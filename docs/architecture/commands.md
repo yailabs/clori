@@ -21,7 +21,7 @@ explicit server entrypoint, write terminal streams.
 ## Product grammar
 
 ```text
-yvex
+yvex                                            # full-screen terminal application
 yvex chat [--session NAME] [--max-new-tokens N]
 yvex run [options] TEXT
 
@@ -59,9 +59,10 @@ state remain different lifecycle stages. `model list` may project the public
 engine inventory when the host is reachable, but it never opens an engine.
 
 The local model registry owns complete typed startup profiles. Text runtimes
-carry one artifact, runtime binding, target, backend, generation mode, and
-startup context; composite runtimes carry an installed component root, target,
-backend, and capability mode. `model list` marks which entries have a complete
+carry one artifact, runtime binding, target, backend, execution strategy, and
+startup context; composite media runtimes carry an installed component root,
+target and backend. Engine kind and execution strategy are independent facts.
+`model list` marks which entries have a complete
 readable profile and `model show` inspects one entry. The foreground TTY console
 lists complete aliases with `profiles`; its `load MODEL|N` resolves an exact
 alias, a numbered row, or an unambiguous runtime target. Multiple profiles for
@@ -75,7 +76,11 @@ reads the engine generations actually known to the host.
 `yvex server` starts the persistent host without opening a package. On a human
 TTY the same foreground process exposes a small operator console for profile
 selection, load, inventory, status, unload, and host stop; external protocol
-clients remain available concurrently. A lifecycle request resolves and
+clients remain available concurrently. If the configured socket already owns a
+healthy compatible YVEX host, the command attaches that console to the existing
+host instead of creating another listener or engine manager. In an attached
+console, `exit` detaches while `stop` explicitly shuts down the shared host. A
+lifecycle request resolves and
 authenticates the named profile, creates one immutable engine generation,
 establishes its admitted residency, and publishes engine readiness. Unload
 drains and closes that generation without stopping the host. Client requests
@@ -86,14 +91,21 @@ not link into runtime execution or open weights locally. The complete operator
 sequence and memory interpretation live in the
 [local runtime runbook](../operator-runbook.md).
 
-`yvex` and `yvex chat` require a TTY. `yvex run` is the noninteractive one-shot
-form. A missing host produces one concise refusal plus the exact `yvex server`
-hint; a missing engine points to `yvex server load MODEL`. Unknown and
-duplicate options follow the product parser's typed refusal policy.
+The empty `yvex` path opens the full-screen terminal application. It is a
+client-owned projection of the public catalog and local protocol: it may
+discover models, start or attach to the canonical host, load an engine, chat,
+and inspect typed runtime facts, but it never reads runtime- or CUDA-private
+state. Explicit `yvex chat` retains the linear console contract. Both require a
+TTY; `yvex run` is the noninteractive one-shot form. A missing host produces
+one concise refusal plus the exact `yvex server` hint; a missing engine points
+to `yvex server load MODEL`. Unknown and duplicate options follow the product
+parser's typed refusal policy.
 
-The REPL owns bounded in-memory history, UTF-8 code-point deletion, bracketed
-multiline paste, resize redraw, and two-stage SIGINT/EOF behavior. History is
-not persisted and never becomes telemetry content.
+The interactive clients own bounded in-memory history, UTF-8 code-point
+deletion, bracketed multiline paste, resize redraw, and two-stage SIGINT/EOF
+behavior. The full-screen application additionally owns alternate-screen
+entry/rollback and resize-safe terminal layout. History is not persisted and
+never becomes telemetry content.
 
 ## Offline engineering grammar
 

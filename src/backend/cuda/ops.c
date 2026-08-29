@@ -6,6 +6,7 @@
  * runtime.
  */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/transformer_ops.h"
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/transformer.h>
 #include <yvex/quant.h>

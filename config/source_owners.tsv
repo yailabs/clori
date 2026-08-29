@@ -78,6 +78,7 @@ src/backend/private.h	backend	backend.private	generic	private	private-interface	
 src/backend/residency.c	backend	backend.residency	generic	private	resource-lifecycle	runtime,graph	implementation	none
 src/backend/cuda/backend.c	backend.cuda	backend.cuda.backend	backend	private	reusable-algorithm	backend,graph	implementation	none
 src/backend/cuda/capability.c	backend.cuda	backend.cuda.capability	backend	private	reusable-algorithm	backend,graph	implementation	none
+src/backend/cuda/component_ops.h	backend.cuda	backend.cuda.component_ops	backend	private	platform-interface	backend.cuda.capability,backend.cuda.convolution,backend.cuda.joint_transformer,backend.cuda.text_encoder,tests	interface	none
 src/backend/cuda/convolution.c	backend.cuda	backend.cuda.convolution	backend	private	reusable-algorithm	graph.family,backend.cuda.family	implementation	none
 src/backend/cuda/convolution_kernels.cu	backend.cuda	backend.cuda.convolution	backend	private	backend-kernel	graph.family,backend.cuda.family	backend-kernel	none
 src/backend/cuda/errors.c	backend.cuda	backend.cuda.errors	backend	private	reusable-algorithm	backend,graph	implementation	none
@@ -101,6 +102,7 @@ src/backend/cuda/qtype.c	backend.cuda	backend.cuda.qtype	backend	private	reusabl
 src/backend/cuda/residency.c	backend.cuda	backend.cuda.residency	backend	private	resource-lifecycle	runtime,backend	implementation	none
 src/backend/cuda/sampling.c	backend.cuda	backend.cuda.sampling	backend	private	backend-implementation	runtime,generation	implementation	none
 src/backend/cuda/transformer.c	backend.cuda	backend.cuda.transformer	backend	private	reusable-algorithm	graph.family,backend.cuda.family	implementation	none
+src/backend/cuda/transformer_ops.h	backend.cuda	backend.cuda.transformer_ops	backend	private	platform-interface	backend.cuda.transformer,backend.cuda.joint_transformer,backend.cuda.text_encoder	interface	none
 src/backend/cuda/transformer_kernels.cu	backend.cuda	backend.cuda.transformer	backend	private	backend-kernel	graph.family,backend.cuda.family	backend-kernel	none
 src/cli/commands/accounts.c	cli.commands	cli.commands.accounts	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/artifact.c	cli.commands	cli.commands.artifact	generic	private	reusable-algorithm	cli	implementation	none

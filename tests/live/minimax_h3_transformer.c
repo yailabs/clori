@@ -18,6 +18,7 @@
 #include <yvex/internal/latent.h>
 #include <yvex/internal/media.h>
 #include <yvex/internal/runtime.h>
+#include "src/backend/cuda/component_ops.h"
 
 enum { VIDEO_VALUES = 96u, AUDIO_VALUES = 32u, CONDITION_VALUES = 5120u };
 
@@ -357,22 +358,22 @@ static int refusal_checks(
     float invalid_timestep[1] = {1.25f};
     int rc;
     request.text_indices = duplicate_text;
-    rc = yvex_backend_transformer_joint_cuda(
+    rc = yvex_cuda_transformer_joint_execute(
         backend, external, blocks, identity, arena_bytes, &request, &result, err);
     if (rc != YVEX_ERR_FORMAT || result.complete) return YVEX_ERR_STATE;
     request = *valid;
     request.timesteps = invalid_timestep;
-    rc = yvex_backend_transformer_joint_cuda(
+    rc = yvex_cuda_transformer_joint_execute(
         backend, external, blocks, identity, arena_bytes, &request, &result, err);
     if (rc != YVEX_ERR_FORMAT || result.complete) return YVEX_ERR_STATE;
     request = *valid;
     request.video_output_capacity--;
-    rc = yvex_backend_transformer_joint_cuda(
+    rc = yvex_cuda_transformer_joint_execute(
         backend, external, blocks, identity, arena_bytes, &request, &result, err);
     if (rc != YVEX_ERR_INVALID_ARG || result.complete) return YVEX_ERR_STATE;
     request = *valid;
     request.video_output_physical = valid->audio_output_physical;
-    rc = yvex_backend_transformer_joint_cuda(
+    rc = yvex_cuda_transformer_joint_execute(
         backend, external, blocks, identity, arena_bytes, &request, &result, err);
     if (rc != YVEX_ERR_INVALID_ARG || result.complete) return YVEX_ERR_STATE;
     yvex_error_clear(err);
@@ -463,7 +464,7 @@ static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
         rc = refusal_checks(backend, external, blocks, identity, arena_bytes,
                             request, err);
     if (rc == YVEX_OK)
-        rc = yvex_backend_transformer_joint_cuda(
+        rc = yvex_cuda_transformer_joint_execute(
             backend, external, blocks, identity, arena_bytes, request, result, err);
     if (attached) {
         yvex_error_clear(&cleanup);
@@ -603,7 +604,7 @@ static int execute_selected_block(
     }
     options.inv_freq = (const float *)external[YVEX_TRANSFORMER_JOINT_ROPE_INV_FREQ].encoded;
     if (rc == YVEX_OK)
-        rc = yvex_backend_transformer_joint_blocks_cuda(
+        rc = yvex_cuda_transformer_joint_blocks_execute(
             backend, graph->omni_recipe, block, 1ull, identity, arena_bytes, hidden,
             time, timestep_count, positions, adaln_indices, rows, output, values,
             &result, &options, &err);
@@ -669,7 +670,7 @@ static int execute_artifact(const yvex_artifact *artifact, const yvex_gguf *gguf
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
             80ull * 1024ull * 1024ull * 1024ull, 16ull * 1024ull * 1024ull * 1024ull, err);
-    if (rc == YVEX_OK) rc = graph->transformer_component_cuda(session, request, result, err);
+    if (rc == YVEX_OK) rc = graph->transformer_component_execute(session, request, result, err);
     yvex_error_clear(&cleanup);
     if (yvex_runtime_component_session_close(&session, &cleanup) != YVEX_OK && rc == YVEX_OK) {
         rc = yvex_error_code(&cleanup);

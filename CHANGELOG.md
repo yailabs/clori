@@ -32,13 +32,13 @@ change. Git history preserves implementation chronology.
   protocol v9 facts that distinguish it from still-open continuous batching.
 - Registry-driven command discovery, advanced help, JSON discovery, and Bash,
   Zsh, and Fish completion.
-- A server-backed, model-labelled console with composed attachment state, live
-  prefill progress, direct streamed output, typed turn metrics,
-  registry-derived slash completion, semantic watch/human trace, clean
-  Ctrl-C/Ctrl-D handling, and a persistent-host startup hero carrying the
-  executable version and local protocol. The foreground host now also owns a
-  TTY lifecycle console for full profile listing and same-terminal load,
-  inventory, status, unload, and stop.
+- A client-owned full-screen terminal application at `yvex`, plus an explicit
+  linear `yvex chat` console. Both consume typed protocol/catalog facts for
+  model selection, live prefill, committed output, turn metrics, runtime
+  inspection, cancellation, and bounded terminal restoration without reading
+  backend-private state. The foreground host also owns a TTY lifecycle console
+  for full profile listing and same-terminal load, inventory, status, unload,
+  and stop.
 - Exact source-authored chat/non-think, think-high and think-max conversation
   encoding, including tool continuity and drop-thinking multi-turn behavior.
   Typed reasoning, final, tool and error streams remain separate; REPL and raw
@@ -192,11 +192,15 @@ change. Git history preserves implementation chronology.
   historical v3 identity remains explicit and is refused before legacy bytes
   can be reinterpreted; a deterministic C/C++ guard now binds current
   versioned public records to their declared layouts.
+- Separated the installed server engine kind from semantic text execution
+  strategy. Engine schema v2 and runtime event schema v4 expose `text` versus
+  `media` independently from `target-only` versus `speculative`; local protocol
+  v15 refuses v14 peers and legacy layouts instead of reinterpreting them.
 - Model hosting is now a persistent zero-engine `yvex server` process. Explicit
   `server load`, `server unload`, and `server models` operations manage
   identity-bound engine generations without restarting the private protocol or
   OpenAI listener; native and OpenAI requests route to an exact loaded model.
-  Local protocol v14 carries engine lifecycle, routing, generation, and resource
+  Local protocol v15 carries engine lifecycle, routing, generation, and resource
   facts.
 - Physical Execution IR v5 and runtime binding v15 retain stable package/storage
   truth while one deployment specialization owns backend, hardware, activation,
@@ -205,7 +209,7 @@ change. Git history preserves implementation chronology.
   requirements that cannot cross the new boundary truthfully.
 - MiniMax hosted media turns now send Unicode creative prompts directly to the
   native tokenizer/conditioning pipeline under one identity-bearing YVEX
-  interactive preset. Protocol v14 carries typed first- and last-image
+  interactive preset. Protocol v15 carries typed first- and last-image
   conditions, and the same FL2VA engine generation executes text-only,
   first-frame, last-frame, or dual-anchor requests through Qwen3-VL vision,
   Visual VAE encoding and condition-aware Omni execution. The removed hardcoded

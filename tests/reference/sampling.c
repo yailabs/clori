@@ -114,15 +114,51 @@ static unsigned long long ref_compact_positive(ref_candidate *candidates,
 
 static unsigned long long ref_mass_prefix(ref_candidate *candidates,
                                           unsigned long long count,
-                                          double requested)
+                                          double requested,
+                                          double *retained_mass)
 {
     double mass = 0.0;
     unsigned long long keep;
     for (keep = 0ull; keep < count; ++keep) {
         mass += candidates[keep].probability;
-        if (mass >= requested) return keep + 1ull;
+        if (mass >= requested) {
+            if (retained_mass) *retained_mass = mass;
+            return keep + 1ull;
+        }
     }
+    if (retained_mass) *retained_mass = mass;
     return count;
+}
+
+const char *yvex_test_sampling_reference_first_divergence(
+    const yvex_runtime_sampling_result *production,
+    const yvex_test_sampling_reference_result *reference,
+    double probability_tolerance)
+{
+    if (!production || !reference || probability_tolerance < 0.0)
+        return "invalid-comparison";
+    if (production->candidates_after_top_k != reference->candidates_after_top_k)
+        return "top-k";
+    if (production->candidates_after_min_p != reference->candidates_after_min_p ||
+        fabs(production->min_p_threshold - reference->min_p_threshold) >
+            probability_tolerance)
+        return "min-p";
+    if (production->candidates_after_typical_p !=
+            reference->candidates_after_typical_p ||
+        fabs(production->entropy - reference->entropy) > probability_tolerance ||
+        fabs(production->typical_retained_mass - reference->typical_retained_mass) >
+            probability_tolerance)
+        return "typical-p";
+    if (production->candidates_after_top_p != reference->candidates_after_top_p ||
+        fabs(production->top_p_retained_mass - reference->top_p_retained_mass) >
+            probability_tolerance)
+        return "top-p";
+    if (production->final_candidate_count != reference->candidate_count ||
+        production->selected_token_id != reference->selected_token_id ||
+        fabs(production->selected_probability - reference->selected_probability) >
+            probability_tolerance)
+        return "categorical-selection";
+    return NULL;
 }
 
 int yvex_test_sampling_reference_select(
@@ -145,7 +181,9 @@ int yvex_test_sampling_reference_select(
         }
         result->selected_token_id = selected;
         result->selected_probability = 1.0;
-        result->candidate_count = count;
+        result->candidates_after_top_k = result->candidates_after_min_p =
+            result->candidates_after_typical_p = result->candidates_after_top_p =
+                result->candidate_count = count;
         result->rng_state_after = rng->state;
         result->rng_draws_after = rng->draws;
         return 1;
@@ -162,18 +200,21 @@ int yvex_test_sampling_reference_select(
         keep = policy->top_k;
         if (!ref_normalize(candidates, keep)) goto fail;
     }
+    result->candidates_after_top_k = keep;
     if (policy->min_p > 0.0) {
         maximum_probability = 0.0;
         for (index = 0ull; index < keep; ++index)
             if (candidates[index].probability > maximum_probability)
                 maximum_probability = candidates[index].probability;
         threshold = policy->min_p * maximum_probability;
+        result->min_p_threshold = threshold;
         for (index = write = 0ull; index < keep; ++index)
             if (candidates[index].probability >= threshold)
                 candidates[write++] = candidates[index];
         keep = write;
         if (!ref_normalize(candidates, keep)) goto fail;
     }
+    result->candidates_after_min_p = keep;
     if (policy->typical_p < 1.0) {
         for (index = 0ull; index < keep; ++index) {
             if (candidates[index].probability <= 0.0) goto fail;
@@ -183,14 +224,19 @@ int yvex_test_sampling_reference_select(
             candidates[index].deviation =
                 fabs(-log(candidates[index].probability) - entropy);
         qsort(candidates, (size_t)keep, sizeof(*candidates), ref_typical_compare);
-        keep = ref_mass_prefix(candidates, keep, policy->typical_p);
+        keep = ref_mass_prefix(candidates, keep, policy->typical_p,
+                               &result->typical_retained_mass);
         if (!ref_normalize(candidates, keep)) goto fail;
     }
+    result->entropy = entropy;
+    result->candidates_after_typical_p = keep;
     if (policy->top_p < 1.0) {
         qsort(candidates, (size_t)keep, sizeof(*candidates), ref_probability_compare);
-        keep = ref_mass_prefix(candidates, keep, policy->top_p);
+        keep = ref_mass_prefix(candidates, keep, policy->top_p,
+                               &result->top_p_retained_mass);
         if (!ref_normalize(candidates, keep)) goto fail;
     }
+    result->candidates_after_top_p = keep;
     keep = ref_compact_positive(candidates, keep);
     if (!keep) goto fail;
     qsort(candidates, (size_t)keep, sizeof(*candidates), ref_token_compare);

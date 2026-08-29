@@ -39,6 +39,11 @@ unavailable exact implementations fail closed.
 make -j4 all
 ```
 
+Running `./yvex` opens the full-screen terminal application. It can discover
+local and remote models, start or attach to the persistent host, load an
+engine, chat, and inspect typed runtime facts without exposing compiler or CUDA
+internals. The commands below are the exact explicit CLI equivalents.
+
 ### 2. Find or prepare a model profile
 
 ```sh
@@ -73,7 +78,9 @@ this in the first terminal:
 ```
 
 The host publishes its private socket and optional loopback OpenAI listener with
-zero loaded engines. It remains alive across model load and unload.
+zero loaded engines. It remains alive across model load and unload. Invoking
+`./yvex server` again on a human terminal attaches to that same healthy host;
+`exit` leaves only the attached console, while `stop` shuts down the host.
 
 ### 4. Load and inspect an engine
 
@@ -133,7 +140,7 @@ session, observation, memory, and recovery procedures.
 | `yvex` | Persistent host, native/OpenAI clients, REPL, model lifecycle controls, and bounded offline compilation/inspection/execution operations |
 | `libyvex` | Reusable source, compilation, package, engine, runtime, graph, backend, tokenizer, generation, and media implementation |
 
-Runtime-facing clients cross private local protocol v14. The server entrypoint
+Runtime-facing clients cross private local protocol v15. The server entrypoint
 owns host and engine lifecycle in the same executable; client handlers do not
 open weights or initialize CUDA. Finite offline operations close their engine
 resources before exit and never create another persistent host.
@@ -160,9 +167,10 @@ Live milestone and release-gate state remains only in
   [artifact](docs/contracts/artifacts.md),
   [local protocol](docs/contracts/local-protocol.md), and
   [OpenAI compatibility](docs/openai-compatibility.md) — normative contracts.
-- [Principles](docs/doctrine/principles.md),
-  [glossary](docs/doctrine/glossary.md), and
-  [evidence discipline](docs/doctrine/evidence.md) — stable doctrine.
+- [Engineering contract](AGENTS.md),
+  [QA evidence](docs/development/qa.md), and
+  [source ownership](docs/development/source-ownership.md) — executable
+  repository invariants.
 - [Contributing](CONTRIBUTING.md),
   [roadmap](ROADMAP.md), and [release target](docs/releases/v0.1.md).
 

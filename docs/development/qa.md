@@ -181,9 +181,6 @@ INVALID` and makes both `run` and `report` return non-zero. Older v1 reports
 without the additive stability record remain readable; they do not acquire a
 source-stability claim retroactively.
 
-Engineering worklogs summarize applicable QA evidence by lane and state. They
-do not copy the registry or become a second test database.
-
 ## CI, sanitizers, static analysis, coverage, and property seams
 
 Hosted CI invokes the canonical `ci` lane. Local GPU/live runners use the same

@@ -21,7 +21,7 @@ extern "C" {
 #define YVEX_RUNTIME_PARTIAL_TURN_SCHEMA_V1 1u
 typedef enum {
     YVEX_GENERATION_MODE_TARGET_ONLY = 0,
-    YVEX_GENERATION_MODE_DSPARK
+    YVEX_GENERATION_MODE_SPECULATIVE
 } yvex_runtime_generation_mode;
 typedef enum {
     YVEX_GENERATION_INPUT_TEXT = 0,
@@ -338,7 +338,7 @@ typedef struct {
     int generation_loop_ready, generation_ready;
     int cli_generate_ready, repl_ready, interactive_chat_ready, server_generation_ready;
     int model_behavior_evaluation_ready, full_model_benchmark_ready;
-    int release_qualification_ready, dspark_ready, speculative_execution_ready;
+    int release_qualification_ready, speculative_execution_ready;
 } yvex_generation_operator_result;
 int yvex_runtime_generation_operator_execute(
     const yvex_generation_operator_request *request,

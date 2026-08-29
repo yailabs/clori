@@ -942,6 +942,56 @@ void yvex_runtime_media_model_close(yvex_runtime_media_model **model)
     *model = NULL;
 }
 
+static int conditioning_component_execute(
+    generation_state *state, yvex_media_conditioning_request *request, yvex_error *err)
+{
+    const yvex_runtime_av_generation_request *generation = state->request;
+    yvex_model_context *text = &state->model->text;
+    yvex_runtime_component_session *session = NULL;
+    yvex_error cleanup;
+    int rc, cleanup_rc;
+    rc = yvex_runtime_component_session_open(
+        &session, state->model->admissions + MEDIA_COMPONENT_TEXT,
+        text->artifact, text->gguf, text->table, generation->component_backend,
+        generation->maximum_host_bytes, generation->maximum_device_bytes, err);
+    request->text_session = session;
+    if (rc == YVEX_OK)
+        rc = generation->condition(request, &state->conditioning_result, err);
+    request->text_session = NULL;
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
+    if (cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    }
+    return rc;
+}
+
+static int keyframe_component_execute(
+    generation_state *state, yvex_media_keyframe_request *request, yvex_error *err)
+{
+    const yvex_runtime_av_generation_request *generation = state->request;
+    component_view *video = &state->model->video;
+    yvex_runtime_component_session *session = NULL;
+    yvex_error cleanup;
+    int rc, cleanup_rc;
+    rc = yvex_runtime_component_session_open(
+        &session, state->model->admissions + MEDIA_COMPONENT_VIDEO,
+        video->artifact, video->gguf, video->tensors, generation->component_backend,
+        generation->maximum_host_bytes, generation->maximum_device_bytes, err);
+    request->video_session = session;
+    if (rc == YVEX_OK)
+        rc = generation->keyframe_encode(request, &state->keyframe_result, err);
+    request->video_session = NULL;
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
+    if (cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    }
+    return rc;
+}
+
 static int conditioning_execute(generation_state *state, yvex_error *err)
 {
     const yvex_runtime_av_generation_request *request = state->request;
@@ -973,17 +1023,13 @@ static int conditioning_execute(generation_state *state, yvex_error *err)
         .condition_count = request->condition_count, .width = request->width,
         .height = request->height, .layer_count = request->conditioning_layers,
         .maximum_prompt_tokens = request->maximum_prompt_tokens,
-        .maximum_host_bytes = request->maximum_host_bytes,
-        .maximum_device_bytes = request->maximum_device_bytes,
-        .text_admission = state->model->admissions + MEDIA_COMPONENT_TEXT,
-        .text_artifact = text->artifact, .text_gguf = text->gguf,
-        .text_tensors = text->table, .conditioning = state->conditioning,
+        .conditioning = state->conditioning,
         .conditioning_capacity = state->conditioning_values,
         .text_tags = state->text_tags,
         .text_tag_capacity = request->maximum_prompt_tokens,
     };
     if (rc == YVEX_OK)
-        rc = request->condition(&conditioning, &state->conditioning_result, err);
+        rc = conditioning_component_execute(state, &conditioning, err);
     if (rc == YVEX_OK &&
         (!state->conditioning_result.complete ||
          !state->conditioning_result.token_count ||
@@ -1019,28 +1065,20 @@ static int conditioning_execute(generation_state *state, yvex_error *err)
     if (rc == YVEX_OK && request->condition_count)
         rc = host_allocate(state, state->condition_latent_values, sizeof(float),
                            (void **)&state->condition_latents, "keyframe latents", err);
-    {
-        component_view *video = &state->model->video;
     keyframes = (yvex_media_keyframe_request){
         .schema_version = YVEX_MEDIA_CONDITIONING_SCHEMA_V2,
         .conditions = request->conditions, .condition_images = state->condition_images,
         .condition_count = request->condition_count, .width = request->width,
         .height = request->height, .posterior_seed = request->keyframe_encode_seed,
-        .maximum_host_bytes = request->maximum_host_bytes,
-        .maximum_device_bytes = request->maximum_device_bytes,
         .pixel_mean = request->pixel_mean, .pixel_std = request->pixel_std,
         .latent_mean = request->video_mean, .latent_std = request->video_std,
         .pixel_channels = request->pixel_channels,
         .latent_channels = request->video_channels,
-        .video_admission = state->model->admissions + MEDIA_COMPONENT_VIDEO,
-        .video_artifact = video->artifact, .video_gguf = video->gguf,
-        .video_tensors = video->tensors,
         .condition_latents = state->condition_latents,
         .condition_latent_capacity = state->condition_latent_values,
     };
-    }
     if (rc == YVEX_OK && request->condition_count)
-        rc = request->keyframe_encode(&keyframes, &state->keyframe_result, err);
+        rc = keyframe_component_execute(state, &keyframes, err);
     if (rc == YVEX_OK && request->condition_count &&
         (!state->keyframe_result.complete ||
          state->keyframe_result.condition_count != request->condition_count ||
@@ -1350,7 +1388,7 @@ static int audio_execute(generation_state *state, yvex_error *err)
     options.cancellation_context = request->cancel_context;
     if (rc == YVEX_OK)
         rc = request->audio_decode(
-            view->artifact, view->gguf, view->tensors, &options,
+            view->artifact, view->gguf, view->tensors, request->component_backend, &options,
             request->maximum_device_bytes, &state->audio_result, &failure, err);
     if (rc == YVEX_OK &&
         !yvex_core_u64_mul(state->plan.audio_latent_steps,

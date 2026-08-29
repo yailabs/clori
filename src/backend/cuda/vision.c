@@ -1,9 +1,9 @@
 /* Execute a source-described patch vision tower with reusable CUDA transformer primitives. */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/transformer_ops.h"
 
 #include <yvex/internal/multimodal.h>
 #include <yvex/internal/quant_numeric.h>
-#include <yvex/internal/transformer.h>
 
 #include <math.h>
 #include <stdint.h>

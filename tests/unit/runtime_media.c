@@ -171,7 +171,7 @@ static int fixture_condition(
     unsigned int tokens[256];
     unsigned long long token_count;
     unsigned long long index, expected;
-    if (!request || !request->tokenizer || !request->prompt ||
+    if (!request || !request->tokenizer || !request->prompt || !request->text_session ||
         request->condition_count > YVEX_RUNTIME_MEDIA_CONDITION_CAP ||
         (request->condition_count &&
          (!request->conditions || !request->condition_images))) {
@@ -209,8 +209,7 @@ static int fixture_condition(
     }
     if (!token_count || request->layer_count != 1ull ||
         !yvex_core_u64_mul(token_count, 5120ull, &expected) ||
-        expected > request->conditioning_capacity ||
-        request->maximum_host_bytes < expected * sizeof(float)) {
+        expected > request->conditioning_capacity) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "test.runtime-media.condition",
                        "fixture conditioning extent is inconsistent");
         return YVEX_ERR_BOUNDS;
@@ -243,7 +242,8 @@ static int fixture_keyframe(const yvex_media_keyframe_request *request,
                             yvex_runtime_av_keyframe_result *result, yvex_error *err)
 {
     unsigned long long index, latent_height, latent_width, values;
-    if (!request || !result || request->condition_count > YVEX_RUNTIME_MEDIA_CONDITION_CAP)
+    if (!request || !result || !request->video_session ||
+        request->condition_count > YVEX_RUNTIME_MEDIA_CONDITION_CAP)
         return YVEX_ERR_INVALID_ARG;
     memset(result, 0, sizeof(*result));
     if (!request->condition_count) {
@@ -393,7 +393,8 @@ static int fixture_video(
 
 static int fixture_audio(
     const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors, const yvex_runtime_av_audio_decode_options *options,
+    const yvex_tensor_table *tensors, yvex_backend_kind backend_kind,
+    const yvex_runtime_av_audio_decode_options *options,
     unsigned long long maximum_device_bytes, yvex_runtime_av_audio_decode_result *result,
     yvex_component_execution_failure *failure, yvex_error *err)
 {
@@ -402,6 +403,7 @@ static int fixture_audio(
     (void)artifact;
     (void)gguf;
     (void)tensors;
+    (void)backend_kind;
     (void)maximum_device_bytes;
     (void)failure;
     context->audio_calls++;

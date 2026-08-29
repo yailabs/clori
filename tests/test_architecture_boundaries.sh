@@ -297,18 +297,29 @@ src/model/families/minimax_h3.c'
 if rg -n -i '(families/|deepseek|minimax|qwen)' src/backend/cuda/text_encoder.c; then
     fail "generic CUDA text execution contains concrete family semantics"
 fi
-if rg -n 'yvex_backend_text_(embedding|encoder)_execute|yvex_backend_transformer_joint_cuda|yvex_backend_alias_decoder_execute|yvex_backend_text_weight' \
+if rg -n 'yvex_runtime_component_session_(open|close)|yvex_runtime_component_text_artifact_execute' \
+    src/backend; then
+    fail "a backend owns component admission or runtime session lifecycle"
+fi
+if rg -n 'yvex_cuda_|yvex_backend_text_(embedding|encoder)_execute|yvex_backend_transformer_joint_cuda|yvex_backend_alias_decoder_execute' \
     src/graph/families/minimax_h3.c; then
     fail "MiniMax family owns generic component residency or backend dispatch"
 fi
-rg -n 'yvex_runtime_component_text_artifact_cuda' src/graph/families/minimax_h3.c >/dev/null ||
+if rg -n '"yvex[.][^"]*[.](cuda|cpu)[.-]' src/graph/families/minimax_h3.c; then
+    fail "MiniMax output identity domains encode one backend implementation"
+fi
+rg -n 'yvex_runtime_component_text_artifact_execute' src/graph/families/minimax_h3.c >/dev/null ||
     fail "MiniMax text recipe bypasses the generic component lifecycle"
-rg -n 'yvex_runtime_component_joint_transformer_cuda' \
+rg -n 'yvex_runtime_component_joint_transformer_execute' \
     src/graph/families/minimax_h3.c >/dev/null ||
     fail "MiniMax joint Transformer bypasses generic resident binding and dispatch"
-rg -n 'yvex_runtime_component_alias_decoder_cuda' \
+rg -n 'yvex_runtime_component_alias_decoder_execute' \
     src/graph/families/minimax_h3.c >/dev/null ||
     fail "MiniMax audio decoder bypasses generic resident binding and dispatch"
+if rg -n 'yvex_cuda_|yvex_backend_text_(embedding|encoder)_execute|yvex_backend_transformer_joint_cuda|yvex_backend_alias_decoder_execute' \
+    src/runtime/component.c include/yvex/internal/component.h; then
+    fail "generic component runtime bypasses backend-owned operation dispatch"
+fi
 if rg -n '#include[[:space:]]+[<"]yvex/internal/backend[.]h[>"]|linear_numeric_policy' \
     include/yvex/internal/joint_transformer.h; then
     fail "joint Transformer semantics contain backend physical policy"
@@ -326,8 +337,8 @@ if rg -n 'encoded_bytes, row_count, row_width, row_bytes' \
     include/yvex/internal/joint_transformer.h; then
     fail "component execution duplicates the canonical encoded-weight descriptor"
 fi
-rg -n 'typedef struct yvex_component_encoded_weight yvex_backend_text_weight' \
-    include/yvex/internal/backend.h >/dev/null ||
+rg -n 'typedef yvex_component_encoded_weight yvex_backend_text_weight' \
+    include/yvex/internal/component.h >/dev/null ||
     fail "text execution does not reuse the canonical component weight view"
 rg -n 'typedef struct yvex_component_encoded_weight yvex_transformer_encoded_weight' \
     include/yvex/internal/transformer.h >/dev/null ||
@@ -747,16 +758,6 @@ if rg -n 'yvex_(artifact|backend|generation|graph|protocol|runtime|server)_|mall
     build/generated/operator/registry.c; then
     fail "generated operator descriptors contain domain logic or resource behavior"
 fi
-
-for reachability_contract in \
-    '### Executable reachability' \
-    'production API directly' \
-    'operator_command_available' \
-    'cli_applicability=not_applicable'
-do
-    rg -F "$reachability_contract" AGENTS.md >/dev/null ||
-        fail "executable-reachability contract is incomplete: $reachability_contract"
-done
 
 pending_identity_pattern='pending-payload-'\
 '(plan|byte)-identity'

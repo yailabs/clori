@@ -63,7 +63,8 @@ int yvex_test_source_manifest(void)
     char json[8192];
     int rc;
 
-    system("rm -rf build/tests/source_manifest_fixture");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source_manifest_fixture") == 0,
+                     "clear source manifest fixture");
     YVEX_TEST_ASSERT(make_dir("build"), "make build");
     YVEX_TEST_ASSERT(make_dir("build/tests"), "make build/tests");
     YVEX_TEST_ASSERT(make_dir(root), "make source manifest fixture");

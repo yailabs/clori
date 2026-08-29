@@ -1,5 +1,6 @@
 /* Execute multistage alias-free Conv1D decoders over admitted resident F32 weights. */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/component_ops.h"
 
 #include <limits.h>
 #include <math.h>
@@ -906,7 +907,7 @@ static int decoder_output(alias_decoder_run *run, yvex_device_tensor *current,
     return decoder_tensor_close(run, &activation, rc, err);
 }
 
-int yvex_backend_alias_decoder_execute(
+int yvex_cuda_alias_decoder_execute(
     yvex_backend *backend, const yvex_alias_decoder_request *request,
     yvex_alias_decoder_result *result, yvex_error *err)
 {

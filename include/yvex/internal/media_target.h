@@ -73,11 +73,9 @@ typedef struct {
     const yvex_media_condition *conditions;
     const yvex_image *condition_images;
     unsigned long long condition_count, width, height, layer_count;
-    unsigned long long maximum_prompt_tokens, maximum_host_bytes, maximum_device_bytes;
-    const yvex_complete_artifact_admission *text_admission;
-    const yvex_artifact *text_artifact;
-    const yvex_gguf *text_gguf;
-    const yvex_tensor_table *text_tensors;
+    unsigned long long maximum_prompt_tokens;
+    /* Borrowed from runtime and valid only for the conditioning callback. */
+    yvex_runtime_component_session *text_session;
     float *conditioning;
     unsigned int *text_tags;
     unsigned long long conditioning_capacity, text_tag_capacity;
@@ -94,13 +92,10 @@ typedef struct {
     const yvex_media_condition *conditions;
     const yvex_image *condition_images;
     unsigned long long condition_count, width, height, posterior_seed;
-    unsigned long long maximum_host_bytes, maximum_device_bytes;
     const float *pixel_mean, *pixel_std, *latent_mean, *latent_std;
     unsigned long long pixel_channels, latent_channels;
-    const yvex_complete_artifact_admission *video_admission;
-    const yvex_artifact *video_artifact;
-    const yvex_gguf *video_gguf;
-    const yvex_tensor_table *video_tensors;
+    /* Borrowed from runtime and valid only for the keyframe callback. */
+    yvex_runtime_component_session *video_session;
     float *condition_latents;
     unsigned long long condition_latent_capacity;
     int (*observe)(void *, const float *, unsigned long long,
@@ -177,7 +172,7 @@ typedef int (*yvex_media_video_fn)(
     yvex_runtime_av_video_decode_result *, yvex_component_execution_failure *, yvex_error *);
 typedef int (*yvex_media_audio_fn)(
     const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
-    const yvex_runtime_av_audio_decode_options *, unsigned long long,
+    yvex_backend_kind, const yvex_runtime_av_audio_decode_options *, unsigned long long,
     yvex_runtime_av_audio_decode_result *, yvex_component_execution_failure *, yvex_error *);
 
 typedef struct yvex_media_execution_recipe {

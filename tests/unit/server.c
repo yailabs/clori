@@ -32,13 +32,14 @@ static void test_engine_options(yvex_server_engine_options *options,
                                 const char *alias)
 {
     memset(options, 0, sizeof(*options));
-    options->schema_version = YVEX_SERVER_ENGINE_SCHEMA_V1;
+    options->schema_version = YVEX_SERVER_ENGINE_SCHEMA_CURRENT;
     options->alias = alias;
     options->artifact_path = "/definitely-absent/yvex-model.gguf";
     options->runtime_binding_path = "/definitely-absent/yvex-binding";
     options->target_id = "deepseek4-v4-flash-dspark";
     options->backend = YVEX_BACKEND_KIND_CPU;
-    options->generation_mode = YVEX_SERVER_GENERATION_TARGET_ONLY;
+    options->engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    options->execution_strategy = YVEX_SERVER_EXECUTION_TARGET_ONLY;
     options->context_capacity = 32u;
     options->prefill_chunk_tokens = 8u;
     options->maximum_new_tokens = 4u;
@@ -449,6 +450,22 @@ static int test_model_open_refusal(void)
     YVEX_TEST_ASSERT(rc == YVEX_OK, "refusal host create");
     rc = yvex_server_start(server, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "host start is independent from model admission");
+    test_engine_options(&engine_options, "legacy");
+    engine_options.schema_version = YVEX_SERVER_ENGINE_SCHEMA_V1;
+    engine_options.engine_kind = YVEX_SERVER_ENGINE_MEDIA;
+    engine_options.execution_strategy = YVEX_SERVER_EXECUTION_SPECULATIVE;
+    memset(&engine, 0, sizeof(engine));
+    rc = yvex_server_engine_load(server, &engine_options, &engine, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_UNSUPPORTED &&
+            strstr(yvex_error_message(&err),
+                   "server engine options schema is unsupported") != NULL,
+        "legacy v1 engine layout refuses before new fields are interpreted");
+    test_engine_options(&engine_options, "strategy");
+    engine_options.execution_strategy = YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
+    rc = yvex_server_engine_load(server, &engine_options, &engine, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG,
+                     "text engine refuses an inapplicable execution strategy");
     test_engine_options(&engine_options, "invalid");
     engine_options.concurrent_sequences = engine_options.maximum_sessions + 1ull;
     rc = yvex_server_engine_load(server, &engine_options, &engine, &err);
@@ -914,7 +931,9 @@ static int test_media_engine_lifecycle(void)
     engine_options.runtime_binding_path = NULL;
     engine_options.target_id = "minimax-h3-base-fl2va-t2va";
     engine_options.backend = YVEX_BACKEND_KIND_CUDA;
-    engine_options.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    engine_options.engine_kind = YVEX_SERVER_ENGINE_MEDIA;
+    engine_options.execution_strategy =
+        YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
     engine_options.context_capacity = 0ull;
     engine_options.prefill_chunk_tokens = 0ull;
     engine_options.maximum_new_tokens = 0ull;
@@ -928,12 +947,22 @@ static int test_media_engine_lifecycle(void)
                          !summary.metrics.model_open_count &&
                          summary.maximum_engines == 2ull,
                      "empty media-capable host is independently ready");
+    engine_options.execution_strategy = YVEX_SERVER_EXECUTION_TARGET_ONLY;
+    YVEX_TEST_ASSERT(
+        yvex_server_media_engine_load(
+            server, &engine_options, &media, &first, &err) ==
+            YVEX_ERR_INVALID_ARG,
+        "media engine refuses a text execution strategy");
+    engine_options.execution_strategy =
+        YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
     memset(&first, 0, sizeof(first));
     YVEX_TEST_ASSERT(yvex_server_media_engine_load(
                          server, &engine_options, &media, &first, &err) == YVEX_OK &&
                          first.state == YVEX_SERVER_ENGINE_LOADED &&
                          first.execution_ready && first.generation != 0ull &&
-                         first.generation_mode == YVEX_SERVER_GENERATION_MEDIA,
+                         first.engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
+                         first.execution_strategy ==
+                             YVEX_SERVER_EXECUTION_NOT_APPLICABLE,
                      "first composite engine loads into the running host");
     engine_options.alias = "minimax-b";
     memset(&second, 0, sizeof(second));
@@ -977,7 +1006,9 @@ static int test_media_engine_lifecycle(void)
         yvex_protocol_message_encode(&wire, frame, sizeof(frame), &frame_count,
                                      &err) == YVEX_OK &&
             yvex_protocol_message_decode(frame, frame_count, &decoded, &err) == YVEX_OK &&
-            decoded.engine.generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+            decoded.engine.engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
+            decoded.engine.execution_strategy ==
+                YVEX_SERVER_EXECUTION_NOT_APPLICABLE &&
             decoded.engine.generation == first.generation &&
             !strcmp(decoded.engine.alias, "minimax-a"),
         "exact media engine generation crosses the local protocol");
@@ -1119,7 +1150,8 @@ static int test_provider_telemetry(void)
     strcpy(request.external_correlation_id, "chatcmpl-yvex-1");
     rc = yvex_provider_request_seal(&request, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry request seal");
-    scope.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    scope.engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    scope.execution_strategy = YVEX_SERVER_EXECUTION_SPECULATIVE;
     strcpy(scope.runtime_model_identity, request.request_identity);
     strcpy(scope.artifact_identity, request.request_identity);
     strcpy(scope.specialization_identity, request.request_identity);
@@ -1139,8 +1171,10 @@ static int test_provider_telemetry(void)
     YVEX_TEST_ASSERT_STREQ(event.provider_request_identity,
                            request.request_identity,
                            "provider request event identity");
-    YVEX_TEST_ASSERT(event.generation_mode == YVEX_SERVER_GENERATION_DSPARK,
-                     "event scope preserves the engine generation mode");
+    YVEX_TEST_ASSERT(
+        event.engine_kind == YVEX_SERVER_ENGINE_TEXT &&
+            event.execution_strategy == YVEX_SERVER_EXECUTION_SPECULATIVE,
+        "event scope preserves engine kind and execution strategy");
     YVEX_TEST_ASSERT_STREQ(event.runtime_model_identity,
                            scope.runtime_model_identity,
                            "event scope owns model lineage");
@@ -1196,7 +1230,9 @@ static int test_provider_telemetry(void)
                          event.confidence_logit_minimum == -1.0 &&
                          event.confidence_logit_maximum == 2.0 &&
                          event.confidence_logit_mean == 0.5 &&
-                         event.generation_mode == YVEX_SERVER_GENERATION_DSPARK,
+                         event.engine_kind == YVEX_SERVER_ENGINE_TEXT &&
+                         event.execution_strategy ==
+                             YVEX_SERVER_EXECUTION_SPECULATIVE,
                      "typed speculation telemetry facts");
     rc = yvex_server_event_json(&event, json, sizeof(json), &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK &&

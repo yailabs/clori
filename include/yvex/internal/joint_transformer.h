@@ -1,4 +1,4 @@
-/* Typed recipe and execution boundary for a joint-modality CUDA Transformer. */
+/* Typed recipe and execution boundary for a joint-modality Transformer. */
 #ifndef INCLUDE_YVEX_INTERNAL_JOINT_TRANSFORMER_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_JOINT_TRANSFORMER_H_INCLUDED
 
@@ -193,22 +193,6 @@ typedef struct yvex_transformer_joint_result {
     char residency_identity[65], execution_identity[65];
     int complete;
 } yvex_transformer_joint_result;
-
-int yvex_backend_transformer_joint_blocks_cuda(
-    yvex_backend *backend, const yvex_transformer_joint_recipe *recipe,
-    const yvex_transformer_joint_encoded_weight *weights, unsigned long long block_count,
-    const char *residency_identity, unsigned long long resident_bytes,
-    const float *hidden, const float *temb, unsigned long long timestep_count,
-    const float *position_ids, const unsigned int *adaln_indices,
-    unsigned long long packed_rows, float *output, unsigned long long output_capacity,
-    yvex_transformer_joint_block_result *result,
-    const yvex_transformer_joint_block_options *options, yvex_error *err);
-int yvex_backend_transformer_joint_cuda(
-    yvex_backend *backend, const yvex_transformer_joint_encoded_weight *external_weights,
-    const yvex_transformer_joint_encoded_weight *block_weights,
-    const char *residency_identity, unsigned long long resident_bytes,
-    const yvex_transformer_joint_request *request,
-    yvex_transformer_joint_result *result, yvex_error *err);
 
 #ifdef __cplusplus
 }

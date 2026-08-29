@@ -1,110 +1,58 @@
 # YVEX Documentation
 
-This index is the navigation and authority map for YVEX documentation. It does
-not own product capability or project state. Code and tests own implemented
-behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
+Code and tests own implemented behavior. [ROADMAP](../ROADMAP.md) owns the live
+project sequence. This page is only the compact route to current architecture,
+contracts, operation, and evidence.
 
 ## Start here
 
-- [README](../README.md) — public project definition, minimal quick start, and
-  current limits.
-- [Operator runbook](operator-runbook.md) — start, inspect, use, and stop the
-  resident runtime.
-- [Canonical glossary](doctrine/glossary.md) — precise terms used throughout
-  the project.
-- [Implemented architecture](architecture/system.md) — what the current YVEX
-  system is and where its boundaries lie.
-- [Contributing](../CONTRIBUTING.md) — contribution, testing, and review
-  workflow.
+- [Public README](../README.md) — what YVEX does, current evidence, quick start,
+  and limits.
+- [Operator runbook](operator-runbook.md) — discover or register a package,
+  start the host, load an engine, run work, inspect it, and unload it.
+- [Implemented system](architecture/system.md) — package, specialization,
+  engine, state, scheduler, backend, and evidence boundaries.
+- [Contributing](../CONTRIBUTING.md) — build, tests, review, and safe shared
+  development.
 
-## Authority map
+## Architecture and contracts
 
-| Information | Canonical owner |
+| Subject | Current owner |
 | --- | --- |
-| Public definition and entry | [`README.md`](../README.md) |
-| Macro state, gates, non-claims, Active Next | [`ROADMAP.md`](../ROADMAP.md) |
-| Engineering contract | [`AGENTS.md`](../AGENTS.md) |
-| Architectural thesis | [YVEX principles](doctrine/principles.md) |
-| Canonical terminology | [Glossary](doctrine/glossary.md) |
-| Claims and evidence | [Evidence discipline](doctrine/evidence.md) |
-| Implementation-independent architecture | [Verified inference reference](reference/verified-inference.md) |
-| Implemented process and subsystem topology | [Implemented system](architecture/system.md) |
-| Compilation and physical artifacts | [Compilation architecture](architecture/compilation.md) |
-| Compiler/family consolidation boundary | [Core compiler and family consolidation](milestones/core-compilation-consolidation.md) |
-| Runtime, execution, state, and resources | [Runtime architecture](architecture/runtime.md) |
-| GB10 execution objectives and measurement key | [GB10 target table](development/gb10-targets.md) |
-| Active GB10 implementation boundary | [Model-derived GB10 execution](milestones/gb10-optimization.md) |
+| Compilation and immutable package | [Compilation architecture](architecture/compilation.md) |
+| Engine/runtime/state/resources | [Runtime architecture](architecture/runtime.md) |
 | Command and operation projections | [Command architecture](architecture/commands.md) |
-| Family integration | [Family integration contract](model-families/integration.md) |
-| DeepSeek-V4-Flash-DSpark facts | [DeepSeek record](model-families/deepseek-v4-flash.md) |
-| Qwen facts | [Qwen record](model-families/qwen.md) |
-| Gemma facts | [Gemma record](model-families/gemma.md) |
-| MiniMax-H3 FL2VA research facts | [MiniMax-H3 record](model-families/minimax-h3.md) |
+| Model-family integration | [Family integration](model-families/integration.md) |
+| DeepSeek vertical | [DeepSeek-V4-Flash](model-families/deepseek-v4-flash.md) |
+| MiniMax composite vertical | [MiniMax-H3](model-families/minimax-h3.md) |
 | Artifact admission | [Artifact contract](contracts/artifacts.md) |
-| Hosted runtime behavior | [Runtime contract](contracts/runtime.md) |
-| Private local protocol | [Local protocol v14](contracts/local-protocol.md) |
+| Runtime behavior and failure | [Runtime contract](contracts/runtime.md) |
+| Local transport | [Local protocol v15](contracts/local-protocol.md) |
+| Installed and internal C ABI | [C API](contracts/c-api.md) |
+| Events and observability | [Events and telemetry](contracts/events-telemetry.md) |
 | OpenAI-compatible HTTP | [Compatibility profile](openai-compatibility.md) |
-| Installed and internal C interfaces | [C API](contracts/c-api.md) |
-| Events and telemetry | [Events contract](contracts/events-telemetry.md) |
-| Normal runtime operation | [Operator runbook](operator-runbook.md) |
-| DeepSeek-specific operation | [DeepSeek operation](operations/deepseek.md) |
-| Build and validation | [Validation](operations/validation.md) |
-| Documentation governance | [Documentation policy](development/documentation-policy.md) |
-| Quality assurance and evidence execution | [QA architecture](development/qa.md) |
-| Engineering worklog procedure | [Repository worklog skill](../.agents/skills/engineering-worklog/SKILL.md) |
-| Source and module ownership | [Source ownership](development/source-ownership.md) |
-| External reference traceability | [Reference-engineering baseline](development/reference-baseline.md) |
-| Release-gate meanings | [Release doctrine](releases/doctrine.md) |
-| v0.1 target and readiness contract | [v0.1 readiness](releases/v0.1.md) |
-| Public change history | [`CHANGELOG.md`](../CHANGELOG.md) |
 
-## Evidence and change records
+## Development and release
 
-- Engineering worklogs retain selected semantic before/after records and
-  optional communication projections without becoming capability or project-
-  control authority: [adaptive memory admission](worklog/2026-08-11-adaptive-memory-admission.md),
-  [MoE route-weight order](worklog/2026-08-14-moe-route-weight-order.md), and
-  [expert worklist execution](worklog/2026-08-16-expert-worklist-execution-batch.md).
-- [Decisions](decisions/README.md) own durable choices and rationale.
-- [Audits](audits/documentation-architecture-51a5c/README.md) preserve
-  point-in-time evidence; the
-  [code-commentary migration](audits/code-commentary-7c90ce1/README.md),
-  [execution-substrate disposition](audits/execution-substrate-dd91fb/README.md),
-  [GB10 optimization baseline](audits/gb10-optimization-691814/README.md),
-  [MiniMax-H3 FL2VA intake](audits/minimax-h3-fl2va-b8b09e3/README.md),
-  [repository-compression disposition](audits/repository-compression-7226f7/README.md),
-  operator-surface, and topology audits remain frozen beside the documentation
-  baseline.
-- [Migrations](migrations/documentation-architecture-v1.md) map superseded
-  paths and terms to current owners; the
-  [DSpark source migration](migrations/deepseek-dspark-source.md) records the
-  sole-target replacement and refusal boundary.
-- [Milestone contracts](milestones/documentation-architecture.md) define
-  bounded implementation acceptance without owning live state; the
-  [commentary contract](milestones/code-commentary.md) records the selective
-  source-commentary boundary; the
-  [DSpark rebase contract](milestones/deepseek-dspark-rebase.md) owns the
-  source-to-speculative-text implementation boundary; and the
-  [execution-substrate contract](milestones/product-architecture.md) records
-  the identity, state-promotion, shape and operational-surface boundary; the
-  [core compiler consolidation contract](milestones/core-compilation-consolidation.md)
-  records where family semantics terminate and compiled execution truth begins;
-  and
-  the [GB10 optimization contract](milestones/gb10-optimization.md) owns the
-  active model-derived execution boundary.
+| Subject | Current owner |
+| --- | --- |
+| Repository engineering rules | [AGENTS](../AGENTS.md) |
+| Source/build ownership | [Source ownership](development/source-ownership.md) |
+| QA lanes and evidence reports | [QA](development/qa.md) |
+| GB10 measurement targets | [GB10 targets](development/gb10-targets.md) |
+| External reference provenance | [Reference baseline](development/reference-baseline.md) |
+| Documentation admission | [Documentation policy](development/documentation-policy.md) |
+| Durable current decisions | [Architecture decisions](decisions/README.md) |
+| Release gate meanings | [Release doctrine](releases/doctrine.md) |
+| v0.1 target | [v0.1 record](releases/v0.1.md) |
+| Public changes | [CHANGELOG](../CHANGELOG.md) |
 
-## Document classes
+Two selected records retain the empirical boundary immediately preceding the
+current work:
 
-The repository separates stable doctrine, implementation-independent
-reference architecture, implemented architecture, family records, normative
-contracts, operator procedures, development policy, project control,
-decisions, frozen audits, selected engineering worklogs, migrations, releases,
-and milestone contracts.
-Their update rules are defined by the
-[documentation policy](development/documentation-policy.md) and checked
-against [`config/documentation_owners.tsv`](../config/documentation_owners.tsv).
+- [DeepSeek GB10 representation barrier](worklog/2026-08-28-deepseek-gb10-matrix-tile-execution.md);
+- [foreground host lifecycle console repair](worklog/2026-08-28-foreground-host-lifecycle-console.md).
 
-Decision records explain why durable choices were made. Frozen audits preserve
-point-in-time evidence. Migration records map superseded paths and vocabulary.
-Milestone contracts describe one implementation boundary but never own live
-status. Detailed retired chronology remains recoverable from Git history.
+They are evidence history, not live architecture or project control. Detailed
+retired audits, migrations, milestone plans, and routine worklogs remain
+available through Git history instead of the current documentation tree.

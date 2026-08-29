@@ -12,7 +12,7 @@ mkdir -m 700 "$home_root" "$home_root/.config"
 mkdir -m 775 "$home_root/.config/yvex"
 registry="$home_root/.local/share/yvex/models.local.json"
 mkdir -p "$home_root/.local/share/yvex"
-printf '{"schema":"yvex.models.local.v5","models":[]}\n' >"$registry"
+printf '{"schema":"yvex.models.local.v6","models":[]}\n' >"$registry"
 export HOME="$home_root"
 cleanup()
 {
@@ -236,7 +236,7 @@ artifact=$(realpath "$artifact")
 binding=$(realpath "$binding")
 cat >"$registry" <<EOF
 {
-  "schema": "yvex.models.local.v5",
+  "schema": "yvex.models.local.v6",
   "models": [{
     "alias": "current-model-runtime-profile",
     "family": "deepseek4",
@@ -244,7 +244,8 @@ cat >"$registry" <<EOF
     "runtime_binding": "$binding",
     "runtime_target": "deepseek4-v4-flash-dspark",
     "runtime_backend": "cuda",
-    "runtime_mode": "dspark",
+    "runtime_engine_kind": "text",
+    "runtime_execution_strategy": "speculative",
     "runtime_context": 4096
   }]
 }

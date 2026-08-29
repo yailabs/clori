@@ -22,7 +22,9 @@ commits would make rejected-suffix rollback depend on undoing visible state.
 
 One admitted artifact and runtime binding contain the target, drafter, shared
 resources, and complete-target verification requirements. One immutable
-`yvex_runtime_model` owns explicit `target-only` and `dspark` execution plans.
+`yvex_runtime_model` owns explicit target-only and speculative execution plans;
+the DeepSeek family adapter supplies DSpark as the admitted speculative
+implementation.
 One server session owns committed target truth and bounded proposal and
 verification candidate state. No draft process, model opening, tokenizer,
 output head, session registry, or backend context is created.

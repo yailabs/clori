@@ -10,7 +10,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 14u
+#define YVEX_LOCAL_PROTOCOL_VERSION 15u
 #define YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1 1u
 #define YVEX_CLIENT_MEDIA_CONDITION_CAP 2u
 #define YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1 1u
@@ -18,11 +18,15 @@ extern "C" {
 #define YVEX_SERVER_OPTIONS_SCHEMA_V4 4u
 #define YVEX_SERVER_OPTIONS_SCHEMA_CURRENT YVEX_SERVER_OPTIONS_SCHEMA_V4
 #define YVEX_SERVER_ENGINE_SCHEMA_V1 1u
+#define YVEX_SERVER_ENGINE_SCHEMA_V2 2u
+#define YVEX_SERVER_ENGINE_SCHEMA_CURRENT YVEX_SERVER_ENGINE_SCHEMA_V2
 #define YVEX_SERVER_SUMMARY_SCHEMA_V1 1u
 #define YVEX_CONSOLE_STATUS_SCHEMA_V1 1u
 #define YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1 1u
 #define YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 1u
-#define YVEX_RUNTIME_EVENT_SCHEMA_VERSION 3u
+#define YVEX_RUNTIME_EVENT_SCHEMA_V3 3u
+#define YVEX_RUNTIME_EVENT_SCHEMA_V4 4u
+#define YVEX_RUNTIME_EVENT_SCHEMA_VERSION YVEX_RUNTIME_EVENT_SCHEMA_V4
 #define YVEX_RUNTIME_METRICS_SCHEMA_VERSION 3u
 #define YVEX_SERVER_SESSION_NAME_CAP 64u
 #define YVEX_SERVER_ID_CAP 65u
@@ -66,10 +70,15 @@ typedef enum {
     YVEX_SERVER_CONSOLE_HUMAN
 } yvex_server_console_kind;
 typedef enum {
-    YVEX_SERVER_GENERATION_TARGET_ONLY = 0,
-    YVEX_SERVER_GENERATION_DSPARK,
-    YVEX_SERVER_GENERATION_MEDIA
-} yvex_server_generation_mode;
+    YVEX_SERVER_ENGINE_NONE = 0,
+    YVEX_SERVER_ENGINE_TEXT,
+    YVEX_SERVER_ENGINE_MEDIA
+} yvex_server_engine_kind;
+typedef enum {
+    YVEX_SERVER_EXECUTION_NOT_APPLICABLE = 0,
+    YVEX_SERVER_EXECUTION_TARGET_ONLY,
+    YVEX_SERVER_EXECUTION_SPECULATIVE
+} yvex_server_execution_strategy;
 typedef enum {
     YVEX_SERVER_SESSION_CREATED = 0,
     YVEX_SERVER_SESSION_READY,
@@ -143,7 +152,8 @@ typedef struct {
     char provider_request_identity[YVEX_PROVIDER_ID_CAP];
     char external_correlation_id[YVEX_PROVIDER_ID_CAP];
     unsigned long long value_a, value_b, value_c;
-    yvex_server_generation_mode generation_mode;
+    yvex_server_engine_kind engine_kind;
+    yvex_server_execution_strategy execution_strategy;
     unsigned long long speculative_cycle, proposed_tokens;
     unsigned long long selected_verification_tokens, accepted_tokens;
     unsigned long long rejected_tokens, discarded_tokens, verification_count;
@@ -191,7 +201,8 @@ typedef struct {
     const char *runtime_binding_path;
     const char *target_id;
     yvex_backend_kind backend;
-    yvex_server_generation_mode generation_mode;
+    yvex_server_engine_kind engine_kind;
+    yvex_server_execution_strategy execution_strategy;
     unsigned long long context_capacity, prefill_chunk_tokens;
     unsigned long long maximum_new_tokens, maximum_output_bytes;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
@@ -203,7 +214,8 @@ typedef struct {
     unsigned int schema_version;
     yvex_server_engine_state state;
     yvex_backend_kind backend;
-    yvex_server_generation_mode generation_mode;
+    yvex_server_engine_kind engine_kind;
+    yvex_server_execution_strategy execution_strategy;
     char alias[YVEX_SERVER_MODEL_ALIAS_CAP];
     char target_id[128];
     unsigned long long generation, active_work, session_count;
@@ -438,7 +450,8 @@ typedef struct {
     unsigned long long generated_tokens, final_position, turn_count;
     unsigned long long reasoning_tokens, final_tokens;
     unsigned long long context_used, kv_used_bytes;
-    yvex_server_generation_mode generation_mode;
+    yvex_server_engine_kind engine_kind;
+    yvex_server_execution_strategy execution_strategy;
     unsigned long long draft_cycle_count, draft_forward_count;
     unsigned long long proposed_tokens, selected_verification_tokens;
     unsigned long long target_verification_count;

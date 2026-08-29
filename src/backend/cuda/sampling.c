@@ -735,7 +735,7 @@ static const yvex_backend_sampling_operations sampling_cuda_operations = {
     sampling_cuda_accept_stochastic
 };
 
-const yvex_backend_sampling_operations *yvex_backend_sampling_operations_get(
+const yvex_backend_sampling_operations *yvex_cuda_sampling_operations_get(
     const yvex_backend *backend)
 {
     const yvex_cuda_backend_state *state = yvex_cuda_state(backend);

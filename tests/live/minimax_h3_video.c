@@ -37,7 +37,7 @@ static int reconstruction_decode(
     options.latent_height = window->latent_height; options.latent_width = window->latent_width;
     options.output_capacity = window->output_capacity;
     options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
-    rc = yvex_graph_register_minimax_h3()->video_vae_decode_cuda(
+    rc = yvex_graph_register_minimax_h3()->video_vae_decode_backend(
         context->session, &options, &result, &context->failure, err);
     if (rc == YVEX_OK) {
         memset(evidence, 0, sizeof(*evidence));
@@ -198,6 +198,7 @@ static int keyframe_encode(
         yvex_model_register_minimax_h3()->latent_normalization();
     yvex_artifact_admission_failure failure = {0};
     yvex_complete_artifact_admission admission;
+    yvex_runtime_component_session *session = NULL;
     yvex_runtime_av_keyframe_result result;
     yvex_media_condition condition = {
         .schema_version = YVEX_MEDIA_CONDITION_SCHEMA_V1,
@@ -210,7 +211,8 @@ static int keyframe_encode(
     yvex_image image = {0};
     unsigned long long values;
     float *output = NULL;
-    int rc;
+    yvex_error cleanup;
+    int rc, cleanup_rc;
 
     if (!normalization || width % 16ull || height % 16ull ||
         width > 4096ull || height > 4096ull ||
@@ -224,6 +226,10 @@ static int keyframe_encode(
         rc = yvex_graph_register_minimax_h3()->component_admit(
             "video_vae", artifact, gguf, tensors, NULL, &admission, NULL,
             &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_open(
+            &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
+            admission.payload_bytes, 16ull * 1024ull * 1024ull * 1024ull, err);
     request = (yvex_media_keyframe_request){
         .schema_version = YVEX_MEDIA_CONDITIONING_SCHEMA_V2,
         .conditions = &condition,
@@ -232,18 +238,13 @@ static int keyframe_encode(
         .width = width,
         .height = height,
         .posterior_seed = 42ull,
-        .maximum_host_bytes = admission.payload_bytes,
-        .maximum_device_bytes = 16ull * 1024ull * 1024ull * 1024ull,
         .pixel_mean = normalization->pixel_mean,
         .pixel_std = normalization->pixel_std,
         .latent_mean = normalization->video_mean,
         .latent_std = normalization->video_std,
         .pixel_channels = normalization->pixel_channels,
         .latent_channels = normalization->video_channels,
-        .video_admission = &admission,
-        .video_artifact = artifact,
-        .video_gguf = gguf,
-        .video_tensors = tensors,
+        .video_session = session,
         .condition_latents = output,
         .condition_latent_capacity = values,
         .observe = moments_path ? posterior_observe : NULL,
@@ -251,6 +252,12 @@ static int keyframe_encode(
     };
     if (rc == YVEX_OK)
         rc = yvex_backend_minimax_h3_keyframe_encode(&request, &result, err);
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
+    if (cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    }
     if (rc == YVEX_OK && !output_write(output_path, output, (size_t)values))
         rc = YVEX_ERR_IO;
     if (rc == YVEX_OK && reference_path &&
@@ -467,7 +474,7 @@ int main(int argc, char **argv)
                 yvex_runtime_component_session_materialization(session), &decode_options,
                 &result, &execution_failure, &err);
         if (rc == YVEX_OK && cuda)
-            rc = yvex_graph_register_minimax_h3()->video_vae_decode_cuda(
+            rc = yvex_graph_register_minimax_h3()->video_vae_decode_backend(
                 session, &decode_options, &result, &execution_failure, &err);
         if (rc != YVEX_OK) {
             fprintf(stderr,

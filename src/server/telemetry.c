@@ -69,7 +69,7 @@ static int event_identity(yvex_server_event *event)
     if (!event)
         return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.server.event.v3") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.server.event.v4") ||
         !yvex_sha256_update_u64(&hash, event->schema_version) ||
         !yvex_sha256_update_u64(&hash, event->sequence) ||
         !yvex_sha256_update_u64(&hash, event->kind) ||
@@ -84,7 +84,8 @@ static int event_identity(yvex_server_event *event)
         !yvex_sha256_update_u64(&hash, event->value_a) ||
         !yvex_sha256_update_u64(&hash, event->value_b) ||
         !yvex_sha256_update_u64(&hash, event->value_c) ||
-        !yvex_sha256_update_u64(&hash, event->generation_mode) ||
+        !yvex_sha256_update_u64(&hash, event->engine_kind) ||
+        !yvex_sha256_update_u64(&hash, event->execution_strategy) ||
         !yvex_sha256_update_u64(&hash, event->speculative_cycle) ||
         !yvex_sha256_update_u64(&hash, event->proposed_tokens) ||
         !yvex_sha256_update_u64(&hash,
@@ -176,7 +177,15 @@ int yvex_server_telemetry_emit_provider(
     if (!telemetry || kind > YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE ||
         severity > YVEX_SERVER_SEVERITY_FATAL ||
         (scope &&
-         (scope->generation_mode > YVEX_SERVER_GENERATION_MEDIA ||
+         (scope->engine_kind == YVEX_SERVER_ENGINE_NONE ||
+          scope->engine_kind > YVEX_SERVER_ENGINE_MEDIA ||
+          scope->execution_strategy > YVEX_SERVER_EXECUTION_SPECULATIVE ||
+          (scope->engine_kind == YVEX_SERVER_ENGINE_TEXT &&
+           scope->execution_strategy ==
+               YVEX_SERVER_EXECUTION_NOT_APPLICABLE) ||
+          (scope->engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
+           scope->execution_strategy !=
+               YVEX_SERVER_EXECUTION_NOT_APPLICABLE) ||
           (scope->runtime_model_identity[0] &&
            !yvex_sha256_hex_valid(scope->runtime_model_identity)) ||
           (scope->artifact_identity[0] &&
@@ -227,8 +236,10 @@ int yvex_server_telemetry_emit_provider(
     event.value_c = value_c;
     event.seconds = seconds;
     event.rate = rate;
-    event.generation_mode = scope ? scope->generation_mode
-                                  : YVEX_SERVER_GENERATION_TARGET_ONLY;
+    event.engine_kind = scope ? scope->engine_kind : YVEX_SERVER_ENGINE_NONE;
+    event.execution_strategy = scope
+                                   ? scope->execution_strategy
+                                   : YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
     if (speculation) {
         event.speculative_cycle = speculation->cycle;
         event.proposed_tokens = speculation->proposed_tokens;
@@ -626,13 +637,21 @@ int yvex_server_event_validate(const yvex_server_event *event, yvex_error *err)
         (!event->provider_adapter[0] &&
          (event->provider_request_identity[0] ||
           event->external_correlation_id[0])) ||
-        event->generation_mode > YVEX_SERVER_GENERATION_MEDIA ||
+        event->engine_kind > YVEX_SERVER_ENGINE_MEDIA ||
+        event->execution_strategy > YVEX_SERVER_EXECUTION_SPECULATIVE ||
+        (event->engine_kind == YVEX_SERVER_ENGINE_TEXT &&
+         event->execution_strategy ==
+             YVEX_SERVER_EXECUTION_NOT_APPLICABLE) ||
+        (event->engine_kind != YVEX_SERVER_ENGINE_TEXT &&
+         event->execution_strategy !=
+             YVEX_SERVER_EXECUTION_NOT_APPLICABLE) ||
         !isfinite(event->confidence_logit_minimum) ||
         !isfinite(event->confidence_logit_maximum) ||
         !isfinite(event->confidence_logit_mean) ||
         !isfinite(event->seconds) || !isfinite(event->rate) ||
         (speculative &&
-         (event->generation_mode != YVEX_SERVER_GENERATION_DSPARK ||
+         (event->engine_kind != YVEX_SERVER_ENGINE_TEXT ||
+          event->execution_strategy != YVEX_SERVER_EXECUTION_SPECULATIVE ||
           !event->speculative_cycle ||
           event->confidence_logit_count > event->proposed_tokens ||
           (event->confidence_logit_count &&
@@ -686,13 +705,14 @@ int yvex_server_event_json(const yvex_server_event *event, char *output,
         return YVEX_ERR_INVALID_ARG;
     }
     length = snprintf(output, (size_t)capacity,
-                      "{\"schema\":3,\"sequence\":%llu,\"process\":%llu,"
+                      "{\"schema\":4,\"sequence\":%llu,\"process\":%llu,"
                       "\"wall_time_ns\":%llu,\"monotonic_time_ns\":%llu,\"kind\":\"%s\","
                       "\"severity\":%u,\"session\":\"%s\",\"request\":\"%s\","
                       "\"turn\":\"%s\",\"phase\":\"%s\","
                       "\"provider\":\"%s\",\"provider_request_identity\":\"%s\","
                       "\"external_correlation_id\":\"%s\",\"a\":%llu,"
-                      "\"b\":%llu,\"c\":%llu,\"generation_mode\":%u,"
+                      "\"b\":%llu,\"c\":%llu,\"engine_kind\":%u,"
+                      "\"execution_strategy\":%u,"
                       "\"speculative_cycle\":%llu,\"proposed_tokens\":%llu,"
                       "\"selected_verification_tokens\":%llu,"
                       "\"accepted_tokens\":%llu,\"rejected_tokens\":%llu,"
@@ -716,7 +736,8 @@ int yvex_server_event_json(const yvex_server_event *event, char *output,
                       event->provider_request_identity,
                       event->external_correlation_id,
                       event->value_a, event->value_b, event->value_c,
-                      (unsigned int)event->generation_mode,
+                      (unsigned int)event->engine_kind,
+                      (unsigned int)event->execution_strategy,
                       event->speculative_cycle, event->proposed_tokens,
                       event->selected_verification_tokens,
                       event->accepted_tokens, event->rejected_tokens,

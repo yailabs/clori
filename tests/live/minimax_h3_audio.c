@@ -237,8 +237,9 @@ static int decode_cuda(const audio_arguments *arguments, const yvex_artifact *ar
     options.output_capacity = output_values;
     options.max_workspace_bytes = 16ull * 1024ull * 1024ull * 1024ull;
     (void)clock_gettime(CLOCK_MONOTONIC, &begin);
-    rc = yvex_graph_register_minimax_h3()->audio_vae_execute_artifact_cuda(
-        artifact, gguf, tensors, &options, 16ull * 1024ull * 1024ull * 1024ull,
+    rc = yvex_graph_register_minimax_h3()->audio_vae_execute_artifact(
+        artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA, &options,
+        16ull * 1024ull * 1024ull * 1024ull,
         &result, &failure, err);
     (void)clock_gettime(CLOCK_MONOTONIC, &end);
     printf("decode_wall_seconds=%.6f\n", elapsed_seconds(&begin, &end));

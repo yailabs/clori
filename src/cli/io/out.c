@@ -568,7 +568,7 @@ static const char *server_event_category(yvex_server_event_kind kind)
     if (kind <= YVEX_SERVER_EVENT_SESSION_CLOSED) return "SESSION";
     if (kind <= YVEX_SERVER_EVENT_REQUEST_STARTED) return "REQUEST";
     if (kind <= YVEX_SERVER_EVENT_PREFILL_COMPLETED) return "PREFILL";
-    if (kind <= YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED) return "DSPARK";
+    if (kind <= YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED) return "SPECULATION";
     if (kind <= YVEX_SERVER_EVENT_GENERATION_FAILED) return "GENERATE";
     if (kind == YVEX_SERVER_EVENT_TELEMETRY_DROPPED) return "WARNING";
     return "RUNTIME";
@@ -611,7 +611,7 @@ void yvex_cli_out_turn_metrics(FILE *output, const yvex_client_message *message,
                                unsigned long long context_capacity,
                                const yvex_cli_terminal_style *style)
 {
-    if (message->generation_mode == YVEX_SERVER_GENERATION_MEDIA) {
+    if (message->engine_kind == YVEX_SERVER_ENGINE_MEDIA) {
         fprintf(output, "%smedia%s · %.2f s", style->success, style->reset,
                 message->decode_seconds);
         return;
@@ -623,8 +623,8 @@ void yvex_cli_out_turn_metrics(FILE *output, const yvex_client_message *message,
             message->reused_tokens, message->prefill_seconds, message->prefill_rate,
             style->success, style->reset, message->generated_tokens, message->decode_seconds,
             message->decode_rate, message->first_token_seconds);
-    if (message->generation_mode == YVEX_SERVER_GENERATION_DSPARK)
-        fprintf(output, " · %sDSpark%s %llu proposed/%llu accepted/%llu rejected/%llu verified",
+    if (message->execution_strategy == YVEX_SERVER_EXECUTION_SPECULATIVE)
+        fprintf(output, " · %sspeculative%s %llu proposed/%llu accepted/%llu rejected/%llu verified",
                 style->accent, style->reset, message->proposed_tokens,
                 message->accepted_draft_tokens, message->rejected_draft_tokens,
                 message->target_verification_count);
@@ -687,7 +687,7 @@ static void server_event_values(const yvex_server_event *event, int detailed)
         printf(" · %llu upload%s", event->value_c, event->value_c == 1u ? "" : "s");
         break;
     case YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE:
-        if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+        if (event->engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
             strcmp(event->phase, "media-model")) {
             static const char *const modes[] = {
                 "full-hash", "verified-reopen", "fallback-full-hash",
@@ -705,7 +705,7 @@ static void server_event_values(const yvex_server_event *event, int detailed)
             if ((event->value_c >> 16u) & 1ull) printf(" · published");
             if ((event->value_c >> 17u) & 1ull) printf(" · repaired");
             if ((event->value_c >> 18u) & 1ull) printf(" · cache warning");
-        } else if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA) {
+        } else if (event->engine_kind == YVEX_SERVER_ENGINE_MEDIA) {
             server_event_bytes("hashed", event->value_a);
             server_event_bytes("files", event->value_b);
             printf(" · %llu components", event->value_c);
@@ -978,7 +978,7 @@ static void watch_cycle(yvex_cli_watch_renderer *renderer,
     renderer->rejected += event->rejected_tokens;
     renderer->discarded += event->discarded_tokens;
     if (!renderer->detailed) return;
-    watch_line_begin(renderer, event, renderer->style.success, "DSPARK");
+    watch_line_begin(renderer, event, renderer->style.success, "SPECULATION");
     printf("cycle %-3llu %llu/%llu accepted", event->speculative_cycle,
            event->accepted_tokens, event->proposed_tokens);
     if (event->selected_verification_tokens)
@@ -1005,7 +1005,7 @@ static void watch_request_end(yvex_cli_watch_renderer *renderer,
     if (event->seconds > 0.0) printf(" · %.3f s", event->seconds);
     if (event->rate > 0.0) printf(" · %.2f tok/s", event->rate);
     if (renderer->cycles)
-        printf("\n          %sDSPARK %llu cycle%s · %llu/%llu accepted · "
+        printf("\n          %sspeculative %llu cycle%s · %llu/%llu accepted · "
                "%llu rejected · %llu discarded%s",
                renderer->style.dim, renderer->cycles,
                renderer->cycles == 1ull ? "" : "s", renderer->accepted,
@@ -1027,7 +1027,7 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
                                   const yvex_server_event *event)
 {
     if (!renderer || !event) return 0;
-    if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+    if (event->engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
         event->kind == YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE &&
         strcmp(event->phase, "media-model")) {
         static const char *const modes[] = {
@@ -1043,14 +1043,14 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
         putchar('\n');
         return 1;
     }
-    if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+    if (event->engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
         event->kind == YVEX_SERVER_EVENT_REQUEST_STARTED) {
         watch_line_begin(renderer, event, renderer->style.accent, "MEDIA");
         printf("request started\n");
         renderer->request_open = 1;
         return 1;
     }
-    if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+    if (event->engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
         (event->kind == YVEX_SERVER_EVENT_PREFILL_STARTED ||
          event->kind == YVEX_SERVER_EVENT_PREFILL_COMPLETED ||
          event->kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS ||
@@ -1063,7 +1063,7 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
         putchar('\n');
         return 1;
     }
-    if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+    if (event->engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
         event->kind >= YVEX_SERVER_EVENT_GENERATION_COMPLETED &&
         event->kind <= YVEX_SERVER_EVENT_GENERATION_FAILED) {
         const char *label = event->kind == YVEX_SERVER_EVENT_GENERATION_COMPLETED

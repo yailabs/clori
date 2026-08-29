@@ -1,8 +1,8 @@
 /*
  * Provide models namespace routing and registry-backed models commands.
  *
- * Preserves existing models command syntax; CLI-only and excluded from libyvex.a. Registry command
- * output is operator CLI surface, not domain ownership.
+ * CLI-only and excluded from libyvex.a. Registry command output is operator projection, not domain
+ * ownership.
  */
 #include "src/cli/model_artifacts/private.h"
 
@@ -31,7 +31,7 @@ typedef struct {
     const char *runtime_binding;
     const char *runtime_target;
     const char *runtime_backend;
-    const char *runtime_mode;
+    const char *runtime_execution_strategy;
     const char *runtime_context;
 } models_add_options;
 
@@ -101,7 +101,10 @@ static const yvex_cli_field_spec registry_add_fields[] = {
     REGISTRY_FIELD("runtime_binding", YVEX_CLI_FIELD_TEXT, runtime_binding, ""),
     REGISTRY_FIELD("runtime_target", YVEX_CLI_FIELD_TEXT, runtime_target, ""),
     REGISTRY_FIELD("runtime_backend", YVEX_CLI_FIELD_TEXT, runtime_backend, ""),
-    REGISTRY_FIELD("runtime_mode", YVEX_CLI_FIELD_TEXT, runtime_mode, ""),
+    REGISTRY_FIELD("runtime_engine_kind", YVEX_CLI_FIELD_TEXT,
+                   runtime_engine_kind, ""),
+    REGISTRY_FIELD("runtime_execution_strategy", YVEX_CLI_FIELD_TEXT,
+                   runtime_execution_strategy, ""),
     REGISTRY_FIELD("runtime_context", YVEX_CLI_FIELD_U64, runtime_context, NULL),
 };
 
@@ -142,18 +145,23 @@ static const yvex_cli_field_spec registry_inspect_fields[] = {
     REGISTRY_FIELD("runtime_binding", YVEX_CLI_FIELD_TEXT, runtime_binding, ""),
     REGISTRY_FIELD("runtime_target", YVEX_CLI_FIELD_TEXT, runtime_target, ""),
     REGISTRY_FIELD("runtime_backend", YVEX_CLI_FIELD_TEXT, runtime_backend, ""),
-    REGISTRY_FIELD("runtime_mode", YVEX_CLI_FIELD_TEXT, runtime_mode, ""),
+    REGISTRY_FIELD("runtime_engine_kind", YVEX_CLI_FIELD_TEXT,
+                   runtime_engine_kind, ""),
+    REGISTRY_FIELD("runtime_execution_strategy", YVEX_CLI_FIELD_TEXT,
+                   runtime_execution_strategy, ""),
     REGISTRY_FIELD("runtime_context", YVEX_CLI_FIELD_U64, runtime_context, NULL),
 };
 
 static const yvex_model_registry_entry empty_registry_entry = {
+    .schema_version = YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT,
     .alias = "", .family = "", .model = "", .scope = "", .artifact_class = "",
-    .qprofile = "", .calibration = "", .producer = "yvex", .schema_version = "v1",
+    .qprofile = "", .calibration = "", .producer = "yvex", .artifact_schema = "v1",
     .path = "", .sha256 = "", .format = "", .architecture = "",
     .primary_tensor_name = "", .primary_tensor_role = "", .primary_tensor_dtype = "",
     .primary_tensor_dims = "", .support_level = "", .runtime_profile = "",
     .runtime_installation = "", .runtime_binding = "",
-    .runtime_target = "", .runtime_backend = "", .runtime_mode = ""
+    .runtime_target = "", .runtime_backend = "", .runtime_engine_kind = "",
+    .runtime_execution_strategy = ""
 };
 
 static const models_verify_pair verify_audit_pairs[] = {
@@ -228,9 +236,9 @@ static const char *const models_help_lines[] = {
     "usage: yvex model registry scan --root DIR [--registry FILE]",
     "       yvex model registry add --path FILE [--alias ALIAS] [--support-level LEVEL] "
         "[--startup-profile single-artifact --runtime-binding FILE --target ID "
-        "--backend cpu|cuda --generation-mode target-only|dspark --ctx N] "
+        "--backend cpu|cuda --execution-strategy target-only|speculative --ctx N] "
         "[--startup-profile composite --installation-root DIR --target ID --backend cuda "
-        "--generation-mode media] [--registry FILE]",
+        "] [--registry FILE]",
     "       yvex model acquire TARGET [--models-root DIR] [--auth auto|required|never] [--dry-run] "
         "[--progress auto|live|plain|log|off] [--tick-seconds N] [--no-progress] [--audit | --output "
         "normal|table|audit]",
@@ -370,8 +378,15 @@ static int parse_models_add_options(int arg_count, char **args,
         else if (strcmp(args[i], "--runtime-binding") == 0) options->runtime_binding = args[++i];
         else if (strcmp(args[i], "--target") == 0) options->runtime_target = args[++i];
         else if (strcmp(args[i], "--backend") == 0) options->runtime_backend = args[++i];
-        else if (strcmp(args[i], "--generation-mode") == 0)
-            options->runtime_mode = args[++i];
+        else if (strcmp(args[i], "--execution-strategy") == 0)
+            options->runtime_execution_strategy = args[++i];
+        else if (strcmp(args[i], "--generation-mode") == 0) {
+            yvex_cli_out_writef(
+                stderr,
+                "yvex: --generation-mode is retired; use --execution-strategy "
+                "target-only|speculative (composite media profiles need neither)\n");
+            return 2;
+        }
         else if (strcmp(args[i], "--ctx") == 0) options->runtime_context = args[++i];
         else {
             yvex_cli_out_writef(stderr, "yvex: unknown models add option: %s\n", args[i]);
@@ -481,12 +496,11 @@ static int command_models_add(int arg_count, char **args)
     single_fields += cli_options.runtime_binding != NULL;
     single_fields += cli_options.runtime_target != NULL;
     single_fields += cli_options.runtime_backend != NULL;
-    single_fields += cli_options.runtime_mode != NULL;
+    single_fields += cli_options.runtime_execution_strategy != NULL;
     single_fields += cli_options.runtime_context != NULL;
     composite_fields += cli_options.runtime_installation != NULL;
     composite_fields += cli_options.runtime_target != NULL;
     composite_fields += cli_options.runtime_backend != NULL;
-    composite_fields += cli_options.runtime_mode != NULL;
     if (cli_options.runtime_profile &&
         strcmp(cli_options.runtime_profile, "single-artifact") != 0 &&
         strcmp(cli_options.runtime_profile, "composite") != 0) {
@@ -496,23 +510,24 @@ static int command_models_add(int arg_count, char **args)
     }
     if (cli_options.runtime_profile &&
         strcmp(cli_options.runtime_profile, "composite") == 0) {
-        if (composite_fields != 4u || cli_options.runtime_binding ||
-            cli_options.runtime_context) {
+        if (composite_fields != 3u || cli_options.runtime_binding ||
+            cli_options.runtime_context || cli_options.runtime_execution_strategy) {
             yvex_cli_out_writef(stderr,
                 "yvex: a composite startup profile requires --installation-root, --target, "
-                "--backend, and --generation-mode without --runtime-binding or --ctx\n");
+                "and --backend without --execution-strategy, --runtime-binding, or --ctx\n");
             return 2;
         }
         entry.runtime_profile = "composite";
         entry.runtime_installation = cli_options.runtime_installation;
         entry.runtime_target = cli_options.runtime_target;
         entry.runtime_backend = cli_options.runtime_backend;
-        entry.runtime_mode = cli_options.runtime_mode;
+        entry.runtime_engine_kind = "media";
+        entry.runtime_execution_strategy = "not-applicable";
     } else if (single_fields != 0u || cli_options.runtime_profile) {
         if (single_fields != 5u || cli_options.runtime_installation) {
             yvex_cli_out_writef(stderr,
                 "yvex: a startup profile requires --runtime-binding, --target, --backend, "
-                "--generation-mode, and --ctx together\n");
+                "--execution-strategy, and --ctx together\n");
             return 2;
         }
         errno = 0;
@@ -525,7 +540,8 @@ static int command_models_add(int arg_count, char **args)
         entry.runtime_binding = cli_options.runtime_binding;
         entry.runtime_target = cli_options.runtime_target;
         entry.runtime_backend = cli_options.runtime_backend;
-        entry.runtime_mode = cli_options.runtime_mode;
+        entry.runtime_engine_kind = "text";
+        entry.runtime_execution_strategy = cli_options.runtime_execution_strategy;
     }
 
     rc = populate_registry_identity(&entry,
@@ -1026,8 +1042,9 @@ static int command_models_inspect(int arg_count, char **args)
                entry->execution_ready ? "ready" : "not-established-by-inspection");
         if (startup_ready)
             yvex_cli_out_writef(
-                stdout, "runtime profile: ready binding=available backend=%s mode=%s context=%llu\n",
-                entry->runtime_backend, entry->runtime_mode,
+                stdout, "runtime profile: ready kind=%s backend=%s strategy=%s context=%llu\n",
+                entry->runtime_engine_kind, entry->runtime_backend,
+                entry->runtime_execution_strategy,
                 entry->runtime_context);
         else
             yvex_cli_out_writef(stdout, "runtime profile: unavailable (%s)\n",

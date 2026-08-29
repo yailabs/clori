@@ -4,10 +4,12 @@ This runbook owns first startup and routine operation of the installed local
 server and clients. Normal operation is registry-first: users list a complete
 local model profile, start the foreground host, load that package as one engine
 generation, and enter
-chat without exporting paths or repeating internal paths. Its commands follow
-the canonical operation registry. The REPL attaches to the resident server and
-uses the same typed session, progress, and result facts as noninteractive
-clients.
+chat without exporting paths or repeating internal paths. Running `yvex`
+provides the full-screen terminal path over the same catalog and protocol APIs;
+`yvex chat` retains the linear console. Both attach to the resident server and
+use the same typed session, progress, runtime-observation, and result facts as
+noninteractive clients. Neither reads backend-private state. Their commands
+follow the canonical operation registry.
 It is not a capability ledger: consult [`ROADMAP.md`](../ROADMAP.md) for current
 gates.
 
@@ -119,7 +121,7 @@ opening payloads or engines. A moving provider reference is shown as
 Package identities and startup facts remain available through `model show`.
 Acquired sources report engine state as `not-applicable`. If no host can be
 observed, packages report `not-observed`; with a live host they report
-`not-loaded` or the engine state returned by protocol v14. Package readiness
+`not-loaded` or the engine state returned by protocol v15. Package readiness
 never implies residency or serving activity. The lifecycle handoff is explicit:
 
 ```sh
@@ -394,6 +396,12 @@ yvex[host] > load N
 deepseek4-v4-flash-dspark > models
 ```
 
+Running `./yvex server` from another terminal while this compatible host is
+healthy attaches a second operator console to the same engine manager. It does
+not reserve another Unix or OpenAI listener. Use `exit` to detach that console
+without affecting the host; use `stop` only when the shared host itself should
+shut down.
+
 After the engine reports `loaded`, an optional second terminal may run
 `./yvex chat --model PROFILE --session main` or `./yvex server log`. Add
 `--verbose` for individual DSpark cycles or `--json` for canonical JSONL. All
@@ -406,7 +414,7 @@ Chat opens one concise attachment view and a prompt labelled with the attached
 engine's model alias:
 
 ```text
-YVEX 0.1.0 · protocol 13
+YVEX 0.1.0 · protocol 14
 
   model      deepseek4-v4-flash-dspark
   variant    abcdef012345
@@ -563,7 +571,7 @@ state, and persistent KV while sharing immutable model resources:
 
 Client disconnect and detach do not close the engine. A partial or cancelled
 turn can retain model-committed state and is never silently marked complete.
-Protocol v13 reports the exact engine generation, committed position,
+Protocol v15 reports the exact engine generation, committed position,
 token/text counts, state generations, failure class, and reset requirement.
 Reset clears the session KV, tokens, transcript, decoder, and RNG policy without
 closing the engine or host.
@@ -651,7 +659,7 @@ once with the advanced registry operation and absolute paths:
   --runtime-binding /srv/yvex/models/deepseek-v4-flash-dspark.yvex-runtime-binding \
   --target deepseek4-v4-flash-dspark \
   --backend cuda \
-  --generation-mode dspark \
+  --execution-strategy speculative \
   --ctx 4096 \
   --support-level selected-tensor-materialized
 ```

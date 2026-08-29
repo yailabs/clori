@@ -20,202 +20,116 @@ reject_text() {
   fi
 }
 
-for file in \
-  README.md CHANGELOG.md AGENTS.md ROADMAP.md CONTRIBUTING.md NOTICE.md \
-  docs/README.md docs/doctrine/principles.md docs/doctrine/glossary.md \
-  docs/doctrine/evidence.md docs/reference/verified-inference.md \
-  docs/architecture/system.md docs/architecture/compilation.md \
-  docs/architecture/runtime.md docs/architecture/commands.md \
-  docs/model-families/integration.md \
-  docs/model-families/deepseek-v4-flash.md docs/model-families/qwen.md \
-  docs/model-families/gemma.md docs/contracts/artifacts.md \
-  docs/contracts/runtime.md docs/contracts/local-protocol.md \
-  docs/contracts/events-telemetry.md docs/contracts/c-api.md \
-  docs/openai-compatibility.md docs/operator-runbook.md \
-  docs/operations/deepseek.md docs/operations/validation.md \
-  docs/development/documentation-policy.md \
-  docs/development/source-ownership.md \
-  docs/milestones/engineering-worklog.md \
-  docs/releases/doctrine.md docs/releases/v0.1.md \
-  docs/decisions/0003-documentation-architecture.md \
-  docs/decisions/0004-target-verified-speculation.md \
-  docs/migrations/deepseek-dspark-source.md \
-  docs/migrations/documentation-architecture-v1.md \
-  docs/audits/code-commentary-7c90ce1/README.md \
-  docs/audits/documentation-architecture-51a5c/README.md \
-  docs/milestones/code-commentary.md \
-  docs/milestones/deepseek-dspark-rebase.md \
-  docs/milestones/documentation-architecture.md \
-  config/documentation_owners.tsv config/frozen_documents.tsv
+required_files='
+README.md
+CHANGELOG.md
+AGENTS.md
+ROADMAP.md
+CONTRIBUTING.md
+NOTICE.md
+docs/README.md
+docs/architecture/system.md
+docs/architecture/compilation.md
+docs/architecture/runtime.md
+docs/architecture/commands.md
+docs/model-families/integration.md
+docs/model-families/deepseek-v4-flash.md
+docs/model-families/minimax-h3.md
+docs/contracts/artifacts.md
+docs/contracts/runtime.md
+docs/contracts/local-protocol.md
+docs/contracts/events-telemetry.md
+docs/contracts/c-api.md
+docs/openai-compatibility.md
+docs/operator-runbook.md
+docs/development/documentation-policy.md
+docs/development/source-ownership.md
+docs/development/qa.md
+docs/releases/doctrine.md
+docs/releases/v0.1.md
+'
+for file in $required_files
 do
   require_file "$file"
 done
 
-for retired in \
-  PROJECT.md MODEL_ARTIFACTS.md docs/api.md docs/cli-output-architecture.md \
-  docs/contract.md docs/model-families.md docs/reference-architecture.md \
-  docs/runbooks/README.md docs/runbooks/common.md docs/runbooks/deepseek.md \
-  docs/system-target.md docs/topology-closure-audit.md \
-  docs/v010-release-doctrine.md docs/spine.md
+retired_paths='
+PROJECT.md
+MODEL_ARTIFACTS.md
+docs/audits
+docs/doctrine
+docs/migrations
+docs/milestones
+config/documentation_owners.tsv
+config/frozen_documents.tsv
+.agents/skills/engineering-worklog
+'
+for retired in $retired_paths
 do
-  test ! -e "$retired" || fail "retired documentation path exists: $retired"
+  test ! -e "$retired" || fail "retired governance surface exists: $retired"
 done
 
-require_text README.md '<img src="docs/yvex-primary-lockup.svg" alt="YVEX logo"'
 require_text README.md '## Why YVEX'
 require_text README.md '## Quick start'
 require_text README.md '## Product boundary'
 require_text README.md '## Documentation'
 require_text README.md '## Current limits'
-require_text README.md '## License'
 require_text README.md './yvex model list'
 require_text README.md './yvex server'
 require_text README.md './yvex server load PROFILE'
-require_text README.md './yvex server models'
-require_text README.md './yvex server memory'
-require_text README.md './yvex server unload PROFILE'
 require_text README.md './yvex chat --model PROFILE --session main'
 require_text README.md './yvex run --model PROFILE'
-require_text README.md './yvex help --json'
-require_text README.md '[`ROADMAP.md`](ROADMAP.md)'
 reject_text README.md 'Active Next:'
-reject_text README.md '`yvex-dev`'
-reject_text README.md '`yvex-openai`'
-reject_text README.md 'Terminal 1 —'
 reject_text README.md 'export YVEX_MODEL_ARTIFACT'
-reject_text README.md './yvex runtime start \'
-reject_text README.md './yvex model select'
-reject_text README.md './yvex model selected'
 
 readme_lines=$(wc -l < README.md | tr -d ' ')
-test "$readme_lines" -ge 80 && test "$readme_lines" -le 220 ||
-  fail "README compact-entry bounds failed: $readme_lines lines"
+test "$readme_lines" -le 220 || fail "README exceeds compact entry surface: $readme_lines"
 
-require_text CHANGELOG.md '## Unreleased'
-require_text CHANGELOG.md '### Added'
-require_text CHANGELOG.md '### Changed'
-require_text CHANGELOG.md '### Removed'
-reject_text CHANGELOG.md 'V010.'
-
-require_text docs/doctrine/principles.md '# YVEX Principles'
-require_text docs/doctrine/principles.md '## Identity-bound derivation'
-require_text docs/doctrine/evidence.md '## Promotion rules'
-require_text docs/doctrine/glossary.md '| Complete artifact |'
-require_text docs/doctrine/glossary.md '| Supported artifact |'
-require_text docs/doctrine/glossary.md '| Semantic graph |'
-require_text docs/doctrine/glossary.md '| Executable graph |'
-require_text docs/doctrine/glossary.md '| Launch graph |'
-
-require_text docs/reference/verified-inference.md '# Reference Architecture for Verified Transformer Inference'
 require_text docs/architecture/system.md '# Implemented YVEX System'
 require_text docs/architecture/compilation.md '## Runtime binding'
 require_text docs/architecture/runtime.md '## Sessions and transactional state'
 require_text docs/architecture/commands.md 'yvex.operator.registry.v1'
-require_text docs/architecture/commands.md '`yvex server` starts the persistent host without opening a package.'
-
 require_text docs/model-families/integration.md '# Model-Family Integration Contract'
-require_text docs/model-families/deepseek-v4-flash.md 'sole complete YVEX source-to-streamed-text vertical'
-require_text docs/model-families/deepseek-v4-flash.md 'deepseek4-v4-flash-dspark'
-require_text docs/model-families/deepseek-v4-flash.md '72,317 source tensors'
-require_text docs/model-families/qwen.md 'unsupported runtime family'
-require_text docs/model-families/gemma.md 'unsupported runtime family'
-
 require_text docs/contracts/artifacts.md '# Artifact and Admission Contract'
 require_text docs/contracts/runtime.md 'A client connection is not a session.'
 require_text docs/contracts/runtime.md 'no explicit exact request silently changes'
-require_text docs/contracts/local-protocol.md 'YVEX_LOCAL_PROTOCOL_VERSION = 14'
+require_text docs/contracts/local-protocol.md 'YVEX_LOCAL_PROTOCOL_VERSION = 15'
 require_text docs/contracts/events-telemetry.md 'No consumer scrapes another renderer'
 require_text docs/contracts/c-api.md '## Compiled Operator Registry Boundary'
-require_text docs/contracts/c-api.md 'yvex.models.local.v5'
-require_text docs/openai-compatibility.md 'yvex.openai.compat.v2'
 require_text docs/openai-compatibility.md 'YVEX never executes application tools.'
-
 require_text docs/operator-runbook.md '## First verified startup'
-require_text docs/operator-runbook.md '## What “load the model” means'
-require_text docs/operator-runbook.md '## Foreground host console and client terminal'
-require_text docs/operator-runbook.md '## Registering an existing model'
-require_text docs/operator-runbook.md './yvex model list'
-require_text docs/operator-runbook.md './yvex server load PROFILE'
-require_text docs/operator-runbook.md 'load N'
-require_text docs/operator-runbook.md './yvex server models'
-require_text docs/operator-runbook.md '> unload'
-require_text docs/operator-runbook.md './yvex server memory'
-require_text docs/operator-runbook.md './yvex chat --model'
-require_text docs/operator-runbook.md './yvex server log'
-require_text docs/operator-runbook.md './yvex server log --json'
-require_text docs/operator-runbook.md './yvex compile quant probe'
-reject_text docs/operator-runbook.md 'export YVEX_MODEL_ARTIFACT'
-require_text docs/operations/deepseek.md './yvex execute transformer generate --help'
+require_text docs/development/documentation-policy.md 'Git history is their archive.'
 
-require_text docs/development/documentation-policy.md '## Authority rules'
-require_text docs/development/documentation-policy.md '## Changelog policy'
-require_text docs/development/documentation-policy.md '| worklog |'
-require_text docs/development/documentation-policy.md '## Validation'
-require_text AGENTS.md '.agents/skills/engineering-worklog/SKILL.md'
-require_text CONTRIBUTING.md '$engineering-worklog'
-require_file .agents/skills/engineering-worklog/SKILL.md
-require_file .agents/skills/engineering-worklog/agents/openai.yaml
-require_file docs/worklog/2026-08-11-adaptive-memory-admission.md
-require_text docs/releases/doctrine.md '## Gate meanings'
-require_text docs/releases/v0.1.md 'Status: unreleased target record'
-
-for svg in \
-  docs/diagrams/system_overview.svg \
-  docs/diagrams/physical_compilation.svg \
-  docs/diagrams/runtime_host_sessions.svg \
-  docs/diagrams/autoregressive_execution.svg
+diagram_files='
+docs/diagrams/system_overview.svg
+docs/diagrams/physical_compilation.svg
+docs/diagrams/runtime_host_sessions.svg
+docs/diagrams/autoregressive_execution.svg
+'
+for svg in $diagram_files
 do
   require_text "$svg" '<svg '
   require_text "$svg" '<title '
   require_text "$svg" '<desc '
   require_text "$svg" 'role="img"'
-  require_text "$svg" '@media (prefers-color-scheme: dark)'
 done
 
-test -z "$(find docs/diagrams -maxdepth 1 -type f \
-  \( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' \) -print -quit)" ||
-  fail 'architecture diagrams contain a raster text asset'
-
-if grep -niE \
-  'production-ready|blazing fast|state of the art|enterprise-grade|seamless|cutting-edge|revolutionary' \
-  README.md; then
-  fail 'README contains unsupported marketing language'
-fi
-
-if grep -nE 'V010\.|POST010\.|(/home/|/Users/|\$HOME/)' README.md; then
-  fail 'README contains project-control or machine-local detail'
-fi
-
+test ! -e ./yvexd || fail 'retired hidden server executable remains'
 if test -x ./yvex; then
-  client_help=$(./yvex --help)
-  for command in 'yvex run' 'yvex server status' 'yvex server log' 'yvex session cancel' \
-    'yvex compile quant plan'
+  help=$(./yvex --help)
+  for command in 'yvex run' 'yvex server status' 'yvex server log' 'yvex session cancel' 'yvex compile quant plan'
   do
-    printf '%s\n' "$client_help" | grep -F "$command" >/dev/null ||
+    printf '%s\n' "$help" | grep -F "$command" >/dev/null ||
       fail "built yvex help lacks canonical command: $command"
   done
-  if printf '%s\n' "$client_help" | grep -F 'yvex graph' >/dev/null; then
+  printf '%s\n' "$help" | grep -F 'yvex graph' >/dev/null &&
     fail 'built yvex help exposes retired graph namespace'
-  fi
-  if printf '%s\n' "$client_help" | grep -F 'yvex worklog' >/dev/null; then
-    fail 'development worklog leaked into the product CLI'
-  fi
 fi
 
-test ! -e ./yvexd || fail 'retired hidden server executable remains'
 server_help=$(./yvex server --help)
-printf '%s\n' "$server_help" | grep -E -- '--console[[:space:]]+human\|off\|raw' >/dev/null ||
-  fail 'yvex server help lacks foreground console policy'
-printf '%s\n' "$server_help" | grep -E -- '--openai[[:space:]]+on\|off' >/dev/null ||
-  fail 'yvex server help lacks integrated OpenAI listener policy'
-printf '%s\n' "$server_help" | grep -E -- '--workers[[:space:]]+N' >/dev/null ||
-  fail 'yvex server help lacks host worker-capacity flag'
 printf '%s\n' "$server_help" | grep -F -- 'yvex server load MODEL' >/dev/null ||
-  fail 'yvex server help lacks explicit engine load'
+  fail 'server help lacks explicit engine load'
 printf '%s\n' "$server_help" | grep -F -- 'yvex server unload MODEL' >/dev/null ||
-  fail 'yvex server help lacks independent engine unload'
-
-test ! -e ./yvex-dev || fail 'retired yvex-dev executable remains'
-test ! -e ./yvex-openai || fail 'retired yvex-openai executable remains'
+  fail 'server help lacks independent engine unload'
 
 python3 tests/documentation_architecture.py

@@ -1199,7 +1199,7 @@ static int generation_speculative_current_step(
     if (rc == YVEX_OK && context->device_selection &&
         (!logits.device_values_available || logits.full_array_host_scan_bytes))
         rc = generation_refuse(err, YVEX_ERR_STATE,
-            "production DSpark target logits were materialized on the host");
+            "production speculative target logits were materialized on the host");
     if (rc == YVEX_OK)
         rc = yvex_runtime_sampling_source_from_logits(
             context->sampling, &source, context->logits_row,
@@ -1216,7 +1216,7 @@ static int generation_speculative_current_step(
     if (rc == YVEX_OK && context->device_selection &&
         (!selection.device_selection || selection.full_array_host_scan_bytes))
         rc = generation_refuse(err, YVEX_ERR_STATE,
-            "production DSpark target selection returned host-authored facts");
+            "production speculative target selection returned host-authored facts");
     if (logits.completed) result->logits_projection_count++;
     if (rc == YVEX_OK)
         rc = generation_speculative_terminal_find(
@@ -1395,10 +1395,10 @@ static int generation_speculative_candidate_cycle(
             &commit->promotion_physical.physical, err);
     return rc;
 }
-static int generation_dspark_step(yvex_runtime_generation_context *context,
-                                  runtime_generation_turn_state *turn,
-                                  runtime_engine_progress_lease *lease,
-                                  yvex_error *err)
+static int generation_speculative_step(
+    yvex_runtime_generation_context *context,
+    runtime_generation_turn_state *turn,
+    runtime_engine_progress_lease *lease, yvex_error *err)
 {
     yvex_runtime_generation_result *result = turn->result;
     const yvex_speculation_family_policy *policy =
@@ -1408,7 +1408,7 @@ static int generation_dspark_step(yvex_runtime_generation_context *context,
     yvex_graph_attention_state_summary before;
     int terminal = 0;
     int rc = policy ? YVEX_OK : generation_refuse(
-        err, YVEX_ERR_STATE, "DSpark generation policy is unavailable");
+        err, YVEX_ERR_STATE, "speculative generation policy is unavailable");
     if (rc == YVEX_OK &&
         result->model_committed_token_count == turn->request.maximum_new_tokens) {
         result->stop_reason = YVEX_GENERATION_STOP_MAX_NEW_TOKENS;
@@ -1784,7 +1784,7 @@ int yvex_runtime_generation_turn_advance(yvex_runtime_generation_context *contex
             rc = context->options.mode == YVEX_GENERATION_MODE_TARGET_ONLY ||
                          turn->result->speculation_source_boundary_token_count
                      ? generation_target_step(context, turn, &progress, err)
-                     : generation_dspark_step(context, turn, &progress, err);
+                     : generation_speculative_step(context, turn, &progress, err);
         if (progress.scheduler)
             rc = generation_progress_finish(&progress, rc, err);
         if (rc != YVEX_OK) {

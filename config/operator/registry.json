@@ -1,99 +1,4 @@
 {
-  "audit_reconciliation": {
-    "baseline": "ec7dccede90c1a1efa87b4c2519c25b30d5e1733",
-    "command_overrides": {
-      "repl.status": [
-        "console.status"
-      ]
-    },
-    "removed_flags": [
-      {
-        "command_id": "cli.offline.artifact.verify",
-        "flag": "--model",
-        "rationale": "remove the hidden integrity-check grammar rewrite"
-      },
-      {
-        "command_id": "cli.offline.evidence.models",
-        "flag": "--force-sidecars",
-        "rationale": "remove a parsed but unconsumed option"
-      },
-      {
-        "command_id": "cli.offline.evidence.models",
-        "flag": "--no-use",
-        "rationale": "separate acquisition from selected startup state"
-      },
-      {
-        "command_id": "cli.yvex.model.use",
-        "flag": "--artifact",
-        "rationale": "resolve startup facts from the selected registry profile"
-      },
-      {
-        "command_id": "cli.yvex.model.use",
-        "flag": "--backend",
-        "rationale": "resolve backend policy from the selected registry profile"
-      },
-      {
-        "command_id": "cli.yvex.model.use",
-        "flag": "--context",
-        "rationale": "resolve startup facts from the selected registry profile"
-      },
-      {
-        "command_id": "cli.yvex.model.use",
-        "flag": "--runtime-binding",
-        "rationale": "resolve startup facts from the selected registry profile"
-      },
-      {
-        "command_id": "cli.yvex.model.use",
-        "flag": "--target",
-        "rationale": "resolve startup facts from the selected registry profile"
-      },
-      {
-        "command_id": "cli.yvex.runtime.trace",
-        "flag": "--follow",
-        "rationale": "trace is already a continuous subscription"
-      },
-      {
-        "command_id": "daemon.yvexd",
-        "flag": "--backend",
-        "rationale": "resolve backend policy when loading the selected registry profile"
-      },
-      {
-        "command_id": "daemon.yvexd",
-        "flag": "--context",
-        "rationale": "resolve engine capacity when loading the selected registry profile"
-      },
-      {
-        "command_id": "daemon.yvexd",
-        "flag": "--max-new-tokens",
-        "rationale": "resolve generation bounds from the loaded engine profile and request"
-      },
-      {
-        "command_id": "daemon.yvexd",
-        "flag": "--model",
-        "rationale": "select registered packages through the explicit server load operation"
-      },
-      {
-        "command_id": "daemon.yvexd",
-        "flag": "--prefill-chunk",
-        "rationale": "resolve prefill policy from the loaded engine profile"
-      },
-      {
-        "command_id": "daemon.yvexd",
-        "flag": "--runtime-binding",
-        "rationale": "resolve the admitted binding from the loaded registry profile"
-      },
-      {
-        "command_id": "daemon.yvexd",
-        "flag": "--target",
-        "rationale": "resolve the target from the loaded registry profile"
-      },
-      {
-        "command_id": "daemon.yvexd",
-        "flag": "--version",
-        "rationale": "retain version reporting at the single yvex executable boundary"
-      }
-    ]
-  },
   "catalogs": {
     "adapters": {
       "REPL-local": [
@@ -881,6 +786,7 @@
         "--calibration",
         "--class",
         "--ctx",
+        "--execution-strategy",
         "--family",
         "--generation-mode",
         "--installation-root",

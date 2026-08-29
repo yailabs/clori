@@ -273,9 +273,9 @@ static int session_generation_open(
     memset(&options, 0, sizeof(options));
     options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     options.backend = registry->options.backend;
-    options.mode = registry->options.generation_mode ==
-                           YVEX_SERVER_GENERATION_DSPARK
-                       ? YVEX_GENERATION_MODE_DSPARK
+    options.mode = registry->options.execution_strategy ==
+                           YVEX_SERVER_EXECUTION_SPECULATIVE
+                       ? YVEX_GENERATION_MODE_SPECULATIVE
                        : YVEX_GENERATION_MODE_TARGET_ONLY;
     options.workload_kind = registry->options.concurrent_sequences > 1ull
                                 ? YVEX_EXECUTION_WORKLOAD_BALANCED_SERVING
@@ -809,10 +809,11 @@ static void session_speculation_result_project(
     yvex_client_message *message,
     const yvex_runtime_generation_result *result)
 {
-    message->generation_mode =
-        result->execution_mode == YVEX_GENERATION_MODE_DSPARK
-            ? YVEX_SERVER_GENERATION_DSPARK
-            : YVEX_SERVER_GENERATION_TARGET_ONLY;
+    message->engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    message->execution_strategy =
+        result->execution_mode == YVEX_GENERATION_MODE_SPECULATIVE
+            ? YVEX_SERVER_EXECUTION_SPECULATIVE
+            : YVEX_SERVER_EXECUTION_TARGET_ONLY;
     message->draft_cycle_count = result->draft_cycle_count;
     message->draft_forward_count = result->draft_forward_count;
     message->proposed_tokens = result->proposed_token_count;

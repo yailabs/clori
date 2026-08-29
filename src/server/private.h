@@ -28,7 +28,8 @@ typedef struct server_engine_lease {
     unsigned long long generation;
 } server_engine_lease;
 typedef struct {
-    yvex_server_generation_mode generation_mode;
+    yvex_server_engine_kind engine_kind;
+    yvex_server_execution_strategy execution_strategy;
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char specialization_identity[YVEX_SHA256_HEX_CAP];
@@ -38,7 +39,8 @@ static inline void server_event_scope_from_engine(
 {
     memset(scope, 0, sizeof(*scope));
     if (!engine) return;
-    scope->generation_mode = engine->generation_mode;
+    scope->engine_kind = engine->engine_kind;
+    scope->execution_strategy = engine->execution_strategy;
     memcpy(scope->runtime_model_identity, engine->runtime_model_identity,
            sizeof(scope->runtime_model_identity));
     memcpy(scope->artifact_identity, engine->artifact_identity,

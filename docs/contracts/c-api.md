@@ -131,14 +131,25 @@ artifact is still not a supported artifact.
 ## Model Registry And Startup Profiles
 
 `<yvex/registry.h>` owns the local model catalog and typed reference
-resolution. Registry schema `yvex.models.local.v5` binds a catalog entry to one
-typed startup profile. `single-artifact` profiles carry the absolute artifact,
-exact runtime-binding path, runtime target, backend, generation mode, and
-positive context capacity. `composite` profiles carry an installed component
-root, target, backend, and capability mode without manufacturing a singular
-artifact or runtime binding. Older v1 through v4 catalogs remain readable;
-v1/v2 contain no complete startup profile, v3 profiles are interpreted as
-explicit `target-only`, and v4 single-artifact profiles retain their meaning.
+resolution. Registry schema `yvex.models.local.v6` binds a catalog entry to one
+typed startup profile. Every profile records engine kind independently from
+execution strategy. `single-artifact` text profiles carry the absolute
+artifact, exact runtime-binding path, runtime target, backend, semantic
+`target-only` or `speculative` strategy, and positive context capacity.
+`composite` media profiles carry an installed component root, target and
+backend with a `not-applicable` execution strategy; they do not manufacture a
+singular artifact or runtime binding. Older v1 through v5 catalogs remain
+readable. The importer maps the former `target-only`, `dspark`, and `media`
+mode values onto the two current axes; current writers never emit the mixed
+legacy mode.
+
+The installed in-process `yvex_model_registry_entry` contract is explicitly
+versioned at schema v1. Callers set `schema_version` to
+`YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT`; mutation and startup validation
+reject any other value before reading the remaining fields. The former
+unversioned layout is not a binary compatibility surface. Model-library
+projections expose the separately versioned
+`yvex_model_runtime_profile_fact` v1 record.
 
 `yvex_model_registry_startup_validate` checks the facts required by the profile
 kind and the corresponding local file or installation accessibility. It does
@@ -224,18 +235,19 @@ v7 through v13 remain explicit rebuild boundaries.
 Hardware-profile,
 workload-profile, capacity-plan and phase-roofline schemas begin at v1 as
 internal contracts. Server options schema v4 owns host/listener policy
-independently from `yvex_server_engine_options`; engine schema v1 owns alias,
-package, backend, mode, capacity, memory, and generation facts.
+independently from `yvex_server_engine_options`; engine schema v2 separates
+engine kind from text execution strategy while retaining alias, package,
+backend, capacity, memory, and generation facts. Engine schema v1 is refused
+before the added fields are read.
 The source-authored conversation boundary admits provider request/wire schema
-v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v14.
-Runtime event schema v3 and generation plan/result schema v5 remain current.
+v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v15.
+Runtime event schema v4 and generation plan/result schema v5 remain current.
 Generation plan ABI v5 adds the workload-profile identity
 required to bind phase evidence to the compiled workload. Generation result
 schema v5 adds the identity-bearing committed-token extent of a
 source-output-channel boundary; the target-only continuation extent is derived
-from the final committed extent. This internal ABI change does not alter
-runtime event schema v3; the existing typed profile
-event projects the new facts without serializing the C result layout.
+from the final committed extent. Runtime event schema v4 projects those facts
+without serializing the C result layout.
 
 Phase-roofline v1 accepts both its original complete record and an additive
 availability mask. A zero mask retains the original all-facts meaning; new
@@ -578,7 +590,7 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v14
+## Application Provider And Local Protocol v15
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
 result ABI. Provider schema v3 additionally represents an omitted completion
@@ -590,14 +602,15 @@ reasoning, at most one assistant tool call, and its original field semantics.
 Clone and wire-decode publish only a complete owned request graph. The provider
 owner neither parses HTTP nor renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v14 carries the sealed provider request through the
+`<yvex/server.h>` protocol v15 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 explicit reasoning, function calls, usage, terminal completion, and failure.
 Typed events bind the provider adapter, provider-request identity, and external
 correlation ID while excluding prompt and output content.
 
-Protocol v14 carries host status/stop, engine load/list/unload, exact
-alias/generation routing, selected generation mode, speculative lifecycle events,
+Protocol v15 carries host status/stop, engine load/list/unload, exact
+alias/generation routing, separate engine kind and semantic execution strategy,
+speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn
 timing and cancellation classes, an exact partial-turn schema, source-authored
 reasoning policy, typed reasoning/final/tool/error channels, and separate
@@ -614,7 +627,7 @@ typed digest/identity evidence. Version 9 adds the startup capacity-plan
 identity, required and unreserved bytes, admitted concurrent sequences, and
 separate independent-session-scheduling and continuous-batching readiness.
 Provider v3's adaptive limit and generation-bound routing are not executable by
-an older peer, so every non-v13 frame refuses during the handshake;
+an older peer, so every non-v15 frame refuses during the handshake;
 there is no private pre-v0.1 compatibility decoder.
 
 Version 12 added the typed terminal media result. Version 13 separates host
@@ -625,6 +638,14 @@ hosted-preset identity, execution identity, file identity, and publication
 identity without reclassifying runtime control text as model output. Media
 progress remains server-authored telemetry. Text-generation request and result
 semantics are unchanged.
+
+Version 14 added typed first/last image conditions to hosted media requests.
+Version 15 removes the mixed public generation-mode axis while retaining those
+conditions. Engine records identify text versus media independently from
+target-only versus speculative text execution. DSpark remains a DeepSeek
+implementation of the semantic speculative strategy below the server boundary.
+The incompatible engine and event layouts advance to schemas v2 and v4; v14
+frames and legacy record schemas fail closed rather than being reinterpreted.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map
 queue capacity, timeout, incompatible state and unsupported input without

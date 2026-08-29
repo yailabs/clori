@@ -1934,7 +1934,7 @@ static const yvex_backend_moe_operations moe_cuda_row_operations = {
     moe_cuda_complete_rows
 };
 
-const yvex_backend_moe_operations *yvex_backend_moe_operations_get(
+const yvex_backend_moe_operations *yvex_cuda_moe_operations_get(
     const yvex_backend *backend)
 {
     const yvex_cuda_backend_state *state;

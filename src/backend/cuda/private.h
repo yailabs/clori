@@ -7,7 +7,6 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/quant_numeric.h>
-#include <yvex/internal/transformer.h>
 #include "src/backend/private.h"
 #define YVEX_CUDA_Q8_K_BLOCK 256ull
 #define YVEX_CUDA_Q8_K_BYTES 292ull
@@ -540,6 +539,12 @@ typedef struct {
                        const yvex_cuda_attention_state_sources *, size_t *, int *, yvex_error *);
 } yvex_cuda_attention_operations;
 const yvex_cuda_attention_operations *yvex_cuda_attention_operations_get(void);
+const struct yvex_backend_sampling_operations *yvex_cuda_sampling_operations_get(
+    const yvex_backend *);
+const struct yvex_backend_moe_operations *yvex_cuda_moe_operations_get(
+    const yvex_backend *);
+const struct yvex_backend_transformer_operations *yvex_cuda_transformer_operations_get(
+    const yvex_backend *);
 int yvex_cuda_kernel_bundle_admit(yvex_backend *backend, yvex_error *err);
 const char *yvex_cuda_kernel_function_identity(const yvex_cuda_backend_state *, CUfunction);
 int yvex_cuda_kernel_bundle_close(yvex_backend *backend, yvex_error *err);

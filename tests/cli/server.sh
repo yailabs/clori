@@ -44,6 +44,13 @@ contains()
     grep -F -- "$2" "$1" >/dev/null || fail "$1 missing: $2"
 }
 
+not_contains()
+{
+    if grep -F -- "$2" "$1" >/dev/null; then
+        fail "$1 unexpectedly contains: $2"
+    fi
+}
+
 run_client()
 {
     HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" "$YVEX_BIN" "$@"
@@ -57,7 +64,7 @@ artifact=$(realpath "$artifact")
 binding=$(realpath "$binding")
 cat >"$HOME_ROOT/.local/share/yvex/models.local.json" <<EOF
 {
-  "schema": "yvex.models.local.v5",
+  "schema": "yvex.models.local.v6",
   "models": [{
     "alias": "$LEGACY_PROFILE",
     "family": "deepseek4",
@@ -65,7 +72,8 @@ cat >"$HOME_ROOT/.local/share/yvex/models.local.json" <<EOF
     "runtime_binding": "$binding",
     "runtime_target": "deepseek4-v4-flash-dspark",
     "runtime_backend": "cpu",
-    "runtime_mode": "target-only",
+    "runtime_engine_kind": "text",
+    "runtime_execution_strategy": "target-only",
     "runtime_context": 4096
   }, {
     "alias": "$PROFILE",
@@ -74,7 +82,8 @@ cat >"$HOME_ROOT/.local/share/yvex/models.local.json" <<EOF
     "runtime_binding": "$binding",
     "runtime_target": "deepseek4-v4-flash-dspark",
     "runtime_backend": "cpu",
-    "runtime_mode": "target-only",
+    "runtime_engine_kind": "text",
+    "runtime_execution_strategy": "target-only",
     "runtime_context": 4096
   }]
 }
@@ -148,7 +157,7 @@ contains "$OUT_DIR/host.out" 'YVEX server · persistent host'
 contains "$OUT_DIR/host.out" 'native verified inference · YVEX'
 contains "$OUT_DIR/host.out" 'engines 0/2'
 contains "$OUT_DIR/host.out" 'load with `yvex server load MODEL`'
-contains "$OUT_DIR/status.json" '"protocol":14'
+contains "$OUT_DIR/status.json" '"protocol":15'
 contains "$OUT_DIR/status.json" '"status":2'
 contains "$OUT_DIR/status.json" '"host_ready":true'
 contains "$OUT_DIR/status.json" '"engine_count":0'
@@ -190,6 +199,24 @@ unload_status=$?
 set -e
 test "$unload_status" -eq 1
 contains "$OUT_DIR/unload.err" 'requested model engine is not loaded'
+
+# A second foreground invocation attaches to the healthy host instead of
+# competing for its Unix/OpenAI listeners.  Leaving that console does not stop
+# the shared process.
+printf 'models\nstatus\nexit\n' |
+    HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 TERM=xterm-256color \
+    script -q -e -c \
+        "stty cols 132 rows 44; $YVEX_BIN server" \
+        "$OUT_DIR/attached.typescript" \
+        >"$OUT_DIR/attached.out" 2>"$OUT_DIR/attached.err"
+contains "$OUT_DIR/attached.typescript" 'STATE      ● READY · ATTACHED'
+contains "$OUT_DIR/attached.typescript" 'server already active'
+contains "$OUT_DIR/attached.typescript" 'Interactive host console connected'
+contains "$OUT_DIR/attached.typescript" 'console detached · YVEX host remains online'
+not_contains "$OUT_DIR/attached.typescript" 'listener reservation failed'
+kill -0 "$server_pid"
+run_client server status --json >"$OUT_DIR/status-after-detach.json"
+contains "$OUT_DIR/status-after-detach.json" '"host_ready":true'
 
 run_client server stop >"$OUT_DIR/stop.out" 2>"$OUT_DIR/stop.err"
 wait "$server_pid"

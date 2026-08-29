@@ -41,7 +41,7 @@ typedef struct {
     char *qprofile;
     char *calibration;
     char *producer;
-    char *schema_version;
+    char *artifact_schema;
     char *path;
     char *sha256;
     unsigned long long file_size;
@@ -67,7 +67,8 @@ typedef struct {
     char *runtime_binding;
     char *runtime_target;
     char *runtime_backend;
-    char *runtime_mode;
+    char *runtime_engine_kind;
+    char *runtime_execution_strategy;
     unsigned long long runtime_context;
 } yvex_model_registry_owned_entry;
 struct yvex_model_registry {

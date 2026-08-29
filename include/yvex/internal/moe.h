@@ -7,6 +7,7 @@
 #ifndef INCLUDE_YVEX_INTERNAL_MOE_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_MOE_H_INCLUDED
 #include <stddef.h>
+#include <yvex/internal/backend.h>
 #include <yvex/internal/execution.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/execution_batch.h>
@@ -271,7 +272,7 @@ typedef struct {
  * while runtime can admit capability, derive the exact stable workspace, and dispatch through one
  * family-neutral ABI.
  */
-typedef struct {
+struct yvex_backend_moe_operations {
     int (*workspace_required)(const yvex_moe_layer_plan *layer,
                               unsigned long long row_count,
                               unsigned long long *bytes,
@@ -282,9 +283,7 @@ typedef struct {
                         yvex_moe_row_batch_result *result, yvex_error *err);
     int (*complete_rows)(yvex_backend *backend, int barrier_observed,
                          yvex_moe_row_batch_result *result, yvex_error *err);
-} yvex_backend_moe_operations;
-const yvex_backend_moe_operations *yvex_backend_moe_operations_get(
-    const yvex_backend *backend);
+};
 int yvex_moe_ffn_prepare_cpu(const yvex_moe_layer_job *job, float *normalized,
                              float *post, float *combination, yvex_error *err);
 int yvex_moe_route_cpu(const yvex_moe_layer_job *job, const float *normalized,

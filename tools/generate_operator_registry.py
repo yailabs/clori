@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
 import json
 import pathlib
@@ -47,7 +46,6 @@ IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 FLAG = re.compile(r"^--[a-z0-9][a-z0-9-]*$")
 WORD = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 TOP_LEVEL_KEYS = {
-    "audit_reconciliation",
     "catalogs",
     "discovery_schema",
     "flag_sets",
@@ -667,50 +665,6 @@ def validate_registry(registry: dict[str, Any]) -> list[dict[str, Any]]:
     for name in OLD_EXECUTABLES:
         if name in encoded:
             fail("registry", f"references retired executable {name!r}")
-    reconciliation = registry.get("audit_reconciliation")
-    if not isinstance(reconciliation, dict):
-        fail("audit_reconciliation", "must be an object")
-    reject_unknown(
-        reconciliation,
-        {"baseline", "command_overrides", "removed_flags"},
-        "audit_reconciliation",
-    )
-    baseline = text(reconciliation.get("baseline"), "audit_reconciliation.baseline")
-    if not re.fullmatch(r"[0-9a-f]{40}", baseline):
-        fail("audit_reconciliation.baseline", "must be one full Git commit identity")
-    overrides = reconciliation.get("command_overrides", {})
-    if not isinstance(overrides, dict):
-        fail("audit_reconciliation.command_overrides", "must be an object")
-    for command_id, successors in overrides.items():
-        text(command_id, "audit_reconciliation.command_overrides key")
-        for successor in string_list(
-            successors,
-            f"audit_reconciliation.command_overrides.{command_id}",
-            allow_empty=False,
-        ):
-            if successor not in operation_ids:
-                fail(
-                    f"audit_reconciliation.command_overrides.{command_id}",
-                    f"unknown operation {successor!r}",
-                )
-    removed_flags = reconciliation.get("removed_flags", [])
-    if not isinstance(removed_flags, list):
-        fail("audit_reconciliation.removed_flags", "must be an array")
-    removed_flag_keys: set[tuple[str, str]] = set()
-    for index, row in enumerate(removed_flags):
-        where = f"audit_reconciliation.removed_flags[{index}]"
-        if not isinstance(row, dict):
-            fail(where, "must be an object")
-        reject_unknown(row, {"command_id", "flag", "rationale"}, where)
-        command_id = text(row.get("command_id"), f"{where}.command_id")
-        flag = text(row.get("flag"), f"{where}.flag")
-        text(row.get("rationale"), f"{where}.rationale")
-        if not FLAG.fullmatch(flag):
-            fail(f"{where}.flag", "must be one canonical long option")
-        key = (command_id, flag)
-        if key in removed_flag_keys:
-            fail(where, "duplicates one removed audit flag")
-        removed_flag_keys.add(key)
     operations.sort(key=lambda row: (row["command_path"], row["operation_id"]))
     return operations
 
@@ -726,224 +680,6 @@ def c_enum(value: str) -> str:
 def registry_identity(registry: dict[str, Any]) -> str:
     normalized = json.dumps(registry, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
-def read_audit_tsv(root: pathlib.Path, name: str) -> list[dict[str, str]]:
-    path = root / name
-    try:
-        with path.open("r", encoding="utf-8", newline="") as source:
-            reader = csv.DictReader(source, delimiter="\t")
-            rows = list(reader)
-    except (OSError, UnicodeError, csv.Error) as exc:
-        fail(f"audit.{name}", f"cannot read frozen TSV: {exc}")
-    if not reader.fieldnames or not rows:
-        fail(f"audit.{name}", "must have one header and at least one row")
-    return rows
-
-
-def current_operations(
-    operation_id: str,
-    by_id: dict[str, dict[str, Any]],
-    stack: tuple[str, ...] = (),
-) -> list[str]:
-    if operation_id in stack:
-        fail(f"audit operation {operation_id}", "supersession cycle")
-    operation = by_id.get(operation_id)
-    if operation is None:
-        fail(f"audit operation {operation_id}", "has no registry identity")
-    if operation["deprecation_state"] != "removed":
-        return [operation_id]
-    result: list[str] = []
-    for successor in operation["superseded_by"]:
-        result.extend(current_operations(successor, by_id, stack + (operation_id,)))
-    return result
-
-
-def operation_flag_names(operation: dict[str, Any]) -> set[str]:
-    result: set[str] = set()
-    for flag in operation["flags"]:
-        result.add(flag["name"])
-        result.update(flag["aliases"])
-    return result
-
-
-def reconcile_audit(
-    registry: dict[str, Any],
-    operations: list[dict[str, Any]],
-    audit_root: pathlib.Path,
-) -> list[dict[str, Any]]:
-    commands = read_audit_tsv(audit_root, "commands.tsv")
-    flags = read_audit_tsv(audit_root, "flags.tsv")
-    audit_operations = read_audit_tsv(audit_root, "operations.tsv")
-    surfaces = read_audit_tsv(audit_root, "surfaces.tsv")
-    if len(commands) != 70 or len(flags) != 426 or len(audit_operations) != 99:
-        fail(
-            "audit",
-            "expected frozen counts commands=70 flags=426 operations=99",
-        )
-    command_ids = [row.get("command_id", "") for row in commands]
-    if len(command_ids) != len(set(command_ids)):
-        fail("audit.commands.tsv", "contains duplicate command IDs")
-    by_id = {operation["operation_id"]: operation for operation in operations}
-    for row in audit_operations:
-        current_operations(row.get("operation_id", ""), by_id)
-    reconciliation = registry["audit_reconciliation"]
-    overrides = reconciliation.get("command_overrides", {})
-    unknown_overrides = sorted(set(overrides) - set(command_ids))
-    if unknown_overrides:
-        fail(
-            "audit_reconciliation.command_overrides",
-            f"unknown command {unknown_overrides[0]!r}",
-        )
-    removed_rows = reconciliation.get("removed_flags", [])
-    removed_flags = {
-        (row["command_id"], row["flag"]): row["rationale"] for row in removed_rows
-    }
-    unknown_removed_commands = sorted(
-        {command_id for command_id, _ in removed_flags} - set(command_ids)
-    )
-    if unknown_removed_commands:
-        fail(
-            "audit_reconciliation.removed_flags",
-            f"unknown command {unknown_removed_commands[0]!r}",
-        )
-    mapping: dict[str, list[str]] = {}
-    rows: list[dict[str, Any]] = []
-    for command in commands:
-        command_id = command["command_id"]
-        operation_ids = overrides.get(command_id)
-        if operation_ids is None:
-            operation_ids = current_operations(command["operation_id"], by_id)
-        operation_ids = list(dict.fromkeys(operation_ids))
-        for operation_id in operation_ids:
-            operation = by_id.get(operation_id)
-            if operation is None or operation["deprecation_state"] == "removed":
-                fail(
-                    f"audit command {command_id}",
-                    f"maps to unavailable operation {operation_id!r}",
-                )
-        mapping[command_id] = operation_ids
-        rows.append({"audit": command, "final": operation_ids})
-    used_removed: set[tuple[str, str]] = set()
-    for row in flags:
-        command_id, flag = row.get("command_id", ""), row.get("flag", "")
-        if command_id not in mapping:
-            fail("audit.flags.tsv", f"flag has no command owner {command_id!r}")
-        owners = [
-            operation_id
-            for operation_id in mapping[command_id]
-            if flag in operation_flag_names(by_id[operation_id])
-        ]
-        key = (command_id, flag)
-        if owners and key in removed_flags:
-            fail(
-                "audit_reconciliation.removed_flags",
-                f"{command_id} {flag} still has a final owner",
-            )
-        if not owners and key not in removed_flags:
-            fail(
-                f"audit flag {command_id} {flag}",
-                "has neither a final operation owner nor an explicit removal",
-            )
-        if key in removed_flags:
-            used_removed.add(key)
-    stale_removed = sorted(set(removed_flags) - used_removed)
-    if stale_removed:
-        fail(
-            "audit_reconciliation.removed_flags",
-            f"does not match frozen audit row {stale_removed[0]!r}",
-        )
-    offline = sum(command_id.startswith("cli.offline.") for command_id in command_ids)
-    runtime = sum(command_id.startswith("cli.yvex.") for command_id in command_ids)
-    slash = sum(command_id.startswith("repl.") for command_id in command_ids)
-    endpoints = sum(row.get("operation_id", "").startswith("http.") for row in audit_operations)
-    if not any(row.get("kind") == "HTTP" for row in surfaces):
-        fail("audit.surfaces.tsv", "has no HTTP surface owner")
-    if (offline, runtime, slash, endpoints) != (39, 20, 10, 5):
-        fail(
-            "audit",
-            "expected route counts offline=39 runtime=20 slash=10 HTTP=5",
-        )
-    return rows
-
-
-def markdown_text(value: str) -> str:
-    return value.replace("|", "\\|").replace("\n", " ")
-
-
-def migration_projection(operation: dict[str, Any], old_path: str) -> str:
-    if old_path.startswith("/") and operation["slash_projection"] != "none":
-        return operation["slash_projection"]
-    if operation["CLI_projection"]:
-        return "yvex " + " ".join(operation["command_path"])
-    if operation["slash_projection"] != "none":
-        return operation["slash_projection"]
-    if operation["lane"] == "daemon-entrypoint":
-        return "yvexd"
-    return "operation:" + operation["operation_id"]
-
-
-def render_migration(
-    registry: dict[str, Any],
-    operations: list[dict[str, Any]],
-    audit_rows: list[dict[str, Any]],
-    identity: str,
-) -> str:
-    by_id = {operation["operation_id"]: operation for operation in operations}
-    lines = [
-        "# Command Architecture v1 Migration",
-        "",
-        "This deterministic migration matrix reconciles the frozen operator audit with",
-        "`yvex.operator.registry.v1`. It is documentation, not runtime command authority.",
-        "",
-        f"- Frozen audit baseline: `{registry['audit_reconciliation']['baseline']}`",
-        f"- Registry identity: `{identity}`",
-        "- Compatibility policy: pre-v0.1 breaking grammar cutover; removed paths never execute aliases.",
-        "",
-        "| Old path | Old operation | Final operation | Final projection | Visibility | Compatibility | Rationale |",
-        "|---|---|---|---|---|---|---|",
-    ]
-    for row in audit_rows:
-        audit = row["audit"]
-        final = [by_id[operation_id] for operation_id in row["final"]]
-        old_path = audit["full_path"]
-        projections = [migration_projection(operation, old_path) for operation in final]
-        retained = old_path in projections
-        if old_path.startswith("yvex "):
-            retained = retained or old_path[5:] in [
-                " ".join(operation["command_path"]) for operation in final
-            ]
-        compatibility = "retained" if retained else "breaking-cutover"
-        lines.append(
-            "| "
-            + " | ".join(
-                markdown_text(value)
-                for value in (
-                    f"`{old_path}`",
-                    f"`{audit['operation_id']}`",
-                    ", ".join(f"`{operation['operation_id']}`" for operation in final),
-                    "; ".join(f"`{value}`" for value in projections),
-                    ", ".join(sorted({operation["visibility"] for operation in final})),
-                    compatibility,
-                    f"{audit['disposition']}: {audit['truthfulness']}",
-                )
-            )
-            + " |"
-        )
-    lines.extend(["", "## Explicit flag removals", ""])
-    for row in registry["audit_reconciliation"]["removed_flags"]:
-        lines.append(
-            f"- `{row['command_id']} {row['flag']}` — {row['rationale']}."
-        )
-    lines.extend(
-        [
-            "",
-            "The retired top-level namespaces `evidence`, `graph`, `quant`, `source`,",
-            "`tensor`, and `tokenizer` are refusal-only migration hints, not aliases.",
-            "",
-        ]
-    )
-    return "\n".join(lines)
 
 
 def render_header(registry: dict[str, Any]) -> str:
@@ -1207,22 +943,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--registry", required=True, type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
-    parser.add_argument("--audit-root", type=pathlib.Path)
-    parser.add_argument("--migration-output", type=pathlib.Path)
     parser.add_argument("--check", action="store_true")
     arguments = parser.parse_args()
     try:
         header, source, identity = generated(arguments.registry, arguments.output)
-        migration = None
-        if arguments.audit_root is not None:
-            registry = load_registry(arguments.registry)
-            operations = validate_registry(registry)
-            audit_rows = reconcile_audit(registry, operations, arguments.audit_root)
-            migration = render_migration(
-                registry, operations, audit_rows, identity.strip()
-            )
-        if arguments.migration_output is not None and migration is None:
-            fail("migration-output", "requires --audit-root")
     except RegistryError as exc:
         print(f"operator registry: {exc}", file=sys.stderr)
         return 2
@@ -1231,8 +955,6 @@ def main() -> int:
         arguments.output / "registry.c": source,
         arguments.output / "registry.sha256": identity,
     }
-    if arguments.migration_output is not None:
-        products[arguments.migration_output] = migration
     if arguments.check:
         stale = [str(path) for path, content in products.items() if not path.exists() or path.read_text(encoding="utf-8") != content]
         if stale:

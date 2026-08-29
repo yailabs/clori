@@ -447,7 +447,10 @@ int yvex_server_engine_load(
         server->summary.status != YVEX_SERVER_STATUS_READY)
         return server_refuse(err, YVEX_ERR_STATE,
                              "ready host and text-engine options are required");
-    if (options->generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+    if (options->schema_version != YVEX_SERVER_ENGINE_SCHEMA_CURRENT)
+        return server_refuse(err, YVEX_ERR_UNSUPPORTED,
+                             "server engine options schema is unsupported");
+    if (options->engine_kind != YVEX_SERVER_ENGINE_TEXT)
         return server_refuse(err, YVEX_ERR_INVALID_ARG,
                              "media engine requires its composite profile");
     return yvex_server_engine_manager_load(
@@ -460,10 +463,15 @@ int yvex_server_media_engine_load(
     yvex_server_engine_summary *summary, yvex_error *err)
 {
     if (!server || !options || !media || !summary || !server->engines ||
-        server->summary.status != YVEX_SERVER_STATUS_READY ||
-        options->generation_mode != YVEX_SERVER_GENERATION_MEDIA)
+        server->summary.status != YVEX_SERVER_STATUS_READY)
         return server_refuse(err, YVEX_ERR_STATE,
                              "ready host and media-engine profile are required");
+    if (options->schema_version != YVEX_SERVER_ENGINE_SCHEMA_CURRENT)
+        return server_refuse(err, YVEX_ERR_UNSUPPORTED,
+                             "server engine options schema is unsupported");
+    if (options->engine_kind != YVEX_SERVER_ENGINE_MEDIA)
+        return server_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "media engine requires its composite profile");
     return yvex_server_engine_manager_load(
         server->engines, options, media, summary, err);
 }
@@ -630,7 +638,8 @@ static int console_status_message(yvex_server *server,
     message->console.backend = engine.backend;
     message->console.context_capacity = engine.context_capacity;
     message->console.engine_generation = engine.generation;
-    message->generation_mode = engine.generation_mode;
+    message->engine_kind = engine.engine_kind;
+    message->execution_strategy = engine.execution_strategy;
     message->console.selected_model_available = 0;
     message->console.explicit_reasoning_channel_supported =
         engine.explicit_reasoning_channel_supported;

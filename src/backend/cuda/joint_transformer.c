@@ -1,12 +1,13 @@
 /* Execute one explicitly described joint-modality Transformer through CUDA primitives. */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/component_ops.h"
+#include "src/backend/cuda/transformer_ops.h"
 #include <yvex/backend.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/component.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/joint_transformer.h>
 #include <yvex/internal/quant_numeric.h>
-#include <yvex/internal/transformer.h>
 #include <yvex/qtype.h>
 #include <math.h>
 #include <stdint.h>
@@ -881,7 +882,7 @@ static int joint_blocks_execute(
     free(staged);
     return rc;
 }
-int yvex_backend_transformer_joint_blocks_cuda(
+int yvex_cuda_transformer_joint_blocks_execute(
     yvex_backend *backend, const yvex_transformer_joint_recipe *recipe,
     const yvex_transformer_joint_encoded_weight *weights, unsigned long long block_count,
     const char *residency_identity, unsigned long long resident_bytes,
@@ -1796,7 +1797,7 @@ static int transformer_execution_identity(
     return 1;
 }
 
-int yvex_backend_transformer_joint_cuda(
+int yvex_cuda_transformer_joint_execute(
     yvex_backend *backend, const yvex_transformer_joint_encoded_weight *external_weights,
     const yvex_transformer_joint_encoded_weight *block_weights, const char *residency_identity,
     unsigned long long resident_bytes, const yvex_transformer_joint_request *request,

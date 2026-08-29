@@ -98,24 +98,30 @@ static int options_admit(server_engine *engine,
 {
     int text;
     if (!engine || !options ||
-        options->schema_version != YVEX_SERVER_ENGINE_SCHEMA_V1 ||
+        options->schema_version != YVEX_SERVER_ENGINE_SCHEMA_CURRENT ||
         !alias_valid(options->alias) || !options->target_id ||
         strlen(options->target_id) >= sizeof(engine->target_id) ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) ||
-        options->generation_mode > YVEX_SERVER_GENERATION_MEDIA ||
+        options->engine_kind == YVEX_SERVER_ENGINE_NONE ||
+        options->engine_kind > YVEX_SERVER_ENGINE_MEDIA ||
+        options->execution_strategy > YVEX_SERVER_EXECUTION_SPECULATIVE ||
         options->trace_level > YVEX_SERVER_TRACE_FULL ||
         !options->maximum_output_bytes || !options->maximum_sessions ||
         !options->concurrent_sequences ||
         options->concurrent_sequences > options->maximum_sessions)
         return engine_refuse(err, YVEX_ERR_INVALID_ARG,
                              "complete bounded engine options are required");
-    text = options->generation_mode != YVEX_SERVER_GENERATION_MEDIA;
+    text = options->engine_kind == YVEX_SERVER_ENGINE_TEXT;
     if ((text && (!options->artifact_path || !options->runtime_binding_path ||
-                  !options->context_capacity || !options->maximum_new_tokens || media)) ||
+                  !options->context_capacity || !options->maximum_new_tokens || media ||
+                  options->execution_strategy ==
+                      YVEX_SERVER_EXECUTION_NOT_APPLICABLE)) ||
         (!text && (!media || options->artifact_path ||
                    options->runtime_binding_path || options->context_capacity ||
-                   options->prefill_chunk_tokens || options->maximum_new_tokens)))
+                   options->prefill_chunk_tokens || options->maximum_new_tokens ||
+                   options->execution_strategy !=
+                       YVEX_SERVER_EXECUTION_NOT_APPLICABLE)))
         return engine_refuse(err, YVEX_ERR_INVALID_ARG,
                              "engine package and execution kind disagree");
     if ((options->artifact_path &&
@@ -152,8 +158,9 @@ static void generation_options(const server_engine *engine,
     memset(options, 0, sizeof(*options));
     options->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     options->backend = engine->options.backend;
-    options->mode = engine->options.generation_mode == YVEX_SERVER_GENERATION_DSPARK
-                        ? YVEX_GENERATION_MODE_DSPARK
+    options->mode = engine->options.execution_strategy ==
+                            YVEX_SERVER_EXECUTION_SPECULATIVE
+                        ? YVEX_GENERATION_MODE_SPECULATIVE
                         : YVEX_GENERATION_MODE_TARGET_ONLY;
     options->workload_kind = engine->options.concurrent_sequences > 1ull
                                  ? YVEX_EXECUTION_WORKLOAD_BALANCED_SERVING
@@ -277,7 +284,8 @@ static int text_engine_open(server_engine_manager *manager,
     if (rc == YVEX_OK)
         rc = execution_probe(engine, &capacity, specialization_identity, err);
     if (rc == YVEX_OK) {
-        event_scope.generation_mode = engine->options.generation_mode;
+        event_scope.engine_kind = engine->options.engine_kind;
+        event_scope.execution_strategy = engine->options.execution_strategy;
         yvex_runtime_identity_copy(event_scope.runtime_model_identity,
                                    model.runtime_model_identity);
         yvex_runtime_identity_copy(event_scope.artifact_identity,
@@ -361,10 +369,16 @@ static int optional_summary_identity_valid(const char *identity)
 
 int yvex_server_engine_summary_valid(const yvex_server_engine_summary *engine)
 {
-    if (!engine || engine->schema_version != YVEX_SERVER_ENGINE_SCHEMA_V1 ||
+    if (!engine || engine->schema_version != YVEX_SERVER_ENGINE_SCHEMA_CURRENT ||
         engine->state > YVEX_SERVER_ENGINE_FAILED ||
         engine->backend > YVEX_BACKEND_KIND_CUDA ||
-        engine->generation_mode > YVEX_SERVER_GENERATION_MEDIA ||
+        engine->engine_kind == YVEX_SERVER_ENGINE_NONE ||
+        engine->engine_kind > YVEX_SERVER_ENGINE_MEDIA ||
+        engine->execution_strategy > YVEX_SERVER_EXECUTION_SPECULATIVE ||
+        (engine->engine_kind == YVEX_SERVER_ENGINE_TEXT &&
+         engine->execution_strategy == YVEX_SERVER_EXECUTION_NOT_APPLICABLE) ||
+        (engine->engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
+         engine->execution_strategy != YVEX_SERVER_EXECUTION_NOT_APPLICABLE) ||
         !memchr(engine->alias, '\0', sizeof(engine->alias)) ||
         !memchr(engine->target_id, '\0', sizeof(engine->target_id)) ||
         !alias_valid(engine->alias) || !engine->target_id[0] ||
@@ -390,10 +404,11 @@ int yvex_server_engine_summary_valid(const yvex_server_engine_summary *engine)
 
 static void summary_base(server_engine *engine)
 {
-    engine->summary.schema_version = YVEX_SERVER_ENGINE_SCHEMA_V1;
+    engine->summary.schema_version = YVEX_SERVER_ENGINE_SCHEMA_CURRENT;
     engine->summary.state = engine->state;
     engine->summary.backend = engine->options.backend;
-    engine->summary.generation_mode = engine->options.generation_mode;
+    engine->summary.engine_kind = engine->options.engine_kind;
+    engine->summary.execution_strategy = engine->options.execution_strategy;
     engine->summary.generation = engine->generation;
     engine->summary.active_work = engine->active_work;
     engine->summary.context_capacity = engine->options.context_capacity;
@@ -591,7 +606,7 @@ int yvex_server_engine_manager_load(
     candidate.active_work = 0ull;
     rc = engine_request_queue_open(manager, &candidate, err);
     if (rc == YVEX_OK)
-        rc = candidate.options.generation_mode == YVEX_SERVER_GENERATION_MEDIA
+        rc = candidate.options.engine_kind == YVEX_SERVER_ENGINE_MEDIA
                  ? media_engine_open(manager, &candidate, media, err)
                  : text_engine_open(manager, &candidate, err);
     if (rc != YVEX_OK) {
@@ -615,7 +630,7 @@ int yvex_server_engine_manager_load(
         (void)yvex_server_telemetry_emit(
             manager->telemetry, &event_scope, YVEX_SERVER_EVENT_RUNTIME_READY,
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, published.alias,
-            published.generation, published.generation_mode,
+            published.generation, published.execution_strategy,
             published.backend, 0.0, 0.0, err);
         yvex_error_clear(err);
     }

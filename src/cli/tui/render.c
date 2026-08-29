@@ -311,11 +311,13 @@ static const char *activity_style(tui_frame *frame,
     return frame->dim;
 }
 
-static const char *generation_mode_name(yvex_server_generation_mode mode)
+static const char *engine_execution_name(
+    yvex_server_engine_kind kind, yvex_server_execution_strategy strategy)
 {
-    if (mode == YVEX_SERVER_GENERATION_DSPARK) return "dspark";
-    if (mode == YVEX_SERVER_GENERATION_MEDIA) return "media";
-    return "target-only";
+    if (kind == YVEX_SERVER_ENGINE_MEDIA) return "media";
+    if (strategy == YVEX_SERVER_EXECUTION_SPECULATIVE) return "speculative";
+    if (strategy == YVEX_SERVER_EXECUTION_TARGET_ONLY) return "target-only";
+    return "unavailable";
 }
 
 static const yvex_server_engine_summary *active_engine(const yvex_tui_state *state)
@@ -658,7 +660,8 @@ static void render_home(tui_frame *frame, const yvex_tui_state *state,
             char context[256];
             (void)snprintf(context, sizeof(context), "  %s · %s · session %s",
                            backend_name(engine->backend),
-                           generation_mode_name(engine->generation_mode),
+                           engine_execution_name(
+                               engine->engine_kind, engine->execution_strategy),
                            state->active_session);
             frame_begin_line(frame, row++);
             frame_style(frame, frame->dim);
@@ -1343,7 +1346,8 @@ static void render_runtime(tui_frame *frame, const yvex_tui_state *state,
         if (row <= last) runtime_metric(frame, row++, "active model", value, limit);
         (void)snprintf(value, sizeof(value), "%s · %s",
                        backend_name(engine->backend),
-                       generation_mode_name(engine->generation_mode));
+                       engine_execution_name(
+                           engine->engine_kind, engine->execution_strategy));
         if (row <= last) runtime_metric(frame, row++, "execution", value, limit);
     } else if (row <= last) {
         runtime_metric(frame, row++, "active model", "none loaded", limit);

@@ -1451,7 +1451,7 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
         yvex_cli_json_field_str(fp, "prompt_identity", run->prompt_identity, 1);
         yvex_cli_json_field_str(
             fp, "execution_mode",
-            run->execution_mode == YVEX_GENERATION_MODE_DSPARK
+            run->execution_mode == YVEX_GENERATION_MODE_SPECULATIVE
                 ? "dspark" : "target-only",
             1);
         yvex_cli_json_field_str(fp, "speculation_policy_identity",
@@ -1555,13 +1555,13 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
                 "generated_text_digest: %s\nstop_reason: %s\nreason: %s\n",
                 result->status, run->prompt_token_count, run->sampled_token_count,
                 run->model_committed_token_count,
-                run->execution_mode == YVEX_GENERATION_MODE_DSPARK
+                run->execution_mode == YVEX_GENERATION_MODE_SPECULATIVE
                     ? "dspark" : "target-only",
                 run->generated_text_bytes, run->generated_text_digest,
                 yvex_runtime_generation_stop_reason_name(run->stop_reason),
                 result->reason[0] ? result->reason : "none") < 0)
             return YVEX_ERR_IO;
-        if (run->execution_mode == YVEX_GENERATION_MODE_DSPARK &&
+        if (run->execution_mode == YVEX_GENERATION_MODE_SPECULATIVE &&
             yvex_cli_out_writef(
                 fp, "speculation: proposed=%llu accepted=%llu rejected=%llu "
                     "verifications=%llu max_prefix=%llu confidence=%llu "

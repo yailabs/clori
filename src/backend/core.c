@@ -99,6 +99,38 @@ static const backend_capability_rule backend_capability_rules[] = {
                  YVEX_BACKEND_VARIANT_ATTENTION_NONCAUSAL_F32}},
 };
 
+const struct yvex_backend_sampling_operations *yvex_backend_sampling_operations_get(
+    const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->sampling_operations
+               ? backend->vtable->sampling_operations(backend)
+               : NULL;
+}
+
+const struct yvex_backend_moe_operations *yvex_backend_moe_operations_get(
+    const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->moe_operations
+               ? backend->vtable->moe_operations(backend)
+               : NULL;
+}
+
+const struct yvex_backend_transformer_operations *yvex_backend_transformer_operations_get(
+    const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->transformer_operations
+               ? backend->vtable->transformer_operations(backend)
+               : NULL;
+}
+
+const struct yvex_backend_component_operations *yvex_backend_component_operations_get(
+    const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->component_operations
+               ? backend->vtable->component_operations(backend)
+               : NULL;
+}
+
 static const char *backend_name_at(const char *const *names,
                                    size_t count,
                                    unsigned int index)

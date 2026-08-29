@@ -4542,7 +4542,7 @@ static int test_runtime_model_snapshot_drift(
     return 0;
 }
 
-int yvex_test_runtime_binding(void)
+static int runtime_binding_suite(int cuda_only)
 {
     binding_fixture fixture;
     yvex_materialization_projection projection = {0};
@@ -4555,11 +4555,13 @@ int yvex_test_runtime_binding(void)
 
     memset(&prepared, 0, sizeof(prepared));
     yvex_error_clear(&err);
-    YVEX_TEST_ASSERT(
-        yvex_materialization_project_artifact_lowering(NULL, &projection, &err) ==
-                YVEX_ERR_INVALID_ARG &&
-            strcmp(yvex_error_where(&err), "materialization.lowering") == 0,
-        "materialization projection refuses a missing generic lowering map");
+    if (!cuda_only) {
+        YVEX_TEST_ASSERT(
+            yvex_materialization_project_artifact_lowering(NULL, &projection, &err) ==
+                    YVEX_ERR_INVALID_ARG &&
+                strcmp(yvex_error_where(&err), "materialization.lowering") == 0,
+            "materialization projection refuses a missing generic lowering map");
+    }
     YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "runtime binding temporary root");
     YVEX_TEST_ASSERT(snprintf(artifact_path, sizeof(artifact_path), "%s/runtime.gguf", root) <
                          (int)sizeof(artifact_path) &&
@@ -4569,31 +4571,40 @@ int yvex_test_runtime_binding(void)
                      "runtime artifact fixture copied and bound to one attention tensor");
     YVEX_TEST_ASSERT(fixture_build(&fixture, artifact_path, 1),
                      "runtime binding fixture built");
-    if (test_runtime_capability_contract() != 0) goto done;
+    if (!cuda_only && test_runtime_capability_contract() != 0) goto done;
     if (test_prepare_reopen_import(&fixture, root, &prepared, &binding) != 0) goto done;
-    if (test_corruption_refusals(&prepared, root) != 0) goto done;
-    if (test_canonical_refusals(&prepared, root) != 0) goto done;
-    if (test_graph_identity_refusals(&prepared, root) != 0) goto done;
-    if (test_artifact_copy_portability(&fixture, &prepared, root) != 0) goto done;
-    if (test_compiled_model_binding_v15(root) != 0) goto done;
-    if (test_runtime_family_neutrality() != 0) goto done;
-    if (test_runtime_model_compiled_execution(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_model_progress(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_model_verified_reopen(&fixture, &prepared, root) != 0) goto done;
-    if (test_runtime_model_session_reuse(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_concurrent_session_isolation(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_concurrent_close_drain(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_model_close_drain(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_session_owner_retry(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_state_factory_candidate_cleanup(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_injected_state_provider(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_cleanup_lease_retry(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_probe_consumer_boundary(&fixture, &prepared, root) != 0) goto done;
-    if (test_runtime_paged_state_cuda_pack(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_model_cuda_residency_claim(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_cuda_session_cleanup_retry(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_cuda_workspace_transaction(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_model_snapshot_drift(&fixture, &prepared) != 0) goto done;
+    if (cuda_only) {
+        int ready = 0;
+
+        if (runtime_cuda_test_ready(&ready) != YVEX_OK || !ready) {
+            fprintf(stderr, "CUDA runtime binding qualification requires the native bundle\n");
+            goto done;
+        }
+        if (test_runtime_paged_state_cuda_pack(&fixture, &prepared) != 0) goto done;
+        if (test_runtime_model_cuda_residency_claim(&fixture, &prepared) != 0) goto done;
+        if (test_runtime_cuda_session_cleanup_retry(&fixture, &prepared) != 0) goto done;
+        if (test_runtime_cuda_workspace_transaction(&fixture, &prepared) != 0) goto done;
+    } else {
+        if (test_corruption_refusals(&prepared, root) != 0) goto done;
+        if (test_canonical_refusals(&prepared, root) != 0) goto done;
+        if (test_graph_identity_refusals(&prepared, root) != 0) goto done;
+        if (test_artifact_copy_portability(&fixture, &prepared, root) != 0) goto done;
+        if (test_compiled_model_binding_v15(root) != 0) goto done;
+        if (test_runtime_family_neutrality() != 0) goto done;
+        if (test_runtime_model_compiled_execution(&fixture, &prepared) != 0) goto done;
+        if (test_runtime_model_progress(&fixture, &prepared) != 0) goto done;
+        if (test_runtime_model_verified_reopen(&fixture, &prepared, root) != 0) goto done;
+        if (test_runtime_model_session_reuse(&fixture, &prepared) != 0) goto done;
+        if (test_runtime_concurrent_session_isolation(&fixture, &prepared) != 0) goto done;
+        if (test_runtime_concurrent_close_drain(&fixture, &prepared) != 0) goto done;
+        if (test_runtime_model_close_drain(&fixture, &prepared) != 0) goto done;
+        if (test_runtime_session_owner_retry(&fixture, &prepared) != 0) goto done;
+        if (test_runtime_state_factory_candidate_cleanup(&fixture, &prepared) != 0) goto done;
+        if (test_runtime_injected_state_provider(&fixture, &prepared) != 0) goto done;
+        if (test_runtime_cleanup_lease_retry(&fixture, &prepared) != 0) goto done;
+        if (test_runtime_probe_consumer_boundary(&fixture, &prepared, root) != 0) goto done;
+        if (test_runtime_model_snapshot_drift(&fixture, &prepared) != 0) goto done;
+    }
     rc = 0;
 
 done:
@@ -4603,4 +4614,14 @@ done:
     (void)unlink(artifact_path);
     (void)rmdir(root);
     return rc;
+}
+
+int yvex_test_runtime_binding(void)
+{
+    return runtime_binding_suite(0);
+}
+
+int yvex_test_runtime_binding_cuda(void)
+{
+    return runtime_binding_suite(1);
 }

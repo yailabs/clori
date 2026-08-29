@@ -99,7 +99,7 @@ typedef struct {
     unsigned long long final_channels, final_kernel;
 } yvex_alias_decoder_recipe;
 
-typedef struct {
+typedef struct yvex_alias_decoder_request {
     const yvex_alias_decoder_recipe *recipe;
     const float *input;
     unsigned long long batch, input_length, input_count;
@@ -112,21 +112,18 @@ typedef struct {
     void *cancel_context;
 } yvex_alias_decoder_request;
 
-typedef struct {
+typedef struct yvex_alias_decoder_result {
     unsigned long long output_length, output_values, weight_bindings;
     unsigned long long kernel_launches, h2d_bytes, d2h_bytes, peak_device_bytes;
     unsigned long long tensor_reads, payload_bytes_read, peak_host_bytes;
     int complete;
 } yvex_alias_decoder_result;
 
-int yvex_backend_alias_decoder_execute(
-    yvex_backend *backend, const yvex_alias_decoder_request *request,
-    yvex_alias_decoder_result *result, yvex_error *err);
 int yvex_runtime_alias_decoder_execute_cpu(
     yvex_materialization_session *session, const yvex_alias_decoder_request *request,
     yvex_alias_decoder_result *result, yvex_component_execution_failure *failure,
     yvex_error *err);
-int yvex_runtime_component_alias_decoder_cuda(
+int yvex_runtime_component_alias_decoder_execute(
     const yvex_runtime_component_session *session,
     const yvex_alias_decoder_request *request,
     yvex_alias_decoder_result *result, yvex_error *err);

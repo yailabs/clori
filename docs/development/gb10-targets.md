@@ -26,8 +26,9 @@ The matched DSpark lanes measured 10.68 and 9.72 token/s respectively. One
 1,000-token reasoning characterization measured 2.22 token/s target-only and
 2.08 token/s DSpark, with 241 accepted of 530 proposed tokens. These results
 are controlled engineering characterization, not a release benchmark. Their
-identity and experimental context are retained in the
-[selective-residency barrier](../worklog/2026-08-24-deepseek-selective-residency-barrier.md).
+earlier characterization. The current representation barrier and exact
+comparison context are retained in the
+[GB10 representation record](../worklog/2026-08-28-deepseek-gb10-matrix-tile-execution.md).
 
 ## Target dimensions
 

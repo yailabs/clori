@@ -197,6 +197,9 @@ const yvex_local_package_record *yvex_local_catalog_package_at(
 #define YVEX_MODEL_LIBRARY_NAME_CAP 128u
 #define YVEX_MODEL_LIBRARY_REASON_CAP 192u
 #define YVEX_MODEL_ARTIFACT_ID_CAP 65u
+#define YVEX_MODEL_RUNTIME_PROFILE_SCHEMA_V1 1u
+#define YVEX_MODEL_RUNTIME_PROFILE_SCHEMA_CURRENT \
+    YVEX_MODEL_RUNTIME_PROFILE_SCHEMA_V1
 
 /* A model-library snapshot groups physical and launch facts under one exact logical identity.
  * It owns only copied catalog metadata; artifacts, profiles, engines, and source payloads retain
@@ -243,6 +246,7 @@ typedef struct {
 } yvex_model_artifact_fact;
 
 typedef struct {
+    unsigned int schema_version;
     char alias[YVEX_MODEL_LIBRARY_NAME_CAP];
     char profile[YVEX_MODEL_LIBRARY_NAME_CAP];
     char installation[YVEX_PATH_CAP];
@@ -252,7 +256,8 @@ typedef struct {
     char runtime_binding[YVEX_PATH_CAP];
     char runtime_target[YVEX_MODEL_LIBRARY_NAME_CAP];
     char backend[32];
-    char generation_mode[32];
+    char engine_kind[32];
+    char execution_strategy[32];
     unsigned long long context_capacity;
     int launchable;
     char blocker[YVEX_MODEL_LIBRARY_REASON_CAP];

@@ -401,12 +401,15 @@ void print_model_registry_entry_cli(const yvex_model_registry_entry *entry) {
         (void)snprintf(context, sizeof(context), "%llu", entry->runtime_context);
     else
         (void)snprintf(context, sizeof(context), "-");
-    yvex_cli_out_writef(stdout, "%-44s  %-10s  %-8s  %-11s  %7s  %s\n",
+    yvex_cli_out_writef(stdout, "%-44s  %-10s  %-8s  %-5s  %-11s  %7s  %s\n",
                         entry->alias ? entry->alias : "", entry->family ? entry->family : "",
                         entry->runtime_backend && entry->runtime_backend[0]
                             ? entry->runtime_backend : "-",
-                        entry->runtime_mode && entry->runtime_mode[0]
-                            ? entry->runtime_mode : "-",
+                        entry->runtime_engine_kind && entry->runtime_engine_kind[0]
+                            ? entry->runtime_engine_kind : "-",
+                        entry->runtime_execution_strategy &&
+                                entry->runtime_execution_strategy[0]
+                            ? entry->runtime_execution_strategy : "-",
                         context, startup_ready ? "yes" : "no");
 }
 
@@ -446,8 +449,11 @@ void print_model_registry_entry_audit(const yvex_model_registry_entry *entry) {
                         entry->runtime_target ? entry->runtime_target : "");
     yvex_cli_out_writef(stdout, "runtime_backend: %s\n",
                         entry->runtime_backend ? entry->runtime_backend : "");
-    yvex_cli_out_writef(stdout, "runtime_mode: %s\n",
-                        entry->runtime_mode ? entry->runtime_mode : "");
+    yvex_cli_out_writef(stdout, "runtime_engine_kind: %s\n",
+                        entry->runtime_engine_kind ? entry->runtime_engine_kind : "");
+    yvex_cli_out_writef(
+        stdout, "runtime_execution_strategy: %s\n",
+        entry->runtime_execution_strategy ? entry->runtime_execution_strategy : "");
     yvex_cli_out_writef(stdout, "runtime_context: %llu\n", entry->runtime_context);
     {
         yvex_error err;

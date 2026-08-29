@@ -290,7 +290,7 @@ static int generation_profile_final_counters(
             "profile execution counters overflowed");
     runtime_forwards = result->decode_step_count;
     runtime_rows = result->decode_step_count;
-    if (result->execution_mode == YVEX_GENERATION_MODE_DSPARK &&
+    if (result->execution_mode == YVEX_GENERATION_MODE_SPECULATIVE &&
         (!yvex_core_u64_add(result->target_verification_count,
                             result->target_correction_or_bonus_token_count,
                             &runtime_forwards) ||
@@ -1013,7 +1013,7 @@ int yvex_runtime_generation_result_validate(
           result->confidence_logit_maximum || result->confidence_logit_mean || result->draft_ns ||
           result->verification_ns || result->speculative_commit_ns ||
           result->speculation_policy_identity[0])) ||
-        (result->execution_mode == YVEX_GENERATION_MODE_DSPARK &&
+        (result->execution_mode == YVEX_GENERATION_MODE_SPECULATIVE &&
          (!speculation_counts_valid ||
           !yvex_sha256_hex_valid(result->speculation_policy_identity) ||
           result->speculation_source_boundary_token_count > result->model_committed_token_count ||
@@ -1128,9 +1128,8 @@ static void generation_operator_ready(yvex_generation_operator_result *result,
     result->generation_cuda_model_path_ready = backend == YVEX_BACKEND_KIND_CUDA;
     result->generation_loop_ready = 1;
     result->generation_ready = 1;
-    result->dspark_ready =
-        result->execution.execution_mode == YVEX_GENERATION_MODE_DSPARK;
-    result->speculative_execution_ready = result->dspark_ready &&
+    result->speculative_execution_ready =
+        result->execution.execution_mode == YVEX_GENERATION_MODE_SPECULATIVE &&
         result->execution.draft_cycle_count > 0ull &&
         result->execution.target_verification_count > 0ull;
 }
@@ -1164,7 +1163,7 @@ int yvex_runtime_generation_operator_execute(
         !request->prefill_chunk_tokens || !request->maximum_new_tokens ||
         !request->maximum_output_bytes ||
         request->input_kind > YVEX_GENERATION_INPUT_MESSAGES ||
-        request->mode > YVEX_GENERATION_MODE_DSPARK ||
+        request->mode > YVEX_GENERATION_MODE_SPECULATIVE ||
         (request->backend != YVEX_BACKEND_KIND_CPU &&
          request->backend != YVEX_BACKEND_KIND_CUDA))
         return generation_result_refuse(err, YVEX_ERR_INVALID_ARG,

@@ -17,6 +17,7 @@
 #include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/image.h>
 #include <yvex/internal/multimodal.h>
+#include "src/backend/cuda/component_ops.h"
 
 enum { TEXT_HIDDEN = 5120u };
 /* The independent PyTorch CPU/CUDA BF16 oracle pair differs by these measured bounds. */
@@ -157,8 +158,6 @@ static int layer_proof_execute(
     geometry = (yvex_component_text_recipe){
         .schema_version = YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1,
         .semantic_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY,
-        .embedding_identity_domain = "yvex.minimax-h3.text-conditioning.cuda.v1",
-        .encoder_identity_domain = "yvex.minimax-h3.qwen-text-stack.cuda.v1",
         .layer_capacity = architecture.encoder.text_layers,
         .hidden_width = architecture.encoder.text_width,
         .ffn_width = architecture.encoder.text_ffn_width,
@@ -206,7 +205,7 @@ static int layer_proof_execute(
         attached = rc == YVEX_OK;
     }
     if (rc == YVEX_OK)
-        rc = yvex_backend_text_encoder_execute(
+        rc = yvex_cuda_text_encoder_execute(
             backend, &geometry, weights, 1ull, identity, arena_bytes, token, 1ull,
             output, TEXT_HIDDEN, &backend_result, err);
     if (rc == YVEX_OK) {
@@ -513,6 +512,7 @@ static int multimodal_execute(
     yvex_model_context model = {0};
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure = {0};
+    yvex_runtime_component_session *session = NULL;
     yvex_runtime_av_conditioning_result result;
     yvex_media_condition condition = {
         .schema_version = YVEX_MEDIA_CONDITION_SCHEMA_V1,
@@ -527,8 +527,8 @@ static int multimodal_execute(
     unsigned int *tags = NULL;
     unsigned long long maximum_tokens = 256ull, output_values;
     char output_path[1024];
-    yvex_error err;
-    int rc;
+    yvex_error err, cleanup;
+    int rc, cleanup_rc;
 
     output_values = maximum_tokens * TEXT_HIDDEN;
     output = calloc((size_t)output_values, sizeof(*output));
@@ -549,6 +549,11 @@ static int multimodal_execute(
     if (rc == YVEX_OK)
         rc = yvex_image_decode_file(&image, image_path,
                                     256ull * 1024ull * 1024ull, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_open(
+            &session, &admission, model.artifact, model.gguf, model.table,
+            YVEX_BACKEND_KIND_CUDA, admission.payload_bytes,
+            80ull * 1024ull * 1024ull * 1024ull, &err);
     request = (yvex_media_conditioning_request){
         .schema_version = YVEX_MEDIA_CONDITIONING_SCHEMA_V2,
         .prompt = prompt,
@@ -560,12 +565,7 @@ static int multimodal_execute(
         .height = 192ull,
         .layer_count = 50ull,
         .maximum_prompt_tokens = maximum_tokens,
-        .maximum_host_bytes = admission.payload_bytes,
-        .maximum_device_bytes = 80ull * 1024ull * 1024ull * 1024ull,
-        .text_admission = &admission,
-        .text_artifact = model.artifact,
-        .text_gguf = model.gguf,
-        .text_tensors = model.table,
+        .text_session = session,
         .conditioning = output,
         .text_tags = tags,
         .conditioning_capacity = output_values,
@@ -577,6 +577,12 @@ static int multimodal_execute(
     };
     if (rc == YVEX_OK)
         rc = yvex_backend_minimax_h3_fl2va_condition(&request, &result, &err);
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
+    if (cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        err = cleanup;
+    }
     if (rc == YVEX_OK &&
         !evidence_write(evidence_root, "conditioning.yvex.f32", output,
                         (size_t)(result.token_count * TEXT_HIDDEN) * sizeof(float)))
@@ -660,8 +666,8 @@ int main(int argc, char **argv)
             rc = layer_proof_execute(
                 artifact, gguf, tensors, &token, output, &result, &err);
         else
-            rc = api->text_encoder_artifact_cuda(
-                artifact, gguf, tensors, &token, 1ull,
+            rc = api->text_encoder_artifact_execute(
+                artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA, &token, 1ull,
                 execution_mode == 3 ? 50ull : execution_mode == 1 ? 1ull : 0ull,
                 output, TEXT_HIDDEN, 70ull * 1024ull * 1024ull * 1024ull,
                 execution_mode ? 512ull * 1024ull * 1024ull : 256ull * 1024ull * 1024ull,

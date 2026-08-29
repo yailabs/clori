@@ -1,5 +1,7 @@
 /* Execute an admitted text-encoder operation through generic CUDA primitives. */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/component_ops.h"
+#include "src/backend/cuda/transformer_ops.h"
 
 #include <yvex/backend.h>
 #include <yvex/internal/backend.h>
@@ -16,11 +18,15 @@
 enum {
     TEXT_IDENTITY_CAP = 65u
 };
+static const char text_embedding_identity_domain[] =
+    "yvex.component.text.embedding-output.f32.v1";
+static const char text_encoder_identity_domain[] =
+    "yvex.component.text.encoder-output.f32.v1";
 
 typedef struct {
     unsigned long long hidden, vocabulary, ffn, query_heads, kv_heads;
     unsigned long long head_dimension, query_width, kv_width, rope_theta, layer_capacity;
-    const char *semantic_identity, *embedding_identity_domain, *encoder_identity_domain;
+    const char *semantic_identity;
     float normalization_epsilon;
 } text_geometry;
 
@@ -63,8 +69,6 @@ static int text_geometry_build(const yvex_component_text_recipe *source,
     if (!source || !out ||
         source->schema_version != YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1 ||
         !yvex_sha256_hex_valid(source->semantic_identity) ||
-        !source->embedding_identity_domain || !*source->embedding_identity_domain ||
-        !source->encoder_identity_domain || !*source->encoder_identity_domain ||
         !source->layer_capacity ||
         !source->hidden_width || !source->vocabulary_size || !source->ffn_width ||
         !source->query_heads || !source->kv_heads || !source->head_dimension ||
@@ -84,8 +88,6 @@ static int text_geometry_build(const yvex_component_text_recipe *source,
     geometry.rope_theta = source->rope_theta;
     geometry.layer_capacity = source->layer_capacity;
     geometry.semantic_identity = source->semantic_identity;
-    geometry.embedding_identity_domain = source->embedding_identity_domain;
-    geometry.encoder_identity_domain = source->encoder_identity_domain;
     geometry.normalization_epsilon = source->normalization_epsilon;
     *out = geometry;
     return 1;
@@ -108,7 +110,7 @@ static int conditioning_identity(
     unsigned long long index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, geometry->embedding_identity_domain) ||
+    if (!yvex_sha256_update_text(&hash, text_embedding_identity_domain) ||
         !yvex_sha256_update_text(&hash, geometry->semantic_identity) ||
         !yvex_sha256_update_text(&hash, residency_identity) ||
         !yvex_sha256_update_u64(&hash, token_count) ||
@@ -162,7 +164,7 @@ static int text_embed_validate(
     return YVEX_OK;
 }
 
-int yvex_backend_text_embedding_execute(
+int yvex_cuda_text_embedding_execute(
     yvex_backend *backend, const yvex_component_text_recipe *source,
     const unsigned char *encoded, unsigned long long encoded_bytes,
     unsigned int qtype, unsigned long long row_count, unsigned long long row_width,
@@ -257,7 +259,7 @@ static int text_layer_identity(
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long index;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, geometry->encoder_identity_domain) ||
+    if (!yvex_sha256_update_text(&hash, text_encoder_identity_domain) ||
         !yvex_sha256_update_text(&hash, geometry->semantic_identity) ||
         !yvex_sha256_update_text(&hash, residency_identity) ||
         !yvex_sha256_update_u64(&hash, layer_count) ||
@@ -801,7 +803,7 @@ static int text_encoder_execute(
     return rc;
 }
 
-int yvex_backend_text_encoder_execute(
+int yvex_cuda_text_encoder_execute(
     yvex_backend *backend, const yvex_component_text_recipe *source,
     const yvex_backend_text_weight *weights, unsigned long long layer_count,
     const char *residency_identity, unsigned long long resident_bytes,
@@ -814,7 +816,7 @@ int yvex_backend_text_encoder_execute(
         token_ids, token_count, NULL, output, output_capacity, result, err);
 }
 
-int yvex_backend_text_encoder_multimodal_execute(
+int yvex_cuda_text_encoder_multimodal_execute(
     yvex_backend *backend, const yvex_component_text_recipe *source,
     const yvex_backend_text_weight *weights, unsigned long long layer_count,
     const char *residency_identity, unsigned long long resident_bytes,

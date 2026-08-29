@@ -12,9 +12,9 @@
 #include <yvex/api.h>
 
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/transformer_ops.h"
 #include <yvex/internal/component.h>
 #include <yvex/internal/quant_numeric.h>
-#include <yvex/internal/transformer.h>
 
 #include "tests/test.h"
 
@@ -1528,6 +1528,12 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
     unsigned long long index;
     int rc;
 
+    const yvex_backend_transformer_operations *operations =
+        yvex_backend_transformer_operations_get(backend);
+    YVEX_TEST_ASSERT(operations && operations->initial && operations->feature_mean &&
+                         operations->final,
+                     "CUDA publishes admitted transformer operations");
+
     for (index = 0ull; index < HIDDEN; ++index) norm[index] = 1.0f;
     for (index = 0ull; index < TOKENS; ++index) {
         YVEX_TEST_ASSERT(quant_cuda_encode_row(
@@ -1552,7 +1558,7 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
             quant_cuda_tensor(backend, "transformer_expanded", YVEX_DTYPE_F32,
                               NULL, sizeof(expanded), &expanded_device, &err),
         "transformer initial tensors allocate");
-    rc = yvex_backend_transformer_cuda_initial(
+    rc = operations->initial(
         backend, encoded_device, YVEX_GGUF_QTYPE_Q8_0, TOKENS, HIDDEN, STREAMS,
         embedding_device, expanded_device, &facts, &err);
     YVEX_TEST_ASSERT(
@@ -1581,12 +1587,12 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
                               &resident_feature_device, &err),
         "transformer feature tensors prepare");
     YVEX_TEST_ASSERT(
-        yvex_backend_transformer_cuda_feature_mean(
+        operations->feature_mean(
             backend, expanded_device, TOKENS, HIDDEN, STREAMS, feature_device,
             feature_device, 0ull, HIDDEN, 0ull, features, &facts, &err) ==
             YVEX_ERR_FORMAT,
         "transformer feature mean refuses aliased compact and resident publication");
-    rc = yvex_backend_transformer_cuda_feature_mean(
+    rc = operations->feature_mean(
         backend, expanded_device, TOKENS, HIDDEN, STREAMS, feature_device,
         resident_feature_device, 0ull, HIDDEN * 2ull, HIDDEN,
         features, &facts, &err);
@@ -1618,7 +1624,7 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
     YVEX_TEST_ASSERT(
         yvex_backend_tensor_write(backend, resident_feature_device,
                                   resident_features, sizeof(resident_features), &err) == YVEX_OK &&
-            yvex_backend_transformer_cuda_feature_mean(
+            operations->feature_mean(
                 backend, expanded_device, TOKENS, HIDDEN, STREAMS, feature_device,
                 resident_feature_device, 0ull, HIDDEN * 2ull, HIDDEN,
                 NULL, &facts, &err) == YVEX_OK &&
@@ -1643,7 +1649,7 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
     YVEX_TEST_ASSERT(
         yvex_backend_tensor_write(backend, expanded_device, expanded,
                                   sizeof(expanded), &err) == YVEX_OK &&
-            yvex_backend_transformer_cuda_feature_mean(
+            operations->feature_mean(
                 backend, expanded_device, TOKENS, HIDDEN, STREAMS, feature_device,
                 resident_feature_device, 0ull, HIDDEN * 2ull, HIDDEN,
                 features, &facts, &err) == YVEX_ERR_FORMAT &&
@@ -1689,13 +1695,13 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
                               NULL, sizeof(output), &output_device, &err),
         "transformer final tensors allocate");
     YVEX_TEST_ASSERT(
-        yvex_backend_transformer_cuda_final(
+        operations->final(
             backend, expanded_device, function_device, base_device, scale_device,
             norm_device, TOKENS, HIDDEN, STREAMS, 1e-6, 1e-6, output_device,
             output_device, &facts, &err) == YVEX_ERR_FORMAT &&
             !facts.kernel_launches && !facts.d2h_bytes,
         "transformer final refuses aliased pre-normalized publication");
-    rc = yvex_backend_transformer_cuda_final(
+    rc = operations->final(
         backend, expanded_device, function_device, base_device, scale_device,
         norm_device, TOKENS, HIDDEN, STREAMS, 1e-6, 1e-6, pre_device,
         output_device, &facts, &err);
@@ -1722,7 +1728,7 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
             yvex_backend_workspace_attach(backend, workspace_device, 1ull, &err) == YVEX_OK,
         "transformer status workspace attaches");
     YVEX_TEST_ASSERT(
-        yvex_backend_transformer_cuda_initial(
+        operations->initial(
             backend, encoded_device, YVEX_GGUF_QTYPE_Q8_0, TOKENS, HIDDEN, STREAMS,
             embedding_device, expanded_device, &facts, &err) == YVEX_OK &&
             !facts.d2h_bytes && !facts.download_count && !facts.stream_synchronizations &&
@@ -1735,7 +1741,7 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
                                   sizeof(workspace), &err) == YVEX_OK,
         "transformer status survives intervening reusable workspace ownership");
     YVEX_TEST_ASSERT(
-        yvex_backend_transformer_cuda_feature_mean(
+        operations->feature_mean(
             backend, expanded_device, TOKENS, HIDDEN, STREAMS, feature_device,
             resident_feature_device, 0ull, HIDDEN * 2ull, HIDDEN,
             NULL, &facts, &err) == YVEX_OK &&
@@ -1743,7 +1749,7 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
             !facts.device_synchronizations,
         "transformer feature reduction retains deferred status");
     YVEX_TEST_ASSERT(
-        yvex_backend_transformer_cuda_final(
+        operations->final(
             backend, expanded_device, function_device, base_device, scale_device,
             norm_device, TOKENS, HIDDEN, STREAMS, 1e-6, 1e-6, pre_device,
             output_device, &facts, &err) == YVEX_OK &&
@@ -2088,6 +2094,11 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
     unsigned int index;
     int causal;
 
+    const yvex_backend_transformer_operations *operations =
+        yvex_backend_transformer_operations_get(backend);
+    YVEX_TEST_ASSERT(operations && operations->gqa_workspace_required,
+                     "CUDA publishes transformer workspace planning");
+
     for (index = 0u; index < ELEMENTS; ++index) {
         query_values[index] = yvex_quant_bf16_decode(
             yvex_quant_bf16_encode((float)((int)((index * 3u) % 31u) - 15) / 16.0f));
@@ -2107,17 +2118,17 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
                               NULL, sizeof(result), &output, &err),
         "chunked source-published GQA tensors allocate");
     YVEX_TEST_ASSERT(
-        yvex_backend_transformer_gqa_workspace_bytes(
+        operations->gqa_workspace_required(
             TOKENS, 1ull, 1ull, HEAD_DIM, &workspace_bytes, &err) == YVEX_OK &&
             workspace_bytes > sizeof(result) &&
-            yvex_backend_transformer_gqa_workspace_bytes(
+            operations->gqa_workspace_required(
                 5ull, 1ull, 1ull, HEAD_DIM, &small_workspace_bytes, &err) == YVEX_OK &&
             small_workspace_bytes == 12804ull &&
-            yvex_backend_transformer_gqa_workspace_bytes(
+            operations->gqa_workspace_required(
                 21741ull, 56ull, 56ull, HEAD_DIM, &source_workspace_bytes, &err) == YVEX_OK &&
             source_workspace_bytes == 3116789764ull &&
             source_workspace_bytes < 4ull * 1024ull * 1024ull * 1024ull &&
-            yvex_backend_transformer_gqa_workspace_bytes(
+            operations->gqa_workspace_required(
                 129ull, 1ull, 1ull, 33ull, &aligned_workspace_bytes, &err) == YVEX_OK &&
             aligned_workspace_bytes == 134660ull &&
             quant_cuda_tensor(backend, "gqa-blas-workspace", YVEX_DTYPE_I8,
@@ -2343,6 +2354,11 @@ static int quant_cuda_dense_decoder(yvex_backend *backend)
     yvex_error err;
     int rc;
 
+    const yvex_backend_transformer_operations *operations =
+        yvex_backend_transformer_operations_get(backend);
+    YVEX_TEST_ASSERT(operations && operations->dense_decoder_execute,
+                     "CUDA publishes dense decoder execution");
+
     descriptor.name = "dense-decoder-weights";
     descriptor.dtype = YVEX_DTYPE_I8;
     descriptor.rank = 1u;
@@ -2410,7 +2426,7 @@ static int quant_cuda_dense_decoder(yvex_backend *backend)
     request.output = output;
     request.cancel_requested = quant_dense_cancel;
     request.cancel_context = &cancel;
-    rc = yvex_cuda_transformer_dense_decoder_execute(
+    rc = operations->dense_decoder_execute(
         backend, &request, &result, &err);
     if (rc != YVEX_OK)
         fprintf(stderr, "dense decoder failed: %s (%s)\n",
@@ -2432,14 +2448,14 @@ static int quant_cuda_dense_decoder(yvex_backend *backend)
     cancel = 1;
     output[0] = 7.0f;
     output[1] = 9.0f;
-    rc = yvex_cuda_transformer_dense_decoder_execute(
+    rc = operations->dense_decoder_execute(
         backend, &request, &result, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_CANCELLED && !result.complete &&
                          output[0] == 7.0f && output[1] == 9.0f,
                      "dense decoder cancellation preserves transactional output");
     cancel = 0;
     output_weight.row_width++;
-    rc = yvex_cuda_transformer_dense_decoder_execute(
+    rc = operations->dense_decoder_execute(
         backend, &request, &result, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !result.complete,
                      "dense decoder refuses mismatched physical weight geometry");

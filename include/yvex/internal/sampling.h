@@ -9,6 +9,7 @@
 #define INCLUDE_YVEX_INTERNAL_SAMPLING_H_INCLUDED
 
 #include <stdint.h>
+#include <yvex/internal/backend.h>
 #include <yvex/internal/logits.h>
 
 #ifdef __cplusplus
@@ -120,7 +121,7 @@ typedef struct {
 } yvex_backend_speculation_result;
 
 /* Device sampling owns full-row numerical selection; runtime retains transactional RNG publish. */
-typedef struct {
+struct yvex_backend_sampling_operations {
     int (*workspace_required)(unsigned long long vocabulary_size,
                               unsigned long long *bytes, yvex_error *err);
     int (*speculation_workspace_required)(unsigned long long vocabulary_size,
@@ -156,10 +157,7 @@ typedef struct {
         unsigned long long committed_capacity,
         yvex_backend_speculation_result *result,
         yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-} yvex_backend_sampling_operations;
-
-const yvex_backend_sampling_operations *yvex_backend_sampling_operations_get(
-    const yvex_backend *backend);
+};
 
 typedef struct {
     unsigned int schema_version;

@@ -245,7 +245,9 @@ int yvex_server_media_registry_open(
     }
     if (preset_admit(registry, err) != YVEX_OK) goto failed;
     if (registry_identity(registry, err) != YVEX_OK) goto failed;
-    registry->event_scope.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    registry->event_scope.engine_kind = YVEX_SERVER_ENGINE_MEDIA;
+    registry->event_scope.execution_strategy =
+        YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
     yvex_runtime_identity_copy(registry->event_scope.specialization_identity,
                                registry->profile_identity);
     *out = registry;
@@ -310,7 +312,8 @@ static int message_emit(server_message_emit emit, void *context,
     message.kind = kind;
     message.status = YVEX_OK;
     message.request_number = request->request_number;
-    message.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    message.engine_kind = YVEX_SERVER_ENGINE_MEDIA;
+    message.execution_strategy = YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
     message.stream_channel = YVEX_CLIENT_STREAM_FINAL_TEXT;
     message.session_state = session ? session->state : YVEX_SERVER_SESSION_READY;
     if (session)
@@ -335,7 +338,8 @@ static int turn_complete(server_message_emit emit, void *context,
     message.kind = YVEX_CLIENT_MESSAGE_TURN_COMPLETE;
     message.status = YVEX_OK;
     message.request_number = request->request_number;
-    message.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    message.engine_kind = YVEX_SERVER_ENGINE_MEDIA;
+    message.execution_strategy = YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
     message.generation_phase = YVEX_CLIENT_PHASE_COMPLETE;
     message.stop_reason = YVEX_CLIENT_STOP_EOS;
     message.decode_seconds = seconds;
@@ -382,7 +386,8 @@ static int turn_error(server_message_emit emit, void *context,
     message.status = status;
     message.failure_class = yvex_server_failure_class_from_status(status);
     message.request_number = request->request_number;
-    message.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    message.engine_kind = YVEX_SERVER_ENGINE_MEDIA;
+    message.execution_strategy = YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
     message.generation_phase = status == YVEX_ERR_CANCELLED
                                    ? YVEX_CLIENT_PHASE_CANCELLED
                                    : YVEX_CLIENT_PHASE_FAILED;
@@ -436,7 +441,8 @@ static int media_event_emit(
     message.kind = YVEX_CLIENT_MESSAGE_EVENT;
     message.status = YVEX_OK;
     message.request_number = sink->request->request_number;
-    message.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    message.engine_kind = YVEX_SERVER_ENGINE_MEDIA;
+    message.execution_strategy = YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
     message.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
     return sink->emit(sink->emit_context, &message, err);
 }
@@ -596,7 +602,8 @@ static int session_message(server_message_emit emit, void *context,
     message.kind = kind;
     message.status = YVEX_OK;
     message.request_number = request->request_number;
-    message.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    message.engine_kind = YVEX_SERVER_ENGINE_MEDIA;
+    message.execution_strategy = YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
     if (session) {
         yvex_core_text_copy(message.session_name, sizeof(message.session_name), session->name);
         message.session_state = session->state;

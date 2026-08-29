@@ -6,6 +6,7 @@
  * runtime support.
  */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/component_ops.h"
 #include <ctype.h>
 #include <dlfcn.h>
 #include <limits.h>
@@ -14,11 +15,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-
 #define CUDA_BANDWIDTH_WORKING_SET (32ull * 1024ull * 1024ull)
 #define CUDA_BANDWIDTH_ITERATIONS 8ull
 #define CUDA_BANDWIDTH_BLOCK 256u
-
 /* Initialize one stable work range without breaking active stream capture. */
 int yvex_cuda_work_initialize(yvex_cuda_work *work, CUdeviceptr target,
                               size_t bytes, const void *source, int zero,
@@ -1681,37 +1680,40 @@ static int cuda_bandwidth_probe(yvex_backend *backend,
     }
     return rc;
 }
-
 static const yvex_backend_vtable cuda_vtable = {
-    cuda_close,
-    cuda_memory_stats,
-    cuda_device_info,
-    cuda_bandwidth_probe,
-    cuda_tensor_alloc,
-    yvex_cuda_resident_alloc,
-    yvex_cuda_resident_map_supported,
-    yvex_cuda_resident_map_readonly,
-    yvex_cuda_resident_prefetch_supported,
-    yvex_cuda_resident_prefetch,
-    cuda_tensor_reserve,
-    cuda_tensor_commit,
-    cuda_tensor_decommit,
-    cuda_tensor_free,
-    cuda_tensor_write,
-    cuda_tensor_read,
-    cuda_tensor_copy,
-    cuda_tensor_copy_async,
-    cuda_tensor_copy_shared_async,
-    cuda_sync,
-    yvex_cuda_query_capability,
-    yvex_cuda_op_embed,
-    yvex_cuda_op_rms_norm,
-    yvex_cuda_op_rope,
-    yvex_cuda_op_matmul,
-    yvex_cuda_op_mlp,
-    yvex_cuda_op_attention,
-    cuda_host_workspace_alloc,
-    cuda_host_workspace_free,
+    .close = cuda_close,
+    .memory_stats = cuda_memory_stats,
+    .device_info = cuda_device_info,
+    .bandwidth_probe = cuda_bandwidth_probe,
+    .tensor_alloc = cuda_tensor_alloc,
+    .resident_alloc = yvex_cuda_resident_alloc,
+    .resident_map_supported = yvex_cuda_resident_map_supported,
+    .resident_map_readonly = yvex_cuda_resident_map_readonly,
+    .resident_prefetch_supported = yvex_cuda_resident_prefetch_supported,
+    .resident_prefetch = yvex_cuda_resident_prefetch,
+    .tensor_reserve = cuda_tensor_reserve,
+    .tensor_commit = cuda_tensor_commit,
+    .tensor_decommit = cuda_tensor_decommit,
+    .tensor_free = cuda_tensor_free,
+    .tensor_write = cuda_tensor_write,
+    .tensor_read = cuda_tensor_read,
+    .tensor_copy = cuda_tensor_copy,
+    .tensor_copy_async = cuda_tensor_copy_async,
+    .tensor_copy_shared_async = cuda_tensor_copy_shared_async,
+    .sync = cuda_sync,
+    .query_capability = yvex_cuda_query_capability,
+    .op_embed = yvex_cuda_op_embed,
+    .op_rms_norm = yvex_cuda_op_rms_norm,
+    .op_rope = yvex_cuda_op_rope,
+    .op_matmul = yvex_cuda_op_matmul,
+    .op_mlp = yvex_cuda_op_mlp,
+    .op_attention = yvex_cuda_op_attention,
+    .host_workspace_alloc = cuda_host_workspace_alloc,
+    .host_workspace_free = cuda_host_workspace_free,
+    .sampling_operations = yvex_cuda_sampling_operations_get,
+    .moe_operations = yvex_cuda_moe_operations_get,
+    .transformer_operations = yvex_cuda_transformer_operations_get,
+    .component_operations = yvex_cuda_component_operations_get,
 };
 
 static int shared_owner_acquire(yvex_backend *owner, yvex_error *err)

@@ -6,6 +6,8 @@
  * primitive capability is not transformer or generation support.
  */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/component_ops.h"
+#include "src/backend/cuda/transformer_ops.h"
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +18,44 @@
 #ifdef YVEX_HAVE_CUDA_KERNEL_CUBIN
 #include <cuda_kernels_cubin.inc>
 #endif
+
+static const yvex_backend_transformer_operations transformer_operations = {
+    .initial = yvex_cuda_transformer_initial,
+    .feature_mean = yvex_cuda_transformer_feature_mean,
+    .final = yvex_cuda_transformer_final,
+    .gqa_workspace_required = yvex_cuda_transformer_gqa_workspace_required,
+    .dense_decoder_execute = yvex_cuda_transformer_dense_decoder_execute,
+};
+
+static const yvex_backend_component_operations component_operations = {
+    .text_embedding_execute = yvex_cuda_text_embedding_execute,
+    .text_encoder_execute = yvex_cuda_text_encoder_execute,
+    .text_encoder_multimodal_execute = yvex_cuda_text_encoder_multimodal_execute,
+    .joint_transformer_execute = yvex_cuda_transformer_joint_execute,
+    .alias_decoder_execute = yvex_cuda_alias_decoder_execute,
+};
+
+const yvex_backend_component_operations *yvex_cuda_component_operations_get(
+    const yvex_backend *backend)
+{
+    const yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    return backend && yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA && state &&
+                   state->kernel_bundle_state == YVEX_CUDA_KERNEL_BUNDLE_ADMITTED
+               ? &component_operations
+               : NULL;
+}
+
+const yvex_backend_transformer_operations *yvex_cuda_transformer_operations_get(
+    const yvex_backend *backend)
+{
+    const yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    return backend && yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA && state &&
+                   state->kernel_bundle_state == YVEX_CUDA_KERNEL_BUNDLE_ADMITTED &&
+                   state->encoded_row_decode_function &&
+                   state->transformer_feature_mean_function && state->transformer_final_function
+               ? &transformer_operations
+               : NULL;
+}
 typedef struct {
     const char *symbol;
     yvex_backend_operation_variant variant;

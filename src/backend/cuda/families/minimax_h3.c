@@ -55,8 +55,6 @@ typedef struct {
 static const yvex_component_text_recipe h3_text_recipe = {
     .schema_version = YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1,
     .semantic_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY,
-    .embedding_identity_domain = "yvex.minimax-h3.text-conditioning.cuda.v1",
-    .encoder_identity_domain = "yvex.minimax-h3.qwen3-vl.hidden-state-50.cuda.v1",
     .layer_capacity = YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS,
     .hidden_width = H3_CONDITION_WIDTH, .ffn_width = 25600ull,
     .query_heads = 64ull, .kv_heads = 8ull, .head_dimension = 128ull,
@@ -543,12 +541,9 @@ static int h3_text_only(const yvex_media_conditioning_request *request,
     text.token_ids = presentation.ids; text.token_count = presentation.count;
     text.layer_count = request->layer_count; text.output = request->conditioning;
     text.output_capacity = request->conditioning_capacity;
-    text.maximum_host_bytes = request->maximum_host_bytes;
-    text.maximum_device_bytes = request->maximum_device_bytes;
     if (rc == YVEX_OK)
-        rc = yvex_runtime_component_text_artifact_cuda(
-            request->text_admission, request->text_artifact, request->text_gguf,
-            request->text_tensors, &text, result, err);
+        rc = yvex_runtime_component_text_execute(
+            request->text_session, &text, result, err);
     if (rc == YVEX_OK && !h3_token_identity(&presentation, result->prompt_identity))
         rc = h3_refuse(err, YVEX_ERR_STATE, "minimax-h3.presentation.identity",
                         "T2VA presentation identity could not be sealed");
@@ -565,7 +560,6 @@ int yvex_backend_minimax_h3_fl2va_condition(
 {
     h3_images images = {0};
     h3_presentation presentation = {0};
-    yvex_runtime_component_session *session = NULL;
     yvex_component_multimodal_text_request text = {0};
     yvex_backend_text_multimodal_input multimodal = {0};
     yvex_vision_request vision = {0};
@@ -573,12 +567,10 @@ int yvex_backend_minimax_h3_fl2va_condition(
     unsigned int *visual_indices = NULL;
     unsigned long long *position_ids = NULL;
     unsigned long long merged_values, deep_values;
-    yvex_error cleanup;
-    int rc, cleanup_rc;
+    int rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!request || request->schema_version != YVEX_MEDIA_CONDITIONING_SCHEMA_V2 ||
-        !request->prompt || !request->tokenizer || !request->text_admission ||
-        !request->text_artifact || !request->text_gguf || !request->text_tensors ||
+        !request->prompt || !request->tokenizer || !request->text_session ||
         !request->conditioning || !request->text_tags || !result ||
         request->condition_count > YVEX_MEDIA_CONDITION_CAP ||
         (request->condition_count && (!request->conditions || !request->condition_images)))
@@ -598,11 +590,6 @@ int yvex_backend_minimax_h3_fl2va_condition(
     if (rc == YVEX_OK)
         rc = h3_presentation_build(request, &images, &presentation,
                                    &visual_indices, &position_ids, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_component_session_open(
-            &session, request->text_admission, request->text_artifact,
-            request->text_gguf, request->text_tensors, YVEX_BACKEND_KIND_CUDA,
-            request->maximum_host_bytes, request->maximum_device_bytes, err);
     vision = (yvex_vision_request){
         .recipe = &h3_vision_recipe, .patches = images.patches,
         .patch_rows = images.patch_rows, .patch_capacity = images.patch_rows * 1536ull,
@@ -614,7 +601,8 @@ int yvex_backend_minimax_h3_fl2va_condition(
         .observer_context = request->vision_observer_context,
     };
     if (rc == YVEX_OK)
-        rc = yvex_runtime_component_vision_cuda(session, &vision, &vision_result, err);
+        rc = yvex_runtime_component_vision_cuda(
+            request->text_session, &vision, &vision_result, err);
     if (rc == YVEX_OK && request->observe) {
         yvex_media_conditioning_observation observation = {
             .token_ids = presentation.ids,
@@ -653,10 +641,8 @@ int yvex_backend_minimax_h3_fl2va_condition(
     text.layer_count = request->layer_count; text.multimodal = &multimodal;
     text.output = request->conditioning; text.output_capacity = request->conditioning_capacity;
     if (rc == YVEX_OK)
-        rc = yvex_runtime_component_multimodal_text_cuda(session, &text, result, err);
-    yvex_error_clear(&cleanup);
-    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
-    if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
+        rc = yvex_runtime_component_multimodal_text_cuda(
+            request->text_session, &text, result, err);
     if (rc == YVEX_OK &&
         (!h3_token_identity(&presentation, result->prompt_identity) ||
          !h3_processor_identity(&presentation, &images, result->processor_identity)))
@@ -1073,13 +1059,11 @@ int yvex_backend_minimax_h3_keyframe_encode(
 {
     h3_images images = {0};
     h3_encoder_run run = {0};
-    yvex_runtime_component_session *session = NULL;
     float *pixels = NULL, *moments = NULL, *noise = NULL;
     unsigned long long latent_height, latent_width, spatial, latent_values;
     unsigned long long pixel_values, moment_values, image, channel, position;
     const yvex_runtime_residency_summary *summary;
-    yvex_error cleanup;
-    int rc, cleanup_rc;
+    int rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!request || request->schema_version != YVEX_MEDIA_CONDITIONING_SCHEMA_V2 ||
         !request->conditions || !request->condition_images ||
@@ -1088,8 +1072,7 @@ int yvex_backend_minimax_h3_keyframe_encode(
         request->height % 16ull || request->pixel_channels != 3ull ||
         request->latent_channels != 24ull || !request->pixel_mean ||
         !request->pixel_std || !request->latent_mean || !request->latent_std ||
-        !request->video_admission || !request->video_artifact || !request->video_gguf ||
-        !request->video_tensors || !request->condition_latents || !result)
+        !request->video_session || !request->condition_latents || !result)
         return h3_refuse(err, YVEX_ERR_INVALID_ARG, "minimax-h3.fl2va.keyframe",
                          "one admitted typed FL2VA keyframe request is required");
     rc = h3_condition_order(request->conditions, request->condition_count, &images, err);
@@ -1129,13 +1112,8 @@ int yvex_backend_minimax_h3_keyframe_encode(
                     ((float)images.canvas[image].data[source] / 255.0f -
                      request->pixel_mean[channel]) / request->pixel_std[channel];
             }
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_component_session_open(
-            &session, request->video_admission, request->video_artifact,
-            request->video_gguf, request->video_tensors, YVEX_BACKEND_KIND_CUDA,
-            request->maximum_host_bytes, request->maximum_device_bytes, err);
-    run.session = session;
-    run.backend = yvex_runtime_component_session_backend(session);
+    run.session = request->video_session;
+    run.backend = yvex_runtime_component_session_backend(request->video_session);
     run.batch = request->condition_count;
     run.channels = 3ull;
     run.height = request->height;
@@ -1169,7 +1147,7 @@ int yvex_backend_minimax_h3_keyframe_encode(
             rc = h3_refuse(err, YVEX_ERR_STATE, "minimax-h3.vae.identity",
                             "Visual VAE latent identity could not be sealed");
     }
-    summary = yvex_runtime_component_session_summary(session);
+    summary = yvex_runtime_component_session_summary(request->video_session);
     if (rc == YVEX_OK && (!summary || !summary->sealed))
         rc = h3_refuse(err, YVEX_ERR_STATE, "minimax-h3.vae.evidence",
                         "Visual VAE residency evidence is incomplete");
@@ -1197,9 +1175,6 @@ int yvex_backend_minimax_h3_keyframe_encode(
                             "Visual VAE execution identity could not be sealed");
         else result->complete = 1;
     }
-    yvex_error_clear(&cleanup);
-    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
-    if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
     free(noise); free(moments); free(pixels);
     h3_images_close(&images);
     if (rc != YVEX_OK) memset(result, 0, sizeof(*result));

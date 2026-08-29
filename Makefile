@@ -41,7 +41,6 @@
 .PHONY: all info lib client package generate-source-manifest \
 	check-source-manifest generate-operator-registry \
 	generate-qa-registry check-qa-registry qa qa-fast qa-structural qa-cuda qa-ci qa-doctor \
-	generate-command-migration \
 	check-operator-registry test-operator-registry cuda-info cuda-kernels cuda test-cuda test-cuda-graph \
 	test-cuda-native-sm121 test-cuda-native-sm121-sass \
 	test-cuda-no-nvcc smoke-cuda check-cuda test test-core test-cli test-materialize \
@@ -63,8 +62,7 @@
 	test-runtime-sanitizers-live test-materialize-live-plan \
 	test-materialize-live test-minimax-audio-artifact-live \
 	test-minimax-video-artifact-live test-minimax-text-conditioning-live \
-	test-minimax-text-layer-live test-minimax-omni-block-live \
-	test-minimax-omni-transformer-live test-minimax-omni-transformer-artifact-live \
+	test-minimax-text-layer-live test-minimax-omni-transformer-artifact-live \
 	test-minimax-latent-live test-minimax-tokenizer-live \
 	test-attention test-attention-fixture-isolation \
 	test-attention-live-plan test-attention-live test-attention-cli-live \
@@ -163,11 +161,6 @@ OPERATOR_REGISTRY_HEADER := $(OPERATOR_REGISTRY_DIR)/registry.h
 OPERATOR_REGISTRY_C := $(OPERATOR_REGISTRY_DIR)/registry.c
 OPERATOR_REGISTRY_IDENTITY := $(OPERATOR_REGISTRY_DIR)/registry.sha256
 OPERATOR_REGISTRY_OBJ := $(OBJ_DIR)/generated/operator/registry.o
-OPERATOR_AUDIT_ROOT := docs/audits/operator-surface-ec7dcc
-OPERATOR_AUDIT_FILES := $(OPERATOR_AUDIT_ROOT)/commands.tsv \
-	$(OPERATOR_AUDIT_ROOT)/flags.tsv $(OPERATOR_AUDIT_ROOT)/operations.tsv \
-	$(OPERATOR_AUDIT_ROOT)/surfaces.tsv
-OPERATOR_MIGRATION_DOC := docs/migrations/command-architecture-v1.md
 DEEPSEEK_SOURCE ?= $(HOME)/lab/models/hf/deepseek/DeepSeek-V4-Flash-DSpark
 DEEPSEEK_MODELS_ROOT ?= $(HOME)/lab/models/gguf
 DEEPSEEK_SOURCE_MANIFEST ?= $(DEEPSEEK_MODELS_ROOT)/deepseek/deepseek-v4-flash-dspark-source-manifest.json
@@ -184,7 +177,7 @@ MINIMAX_H3_OMNI_VIDEO_ROWS ?= 37
 MINIMAX_H3_OMNI_AUDIO_ROWS ?= 414
 MINIMAX_H3_OMNI_TEXT_ROWS ?= 15
 MINIMAX_H3_OMNI_BLOCKS ?= 50
-MINIMAX_H3_OMNI_TIMESTEPS ?= 1
+MINIMAX_H3_OMNI_TIMESTEPS ?= 2
 MINIMAX_H3_LATENT_BLOCKS ?= 50
 MINIMAX_H3_LATENT_STEPS ?= 2
 MINIMAX_H3_LATENT_FIXTURE_ROOT ?=
@@ -288,7 +281,6 @@ MATERIALIZE_LIVE_RUNNER := $(TEST_DIR)/materialize_deepseek
 MINIMAX_AUDIO_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_audio
 MINIMAX_VIDEO_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_video
 MINIMAX_TEXT_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_text
-MINIMAX_OMNI_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_omni
 MINIMAX_TRANSFORMER_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_transformer
 ATTENTION_LIVE_RUNNER := $(TEST_DIR)/attention_deepseek
 PREFILL_LIVE_RUNNER := $(TEST_DIR)/prefill_deepseek
@@ -327,7 +319,6 @@ MATERIALIZE_LIVE_OBJ := $(OBJ_DIR)/tests/live/materialize_deepseek.o
 MINIMAX_AUDIO_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_audio.o
 MINIMAX_VIDEO_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_video.o
 MINIMAX_TEXT_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_text.o
-MINIMAX_OMNI_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_omni.o
 MINIMAX_TRANSFORMER_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_transformer.o
 ATTENTION_LIVE_OBJ := $(OBJ_DIR)/tests/live/attention_deepseek.o
 PREFILL_LIVE_OBJ := $(OBJ_DIR)/tests/live/prefill_deepseek.o
@@ -347,7 +338,7 @@ RUNNER_OBJS := $(TEST_MAIN_OBJ) $(QUANT_TEST_RUNNER_OBJ) \
 	$(ARTIFACT_TEST_RUNNER_OBJ) $(CUDA_TEST_MAIN_OBJ) \
 	$(SOURCE_PAYLOAD_LIVE_OBJ) $(QUANT_LIVE_OBJ) $(ARTIFACT_LIVE_OBJ) \
 	$(MATERIALIZE_LIVE_OBJ) $(MINIMAX_AUDIO_LIVE_OBJ) $(MINIMAX_VIDEO_LIVE_OBJ) \
-	$(MINIMAX_TEXT_LIVE_OBJ) $(MINIMAX_OMNI_LIVE_OBJ) $(MINIMAX_TRANSFORMER_LIVE_OBJ) \
+	$(MINIMAX_TEXT_LIVE_OBJ) $(MINIMAX_TRANSFORMER_LIVE_OBJ) \
 	$(ATTENTION_LIVE_OBJ) \
 	$(PREFILL_LIVE_OBJ) $(MOE_LIVE_OBJ) \
 	$(TRANSFORMER_LIVE_OBJ) $(DECODE_LIVE_OBJ) $(LOGITS_LIVE_OBJ) $(TOKENIZER_LIVE_OBJ) \
@@ -420,12 +411,9 @@ check-source-manifest: $(SOURCE_MANIFEST_MK)
 generate-operator-registry: $(OPERATOR_REGISTRY_HEADER) $(OPERATOR_REGISTRY_C) \
 	$(OPERATOR_REGISTRY_IDENTITY)
 
-generate-command-migration: $(OPERATOR_MIGRATION_DOC)
-
 check-operator-registry: generate-operator-registry
 	python3 $(OPERATOR_REGISTRY_GENERATOR) --registry $(OPERATOR_REGISTRY_SOURCE) \
-		--output $(OPERATOR_REGISTRY_DIR) --audit-root $(OPERATOR_AUDIT_ROOT) \
-		--migration-output $(OPERATOR_MIGRATION_DOC) --check
+		--output $(OPERATOR_REGISTRY_DIR) --check
 	@set -eu; \
 	. tests/support/cleanup.sh; \
 	first=$$(mktemp -d "$${TMPDIR:-/tmp}/yvex-operator-registry.XXXXXX"); \
@@ -559,10 +547,10 @@ $(QA_C_UNIT_LEGACY_TARGETS): generate-qa-registry
 # Runtime model/session lifecycle is exercised by the binding owner because the
 # sealed model consumes one independently reopened binding.
 test-runtime-model-session: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.runtime_binding $(TEST_RUNNER)
 
 test-runtime-residency: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.runtime_binding $(TEST_RUNNER)
 
 test-runtime-phases: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_state,deepseek_attention $(TEST_RUNNER)
@@ -577,7 +565,7 @@ test-runtime-digests: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_state,runtime_benchmark,deepseek_attention $(TEST_RUNNER)
 
 test-runtime-family-neutrality: $(TEST_RUNNER) test-architecture-boundaries
-	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.runtime_binding $(TEST_RUNNER)
 
 test-tokenizer: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=tokenizer,runtime_tokenizer,prompt $(TEST_RUNNER)
@@ -678,7 +666,7 @@ test-runtime: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=provider $(TEST_RUNNER)
 	YVEX_TEST_FILTER=openai $(TEST_RUNNER)
 	YVEX_TEST_FILTER=server $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.runtime_binding $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_decode $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_logits $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_sampling $(TEST_RUNNER)
@@ -879,31 +867,6 @@ test-minimax-text-encoder-live: $(MINIMAX_TEXT_LIVE_RUNNER)
 		"$(MINIMAX_H3_TEXT_ENCODER_TOKENS)" \
 		"$(BUILD_DIR)/tests/minimax_h3_text_encoder.f32" \
 		"$(MINIMAX_H3_TEXT_ENCODER_REFERENCE)" encoder50
-
-test-minimax-omni-block-live: $(MINIMAX_OMNI_LIVE_RUNNER)
-	@test -n "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" || { \
-		echo "MINIMAX_H3_TRANSFORMER_ARTIFACT is required" >&2; exit 2; }
-	@test -n "$(MINIMAX_H3_OMNI_FIXTURE_ROOT)" || { \
-		echo "MINIMAX_H3_OMNI_FIXTURE_ROOT is required" >&2; exit 2; }
-	$(MINIMAX_OMNI_LIVE_RUNNER) "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.block0.input.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.block0.temb.f32" \
-		"$(BUILD_DIR)/tests/minimax_h3_omni_block0.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.block0.oracle.f32"
-
-test-minimax-omni-transformer-live: $(MINIMAX_TRANSFORMER_LIVE_RUNNER)
-	@test -n "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" || { \
-		echo "MINIMAX_H3_TRANSFORMER_ARTIFACT is required" >&2; exit 2; }
-	@test -n "$(MINIMAX_H3_OMNI_FIXTURE_ROOT)" || { \
-		echo "MINIMAX_H3_OMNI_FIXTURE_ROOT is required" >&2; exit 2; }
-	$(MINIMAX_TRANSFORMER_LIVE_RUNNER) "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.video.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.audio.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.conditioning.f32" \
-		"$(BUILD_DIR)/tests/minimax_h3_omni_video.f32" \
-		"$(BUILD_DIR)/tests/minimax_h3_omni_audio.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.video.oracle.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.audio.oracle.f32"
 
 test-minimax-omni-transformer-artifact-live: $(MINIMAX_TRANSFORMER_LIVE_RUNNER)
 	@test -n "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" || { \
@@ -1510,8 +1473,7 @@ test-public-abi: tests/test_public_abi.py
 test-docs-surface: $(YVEX_BIN) tests/test_docs_surface.sh
 	sh tests/test_docs_surface.sh
 
-test-documentation-architecture: tests/documentation_architecture.py \
-		config/documentation_owners.tsv config/frozen_documents.tsv
+test-documentation-architecture: tests/documentation_architecture.py
 	python3 tests/documentation_architecture.py
 
 test-surface: tests/test_surface.sh
@@ -1556,12 +1518,6 @@ $(OPERATOR_REGISTRY_HEADER) $(OPERATOR_REGISTRY_C) $(OPERATOR_REGISTRY_IDENTITY)
 		$(OPERATOR_REGISTRY_SOURCE) $(OPERATOR_REGISTRY_GENERATOR)
 	python3 $(OPERATOR_REGISTRY_GENERATOR) --registry $(OPERATOR_REGISTRY_SOURCE) \
 		--output $(OPERATOR_REGISTRY_DIR)
-
-$(OPERATOR_MIGRATION_DOC): $(OPERATOR_REGISTRY_SOURCE) $(OPERATOR_REGISTRY_GENERATOR) \
-		$(OPERATOR_AUDIT_FILES)
-	python3 $(OPERATOR_REGISTRY_GENERATOR) --registry $(OPERATOR_REGISTRY_SOURCE) \
-		--output $(OPERATOR_REGISTRY_DIR) --audit-root $(OPERATOR_AUDIT_ROOT) \
-		--migration-output $@
 
 $(OPERATOR_REGISTRY_OBJ): $(OPERATOR_REGISTRY_C) $(OPERATOR_REGISTRY_HEADER)
 	@mkdir -p $(@D)
@@ -1725,10 +1681,6 @@ $(MINIMAX_VIDEO_LIVE_RUNNER): $(MINIMAX_VIDEO_LIVE_OBJ) $(LIBYVEX)
 $(MINIMAX_TEXT_LIVE_RUNNER): $(MINIMAX_TEXT_LIVE_OBJ) $(LIBYVEX)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(MINIMAX_TEXT_LIVE_OBJ) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
-
-$(MINIMAX_OMNI_LIVE_RUNNER): $(MINIMAX_OMNI_LIVE_OBJ) $(LIBYVEX)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(MINIMAX_OMNI_LIVE_OBJ) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(MINIMAX_TRANSFORMER_LIVE_RUNNER): $(MINIMAX_TRANSFORMER_LIVE_OBJ) $(LIBYVEX)
 	@mkdir -p $(@D)

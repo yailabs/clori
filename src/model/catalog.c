@@ -675,7 +675,9 @@ static int library_profile_present(const yvex_model_registry_entry *entry)
            library_text(entry->runtime_binding)[0] ||
            library_text(entry->runtime_target)[0] ||
            library_text(entry->runtime_backend)[0] ||
-           library_text(entry->runtime_mode)[0] || entry->runtime_context;
+           library_text(entry->runtime_engine_kind)[0] ||
+           library_text(entry->runtime_execution_strategy)[0] ||
+           entry->runtime_context;
 }
 
 static int library_profile_add(library_model *model,
@@ -697,6 +699,7 @@ static int library_profile_add(library_model *model,
     }
     fact = &model->profiles[model->profile_count++];
     memset(fact, 0, sizeof(*fact));
+    fact->schema_version = YVEX_MODEL_RUNTIME_PROFILE_SCHEMA_CURRENT;
     local_copy(fact->alias, sizeof(fact->alias), entry->alias);
     local_copy(fact->profile, sizeof(fact->profile), entry->runtime_profile);
     local_copy(fact->installation, sizeof(fact->installation), entry->runtime_installation);
@@ -706,7 +709,10 @@ static int library_profile_add(library_model *model,
     local_copy(fact->runtime_binding, sizeof(fact->runtime_binding), entry->runtime_binding);
     local_copy(fact->runtime_target, sizeof(fact->runtime_target), entry->runtime_target);
     local_copy(fact->backend, sizeof(fact->backend), entry->runtime_backend);
-    local_copy(fact->generation_mode, sizeof(fact->generation_mode), entry->runtime_mode);
+    local_copy(fact->engine_kind, sizeof(fact->engine_kind),
+               entry->runtime_engine_kind);
+    local_copy(fact->execution_strategy, sizeof(fact->execution_strategy),
+               entry->runtime_execution_strategy);
     fact->context_capacity = entry->runtime_context;
     yvex_error_clear(&admission);
     /* Startup readiness belongs to the canonical profile validator.  The legacy
