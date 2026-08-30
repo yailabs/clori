@@ -450,15 +450,21 @@ static int neutral_greedy(yvex_backend *backend, const yvex_device_tensor *logit
     return YVEX_ERR_UNSUPPORTED;
 }
 
-static int neutral_transformer_workspace(unsigned long long rows,
-                                         unsigned long long heads,
-                                         unsigned long long width,
-                                         unsigned long long history,
+static int neutral_transformer_workspace(
+                                         const yvex_transformer_attention_requirement *request,
                                          unsigned long long *bytes,
                                          yvex_error *err)
 {
-    (void)heads; (void)width; (void)history;
-    return neutral_workspace(rows, bytes, err);
+    return neutral_workspace(request ? request->tokens : 0ull, bytes, err);
+}
+
+static int neutral_transformer_attention(
+    yvex_backend *backend, const yvex_transformer_attention_request *request,
+    yvex_backend_operation_facts *facts, yvex_error *err)
+{
+    (void)backend; (void)request; (void)err;
+    if (facts) *facts = (yvex_backend_operation_facts){0};
+    return YVEX_ERR_UNSUPPORTED;
 }
 
 int main(void)
@@ -468,11 +474,13 @@ int main(void)
         .select_greedy_rows = neutral_greedy,
     };
     const yvex_backend_transformer_operations transformer = {
-        .gqa_workspace_required = neutral_transformer_workspace,
+        .attention_workspace_required = neutral_transformer_workspace,
+        .attention_execute = neutral_transformer_attention,
     };
     const yvex_backend_encoded_operations encoded = {0};
     return !sampling.workspace_required || !sampling.select_greedy_rows ||
-           !transformer.gqa_workspace_required || encoded.matvec || encoded.gather;
+           !transformer.attention_workspace_required || !transformer.attention_execute ||
+           encoded.matvec || encoded.gather;
 }
 EOF
 

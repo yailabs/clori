@@ -92,6 +92,43 @@ static int joint_facts_add(yvex_transformer_joint_block_result *total,
            yvex_core_u64_add(total->d2h_bytes, part->d2h_bytes, &total->d2h_bytes);
 }
 
+static int joint_exact_attention(
+    yvex_backend *backend, const yvex_device_tensor *query,
+    const yvex_device_tensor *key, const yvex_device_tensor *value,
+    yvex_device_tensor *output, unsigned long long tokens,
+    unsigned long long heads, yvex_backend_operation_facts *facts,
+    yvex_error *err)
+{
+    const yvex_backend_transformer_operations *operations =
+        yvex_backend_transformer_operations_get(backend);
+    yvex_transformer_attention_request request = {
+        .requirement = {
+            .tokens = tokens,
+            .query_heads = heads,
+            .key_value_heads = heads,
+            .head_dimension = JOINT_HEAD_DIM,
+            .query_dtype = YVEX_DTYPE_F32,
+            .key_dtype = YVEX_DTYPE_F32,
+            .value_dtype = YVEX_DTYPE_F32,
+            .output_dtype = YVEX_DTYPE_F32,
+            .layout = YVEX_TRANSFORMER_ATTENTION_LAYOUT_TOKEN_HEAD_DIM,
+            .mask = YVEX_TRANSFORMER_ATTENTION_MASK_FULL,
+            .numeric_contract = YVEX_TRANSFORMER_ATTENTION_NUMERIC_EXACT_F32,
+            .deterministic = 1,
+        },
+        .query = query,
+        .key = key,
+        .value = value,
+        .output = output,
+    };
+    if (!operations || !operations->attention_execute) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.transformer.joint.attention",
+                       "the admitted backend lacks exact attention execution");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    return operations->attention_execute(backend, &request, facts, err);
+}
+
 static const yvex_transformer_joint_encoded_weight *joint_weight(
     const joint_run *run, yvex_transformer_joint_weight_slot slot)
 {
@@ -576,10 +613,10 @@ static int joint_attention(joint_run *run, yvex_error *err)
                                  JOINT_DEVICE_KEY, run->rows,
                                  JOINT_ATTENTION_WIDTH, err);
     if (rc == YVEX_OK)
-        rc = yvex_cuda_transformer_gqa(
+        rc = joint_exact_attention(
             run->backend, run->device[JOINT_DEVICE_QUERY], run->device[JOINT_DEVICE_KEY],
             run->device[JOINT_DEVICE_VALUE], run->device[JOINT_DEVICE_ATTENTION],
-            run->rows, JOINT_HEADS, JOINT_HEADS, JOINT_HEAD_DIM, 0, &facts, err);
+            run->rows, JOINT_HEADS, &facts, err);
     if (rc == YVEX_OK && !joint_facts_add(&run->facts, &facts))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.facts",
                                  "Omni full-attention accounting overflowed");
@@ -1233,10 +1270,10 @@ static int refiner_block(refiner_run *run, unsigned long long block, yvex_error 
                                    YVEX_TRANSFORMER_JOINT_STAGE_KEY_NORM,
                                    REFINER_KEY, run->rows, JOINT_ATTENTION_WIDTH, err);
     if (rc == YVEX_OK)
-        rc = yvex_cuda_transformer_gqa(
+        rc = joint_exact_attention(
             run->backend, run->device[REFINER_QUERY], run->device[REFINER_KEY],
             run->device[REFINER_VALUE], run->device[REFINER_ATTENTION], run->rows,
-            JOINT_HEADS, JOINT_HEADS, JOINT_HEAD_DIM, 0, &part, err);
+            JOINT_HEADS, &part, err);
     if (rc == YVEX_OK && !transformer_facts_add(run->facts, &part)) rc = YVEX_ERR_BOUNDS;
     if (rc == YVEX_OK)
         rc = refiner_stage_observe(run, block + 1ull,

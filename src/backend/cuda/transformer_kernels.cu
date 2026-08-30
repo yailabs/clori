@@ -196,61 +196,6 @@ extern "C" __global__ void yvex_gqa_f32(
     }
 }
 
-/* Preserve BF16 source values in F32 while changing to the head-major GEMM layout. */
-extern "C" __global__ void yvex_gqa_pack_f32(
-    const float *input, float *output, unsigned long long tokens,
-    unsigned long long heads, unsigned long long head_dim, int *status)
-{
-    unsigned long long index =
-        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned long long elements = tokens * heads * head_dim, token, head, dim;
-    float value;
-    if (!input || !output || !status || *status || index >= elements) return;
-    token = index / (heads * head_dim);
-    head = (index / head_dim) % heads;
-    dim = index % head_dim;
-    value = input[index];
-    if (!isfinite(value)) {
-        atomicCAS(status, 0, 1);
-        return;
-    }
-    output[(head * tokens + token) * head_dim + dim] = value;
-}
-
-/* One warp owns one F32-published score so the fallback reduction order is invariant. */
-extern "C" __global__ void yvex_gqa_score_f32(
-    const float *query, const float *key, float *scores,
-    unsigned long long tokens, unsigned long long heads,
-    unsigned long long query_rows, unsigned long long head_dim, float scale)
-{
-    const unsigned int warp = threadIdx.x / warpSize, lane = threadIdx.x % warpSize;
-    const unsigned int warps = blockDim.x / warpSize;
-    unsigned long long task = (unsigned long long)blockIdx.x * warps + warp;
-    unsigned long long source, local_query, head, dim;
-    float dot = 0.0f;
-    if (!query || !key || !scores || !tokens || !heads || !query_rows ||
-        !head_dim || task >= heads * query_rows * tokens) return;
-    source = task % tokens;
-    local_query = (task / tokens) % query_rows;
-    head = task / (tokens * query_rows);
-    for (dim = lane; dim < head_dim; dim += warpSize) {
-        float q = query[(head * tokens + local_query) * head_dim + dim];
-        float k = key[(head * tokens + source) * head_dim + dim];
-        dot += q * k;
-    }
-    for (unsigned int offset = warpSize >> 1; offset; offset >>= 1)
-        dot += __shfl_down_sync(0xffffffffu, dot, offset);
-    if (!lane) scores[task] = dot * scale;
-}
-
-extern "C" __global__ void yvex_gqa_scale_f32(
-    float *values, unsigned long long count, float scale)
-{
-    unsigned long long index =
-        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (values && index < count) values[index] *= scale;
-}
-
 /* Source attention normalizes in F32; only the completed attention output is BF16-rounded. */
 extern "C" __global__ void yvex_gqa_softmax_f32(
     const float *scores, float *probabilities,
@@ -339,45 +284,14 @@ extern "C" __global__ void yvex_gqa_softmax_warp_f32(
     }
 }
 
-/* Publish P*V with a fixed source-order accumulation for every output element. */
-extern "C" __global__ void yvex_gqa_value_f32(
-    const float *probabilities, const float *value, float *output,
-    unsigned long long tokens, unsigned long long heads,
-    unsigned long long query_rows, unsigned long long head_dim, int *status)
-{
-    unsigned long long task =
-        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned long long dim, local_query, head, source;
-    float accumulated = 0.0f;
-    if (!probabilities || !value || !output || !status || *status || !tokens ||
-        !heads || !query_rows || !head_dim || task >= heads * query_rows * head_dim)
-        return;
-    dim = task % head_dim;
-    local_query = (task / head_dim) % query_rows;
-    head = task / (head_dim * query_rows);
-    for (source = 0ull; source < tokens; ++source)
-        accumulated += probabilities[(head * query_rows + local_query) * tokens + source] *
-                       value[(head * tokens + source) * head_dim + dim];
-    if (!isfinite(accumulated)) {
-        atomicCAS(status, 0, 1);
-        return;
-    }
-    output[(head * tokens + local_query) * head_dim + dim] = accumulated;
-}
-
-/* Restore the batched GEMM result to the canonical token/head/dimension layout. */
-extern "C" __global__ void yvex_gqa_unpack_f32(
-    const float *input, float *output, unsigned long long tokens,
-    unsigned long long heads, unsigned long long head_dim)
+extern "C" __global__ void yvex_attention_validate_f32(
+    const float *values, unsigned long long count, int *status)
 {
     unsigned long long index =
-        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned long long elements = tokens * heads * head_dim, token, head, dim;
-    if (!input || !output || index >= elements) return;
-    token = index / (heads * head_dim);
-    head = (index / head_dim) % heads;
-    dim = index % head_dim;
-    output[index] = input[(head * tokens + token) * head_dim + dim];
+        (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
+        (unsigned long long)threadIdx.x;
+    if (!values || !status || *status || index >= count) return;
+    if (!isfinite(values[index])) atomicCAS(status, 0, 1);
 }
 
 /* Fuse the elementwise SiLU gate product used by dense transformer MLPs. */

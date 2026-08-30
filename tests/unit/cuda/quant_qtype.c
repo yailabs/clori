@@ -1791,6 +1791,8 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
 
 static int quant_cuda_dense_transformer(yvex_backend *backend)
 {
+    const yvex_backend_transformer_operations *operations =
+        yvex_backend_transformer_operations_get(backend);
     yvex_device_tensor *rotary = NULL, *cosines = NULL, *sines = NULL;
     yvex_device_tensor *query = NULL, *key = NULL, *value = NULL, *attention = NULL;
     yvex_device_tensor *gate = NULL, *up = NULL, *product = NULL;
@@ -1804,8 +1806,24 @@ static int quant_cuda_dense_transformer(yvex_backend *backend)
     float norm_values[4] = {1.0f, -2.0f, 3.0f, -4.0f};
     float norm_scales[4] = {0.5f, 1.0f, 1.5f, 2.0f}, norm_result[4];
     yvex_backend_operation_facts facts;
+    yvex_transformer_attention_request attention_request = {
+        .requirement = {
+            .tokens = 2ull,
+            .query_heads = 2ull,
+            .key_value_heads = 1ull,
+            .head_dimension = 2ull,
+            .query_dtype = YVEX_DTYPE_F32,
+            .key_dtype = YVEX_DTYPE_F32,
+            .value_dtype = YVEX_DTYPE_F32,
+            .output_dtype = YVEX_DTYPE_F32,
+            .layout = YVEX_TRANSFORMER_ATTENTION_LAYOUT_TOKEN_HEAD_DIM,
+            .mask = YVEX_TRANSFORMER_ATTENTION_MASK_CAUSAL,
+            .numeric_contract = YVEX_TRANSFORMER_ATTENTION_NUMERIC_EXACT_F32,
+            .deterministic = 1,
+        },
+    };
     yvex_error err;
-    unsigned long long index;
+    unsigned long long index, workspace_bytes = ULLONG_MAX;
     int rc;
 
     for (index = 0ull; index < 4ull; ++index) {
@@ -1882,8 +1900,19 @@ static int quant_cuda_dense_transformer(yvex_backend *backend)
             quant_cuda_tensor(backend, "attention", YVEX_DTYPE_F32, NULL,
                               sizeof(attention_output), &attention, &err),
         "dense transformer GQA tensors allocate");
-    rc = yvex_cuda_transformer_gqa(
-        backend, query, key, value, attention, 2ull, 2ull, 1ull, 2ull, 1, &facts, &err);
+    attention_request.query = query;
+    attention_request.key = key;
+    attention_request.value = value;
+    attention_request.output = attention;
+    YVEX_TEST_ASSERT(
+        operations && operations->attention_workspace_required &&
+            operations->attention_execute &&
+            operations->attention_workspace_required(
+                &attention_request.requirement, &workspace_bytes, &err) == YVEX_OK &&
+            workspace_bytes == 0ull,
+        "grouped-query fallback requires no tiled score workspace");
+    rc = operations->attention_execute(
+        backend, &attention_request, &facts, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && facts.kernel_launches == 1ull &&
             facts.device_synchronizations == 1ull &&
@@ -1902,9 +1931,9 @@ static int quant_cuda_dense_transformer(yvex_backend *backend)
             YVEX_TEST_ASSERT(fabsf(attention_output[index * 2ull] - expected0) < 1e-6f &&
                                  fabsf(attention_output[index * 2ull + 1ull] - expected1) < 1e-6f,
                              "second causal row uses stable grouped-query softmax");
-        rc = yvex_cuda_transformer_gqa(
-            backend, query, key, value, attention, 2ull, 2ull, 1ull, 2ull, 0,
-            &facts, &err);
+        attention_request.requirement.mask = YVEX_TRANSFORMER_ATTENTION_MASK_FULL;
+        rc = operations->attention_execute(
+            backend, &attention_request, &facts, &err);
         YVEX_TEST_ASSERT(
             rc == YVEX_OK && yvex_backend_tensor_read(
                                  backend, attention, attention_output,
@@ -1968,6 +1997,66 @@ static int quant_cuda_dense_transformer(yvex_backend *backend)
     return 0;
 }
 
+static yvex_transformer_attention_requirement quant_attention_requirement(
+    unsigned long long tokens, unsigned long long query_heads,
+    unsigned long long key_value_heads, unsigned long long head_dimension,
+    int causal)
+{
+    return (yvex_transformer_attention_requirement){
+        .tokens = tokens,
+        .query_heads = query_heads,
+        .key_value_heads = key_value_heads,
+        .head_dimension = head_dimension,
+        .query_dtype = YVEX_DTYPE_F32,
+        .key_dtype = YVEX_DTYPE_F32,
+        .value_dtype = YVEX_DTYPE_F32,
+        .output_dtype = YVEX_DTYPE_F32,
+        .layout = YVEX_TRANSFORMER_ATTENTION_LAYOUT_TOKEN_HEAD_DIM,
+        .mask = causal ? YVEX_TRANSFORMER_ATTENTION_MASK_CAUSAL
+                       : YVEX_TRANSFORMER_ATTENTION_MASK_FULL,
+        .numeric_contract = YVEX_TRANSFORMER_ATTENTION_NUMERIC_EXACT_F32,
+        .deterministic = 1,
+    };
+}
+
+static int quant_attention_execute(
+    yvex_backend *backend, const yvex_device_tensor *query,
+    const yvex_device_tensor *key, const yvex_device_tensor *value,
+    yvex_device_tensor *output, unsigned long long tokens,
+    unsigned long long query_heads, unsigned long long key_value_heads,
+    unsigned long long head_dimension, int causal,
+    yvex_backend_operation_facts *facts, yvex_error *err)
+{
+    const yvex_backend_transformer_operations *operations =
+        yvex_backend_transformer_operations_get(backend);
+    yvex_transformer_attention_request request = {
+        .requirement = quant_attention_requirement(
+            tokens, query_heads, key_value_heads, head_dimension, causal),
+        .query = query,
+        .key = key,
+        .value = value,
+        .output = output,
+    };
+    if (!operations || !operations->attention_execute) return YVEX_ERR_UNSUPPORTED;
+    return operations->attention_execute(backend, &request, facts, err);
+}
+
+static int quant_attention_workspace(
+    yvex_backend *backend, unsigned long long tokens,
+    unsigned long long query_heads, unsigned long long key_value_heads,
+    unsigned long long head_dimension, unsigned long long *bytes,
+    yvex_error *err)
+{
+    const yvex_backend_transformer_operations *operations =
+        yvex_backend_transformer_operations_get(backend);
+    yvex_transformer_attention_requirement requirement =
+        quant_attention_requirement(
+            tokens, query_heads, key_value_heads, head_dimension, 0);
+    if (!operations || !operations->attention_workspace_required)
+        return YVEX_ERR_UNSUPPORTED;
+    return operations->attention_workspace_required(&requirement, bytes, err);
+}
+
 static void quant_gqa_reference(const float *query, const float *key, const float *value,
                                 float *output, unsigned int tokens, unsigned int head_dim,
                                 int causal)
@@ -1998,7 +2087,7 @@ static void quant_gqa_reference(const float *query, const float *key, const floa
     }
 }
 
-static int quant_cuda_gqa_tiles(yvex_backend *backend)
+static int quant_cuda_attention_small(yvex_backend *backend)
 {
     enum { TOKENS = 5u, HEAD_DIM = 128u, ELEMENTS = TOKENS * HEAD_DIM };
     yvex_device_tensor *query = NULL, *key = NULL, *value = NULL, *output = NULL;
@@ -2022,39 +2111,39 @@ static int quant_cuda_gqa_tiles(yvex_backend *backend)
                               values, sizeof(values), &value, &err) &&
             quant_cuda_tensor(backend, "gqa-tile-output", YVEX_DTYPE_F32,
                               NULL, sizeof(result), &output, &err),
-        "multi-tile GQA tensors allocate");
+        "small exact-attention tensors allocate");
     YVEX_TEST_ASSERT(
-        yvex_cuda_transformer_gqa(
+        quant_attention_execute(
             backend, query, key, value, output, TOKENS, 1ull, 1ull, HEAD_DIM, 1,
             &facts, &err) == YVEX_OK &&
-            facts.kernel_launches == 8ull && facts.accelerated_matrix_launches == 2ull &&
+            facts.kernel_launches == 4ull && facts.accelerated_matrix_launches == 2ull &&
             facts.device_synchronizations == 1ull &&
             yvex_backend_tensor_read(
                 backend, output, result, sizeof(result), &err) == YVEX_OK,
-        "causal source-published GQA crosses the four-query tile boundary");
+        "causal exact attention publishes the admitted small geometry");
     quant_gqa_reference(query_values, key_values, values, reference, TOKENS, HEAD_DIM, 1);
     for (index = 0u; index < ELEMENTS; ++index)
         YVEX_TEST_ASSERT(fabsf(result[index] - reference[index]) < 2e-5f,
-                         "causal online GQA matches the stable scalar oracle");
+                         "causal exact attention matches the stable scalar oracle");
     YVEX_TEST_ASSERT(
-        yvex_cuda_transformer_gqa(
+        quant_attention_execute(
             backend, query, key, value, output, TOKENS, 1ull, 1ull, HEAD_DIM, 0,
             &facts, &err) == YVEX_OK &&
-            facts.kernel_launches == 8ull && facts.accelerated_matrix_launches == 2ull &&
+            facts.kernel_launches == 4ull && facts.accelerated_matrix_launches == 2ull &&
             facts.device_synchronizations == 1ull &&
             yvex_backend_tensor_read(
                 backend, output, result, sizeof(result), &err) == YVEX_OK,
-        "non-causal source-published GQA crosses the four-query tile boundary");
+        "full exact attention publishes the admitted small geometry");
     quant_gqa_reference(query_values, key_values, values, reference, TOKENS, HEAD_DIM, 0);
     for (index = 0u; index < ELEMENTS; ++index)
         YVEX_TEST_ASSERT(fabsf(result[index] - reference[index]) < 2e-5f,
-                         "non-causal online GQA matches the stable scalar oracle");
+                         "full exact attention matches the stable scalar oracle");
     YVEX_TEST_ASSERT(
         yvex_backend_tensor_release(backend, &query, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &key, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &value, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK,
-        "multi-tile GQA tensors release cleanly");
+        "small exact-attention tensors release cleanly");
     return 0;
 }
 
@@ -2105,13 +2194,25 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
     unsigned long long released_workspace_bytes = 0ull;
     unsigned long long aligned_workspace_bytes = 0ull;
     unsigned long long small_workspace_bytes = 0ull;
+    yvex_transformer_attention_requirement rejected_requirement;
+    float max_abs, max_relative;
+    unsigned long long mismatch_count, first_mismatch;
     unsigned int index;
     int causal;
 
     const yvex_backend_transformer_operations *operations =
         yvex_backend_transformer_operations_get(backend);
-    YVEX_TEST_ASSERT(operations && operations->gqa_workspace_required,
-                     "CUDA publishes transformer workspace planning");
+    YVEX_TEST_ASSERT(operations && operations->attention_workspace_required &&
+                         operations->attention_execute,
+                     "CUDA publishes exact-attention planning and execution");
+    rejected_requirement = quant_attention_requirement(
+        TOKENS, 1ull, 1ull, HEAD_DIM, 0);
+    rejected_requirement.output_dtype = YVEX_DTYPE_BF16;
+    YVEX_TEST_ASSERT(
+        operations->attention_workspace_required(
+            &rejected_requirement, &small_workspace_bytes, &err) == YVEX_ERR_UNSUPPORTED &&
+            small_workspace_bytes == 0ull,
+        "exact-attention admission rejects a silent precision change");
 
     for (index = 0u; index < ELEMENTS; ++index) {
         query_values[index] = yvex_quant_bf16_decode(
@@ -2130,58 +2231,97 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
                               values, sizeof(values), &value, &err) &&
             quant_cuda_tensor(backend, "gqa-blas-output", YVEX_DTYPE_F32,
                               NULL, sizeof(result), &output, &err),
-        "chunked source-published GQA tensors allocate");
+        "tiled exact-attention tensors allocate");
     YVEX_TEST_ASSERT(
-        operations->gqa_workspace_required(
-            TOKENS, 1ull, 1ull, HEAD_DIM, &workspace_bytes, &err) == YVEX_OK &&
+        quant_attention_workspace(
+            backend, TOKENS, 1ull, 1ull, HEAD_DIM, &workspace_bytes, &err) == YVEX_OK &&
             workspace_bytes > sizeof(result) &&
-            operations->gqa_workspace_required(
-                5ull, 1ull, 1ull, HEAD_DIM, &small_workspace_bytes, &err) == YVEX_OK &&
-            small_workspace_bytes == 12804ull &&
-            operations->gqa_workspace_required(
-                21741ull, 56ull, 56ull, HEAD_DIM, &source_workspace_bytes, &err) == YVEX_OK &&
-            source_workspace_bytes == 3116789764ull &&
+            quant_attention_workspace(
+                backend, 5ull, 1ull, 1ull, HEAD_DIM,
+                &small_workspace_bytes, &err) == YVEX_OK &&
+            small_workspace_bytes == 260ull &&
+            quant_attention_workspace(
+                backend, 21741ull, 56ull, 56ull, HEAD_DIM,
+                &source_workspace_bytes, &err) == YVEX_OK &&
+            source_workspace_bytes == 2493431812ull &&
             source_workspace_bytes < 4ull * 1024ull * 1024ull * 1024ull &&
-            operations->gqa_workspace_required(
-                106238ull, 56ull, 56ull, HEAD_DIM,
+            quant_attention_workspace(
+                backend, 106238ull, 56ull, 56ull, HEAD_DIM,
                 &released_workspace_bytes, &err) == YVEX_OK &&
-            released_workspace_bytes == 15230279684ull &&
+            released_workspace_bytes == 12184223748ull &&
             released_workspace_bytes < 16ull * 1024ull * 1024ull * 1024ull &&
-            operations->gqa_workspace_required(
-                129ull, 1ull, 1ull, 33ull, &aligned_workspace_bytes, &err) == YVEX_OK &&
-            aligned_workspace_bytes == 134660ull &&
+            quant_attention_workspace(
+                backend, 129ull, 1ull, 1ull, 33ull,
+                &aligned_workspace_bytes, &err) == YVEX_OK &&
+            aligned_workspace_bytes == 66820ull &&
             quant_cuda_tensor(backend, "gqa-blas-workspace", YVEX_DTYPE_I8,
                               NULL, workspace_bytes, &workspace, &err) &&
             yvex_backend_workspace_attach(backend, workspace, 1ull, &err) == YVEX_OK,
-        "chunked source-published GQA admits one exact reusable workspace");
+        "tiled exact attention admits one reusable in-place score workspace");
     for (causal = 0; causal <= 1; ++causal) {
         YVEX_TEST_ASSERT(
-            yvex_cuda_transformer_gqa(
+            quant_attention_execute(
                 backend, query, key, value, output, TOKENS, 1ull, 1ull,
                 HEAD_DIM, causal, &facts, &err) == YVEX_OK &&
-                facts.kernel_launches == 24ull && facts.accelerated_matrix_launches == 10ull &&
+                facts.kernel_launches == 4ull && facts.accelerated_matrix_launches == 2ull &&
                 facts.device_synchronizations == 1ull &&
                 facts.d2h_bytes == sizeof(int) && facts.temporary_bytes == workspace_bytes &&
                 yvex_backend_tensor_read(
                     backend, output, result, sizeof(result), &err) == YVEX_OK,
-            "chunked source-published GQA publishes bounded tensor-core execution facts");
+            "tiled exact attention publishes bounded accelerated execution facts");
         quant_gqa_source_reference(query_values, key_values, values, reference,
                                    TOKENS, HEAD_DIM, causal);
-        for (index = 0u; index < ELEMENTS; ++index)
-            YVEX_TEST_ASSERT(
-                fabsf(result[index] - reference[index]) <=
-                    2e-3f * (1.0f + fabsf(reference[index])),
-                "chunked source-published GQA matches the scalar mixed-precision oracle");
+        max_abs = 0.0f;
+        max_relative = 0.0f;
+        mismatch_count = 0ull;
+        first_mismatch = ULLONG_MAX;
+        for (index = 0u; index < ELEMENTS; ++index) {
+            float absolute = fabsf(result[index] - reference[index]);
+            float relative = absolute / (1.0f + fabsf(reference[index]));
+            if (absolute > max_abs) max_abs = absolute;
+            if (relative > max_relative) max_relative = relative;
+            if (absolute > 2e-3f * (1.0f + fabsf(reference[index]))) {
+                if (!mismatch_count) first_mismatch = index;
+                ++mismatch_count;
+            }
+        }
+        YVEX_TEST_ASSERT(
+            mismatch_count == 0ull,
+            "tiled exact attention matches the scalar mixed-precision oracle");
+        printf("cuda exact attention rows=%u causal=%d max_abs_error=%.9g "
+               "max_relative_error=%.9g mismatches=%llu first_mismatch=%s\n",
+               TOKENS, causal, (double)max_abs, (double)max_relative,
+               mismatch_count, first_mismatch == ULLONG_MAX ? "none" : "present");
     }
     memcpy(repeated, result, sizeof(repeated));
     YVEX_TEST_ASSERT(
-        yvex_cuda_transformer_gqa(
+        quant_attention_execute(
             backend, query, key, value, output, TOKENS, 1ull, 1ull,
             HEAD_DIM, 1, &facts, &err) == YVEX_OK &&
             yvex_backend_tensor_read(
                 backend, output, result, sizeof(result), &err) == YVEX_OK &&
             memcmp(repeated, result, sizeof(result)) == 0,
-        "chunked source-published GQA repeats byte-identically");
+        "tiled exact attention repeats byte-identically");
+    query_values[0] = NAN;
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_write(
+            backend, query, query_values, sizeof(query_values), &err) == YVEX_OK &&
+            quant_attention_execute(
+                backend, query, key, value, output, TOKENS, 1ull, 1ull,
+                HEAD_DIM, 0, &facts, &err) == YVEX_ERR_FORMAT,
+        "tiled exact attention rejects non-finite scores");
+    query_values[0] = yvex_quant_bf16_decode(
+        yvex_quant_bf16_encode(-15.0f / 16.0f));
+    values[0] = NAN;
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_write(
+            backend, query, query_values, sizeof(query_values), &err) == YVEX_OK &&
+            yvex_backend_tensor_write(
+                backend, value, values, sizeof(values), &err) == YVEX_OK &&
+            quant_attention_execute(
+                backend, query, key, value, output, TOKENS, 1ull, 1ull,
+                HEAD_DIM, 0, &facts, &err) == YVEX_ERR_FORMAT,
+        "tiled exact attention rejects a non-finite weighted output");
     yvex_backend_workspace_detach(backend);
     YVEX_TEST_ASSERT(
         yvex_backend_tensor_release(backend, &workspace, &err) == YVEX_OK &&
@@ -2189,7 +2329,111 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
             yvex_backend_tensor_release(backend, &key, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &value, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK,
-        "chunked source-published GQA tensors release cleanly");
+        "tiled exact-attention tensors release cleanly");
+    return 0;
+}
+
+static int quant_cuda_gqa_uniform_geometry(
+    yvex_backend *backend, unsigned long long tokens, unsigned long long heads,
+    unsigned long long expected_launches)
+{
+    enum { HEAD_DIM = 128u };
+    yvex_device_tensor *query = NULL, *key = NULL, *value = NULL;
+    yvex_device_tensor *output = NULL, *workspace = NULL;
+    yvex_backend_operation_facts facts;
+    yvex_error err;
+    unsigned long long elements, bytes, workspace_bytes = 0ull, index;
+    float *zeros = NULL, *ones = NULL, *result = NULL, *repeated = NULL;
+    float max_abs = 0.0f;
+    unsigned long long mismatches = 0ull;
+    int rc = YVEX_OK;
+
+    YVEX_TEST_ASSERT(tokens <= ULLONG_MAX / heads &&
+                         tokens * heads <= ULLONG_MAX / HEAD_DIM,
+                     "large exact-attention element extent fits");
+    elements = tokens * heads * HEAD_DIM;
+    YVEX_TEST_ASSERT(elements <= SIZE_MAX / sizeof(float),
+                     "large exact-attention byte extent fits host storage");
+    bytes = elements * sizeof(float);
+    zeros = (float *)calloc((size_t)elements, sizeof(float));
+    ones = (float *)malloc((size_t)bytes);
+    result = (float *)malloc((size_t)bytes);
+    repeated = (float *)malloc((size_t)bytes);
+    YVEX_TEST_ASSERT(zeros && ones && result && repeated,
+                     "large exact-attention oracle storage allocates");
+    for (index = 0ull; index < elements; ++index)
+        ones[index] = (float)((index / HEAD_DIM) % heads + 1ull);
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "attention-large-query", YVEX_DTYPE_F32,
+                          zeros, bytes, &query, &err) &&
+            quant_cuda_tensor(backend, "attention-large-key", YVEX_DTYPE_F32,
+                              zeros, bytes, &key, &err) &&
+            quant_cuda_tensor(backend, "attention-large-value", YVEX_DTYPE_F32,
+                              ones, bytes, &value, &err) &&
+            quant_cuda_tensor(backend, "attention-large-output", YVEX_DTYPE_F32,
+                              NULL, bytes, &output, &err) &&
+            quant_attention_workspace(
+                backend, tokens, heads, heads, HEAD_DIM,
+                &workspace_bytes, &err) == YVEX_OK &&
+            quant_cuda_tensor(backend, "attention-large-workspace", YVEX_DTYPE_I8,
+                              NULL, workspace_bytes, &workspace, &err) &&
+            yvex_backend_workspace_attach(backend, workspace, 1ull, &err) == YVEX_OK,
+        "large exact-attention tensors and retained workspace admit");
+    if (query && key && value && output && workspace)
+        rc = quant_attention_execute(
+            backend, query, key, value, output, tokens, heads, heads,
+            HEAD_DIM, 0, &facts, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && facts.kernel_launches == expected_launches &&
+            facts.accelerated_matrix_launches == 2ull * (expected_launches - 1ull) / 3ull &&
+            facts.device_synchronizations == 1ull &&
+            facts.temporary_bytes == workspace_bytes &&
+            yvex_backend_tensor_read(
+                backend, output, result, bytes, &err) == YVEX_OK,
+        "large exact-attention execution publishes bounded physical facts");
+    for (index = 0ull; index < elements; ++index) {
+        float expected = (float)((index / HEAD_DIM) % heads + 1ull);
+        float error = fabsf(result[index] - expected);
+        if (error > max_abs) max_abs = error;
+        if (error > 2e-3f) ++mismatches;
+    }
+    YVEX_TEST_ASSERT(mismatches == 0ull,
+                     "large exact-attention result matches the uniform analytic oracle");
+    YVEX_TEST_ASSERT(
+        quant_attention_execute(
+            backend, query, key, value, output, tokens, heads, heads,
+            HEAD_DIM, 0, &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(
+                backend, output, repeated, bytes, &err) == YVEX_OK &&
+            memcmp(result, repeated, (size_t)bytes) == 0,
+        "large exact-attention reuses workspace with byte-identical output");
+    printf("cuda exact attention rows=%llu heads=%llu workspace=%llu launches=%llu "
+           "max_abs_error=%.9g mismatches=%llu\n",
+           tokens, heads, workspace_bytes, facts.kernel_launches,
+           (double)max_abs, mismatches);
+    yvex_backend_workspace_detach(backend);
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &workspace, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &query, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &key, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &value, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK,
+        "large exact-attention resources release cleanly");
+    free(repeated);
+    free(result);
+    free(ones);
+    free(zeros);
+    return 0;
+}
+
+static int quant_cuda_gqa_large(yvex_backend *backend)
+{
+    YVEX_TEST_ASSERT(quant_cuda_gqa_uniform_geometry(backend, 65ull, 2ull, 4ull) == 0,
+                     "multi-head exact-attention layout qualifies");
+    YVEX_TEST_ASSERT(quant_cuda_gqa_uniform_geometry(backend, 5757ull, 1ull, 37ull) == 0,
+                     "intermediate exact-attention geometry qualifies");
+    YVEX_TEST_ASSERT(quant_cuda_gqa_uniform_geometry(backend, 21741ull, 1ull, 130ull) == 0,
+                     "canonical exact-attention geometry qualifies");
     return 0;
 }
 
@@ -2879,10 +3123,12 @@ int yvex_cuda_test_quant_qtype(void)
                      "transformer envelope physical facts");
     YVEX_TEST_ASSERT(quant_cuda_dense_transformer(backend) == 0,
                      "dense transformer activation primitives");
-    YVEX_TEST_ASSERT(quant_cuda_gqa_tiles(backend) == 0,
-                     "online grouped-query attention tiles");
+    YVEX_TEST_ASSERT(quant_cuda_attention_small(backend) == 0,
+                     "small exact-attention oracle");
     YVEX_TEST_ASSERT(quant_cuda_gqa_blas(backend) == 0,
-                     "chunked source-published tensor-core attention");
+                     "scalable exact accelerated attention");
+    YVEX_TEST_ASSERT(quant_cuda_gqa_large(backend) == 0,
+                     "large exact-attention qualification ladder");
     YVEX_TEST_ASSERT(quant_cuda_video_transformer(backend) == 0,
                      "video transformer activation primitives");
     YVEX_TEST_ASSERT(quant_cuda_dense_decoder(backend) == 0,

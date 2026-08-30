@@ -42,10 +42,12 @@ int yvex_cuda_transformer_final(
     unsigned long long residual_streams, double epsilon, double mhc_epsilon,
     yvex_device_tensor *pre_normalized, yvex_device_tensor *output,
     yvex_backend_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_gqa_workspace_required(
-    unsigned long long tokens, unsigned long long query_heads,
-    unsigned long long kv_heads, unsigned long long head_dim,
+int yvex_cuda_transformer_attention_workspace_required(
+    const yvex_transformer_attention_requirement *requirement,
     unsigned long long *bytes, yvex_error *err);
+int yvex_cuda_transformer_attention_execute(
+    yvex_backend *backend, const yvex_transformer_attention_request *request,
+    yvex_backend_operation_facts *facts, yvex_error *err);
 int yvex_cuda_transformer_dense_decoder_execute(
     yvex_backend *backend, const yvex_transformer_dense_decoder_request *request,
     yvex_transformer_dense_decoder_result *result, yvex_error *err);

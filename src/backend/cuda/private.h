@@ -274,8 +274,7 @@ typedef struct {
     CUfunction mlp_function;
     CUfunction attention_function;
     CUfunction rotary_half_function, rotary_half_plain_function, gqa_function;
-    CUfunction gqa_pack_value_function, gqa_score_function, gqa_scale_function, gqa_softmax_function;
-    CUfunction gqa_softmax_warp_function, gqa_value_function, gqa_unpack_function;
+    CUfunction gqa_softmax_function, gqa_softmax_warp_function, attention_validate_function;
     CUfunction silu_product_function, silu_function, gelu_function, timestep_embedding_function;
     CUfunction split_three_function, split_interleaved_function;
     CUfunction swiglu_split_function, swiglu_split_f32_function;

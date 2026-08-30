@@ -1072,6 +1072,7 @@ int yvex_component_joint_transformer_execute(
     yvex_runtime_component_session *session = NULL;
     yvex_transformer_joint_encoded_weight external[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {{0}};
     yvex_transformer_joint_encoded_weight *blocks = NULL;
+    yvex_transformer_attention_requirement attention = {0};
     yvex_backend_memory_stats before = {0}, after = {0};
     yvex_error observation;
     unsigned long long count, index, workspace_bytes = 0ull;
@@ -1113,7 +1114,8 @@ int yvex_component_joint_transformer_execute(
     if (rc == YVEX_OK) {
         transformer_operations = yvex_backend_transformer_operations_get(execution->backend);
         component_operations = yvex_backend_component_operations_get(execution->backend);
-        if (!transformer_operations || !transformer_operations->gqa_workspace_required ||
+        if (!transformer_operations || !transformer_operations->attention_workspace_required ||
+            !transformer_operations->attention_execute ||
             !component_operations || !component_operations->joint_transformer_execute) {
             yvex_error_set(err, YVEX_ERR_UNSUPPORTED,
                            "runtime.component.joint-transformer",
@@ -1121,11 +1123,22 @@ int yvex_component_joint_transformer_execute(
             rc = YVEX_ERR_UNSUPPORTED;
         }
     }
-    if (rc == YVEX_OK)
-        rc = transformer_operations->gqa_workspace_required(
-            request->packed_rows, request->recipe->attention_heads,
-            request->recipe->attention_heads, request->recipe->head_dimension,
-            &workspace_bytes, err);
+    if (rc == YVEX_OK) {
+        attention.tokens = request->packed_rows;
+        attention.query_heads = request->recipe->attention_heads;
+        attention.key_value_heads = request->recipe->attention_heads;
+        attention.head_dimension = request->recipe->head_dimension;
+        attention.query_dtype = YVEX_DTYPE_F32;
+        attention.key_dtype = YVEX_DTYPE_F32;
+        attention.value_dtype = YVEX_DTYPE_F32;
+        attention.output_dtype = YVEX_DTYPE_F32;
+        attention.layout = YVEX_TRANSFORMER_ATTENTION_LAYOUT_TOKEN_HEAD_DIM;
+        attention.mask = YVEX_TRANSFORMER_ATTENTION_MASK_FULL;
+        attention.numeric_contract = YVEX_TRANSFORMER_ATTENTION_NUMERIC_EXACT_F32;
+        attention.deterministic = 1;
+        rc = transformer_operations->attention_workspace_required(
+            &attention, &workspace_bytes, err);
+    }
     if (rc == YVEX_OK && workspace_bytes)
         rc = execution->workspace_reserve(
             execution->owner_context, workspace_bytes, err);

@@ -206,6 +206,35 @@ typedef struct yvex_transformer_dense_decoder_result {
     unsigned long long kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
     int complete;
 } yvex_transformer_dense_decoder_result;
+/* Full attention is one semantic operation here; physical tiling, command submission, and
+   workspace layout remain backend-owned. The numeric contract prevents an optimized backend
+   from silently changing the admitted accumulation or output precision. */
+typedef enum {
+    YVEX_TRANSFORMER_ATTENTION_LAYOUT_UNKNOWN = 0,
+    YVEX_TRANSFORMER_ATTENTION_LAYOUT_TOKEN_HEAD_DIM
+} yvex_transformer_attention_layout;
+typedef enum {
+    YVEX_TRANSFORMER_ATTENTION_MASK_UNKNOWN = 0,
+    YVEX_TRANSFORMER_ATTENTION_MASK_FULL,
+    YVEX_TRANSFORMER_ATTENTION_MASK_CAUSAL
+} yvex_transformer_attention_mask;
+typedef enum {
+    YVEX_TRANSFORMER_ATTENTION_NUMERIC_UNKNOWN = 0,
+    YVEX_TRANSFORMER_ATTENTION_NUMERIC_EXACT_F32
+} yvex_transformer_attention_numeric_contract;
+typedef struct yvex_transformer_attention_requirement {
+    unsigned long long tokens, query_heads, key_value_heads, head_dimension;
+    yvex_dtype query_dtype, key_dtype, value_dtype, output_dtype;
+    yvex_transformer_attention_layout layout;
+    yvex_transformer_attention_mask mask;
+    yvex_transformer_attention_numeric_contract numeric_contract;
+    int deterministic;
+} yvex_transformer_attention_requirement;
+typedef struct yvex_transformer_attention_request {
+    yvex_transformer_attention_requirement requirement;
+    const yvex_device_tensor *query, *key, *value;
+    yvex_device_tensor *output;
+} yvex_transformer_attention_request;
 struct yvex_backend_transformer_operations {
     int (*initial)(yvex_backend *, const yvex_device_tensor *, unsigned int,
                    unsigned long long, unsigned long long, unsigned long long,
@@ -221,9 +250,10 @@ struct yvex_backend_transformer_operations {
                  const yvex_device_tensor *, unsigned long long, unsigned long long,
                  unsigned long long, double, double, yvex_device_tensor *,
                  yvex_device_tensor *, yvex_backend_operation_facts *, yvex_error *);
-    int (*gqa_workspace_required)(unsigned long long, unsigned long long,
-                                  unsigned long long, unsigned long long,
-                                  unsigned long long *, yvex_error *);
+    int (*attention_workspace_required)(const yvex_transformer_attention_requirement *,
+                                        unsigned long long *, yvex_error *);
+    int (*attention_execute)(yvex_backend *, const yvex_transformer_attention_request *,
+                             yvex_backend_operation_facts *, yvex_error *);
     int (*dense_decoder_execute)(yvex_backend *,
                                  const yvex_transformer_dense_decoder_request *,
                                  yvex_transformer_dense_decoder_result *, yvex_error *);
