@@ -65,7 +65,12 @@ typedef struct yvex_transformer_plan yvex_transformer_plan;
 typedef enum {
     YVEX_TRANSFORMER_LINEAR_OPERATION_UNKNOWN = 0,
     YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT,
-    YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT
+    YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT,
+    YVEX_TRANSFORMER_LINEAR_OPERATION_MODULATION,
+    YVEX_TRANSFORMER_LINEAR_OPERATION_QKV,
+    YVEX_TRANSFORMER_LINEAR_OPERATION_ATTENTION_OUTPUT,
+    YVEX_TRANSFORMER_LINEAR_OPERATION_GATE_UP,
+    YVEX_TRANSFORMER_LINEAR_OPERATION_DOWN
 } yvex_transformer_linear_operation;
 typedef enum {
     YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_UNKNOWN = 0,
@@ -73,15 +78,19 @@ typedef enum {
 } yvex_transformer_linear_implementation;
 typedef enum {
     YVEX_TRANSFORMER_LINEAR_NUMERIC_UNKNOWN = 0,
-    YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT
+    YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT,
+    YVEX_TRANSFORMER_LINEAR_NUMERIC_BF16_F32_ACCUMULATION
 } yvex_transformer_linear_numeric_contract;
 typedef struct yvex_transformer_linear_requirement {
     yvex_transformer_linear_operation operation;
     yvex_transformer_linear_numeric_contract publication_contract;
     yvex_dtype source_dtype;
+    yvex_dtype input_dtype, accumulation_dtype, output_dtype, publication_dtype;
     unsigned long long input_width, output_width;
     int bias;
 } yvex_transformer_linear_requirement;
+int yvex_transformer_linear_requirement_validate(
+    const yvex_transformer_linear_requirement *, yvex_error *);
 typedef struct yvex_transformer_linear_physical_plan {
     unsigned int schema_version;
     char semantic_domain[YVEX_TRANSFORMER_LINEAR_DOMAIN_CAP];
@@ -99,6 +108,28 @@ int yvex_transformer_linear_physical_seal(
     yvex_transformer_linear_physical_plan *plan, yvex_error *err);
 int yvex_transformer_linear_physical_validate(
     const yvex_transformer_linear_physical_plan *plan, yvex_error *err);
+typedef struct yvex_transformer_linear_executable yvex_transformer_linear_executable;
+#define YVEX_TRANSFORMER_LINEAR_EXECUTABLE_SCHEMA_V1 1u
+typedef struct {
+    const char *semantic_domain;
+    const yvex_transformer_linear_requirement *requirement;
+    unsigned long long input_rows;
+} yvex_transformer_linear_compile_request;
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long input_rows, workspace_bytes, input_pack_bytes;
+    unsigned long long plan_host_bytes, prepared_weight_bytes;
+    unsigned long long preparation_nanoseconds, algorithm_selection_count, use_count;
+    char identity[YVEX_SHA256_HEX_CAP];
+    int accelerated_matrix, exact;
+} yvex_transformer_linear_executable_summary;
+struct yvex_component_encoded_weight;
+typedef struct {
+    yvex_transformer_linear_executable *executable;
+    const struct yvex_component_encoded_weight *weight;
+    const yvex_device_tensor *input;
+    yvex_device_tensor *output;
+} yvex_transformer_linear_execution_request;
 int yvex_transformer_plan_compile(
     yvex_transformer_plan **out, const yvex_transformer_family_policy *policy,
     unsigned long long family_adapter_id,
@@ -254,6 +285,17 @@ struct yvex_backend_transformer_operations {
                                         unsigned long long *, yvex_error *);
     int (*attention_execute)(yvex_backend *, const yvex_transformer_attention_request *,
                              yvex_backend_operation_facts *, yvex_error *);
+    int (*linear_workspace_required)(const yvex_transformer_linear_compile_request *,
+                                     unsigned long long *, yvex_error *);
+    int (*linear_compile)(yvex_backend *, const yvex_transformer_linear_compile_request *,
+                          yvex_transformer_linear_executable **,
+                          yvex_transformer_linear_executable_summary *, yvex_error *);
+    int (*linear_execute)(yvex_backend *, const yvex_transformer_linear_execution_request *,
+                          yvex_backend_operation_facts *, yvex_error *);
+    int (*linear_summary)(const yvex_transformer_linear_executable *,
+                          yvex_transformer_linear_executable_summary *, yvex_error *);
+    int (*linear_release)(yvex_backend *, yvex_transformer_linear_executable **,
+                          yvex_error *);
     int (*dense_decoder_execute)(yvex_backend *,
                                  const yvex_transformer_dense_decoder_request *,
                                  yvex_transformer_dense_decoder_result *, yvex_error *);

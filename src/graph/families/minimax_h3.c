@@ -1355,7 +1355,11 @@ static const yvex_transformer_joint_recipe omni_transformer_recipe = {
     .audio_output = {
         .operation = YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT,
         .publication_contract = YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT, .source_dtype = YVEX_DTYPE_F32,
-        .input_width = 5376ull, .output_width = 32ull, .bias = 1}};
+        .input_width = 5376ull, .output_width = 32ull, .bias = 1},
+    .linear_numeric_contract = YVEX_TRANSFORMER_LINEAR_NUMERIC_BF16_F32_ACCUMULATION,
+    .linear_source_dtype = YVEX_DTYPE_BF16, .linear_input_dtype = YVEX_DTYPE_F32,
+    .linear_accumulation_dtype = YVEX_DTYPE_F32, .linear_output_dtype = YVEX_DTYPE_F32,
+    .linear_publication_dtype = YVEX_DTYPE_BF16};
 static const char *const transformer_external_names[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {
     "audio_patch_proj.weight", "audio_patch_proj.bias", "video_patch_proj.weight", "video_patch_proj.bias",
     "condition_proj.weight", "condition_proj.bias", "time_embedder.proj_in.weight", "time_embedder.proj_in.bias",

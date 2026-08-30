@@ -25,6 +25,11 @@ static const yvex_backend_transformer_operations transformer_operations = {
     .final = yvex_cuda_transformer_final,
     .attention_workspace_required = yvex_cuda_transformer_attention_workspace_required,
     .attention_execute = yvex_cuda_transformer_attention_execute,
+    .linear_workspace_required = yvex_cuda_transformer_linear_workspace_required,
+    .linear_compile = yvex_cuda_transformer_linear_compile,
+    .linear_execute = yvex_cuda_transformer_linear_execute,
+    .linear_summary = yvex_cuda_transformer_linear_summary,
+    .linear_release = yvex_cuda_transformer_linear_release,
     .dense_decoder_execute = yvex_cuda_transformer_dense_decoder_execute,
 };
 

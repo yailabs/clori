@@ -79,7 +79,6 @@ static float joint_bf16_value(float value)
 {
     return yvex_quant_bf16_decode(yvex_quant_bf16_encode(value));
 }
-
 static int joint_facts_add(yvex_transformer_joint_block_result *total,
                           const yvex_backend_operation_facts *part)
 {
@@ -91,7 +90,6 @@ static int joint_facts_add(yvex_transformer_joint_block_result *total,
            yvex_core_u64_add(total->h2d_bytes, part->h2d_bytes, &total->h2d_bytes) &&
            yvex_core_u64_add(total->d2h_bytes, part->d2h_bytes, &total->d2h_bytes);
 }
-
 static int joint_exact_attention(
     yvex_backend *backend, const yvex_device_tensor *query,
     const yvex_device_tensor *key, const yvex_device_tensor *value,
@@ -128,7 +126,6 @@ static int joint_exact_attention(
     }
     return operations->attention_execute(backend, &request, facts, err);
 }
-
 static const yvex_transformer_joint_encoded_weight *joint_weight(
     const joint_run *run, yvex_transformer_joint_weight_slot slot)
 {
@@ -166,7 +163,6 @@ int yvex_cuda_joint_weights_validate(
     }
     return 1;
 }
-
 static int joint_validate(joint_run *run, const char *residency_identity,
                          unsigned long long resident_bytes, float *output,
                          unsigned long long output_capacity,
@@ -194,7 +190,6 @@ static int joint_validate(joint_run *run, const char *residency_identity,
                                        "packed row selects an unavailable timestep/modality table row");
     return YVEX_OK;
 }
-
 static int joint_device_descriptor(const joint_run *run, joint_device_slot slot,
                                    yvex_backend_tensor_desc *descriptor)
 {
@@ -241,7 +236,6 @@ static int joint_device_descriptor(const joint_run *run, joint_device_slot slot,
     return rows && width && yvex_core_u64_mul(rows, width, &descriptor->bytes) &&
            yvex_core_u64_mul(descriptor->bytes, sizeof(float), &descriptor->bytes);
 }
-
 static int joint_devices_prepare(joint_run *run, yvex_error *err)
 {
     unsigned int slot;
@@ -292,14 +286,26 @@ static int joint_weight_gather(joint_run *run, yvex_transformer_joint_weight_slo
                                  "Omni gather accounting overflowed");
     return rc;
 }
-
 static int joint_weight_project(joint_run *run, yvex_transformer_joint_weight_slot slot,
                                unsigned long long rows, const yvex_device_tensor *input,
-                               yvex_device_tensor *output, yvex_error *err)
+                               yvex_device_tensor *output, int *published_bf16,
+                               yvex_error *err)
 {
     const yvex_transformer_joint_encoded_weight *weight = joint_weight(run, slot);
     yvex_backend_operation_facts facts;
-    int rc = yvex_backend_encoded_matvec(
+    int ignored = 0, observe_block, handled = 0, rc;
+    if (!published_bf16) published_bf16 = &ignored;
+    *published_bf16 = 0;
+    observe_block = run->stage_observer &&
+                    run->observed_stage_scope == YVEX_TRANSFORMER_JOINT_SCOPE_OMNI &&
+                    run->observed_stage_block == run->block_index + 1ull;
+    if (run->prepared && !observe_block) {
+        rc = yvex_cuda_joint_dense_plan_execute(
+            run->prepared, slot, weight, input, output, &run->facts, &handled,
+            published_bf16, err);
+        if (handled || rc != YVEX_OK) return rc;
+    }
+    rc = yvex_backend_encoded_matvec(
         run->backend, weight->encoded, weight->encoded_bytes, weight->qtype,
         weight->row_count, weight->row_width, weight->row_bytes, rows,
         input, NULL, 0ull, NULL, output, 0, &facts, err);
@@ -308,7 +314,6 @@ static int joint_weight_project(joint_run *run, yvex_transformer_joint_weight_sl
                                  "Omni projection accounting overflowed");
     return rc;
 }
-
 static int joint_round(joint_run *run, joint_device_slot slot,
                       unsigned long long count, yvex_error *err)
 {
@@ -320,7 +325,6 @@ static int joint_round(joint_run *run, joint_device_slot slot,
                                  "Omni rounding accounting overflowed");
     return rc;
 }
-
 static int joint_stage_observe(joint_run *run, yvex_transformer_joint_stage stage,
                                joint_device_slot slot, unsigned long long rows,
                                unsigned long long width, yvex_error *err)
@@ -366,7 +370,20 @@ static int joint_stage_observe(joint_run *run, yvex_transformer_joint_stage stag
     free(values);
     return rc;
 }
-
+static int joint_dense_bf16(joint_run *run, yvex_transformer_joint_weight_slot weight,
+                            unsigned long long rows, joint_device_slot input,
+                            joint_device_slot output, yvex_transformer_joint_stage f32_stage,
+                            unsigned long long width, unsigned long long count,
+                            yvex_error *err)
+{
+    int published = 0;
+    int rc = joint_weight_project(run, weight, rows, run->device[input],
+                                  run->device[output], &published, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, f32_stage, output, rows, width, err);
+    if (rc == YVEX_OK && !published) rc = joint_round(run, output, count, err);
+    return rc;
+}
 static int joint_norm(joint_run *run, joint_device_slot input,
                      yvex_transformer_joint_weight_slot weight,
                      joint_device_slot weight_device, joint_device_slot output,
@@ -481,7 +498,7 @@ static int joint_modulation(joint_run *run, yvex_error *err)
     if (rc == YVEX_OK)
         rc = joint_weight_project(run, YVEX_TRANSFORMER_JOINT_ADALN_WEIGHT, run->timesteps,
                                  run->device[JOINT_DEVICE_TEMB_ACTIVATED],
-                                 run->device[JOINT_DEVICE_MODULATION], err);
+                                 run->device[JOINT_DEVICE_MODULATION], NULL, err);
     /* The source BF16 linear rounds after its bias epilogue. Keeping the GEMM result in
      * F32 until the broadcast bias kernel avoids a second, coherently accumulating round. */
     if (rc == YVEX_OK)
@@ -538,14 +555,10 @@ static int joint_attention(joint_run *run, yvex_error *err)
 {
     yvex_backend_operation_facts facts;
     unsigned long long attention_values = run->rows * JOINT_ATTENTION_WIDTH;
-    int rc = joint_weight_project(run, YVEX_TRANSFORMER_JOINT_QKV, run->rows,
-                                 run->device[JOINT_DEVICE_NORM],
-                                 run->device[JOINT_DEVICE_QKV], err);
-    if (rc == YVEX_OK)
-        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_QKV_F32,
-                                 JOINT_DEVICE_QKV, run->rows,
-                                 3ull * JOINT_ATTENTION_WIDTH, err);
-    if (rc == YVEX_OK) rc = joint_round(run, JOINT_DEVICE_QKV, 3ull * attention_values, err);
+    int rc = joint_dense_bf16(
+        run, YVEX_TRANSFORMER_JOINT_QKV, run->rows, JOINT_DEVICE_NORM,
+        JOINT_DEVICE_QKV, YVEX_TRANSFORMER_JOINT_STAGE_QKV_F32,
+        3ull * JOINT_ATTENTION_WIDTH, 3ull * attention_values, err);
     if (rc == YVEX_OK)
         rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_QKV_BF16,
                                  JOINT_DEVICE_QKV, run->rows,
@@ -630,14 +643,11 @@ static int joint_attention(joint_run *run, yvex_error *err)
                                  JOINT_DEVICE_ATTENTION, run->rows,
                                  JOINT_ATTENTION_WIDTH, err);
     if (rc == YVEX_OK)
-        rc = joint_weight_project(run, YVEX_TRANSFORMER_JOINT_ATTENTION_OUT, run->rows,
-                                 run->device[JOINT_DEVICE_ATTENTION],
-                                 run->device[JOINT_DEVICE_UPDATE], err);
-    if (rc == YVEX_OK)
-        rc = joint_stage_observe(
-            run, YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_PROJECTION_F32,
-            JOINT_DEVICE_UPDATE, run->rows, JOINT_HIDDEN, err);
-    if (rc == YVEX_OK) rc = joint_round(run, JOINT_DEVICE_UPDATE, run->values, err);
+        rc = joint_dense_bf16(
+            run, YVEX_TRANSFORMER_JOINT_ATTENTION_OUT, run->rows,
+            JOINT_DEVICE_ATTENTION, JOINT_DEVICE_UPDATE,
+            YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_PROJECTION_F32,
+            JOINT_HIDDEN, run->values, err);
     if (rc == YVEX_OK)
         rc = joint_stage_observe(
             run, YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_PROJECTION_BF16,
@@ -649,13 +659,10 @@ static int joint_mlp(joint_run *run, yvex_error *err)
 {
     yvex_backend_operation_facts facts;
     unsigned long long ffn_values = run->rows * JOINT_FFN;
-    int rc = joint_weight_project(run, YVEX_TRANSFORMER_JOINT_FC1, run->rows,
-                                 run->device[JOINT_DEVICE_NORM],
-                                 run->device[JOINT_DEVICE_FC1], err);
-    if (rc == YVEX_OK)
-        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_FC1_F32,
-                                 JOINT_DEVICE_FC1, run->rows, 2ull * JOINT_FFN, err);
-    if (rc == YVEX_OK) rc = joint_round(run, JOINT_DEVICE_FC1, 2ull * ffn_values, err);
+    int rc = joint_dense_bf16(
+        run, YVEX_TRANSFORMER_JOINT_FC1, run->rows, JOINT_DEVICE_NORM,
+        JOINT_DEVICE_FC1, YVEX_TRANSFORMER_JOINT_STAGE_FC1_F32,
+        2ull * JOINT_FFN, 2ull * ffn_values, err);
     if (rc == YVEX_OK)
         rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_FC1_BF16,
                                  JOINT_DEVICE_FC1, run->rows, 2ull * JOINT_FFN, err);
@@ -670,13 +677,10 @@ static int joint_mlp(joint_run *run, yvex_error *err)
         rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_SWIGLU,
                                  JOINT_DEVICE_FF, run->rows, JOINT_FFN, err);
     if (rc == YVEX_OK)
-        rc = joint_weight_project(run, YVEX_TRANSFORMER_JOINT_FC2, run->rows,
-                                 run->device[JOINT_DEVICE_FF],
-                                 run->device[JOINT_DEVICE_UPDATE], err);
-    if (rc == YVEX_OK)
-        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_FC2_F32,
-                                 JOINT_DEVICE_UPDATE, run->rows, JOINT_HIDDEN, err);
-    if (rc == YVEX_OK) rc = joint_round(run, JOINT_DEVICE_UPDATE, run->values, err);
+        rc = joint_dense_bf16(
+            run, YVEX_TRANSFORMER_JOINT_FC2, run->rows, JOINT_DEVICE_FF,
+            JOINT_DEVICE_UPDATE, YVEX_TRANSFORMER_JOINT_STAGE_FC2_F32,
+            JOINT_HIDDEN, run->values, err);
     if (rc == YVEX_OK)
         rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_FC2_BF16,
                                  JOINT_DEVICE_UPDATE, run->rows, JOINT_HIDDEN, err);
@@ -915,6 +919,7 @@ static int joint_blocks_execute(
     if (!prepared) free(staged);
     return rc;
 }
+
 int yvex_cuda_transformer_joint_blocks_execute(
     yvex_backend *backend, const yvex_transformer_joint_recipe *recipe,
     const yvex_transformer_joint_encoded_weight *weights, unsigned long long block_count,
@@ -944,7 +949,6 @@ typedef enum {
     REFINER_K_NORM, REFINER_ATTENTION, REFINER_UPDATE, REFINER_FC1,
     REFINER_FF, REFINER_DEVICE_COUNT
 } refiner_device_slot;
-
 typedef struct {
     yvex_backend *backend;
     const yvex_transformer_joint_encoded_weight *weights;
@@ -957,7 +961,6 @@ typedef struct {
     yvex_transformer_joint_stage observed_stage;
     yvex_transformer_joint_result *facts;
 } refiner_run;
-
 static int transformer_facts_add(yvex_transformer_joint_result *total,
                                  const yvex_backend_operation_facts *part)
 {
@@ -967,6 +970,7 @@ static int transformer_facts_add(yvex_transformer_joint_result *total,
            yvex_core_u64_add(total->h2d_bytes, part->h2d_bytes, &total->h2d_bytes) &&
            yvex_core_u64_add(total->d2h_bytes, part->d2h_bytes, &total->d2h_bytes);
 }
+
 static int transformer_fact_bytes(unsigned long long *total, unsigned long long bytes,
                                   yvex_error *err)
 {
@@ -974,6 +978,7 @@ static int transformer_fact_bytes(unsigned long long *total, unsigned long long 
     return conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.transformer.facts",
                                "transformer transfer accounting overflowed");
 }
+
 static int transformer_tensor(yvex_backend *backend, const char *name,
                               unsigned long long rows, unsigned long long width,
                               yvex_device_tensor **out, unsigned long long *bytes,
@@ -1898,7 +1903,11 @@ static int transformer_joint_execute_impl(
         (!yvex_core_u64_add(published.kernel_launches, blocks.kernel_launches,
                             &published.kernel_launches) ||
          !yvex_core_u64_add(published.h2d_bytes, blocks.h2d_bytes, &published.h2d_bytes) ||
-         !yvex_core_u64_add(published.d2h_bytes, blocks.d2h_bytes, &published.d2h_bytes)))
+         !yvex_core_u64_add(published.d2h_bytes, blocks.d2h_bytes, &published.d2h_bytes) ||
+         !yvex_core_u64_add(published.dense_plan_uses, blocks.dense_plan_uses,
+                            &published.dense_plan_uses) ||
+         !yvex_core_u64_add(published.dense_synchronizations, blocks.dense_synchronizations,
+                            &published.dense_synchronizations)))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.transformer.facts",
                                  "block-stack accounting overflowed");
     if (blocks.device_bytes > published.device_bytes) published.device_bytes = blocks.device_bytes;
@@ -1973,7 +1982,7 @@ int yvex_cuda_transformer_joint_prepared_execute(
 {
     int rc;
     if (!prepared || prepared->in_use || prepared->backend != backend ||
-        prepared->summary.schema_version != YVEX_TRANSFORMER_JOINT_PREPARED_SCHEMA_V1 ||
+        prepared->summary.schema_version != YVEX_TRANSFORMER_JOINT_PREPARED_SCHEMA_V2 ||
         !request || !request->layout_identity || !request->condition_identity ||
         strcmp(prepared->residency_identity, residency_identity) != 0 ||
         strcmp(prepared->layout_identity, request->layout_identity) != 0 ||

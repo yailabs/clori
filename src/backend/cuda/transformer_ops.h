@@ -21,6 +21,20 @@ int yvex_cuda_transformer_linear_f32(
     unsigned long long, unsigned long long, const yvex_device_tensor *,
     yvex_device_tensor *, const yvex_transformer_linear_physical_plan *,
     yvex_backend_operation_facts *, yvex_error *);
+int yvex_cuda_transformer_linear_workspace_required(
+    const yvex_transformer_linear_compile_request *, unsigned long long *, yvex_error *);
+int yvex_cuda_transformer_linear_compile(
+    yvex_backend *, const yvex_transformer_linear_compile_request *,
+    yvex_transformer_linear_executable **,
+    yvex_transformer_linear_executable_summary *, yvex_error *);
+int yvex_cuda_transformer_linear_execute(
+    yvex_backend *, const yvex_transformer_linear_execution_request *,
+    yvex_backend_operation_facts *, yvex_error *);
+int yvex_cuda_transformer_linear_summary(
+    const yvex_transformer_linear_executable *,
+    yvex_transformer_linear_executable_summary *, yvex_error *);
+int yvex_cuda_transformer_linear_release(
+    yvex_backend *, yvex_transformer_linear_executable **, yvex_error *);
 int yvex_cuda_transformer_initial(
     yvex_backend *backend, const yvex_device_tensor *encoded, unsigned int qtype,
     unsigned long long token_count, unsigned long long hidden_width,

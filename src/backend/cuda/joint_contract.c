@@ -51,6 +51,37 @@ static int joint_linear_physical_supported(
            yvex_transformer_linear_physical_validate(plan, &err) == YVEX_OK;
 }
 
+static int joint_dense_recipe_supported(const yvex_transformer_joint_recipe *recipe)
+{
+    static const yvex_transformer_linear_operation operations[] = {
+        YVEX_TRANSFORMER_LINEAR_OPERATION_MODULATION,
+        YVEX_TRANSFORMER_LINEAR_OPERATION_QKV,
+        YVEX_TRANSFORMER_LINEAR_OPERATION_ATTENTION_OUTPUT,
+        YVEX_TRANSFORMER_LINEAR_OPERATION_GATE_UP,
+        YVEX_TRANSFORMER_LINEAR_OPERATION_DOWN};
+    static const unsigned long long inputs[] = {
+        JOINT_TIME, JOINT_HIDDEN, JOINT_ATTENTION_WIDTH, JOINT_HIDDEN, JOINT_FFN};
+    static const unsigned long long outputs[] = {
+        JOINT_PARAMETERS * JOINT_MODALITIES * JOINT_HIDDEN,
+        3u * JOINT_ATTENTION_WIDTH, JOINT_HIDDEN, 2u * JOINT_FFN, JOINT_HIDDEN};
+    static const yvex_dtype publication[] = {
+        YVEX_DTYPE_F32, YVEX_DTYPE_BF16, YVEX_DTYPE_BF16,
+        YVEX_DTYPE_BF16, YVEX_DTYPE_BF16};
+    unsigned int slot;
+    yvex_error err;
+    if (!recipe) return 0;
+    for (slot = 0u; slot < YVEX_TRANSFORMER_JOINT_LINEAR_COUNT; ++slot) {
+        yvex_transformer_linear_requirement linear;
+        if (yvex_transformer_joint_linear_requirement(
+                recipe, (yvex_transformer_joint_linear_slot)slot, &linear, &err) != YVEX_OK ||
+            linear.operation != operations[slot] || linear.input_width != inputs[slot] ||
+            linear.output_width != outputs[slot] ||
+            linear.publication_dtype != publication[slot])
+            return 0;
+    }
+    return 1;
+}
+
 int yvex_cuda_joint_recipe_supported(
     const yvex_transformer_joint_recipe *recipe)
 {
@@ -72,6 +103,7 @@ int yvex_cuda_joint_recipe_supported(
            recipe->maximum_timesteps == JOINT_MAX_TIMESTEPS &&
            recipe->maximum_packed_rows &&
            recipe->maximum_packed_rows <= JOINT_IMPLEMENTATION_MAX_PACKED_ROWS &&
+           joint_dense_recipe_supported(recipe) &&
            recipe->video_input_width == 96ull &&
            recipe->audio_input_width == 32ull &&
            recipe->condition_input_width == 5120ull &&
@@ -391,6 +423,157 @@ static unsigned long long joint_elapsed_ns(const struct timespec *start,
                : seconds * 1000000000ull + nanoseconds;
 }
 
+static int joint_dense_plans_compile(
+    yvex_transformer_joint_prepared *prepared, yvex_backend *backend,
+    const yvex_transformer_joint_request *request, yvex_error *err)
+{
+    const yvex_backend_transformer_operations *operations =
+        yvex_backend_transformer_operations_get(backend);
+    unsigned int slot;
+    int rc = YVEX_OK;
+    if (!prepared || !request || !operations || !operations->linear_compile ||
+        !operations->linear_release || !operations->linear_summary)
+        return joint_contract_refuse(
+            err, YVEX_ERR_UNSUPPORTED, "cuda.transformer.joint.dense-plan",
+            "the admitted backend lacks compiled dense execution");
+    for (slot = 0u; rc == YVEX_OK && slot < YVEX_TRANSFORMER_JOINT_LINEAR_COUNT; ++slot) {
+        yvex_transformer_linear_requirement requirement;
+        yvex_transformer_linear_executable_summary summary;
+        yvex_transformer_linear_compile_request compile;
+        rc = yvex_transformer_joint_linear_requirement(
+            request->recipe, (yvex_transformer_joint_linear_slot)slot,
+            &requirement, err);
+        compile = (yvex_transformer_linear_compile_request){
+            request->recipe->identity_domain, &requirement,
+            slot == YVEX_TRANSFORMER_JOINT_LINEAR_MODULATION
+                ? request->timestep_count : request->packed_rows};
+        if (rc == YVEX_OK)
+            rc = operations->linear_compile(
+                backend, &compile, prepared->linear + slot, &summary, err);
+        if (rc == YVEX_ERR_UNSUPPORTED) {
+            prepared->linear[slot] = NULL;
+            yvex_error_clear(err);
+            rc = YVEX_OK;
+            continue;
+        }
+        if (rc != YVEX_OK) break;
+        prepared->summary.dense_plan_count++;
+        if (summary.workspace_bytes > prepared->summary.dense_workspace_bytes)
+            prepared->summary.dense_workspace_bytes = summary.workspace_bytes;
+        if (!yvex_core_u64_add(prepared->summary.dense_plan_host_bytes,
+                               summary.plan_host_bytes,
+                               &prepared->summary.dense_plan_host_bytes) ||
+            !yvex_core_u64_add(prepared->summary.dense_prepared_weight_bytes,
+                               summary.prepared_weight_bytes,
+                               &prepared->summary.dense_prepared_weight_bytes) ||
+            !yvex_core_u64_add(prepared->summary.dense_plan_preparation_nanoseconds,
+                               summary.preparation_nanoseconds,
+                               &prepared->summary.dense_plan_preparation_nanoseconds) ||
+            !yvex_core_u64_add(prepared->summary.dense_algorithm_selection_count,
+                               summary.algorithm_selection_count,
+                               &prepared->summary.dense_algorithm_selection_count))
+            rc = joint_contract_refuse(
+                err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.dense-plan",
+                "compiled dense plan accounting overflowed");
+    }
+    return rc;
+}
+
+static int joint_dense_plans_release(
+    yvex_transformer_joint_prepared *prepared, yvex_error *err)
+{
+    const yvex_backend_transformer_operations *operations;
+    unsigned int slot = YVEX_TRANSFORMER_JOINT_LINEAR_COUNT;
+    int rc = YVEX_OK;
+    if (!prepared) return YVEX_OK;
+    operations = yvex_backend_transformer_operations_get(prepared->backend);
+    while (slot) {
+        yvex_error cleanup;
+        int cleanup_rc;
+        --slot;
+        if (!prepared->linear[slot]) continue;
+        yvex_error_clear(&cleanup);
+        cleanup_rc = operations && operations->linear_release
+                         ? operations->linear_release(
+                               prepared->backend, prepared->linear + slot, &cleanup)
+                         : YVEX_ERR_UNSUPPORTED;
+        if (rc == YVEX_OK && cleanup_rc != YVEX_OK) {
+            rc = cleanup_rc;
+            if (err) *err = cleanup;
+        }
+    }
+    return rc;
+}
+
+int yvex_cuda_joint_dense_plan_execute(
+    yvex_transformer_joint_prepared *prepared,
+    yvex_transformer_joint_weight_slot weight_slot,
+    const yvex_transformer_joint_encoded_weight *weight,
+    const yvex_device_tensor *input, yvex_device_tensor *output,
+    yvex_transformer_joint_block_result *total, int *handled,
+    int *published_bf16, yvex_error *err)
+{
+    static const unsigned char plan_slot[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT] = {
+        YVEX_TRANSFORMER_JOINT_LINEAR_COUNT, YVEX_TRANSFORMER_JOINT_LINEAR_QKV,
+        YVEX_TRANSFORMER_JOINT_LINEAR_COUNT, YVEX_TRANSFORMER_JOINT_LINEAR_COUNT,
+        YVEX_TRANSFORMER_JOINT_LINEAR_ATTENTION_OUTPUT,
+        YVEX_TRANSFORMER_JOINT_LINEAR_COUNT, YVEX_TRANSFORMER_JOINT_LINEAR_GATE_UP,
+        YVEX_TRANSFORMER_JOINT_LINEAR_DOWN, YVEX_TRANSFORMER_JOINT_LINEAR_MODULATION,
+        YVEX_TRANSFORMER_JOINT_LINEAR_COUNT};
+    const yvex_backend_transformer_operations *operations;
+    yvex_transformer_linear_execution_request request;
+    yvex_backend_operation_facts facts;
+    unsigned int linear;
+    int rc;
+    if (handled) *handled = 0;
+    if (published_bf16) *published_bf16 = 0;
+    if (!prepared || !weight || !input || !output || !total || !handled ||
+        !published_bf16 || weight_slot >= YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT)
+        return joint_contract_refuse(
+            err, YVEX_ERR_INVALID_ARG, "cuda.transformer.joint.dense-plan.execute",
+            "one prepared dense projection and accounting target are required");
+    if (!prepared->backend || !prepared->in_use ||
+        prepared->summary.schema_version != YVEX_TRANSFORMER_JOINT_PREPARED_SCHEMA_V2)
+        return joint_contract_refuse(
+            err, YVEX_ERR_STATE, "cuda.transformer.joint.dense-plan.execute",
+            "an active prepared resource with compiled dense-plan ownership is required");
+    linear = plan_slot[weight_slot];
+    if (linear >= YVEX_TRANSFORMER_JOINT_LINEAR_COUNT) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    operations = yvex_backend_transformer_operations_get(prepared->backend);
+    if (!operations || !operations->linear_execute)
+        return joint_contract_refuse(
+            err, YVEX_ERR_STATE, "cuda.transformer.joint.dense-plan.execute",
+            "the prepared resource lacks compiled dense execution ownership");
+    if (!prepared->linear[linear]) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    *handled = 1;
+    request = (yvex_transformer_linear_execution_request){
+        prepared->linear[linear], weight, input, output};
+    rc = operations->linear_execute(prepared->backend, &request, &facts, err);
+    if (rc != YVEX_OK) return rc;
+    if (facts.temporary_bytes > total->temporary_bytes)
+        total->temporary_bytes = facts.temporary_bytes;
+    if (!facts.compulsory_memory_facts_available || total->dense_plan_uses == ULLONG_MAX ||
+        !yvex_core_u64_add(total->kernel_launches, facts.kernel_launches,
+                           &total->kernel_launches) ||
+        !yvex_core_u64_add(total->h2d_bytes, facts.h2d_bytes, &total->h2d_bytes) ||
+        !yvex_core_u64_add(total->d2h_bytes, facts.d2h_bytes, &total->d2h_bytes) ||
+        !yvex_core_u64_add(total->dense_synchronizations, facts.device_synchronizations,
+                           &total->dense_synchronizations))
+        return joint_contract_refuse(
+            err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.dense-plan.execute",
+            "compiled dense execution accounting overflowed");
+    total->dense_plan_uses++;
+    *published_bf16 = linear != YVEX_TRANSFORMER_JOINT_LINEAR_MODULATION;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 int yvex_cuda_transformer_joint_prepare(
     yvex_backend *backend,
     const yvex_transformer_joint_encoded_weight *external_weights,
@@ -445,7 +628,7 @@ int yvex_cuda_transformer_joint_prepare(
             &prepared->arena, backend, &arena_plan, &arena_summary, err);
     if (rc == YVEX_OK) {
         prepared->summary.schema_version =
-            YVEX_TRANSFORMER_JOINT_PREPARED_SCHEMA_V1;
+            YVEX_TRANSFORMER_JOINT_PREPARED_SCHEMA_V2;
         prepared->summary.host_arena_bytes = arena_summary.host_bytes;
         prepared->summary.device_arena_bytes = arena_summary.device_bytes;
         prepared->summary.allocation_count = arena_summary.allocation_count;
@@ -462,8 +645,17 @@ int yvex_cuda_transformer_joint_prepare(
         yvex_core_text_copy(prepared->condition_identity,
                             sizeof(prepared->condition_identity),
                             request->condition_identity);
-        rc = yvex_cuda_joint_prepare_invariants(
-            prepared, backend, external_weights, request, err);
+        rc = joint_dense_plans_compile(prepared, backend, request, err);
+        if (rc == YVEX_OK)
+            rc = yvex_cuda_joint_prepare_invariants(
+                prepared, backend, external_weights, request, err);
+        if (rc == YVEX_OK &&
+            !yvex_core_u64_add(prepared->summary.request_prepared_bytes,
+                               prepared->summary.dense_plan_host_bytes,
+                               &prepared->summary.request_prepared_bytes))
+            rc = joint_contract_refuse(
+                err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.dense-plan",
+                "request prepared-resource accounting overflowed");
     }
     (void)clock_gettime(CLOCK_MONOTONIC, &finished);
     if (rc == YVEX_OK) {
@@ -475,17 +667,21 @@ int yvex_cuda_transformer_joint_prepare(
         return YVEX_OK;
     }
     if (prepared) {
-        yvex_error primary = err ? *err : (yvex_error){0}, cleanup;
-        int cleanup_rc;
-        yvex_error_clear(&cleanup);
-        cleanup_rc = yvex_cuda_execution_arena_close(
-            &prepared->arena, &cleanup);
-        if (cleanup_rc == YVEX_OK) {
+        yvex_error primary = err ? *err : (yvex_error){0}, plan_error, arena_error;
+        int plan_rc, arena_rc;
+        yvex_error_clear(&plan_error);
+        yvex_error_clear(&arena_error);
+        plan_rc = joint_dense_plans_release(prepared, &plan_error);
+        arena_rc = yvex_cuda_execution_arena_close(&prepared->arena, &arena_error);
+        if (arena_rc == YVEX_OK) {
             free(prepared);
-            if (err) *err = primary;
-        } else {
-            if (err) *err = cleanup;
-            return cleanup_rc;
+            if (plan_rc == YVEX_OK) {
+                if (err) *err = primary;
+            } else if (err) *err = plan_error;
+        }
+        if (arena_rc != YVEX_OK || plan_rc != YVEX_OK) {
+            if (err) *err = arena_rc != YVEX_OK ? arena_error : plan_error;
+            return arena_rc != YVEX_OK ? arena_rc : plan_rc;
         }
     }
     return rc;
@@ -496,7 +692,8 @@ int yvex_cuda_transformer_joint_prepared_release(
     yvex_error *err)
 {
     yvex_transformer_joint_prepared *owned;
-    int rc;
+    yvex_error cleanup;
+    int plan_rc, arena_rc;
     if (!prepared || !*prepared) {
         yvex_error_clear(err);
         return YVEX_OK;
@@ -507,11 +704,17 @@ int yvex_cuda_transformer_joint_prepared_release(
             err, YVEX_ERR_STATE,
             "cuda.transformer.joint.prepared.release",
             "an idle same-backend prepared execution resource is required");
-    rc = yvex_cuda_execution_arena_close(&owned->arena, err);
-    if (rc != YVEX_OK) return rc;
+    yvex_error_clear(&cleanup);
+    plan_rc = joint_dense_plans_release(owned, &cleanup);
+    arena_rc = yvex_cuda_execution_arena_close(&owned->arena, err);
+    if (arena_rc != YVEX_OK) return arena_rc;
     memset(owned, 0, sizeof(*owned));
     free(owned);
     *prepared = NULL;
+    if (plan_rc != YVEX_OK) {
+        if (err) *err = cleanup;
+        return plan_rc;
+    }
     yvex_error_clear(err);
     return YVEX_OK;
 }

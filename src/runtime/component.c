@@ -1116,6 +1116,11 @@ int yvex_component_joint_transformer_execute(
         component_operations = yvex_backend_component_operations_get(execution->backend);
         if (!transformer_operations || !transformer_operations->attention_workspace_required ||
             !transformer_operations->attention_execute ||
+            !transformer_operations->linear_workspace_required ||
+            !transformer_operations->linear_compile ||
+            !transformer_operations->linear_execute ||
+            !transformer_operations->linear_summary ||
+            !transformer_operations->linear_release ||
             !component_operations || !component_operations->joint_transformer_execute) {
             yvex_error_set(err, YVEX_ERR_UNSUPPORTED,
                            "runtime.component.joint-transformer",
@@ -1138,6 +1143,23 @@ int yvex_component_joint_transformer_execute(
         attention.deterministic = 1;
         rc = transformer_operations->attention_workspace_required(
             &attention, &workspace_bytes, err);
+    }
+    for (index = 0ull; rc == YVEX_OK &&
+         index < YVEX_TRANSFORMER_JOINT_LINEAR_COUNT; ++index) {
+        unsigned long long dense_bytes = 0ull;
+        yvex_transformer_linear_requirement requirement;
+        yvex_transformer_linear_compile_request compile;
+        rc = yvex_transformer_joint_linear_requirement(
+            request->recipe, (yvex_transformer_joint_linear_slot)index,
+            &requirement, err);
+        compile = (yvex_transformer_linear_compile_request){
+            request->recipe->identity_domain, &requirement,
+            index == YVEX_TRANSFORMER_JOINT_LINEAR_MODULATION
+                ? request->timestep_count : request->packed_rows};
+        if (rc == YVEX_OK)
+            rc = transformer_operations->linear_workspace_required(
+                &compile, &dense_bytes, err);
+        if (dense_bytes > workspace_bytes) workspace_bytes = dense_bytes;
     }
     if (rc == YVEX_OK && workspace_bytes)
         rc = execution->workspace_reserve(

@@ -4,6 +4,7 @@
  * Component identities and typed global bindings determine one ordered immutable plan. Reusable
  * family-neutral composition from embedding values to normalized hidden values.
  */
+#include <yvex/internal/joint_transformer.h>
 #include <yvex/internal/transformer.h>
 
 #include "src/graph/private.h"
@@ -55,6 +56,95 @@ static int transformer_hash_f64(yvex_sha256 *hash, double value)
     if (!isfinite(value)) return 0;
     memcpy(&bits, &value, sizeof(bits));
     return yvex_sha256_update_u64(hash, bits);
+}
+
+int yvex_transformer_linear_requirement_validate(
+    const yvex_transformer_linear_requirement *requirement, yvex_error *err)
+{
+    int output_projection = requirement &&
+        requirement->operation >= YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT &&
+        requirement->operation <= YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT;
+    int compiled_dense = requirement &&
+        requirement->operation >= YVEX_TRANSFORMER_LINEAR_OPERATION_MODULATION &&
+        requirement->operation <= YVEX_TRANSFORMER_LINEAR_OPERATION_DOWN;
+    if (!requirement || !requirement->input_width || !requirement->output_width ||
+        (output_projection &&
+         (requirement->publication_contract != YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT ||
+          requirement->source_dtype != YVEX_DTYPE_F32 ||
+          requirement->input_dtype != YVEX_DTYPE_UNKNOWN ||
+          requirement->accumulation_dtype != YVEX_DTYPE_UNKNOWN ||
+          requirement->output_dtype != YVEX_DTYPE_UNKNOWN ||
+          requirement->publication_dtype != YVEX_DTYPE_UNKNOWN || requirement->bias != 1)) ||
+        (compiled_dense &&
+         (requirement->publication_contract !=
+              YVEX_TRANSFORMER_LINEAR_NUMERIC_BF16_F32_ACCUMULATION ||
+          requirement->source_dtype != YVEX_DTYPE_BF16 ||
+          requirement->input_dtype != YVEX_DTYPE_F32 ||
+          requirement->accumulation_dtype != YVEX_DTYPE_F32 ||
+          requirement->output_dtype != YVEX_DTYPE_F32 ||
+          (requirement->publication_dtype != YVEX_DTYPE_F32 &&
+           requirement->publication_dtype != YVEX_DTYPE_BF16) || requirement->bias != 0)) ||
+        (!output_projection && !compiled_dense))
+        return transformer_refuse(err, YVEX_ERR_FORMAT,
+                                  "linear semantic requirement is malformed");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_transformer_joint_linear_requirement(
+    const yvex_transformer_joint_recipe *recipe,
+    yvex_transformer_joint_linear_slot slot,
+    yvex_transformer_linear_requirement *requirement, yvex_error *err)
+{
+    unsigned long long output_width = 0ull;
+    if (requirement) memset(requirement, 0, sizeof(*requirement));
+    if (!recipe || !requirement || slot >= YVEX_TRANSFORMER_JOINT_LINEAR_COUNT)
+        return transformer_refuse(err, YVEX_ERR_INVALID_ARG,
+                                  "one joint dense semantic slot is required");
+    requirement->operation = (yvex_transformer_linear_operation)(
+        YVEX_TRANSFORMER_LINEAR_OPERATION_MODULATION + slot);
+    requirement->publication_contract = recipe->linear_numeric_contract;
+    requirement->source_dtype = recipe->linear_source_dtype;
+    requirement->input_dtype = recipe->linear_input_dtype;
+    requirement->accumulation_dtype = recipe->linear_accumulation_dtype;
+    requirement->output_dtype = recipe->linear_output_dtype;
+    requirement->publication_dtype = recipe->linear_publication_dtype;
+    switch (slot) {
+    case YVEX_TRANSFORMER_JOINT_LINEAR_MODULATION:
+        requirement->input_width = recipe->timestep_width;
+        if (!yvex_core_u64_mul(recipe->modality_count, recipe->modulation_parameters,
+                               &output_width) ||
+            !yvex_core_u64_mul(output_width, recipe->hidden_width, &output_width))
+            return transformer_refuse(err, YVEX_ERR_BOUNDS,
+                                      "joint modulation geometry overflowed");
+        requirement->publication_dtype = recipe->linear_output_dtype;
+        break;
+    case YVEX_TRANSFORMER_JOINT_LINEAR_QKV:
+        requirement->input_width = recipe->hidden_width;
+        if (!yvex_core_u64_mul(3ull, recipe->attention_width, &output_width))
+            return transformer_refuse(err, YVEX_ERR_BOUNDS,
+                                      "joint QKV geometry overflowed");
+        break;
+    case YVEX_TRANSFORMER_JOINT_LINEAR_ATTENTION_OUTPUT:
+        requirement->input_width = recipe->attention_width;
+        output_width = recipe->hidden_width;
+        break;
+    case YVEX_TRANSFORMER_JOINT_LINEAR_GATE_UP:
+        requirement->input_width = recipe->hidden_width;
+        if (!yvex_core_u64_mul(2ull, recipe->ffn_width, &output_width))
+            return transformer_refuse(err, YVEX_ERR_BOUNDS,
+                                      "joint gate/up geometry overflowed");
+        break;
+    case YVEX_TRANSFORMER_JOINT_LINEAR_DOWN:
+        requirement->input_width = recipe->ffn_width;
+        output_width = recipe->hidden_width;
+        break;
+    default:
+        return transformer_refuse(err, YVEX_ERR_INVALID_ARG,
+                                  "unknown joint dense semantic slot");
+    }
+    requirement->output_width = output_width;
+    return yvex_transformer_linear_requirement_validate(requirement, err);
 }
 
 static int linear_physical_facts_valid(const yvex_transformer_linear_physical_plan *plan)

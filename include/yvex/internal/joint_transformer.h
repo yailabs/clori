@@ -34,6 +34,15 @@ typedef enum {
 } yvex_transformer_joint_weight_slot;
 
 typedef enum {
+    YVEX_TRANSFORMER_JOINT_LINEAR_MODULATION = 0,
+    YVEX_TRANSFORMER_JOINT_LINEAR_QKV,
+    YVEX_TRANSFORMER_JOINT_LINEAR_ATTENTION_OUTPUT,
+    YVEX_TRANSFORMER_JOINT_LINEAR_GATE_UP,
+    YVEX_TRANSFORMER_JOINT_LINEAR_DOWN,
+    YVEX_TRANSFORMER_JOINT_LINEAR_COUNT
+} yvex_transformer_joint_linear_slot;
+
+typedef enum {
     YVEX_TRANSFORMER_JOINT_AUDIO_WEIGHT = 0,
     YVEX_TRANSFORMER_JOINT_AUDIO_BIAS,
     YVEX_TRANSFORMER_JOINT_VIDEO_WEIGHT,
@@ -80,11 +89,18 @@ typedef struct yvex_transformer_joint_recipe {
     unsigned long long maximum_timesteps, maximum_packed_rows;
     unsigned long long video_input_width, audio_input_width, condition_input_width;
     yvex_transformer_linear_requirement video_output, audio_output;
+    yvex_transformer_linear_numeric_contract linear_numeric_contract;
+    yvex_dtype linear_source_dtype, linear_input_dtype, linear_accumulation_dtype;
+    yvex_dtype linear_output_dtype, linear_publication_dtype;
 } yvex_transformer_joint_recipe;
+int yvex_transformer_joint_linear_requirement(
+    const yvex_transformer_joint_recipe *, yvex_transformer_joint_linear_slot,
+    yvex_transformer_linear_requirement *, yvex_error *);
 
 typedef struct yvex_transformer_joint_block_result {
     unsigned long long packed_rows, block_count, resident_bytes, kernel_launches;
     unsigned long long h2d_bytes, d2h_bytes, device_bytes, temporary_bytes;
+    unsigned long long dense_plan_uses, dense_synchronizations;
     char residency_identity[65], execution_identity[65];
     int complete;
 } yvex_transformer_joint_block_result;
@@ -190,6 +206,7 @@ typedef struct yvex_transformer_joint_request {
 } yvex_transformer_joint_request;
 
 #define YVEX_TRANSFORMER_JOINT_PREPARED_SCHEMA_V1 1u
+#define YVEX_TRANSFORMER_JOINT_PREPARED_SCHEMA_V2 2u
 typedef struct yvex_transformer_joint_prepared_summary {
     unsigned int schema_version;
     unsigned long long host_arena_bytes, device_arena_bytes;
@@ -197,6 +214,9 @@ typedef struct yvex_transformer_joint_prepared_summary {
     unsigned long long preparation_nanoseconds, preparation_kernel_launches;
     unsigned long long preparation_h2d_bytes, preparation_d2h_bytes;
     unsigned long long allocation_count;
+    unsigned long long dense_plan_count, dense_workspace_bytes, dense_plan_host_bytes;
+    unsigned long long dense_prepared_weight_bytes, dense_plan_preparation_nanoseconds;
+    unsigned long long dense_algorithm_selection_count;
     char identity[YVEX_SHA256_HEX_CAP];
     int request_ready, condition_ready;
 } yvex_transformer_joint_prepared_summary;
@@ -204,6 +224,7 @@ typedef struct yvex_transformer_joint_prepared_summary {
 typedef struct yvex_transformer_joint_result {
     unsigned long long video_rows, audio_rows, text_rows, packed_rows, block_count;
     unsigned long long resident_bytes, kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
+    unsigned long long dense_plan_uses, dense_synchronizations;
     char residency_identity[65], execution_identity[65];
     int complete;
 } yvex_transformer_joint_result;

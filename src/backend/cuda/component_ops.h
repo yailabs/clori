@@ -60,6 +60,7 @@ struct yvex_transformer_joint_prepared {
     yvex_backend *backend;
     yvex_cuda_execution_arena *arena;
     yvex_transformer_joint_prepared_summary summary;
+    yvex_transformer_linear_executable *linear[YVEX_TRANSFORMER_JOINT_LINEAR_COUNT];
     char residency_identity[YVEX_SHA256_HEX_CAP];
     char layout_identity[YVEX_SHA256_HEX_CAP];
     char condition_identity[YVEX_SHA256_HEX_CAP];
@@ -83,6 +84,11 @@ int yvex_cuda_joint_prepare_invariants(
     yvex_transformer_joint_prepared *, yvex_backend *,
     const yvex_transformer_joint_encoded_weight *,
     const yvex_transformer_joint_request *, yvex_error *);
+int yvex_cuda_joint_dense_plan_execute(
+    yvex_transformer_joint_prepared *, yvex_transformer_joint_weight_slot,
+    const yvex_transformer_joint_encoded_weight *, const yvex_device_tensor *,
+    yvex_device_tensor *, yvex_transformer_joint_block_result *, int *, int *,
+    yvex_error *);
 int yvex_cuda_joint_execution_identity(
     const yvex_transformer_joint_request *, const char *, const char *,
     const float *, unsigned long long, const float *, unsigned long long,

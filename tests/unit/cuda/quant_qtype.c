@@ -11,6 +11,7 @@
 
 #include <yvex/api.h>
 
+#include "src/backend/cuda/component_ops.h"
 #include "src/backend/cuda/private.h"
 #include "src/backend/cuda/transformer_ops.h"
 #include <yvex/internal/component.h>
@@ -954,6 +955,194 @@ static int quant_cuda_tensor(yvex_backend *backend, const char *name,
     return yvex_backend_tensor_alloc(backend, &descriptor, tensor, err) == YVEX_OK &&
            (!source || yvex_backend_tensor_write(
                            backend, *tensor, source, bytes, err) == YVEX_OK);
+}
+
+static int quant_cuda_compiled_dense_plan(yvex_backend *backend)
+{
+    enum { ROWS = 3, WIDTH = 32, OUTPUT = 16 };
+    const yvex_backend_transformer_operations *operations =
+        yvex_backend_transformer_operations_get(backend);
+    yvex_transformer_linear_requirement requirement = {
+        .operation = YVEX_TRANSFORMER_LINEAR_OPERATION_QKV,
+        .publication_contract = YVEX_TRANSFORMER_LINEAR_NUMERIC_BF16_F32_ACCUMULATION,
+        .source_dtype = YVEX_DTYPE_BF16, .input_dtype = YVEX_DTYPE_F32,
+        .accumulation_dtype = YVEX_DTYPE_F32, .output_dtype = YVEX_DTYPE_F32,
+        .publication_dtype = YVEX_DTYPE_BF16,
+        .input_width = WIDTH, .output_width = OUTPUT, .bias = 0};
+    yvex_transformer_linear_requirement unsupported_requirement = {
+        .operation = YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT,
+        .publication_contract = YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT,
+        .source_dtype = YVEX_DTYPE_F32,
+        .input_width = WIDTH, .output_width = OUTPUT, .bias = 1};
+    yvex_transformer_linear_compile_request compile = {
+        "cuda-compiled-dense-fixture", &requirement, ROWS};
+    yvex_transformer_linear_compile_request changed = compile;
+    yvex_transformer_linear_compile_request unsupported = {
+        "cuda-compiled-dense-fixture", &unsupported_requirement, ROWS};
+    yvex_transformer_linear_execution_request execution = {0};
+    yvex_transformer_linear_executable *plan = NULL, *other = NULL, *failed = NULL;
+    yvex_transformer_linear_executable_summary summary, repeated, other_summary, failed_summary;
+    yvex_transformer_joint_prepared prepared = {0};
+    yvex_transformer_joint_block_result block = {0};
+    yvex_component_encoded_weight weight = {0};
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *resident = NULL, *input = NULL, *output = NULL, *workspace = NULL;
+    unsigned char *mapped = NULL;
+    float inputs[ROWS * WIDTH], actual[ROWS * OUTPUT], expected[ROWS * OUTPUT];
+    yvex_backend_operation_facts facts;
+    yvex_error err;
+    unsigned long long required, unsupported_required, index, row, column;
+    int handled = 0, published_bf16 = 0, rc;
+    YVEX_TEST_ASSERT(
+        operations && operations->linear_workspace_required && operations->linear_compile &&
+            operations->linear_execute && operations->linear_summary &&
+            operations->linear_release,
+        "CUDA publishes compiled dense planning and execution");
+    YVEX_TEST_ASSERT(
+        operations->linear_workspace_required(&compile, &required, &err) == YVEX_OK &&
+            required > sizeof(inputs),
+        "compiled dense requirement exposes bounded reusable workspace");
+    YVEX_TEST_ASSERT(
+        operations->linear_workspace_required(&unsupported, &unsupported_required, &err) ==
+                YVEX_ERR_UNSUPPORTED &&
+            !unsupported_required,
+        "compiled BF16 planning refuses a different valid linear numerical class");
+    descriptor.name = "compiled-dense-weight";
+    descriptor.dtype = YVEX_DTYPE_I8;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = descriptor.bytes = OUTPUT * WIDTH * sizeof(unsigned short);
+    YVEX_TEST_ASSERT(
+        yvex_backend_resident_alloc(backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
+        "compiled dense resident BF16 weight allocates");
+    memset(mapped, 0, (size_t)descriptor.bytes);
+    for (column = 0ull; column < OUTPUT; ++column) {
+        float value = 0.5f + (float)column / 32.0f;
+        unsigned short encoded = yvex_quant_bf16_encode(value);
+        memcpy(mapped + (column * WIDTH + column) * sizeof(encoded), &encoded, sizeof(encoded));
+    }
+    for (index = 0ull; index < ROWS * WIDTH; ++index)
+        inputs[index] = (float)((int)((index * 7ull + 3ull) % 31ull) - 15) / 8.0f;
+    for (row = 0ull; row < ROWS; ++row)
+        for (column = 0ull; column < OUTPUT; ++column) {
+            unsigned short encoded;
+            float source = yvex_quant_bf16_decode(
+                yvex_quant_bf16_encode(inputs[row * WIDTH + column]));
+            memcpy(&encoded, mapped + (column * WIDTH + column) * sizeof(encoded),
+                   sizeof(encoded));
+            expected[row * OUTPUT + column] = yvex_quant_bf16_decode(
+                yvex_quant_bf16_encode(source * yvex_quant_bf16_decode(encoded)));
+        }
+    YVEX_TEST_ASSERT(
+        yvex_backend_resident_attach(backend, mapped, descriptor.bytes, resident, 37ull, &err) ==
+            YVEX_OK &&
+            quant_cuda_tensor(backend, "compiled-dense-input", YVEX_DTYPE_F32,
+                              inputs, sizeof(inputs), &input, &err) &&
+            quant_cuda_tensor(backend, "compiled-dense-output", YVEX_DTYPE_F32,
+                              NULL, sizeof(actual), &output, &err),
+        "compiled dense bindings become resident");
+    weight.encoded = mapped;
+    weight.encoded_bytes = descriptor.bytes;
+    weight.row_count = OUTPUT;
+    weight.row_width = WIDTH;
+    weight.row_bytes = WIDTH * sizeof(unsigned short);
+    weight.qtype = YVEX_GGUF_QTYPE_BF16;
+    YVEX_TEST_ASSERT(
+        operations->linear_compile(backend, &compile, &plan, &summary, &err) == YVEX_OK &&
+            plan && summary.schema_version == YVEX_TRANSFORMER_LINEAR_EXECUTABLE_SCHEMA_V1 &&
+            summary.workspace_bytes <= required && summary.input_pack_bytes > 0ull &&
+            summary.plan_host_bytes > 0ull && !summary.prepared_weight_bytes &&
+            summary.algorithm_selection_count == 1ull && !summary.use_count &&
+            summary.accelerated_matrix && summary.exact,
+        "compiled dense plan selects one exact reusable algorithm without copying weights");
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "compiled-dense-workspace", YVEX_DTYPE_I8,
+                          NULL, summary.workspace_bytes, &workspace, &err) &&
+            yvex_backend_workspace_attach(backend, workspace, 1ull, &err) == YVEX_OK,
+        "compiled dense plan binds its persistent workspace");
+    execution.executable = plan;
+    execution.weight = &weight;
+    execution.input = input;
+    execution.output = output;
+    for (index = 0ull; index < 2ull; ++index) {
+        rc = operations->linear_execute(backend, &execution, &facts, &err);
+        YVEX_TEST_ASSERT(
+            rc == YVEX_OK && facts.kernel_launches == 3ull &&
+                facts.accelerated_matrix_launches == 1ull &&
+                facts.device_synchronizations == 1ull && facts.d2h_bytes == sizeof(int) &&
+                facts.temporary_bytes == summary.workspace_bytes &&
+                yvex_backend_tensor_read(backend, output, actual, sizeof(actual), &err) == YVEX_OK &&
+                memcmp(actual, expected, sizeof(actual)) == 0,
+            "compiled dense execution repeats byte-exact publication with one completion boundary");
+    }
+    prepared.backend = backend;
+    prepared.summary.schema_version = YVEX_TRANSFORMER_JOINT_PREPARED_SCHEMA_V2;
+    prepared.in_use = 1;
+    YVEX_TEST_ASSERT(
+        yvex_cuda_joint_dense_plan_execute(
+            &prepared, YVEX_TRANSFORMER_JOINT_QKV, &weight, input, output,
+            &block, &handled, &published_bf16, &err) == YVEX_OK && !handled,
+        "an unsupported compiled plan leaves the exact production fallback available");
+    prepared.in_use = 0;
+    prepared.linear[YVEX_TRANSFORMER_JOINT_LINEAR_QKV] = plan;
+    YVEX_TEST_ASSERT(
+        yvex_cuda_joint_dense_plan_execute(
+            &prepared, YVEX_TRANSFORMER_JOINT_QKV, &weight, input, output,
+            &block, &handled, &published_bf16, &err) == YVEX_ERR_STATE && !handled,
+        "an idle prepared resource cannot execute its compiled dense plan");
+    prepared.in_use = 1;
+    YVEX_TEST_ASSERT(
+        yvex_cuda_joint_dense_plan_execute(
+            &prepared, YVEX_TRANSFORMER_JOINT_QKV, &weight, input, output,
+            &block, &handled, &published_bf16, &err) == YVEX_OK &&
+            handled && published_bf16 && block.dense_plan_uses == 1ull &&
+            block.dense_synchronizations == 1ull && block.kernel_launches == 3ull &&
+            yvex_backend_tensor_read(backend, output, actual, sizeof(actual), &err) == YVEX_OK &&
+            memcmp(actual, expected, sizeof(actual)) == 0,
+        "joint prepared-resource ownership consumes and accounts the compiled QKV plan");
+    YVEX_TEST_ASSERT(
+        operations->linear_summary(plan, &repeated, &err) == YVEX_OK &&
+            repeated.use_count == 3ull && !strcmp(repeated.identity, summary.identity),
+        "compiled dense plan retains identity and measured reuse count");
+    changed.input_rows = ROWS - 1ull;
+    YVEX_TEST_ASSERT(
+        operations->linear_compile(backend, &changed, &other, &other_summary, &err) == YVEX_OK &&
+            strcmp(other_summary.identity, summary.identity) != 0 &&
+            operations->linear_release(backend, &other, &err) == YVEX_OK && !other,
+        "compiled dense plan invalidates when request geometry changes");
+    YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_LINEAR_PLAN_FAILURE", "compile", 1) == 0 &&
+                         operations->linear_compile(
+                             backend, &compile, &failed, &failed_summary, &err) ==
+                             YVEX_ERR_BACKEND && !failed && unsetenv(
+                                 "YVEX_TEST_CUDA_LINEAR_PLAN_FAILURE") == 0,
+                     "compiled dense preparation failure leaves no partial owner");
+    YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_LINEAR_PLAN_FAILURE", "unsupported", 1) == 0 &&
+                         operations->linear_compile(
+                             backend, &compile, &failed, &failed_summary, &err) ==
+                             YVEX_ERR_UNSUPPORTED && !failed && unsetenv(
+                                 "YVEX_TEST_CUDA_LINEAR_PLAN_FAILURE") == 0,
+                     "compiled dense capability refusal is explicit and leaves no partial owner");
+    YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_LINEAR_PLAN_FAILURE", "execute", 1) == 0 &&
+                         operations->linear_execute(backend, &execution, &facts, &err) ==
+                             YVEX_ERR_BACKEND && !output->is_written && unsetenv(
+                                 "YVEX_TEST_CUDA_LINEAR_PLAN_FAILURE") == 0,
+                     "compiled dense execution failure cannot publish stale output");
+    requirement.source_dtype = YVEX_DTYPE_F32;
+    YVEX_TEST_ASSERT(
+        operations->linear_workspace_required(&compile, &required, &err) == YVEX_ERR_FORMAT,
+        "compiled dense admission refuses a mismatched numerical contract");
+    requirement.source_dtype = YVEX_DTYPE_BF16;
+    prepared.linear[YVEX_TRANSFORMER_JOINT_LINEAR_QKV] = NULL;
+    prepared.in_use = 0;
+    YVEX_TEST_ASSERT(
+        operations->linear_release(backend, &plan, &err) == YVEX_OK && !plan &&
+            (yvex_backend_workspace_detach(backend), 1) &&
+            yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &workspace, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
+        "compiled dense plan releases descriptors, workspace, tensors, and residency");
+    return 0;
 }
 
 static int quant_cuda_bf16_projection_pair(yvex_backend *backend)
@@ -3117,6 +3306,8 @@ int yvex_cuda_test_quant_qtype(void)
                      "F32 production row batch GEMM");
     YVEX_TEST_ASSERT(quant_cuda_f32_linear_policy(backend) == 0,
                      "F32 source-qualified split reduction");
+    YVEX_TEST_ASSERT(quant_cuda_compiled_dense_plan(backend) == 0,
+                     "compiled BF16 dense plan lifecycle and exactness");
     YVEX_TEST_ASSERT(quant_cuda_encoded_gather(backend) == 0,
                      "resident qtype row gather");
     YVEX_TEST_ASSERT(quant_cuda_transformer_facts(backend) == 0,

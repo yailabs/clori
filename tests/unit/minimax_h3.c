@@ -689,7 +689,9 @@ static int test_t2va_plan(void)
 {
     const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
     const yvex_transformer_joint_recipe *recipe = graph->omni_recipe;
+    yvex_transformer_linear_requirement dense[YVEX_TRANSFORMER_JOINT_LINEAR_COUNT];
     yvex_transformer_linear_requirement unsupported_requirement;
+    yvex_transformer_joint_recipe invalid_recipe;
     yvex_runtime_av_generation_request specialization = {
         .component_backend = YVEX_BACKEND_KIND_CUDA};
     yvex_transformer_linear_physical_plan video, audio, changed;
@@ -707,6 +709,7 @@ static int test_t2va_plan(void)
         .frames = 124ull, .inference_steps = 19u};
     float sample[2] = {0.5f, -1.0f}, velocity[2] = {2.0f, 4.0f};
     float stepped[2] = {13.0f, 13.0f};
+    unsigned int dense_slot;
     yvex_error err;
 
     YVEX_TEST_ASSERT(recipe &&
@@ -717,6 +720,32 @@ static int test_t2va_plan(void)
                          recipe->swiglu_layout ==
                              YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP,
                      "Omni recipe preserves the released gate-before-up SwiGLU row layout");
+    for (dense_slot = 0u; dense_slot < YVEX_TRANSFORMER_JOINT_LINEAR_COUNT; ++dense_slot)
+        YVEX_TEST_ASSERT(
+            yvex_transformer_joint_linear_requirement(
+                recipe, (yvex_transformer_joint_linear_slot)dense_slot,
+                dense + dense_slot, &err) == YVEX_OK,
+            "joint Transformer derives every dense operation from one numerical recipe");
+    YVEX_TEST_ASSERT(
+        dense[YVEX_TRANSFORMER_JOINT_LINEAR_MODULATION].input_width == 2688ull &&
+            dense[YVEX_TRANSFORMER_JOINT_LINEAR_MODULATION].output_width == 96768ull &&
+            dense[YVEX_TRANSFORMER_JOINT_LINEAR_MODULATION].publication_dtype == YVEX_DTYPE_F32 &&
+            dense[YVEX_TRANSFORMER_JOINT_LINEAR_QKV].input_width == 5376ull &&
+            dense[YVEX_TRANSFORMER_JOINT_LINEAR_QKV].output_width == 21504ull &&
+            dense[YVEX_TRANSFORMER_JOINT_LINEAR_ATTENTION_OUTPUT].input_width == 7168ull &&
+            dense[YVEX_TRANSFORMER_JOINT_LINEAR_ATTENTION_OUTPUT].output_width == 5376ull &&
+            dense[YVEX_TRANSFORMER_JOINT_LINEAR_GATE_UP].output_width == 28672ull &&
+            dense[YVEX_TRANSFORMER_JOINT_LINEAR_DOWN].input_width == 14336ull &&
+            dense[YVEX_TRANSFORMER_JOINT_LINEAR_DOWN].output_width == 5376ull &&
+            dense[YVEX_TRANSFORMER_JOINT_LINEAR_DOWN].publication_dtype == YVEX_DTYPE_BF16,
+        "derived dense operations preserve combined QKV, gate/up, and exact publication shapes");
+    invalid_recipe = *recipe;
+    invalid_recipe.linear_source_dtype = YVEX_DTYPE_F32;
+    YVEX_TEST_ASSERT(
+        yvex_transformer_joint_linear_requirement(
+            &invalid_recipe, YVEX_TRANSFORMER_JOINT_LINEAR_QKV, dense, &err) ==
+            YVEX_ERR_FORMAT,
+        "joint Transformer refuses an altered dense numerical contract");
     YVEX_TEST_ASSERT(
         recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V4 &&
             recipe->video_output.source_dtype == YVEX_DTYPE_F32 &&
