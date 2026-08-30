@@ -235,6 +235,11 @@ def test_refusals(registry: dict[str, object]) -> None:
     )
     mutation_failure(
         registry,
+        lambda row: operation(row, "server.status").update(command_path=[]),
+        "duplicate canonical path",
+    )
+    mutation_failure(
+        registry,
         lambda row: operation(row, "server.status").update(summary="run yvex-dev"),
         "references retired executable",
     )
@@ -357,6 +362,9 @@ def test_compiled_discovery(registry: dict[str, object]) -> None:
                 actual["documentation_owner"] == source["documentation_owner"],
                 f"discovery owners: {actual['operation_id']}")
     projected = [row for row in operations if row["projections"]["cli"]]
+    roots = [row for row in projected if not row["command_path"]]
+    require(len(roots) == 1 and roots[0]["operation_id"] == "generation.chat",
+            "one canonical root interactive operation")
     for row in projected:
         first = row["command_path"].split(" ", 1)[0]
         require(first not in FORBIDDEN_TOP_LEVEL, f"forbidden projection: {row['command_path']}")

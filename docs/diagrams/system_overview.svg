@@ -101,7 +101,7 @@
   <text class="text" x="1465" y="297">Engine watch</text>
   <text class="small" x="1465" y="318">compact operations</text>
   <rect class="orange-box" x="1380" y="360" width="170" height="65" rx="10"/>
-  <text class="text" x="1465" y="387">yvex chat</text>
+  <text class="text" x="1465" y="387">yvex</text>
   <text class="small" x="1465" y="408">multi-turn streaming</text>
   <rect class="orange-box" x="1380" y="450" width="170" height="65" rx="10"/>
   <text class="text" x="1465" y="477">yvex run</text>

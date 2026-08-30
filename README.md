@@ -39,10 +39,10 @@ unavailable exact implementations fail closed.
 make -j4 all
 ```
 
-Running `./yvex` enters the same linear, scrollback-preserving console as
-`./yvex chat`. It attaches to the persistent host through the typed client
-protocol; deterministic commands remain the explicit path for model discovery,
-host control, inspection, and scripts.
+Running `./yvex` enters the one linear, scrollback-preserving interactive
+console. It attaches to the persistent host through the typed client protocol;
+deterministic commands remain the explicit path for model discovery, host
+control, inspection, and scripts. The former `yvex chat` spelling is retired.
 
 ### 2. Find or prepare a model profile
 
@@ -78,35 +78,33 @@ this in the first terminal:
 ```
 
 The host publishes its private socket and optional loopback OpenAI listener with
-zero loaded engines. It remains alive across model load and unload. Invoking
-`./yvex server` again on a human terminal attaches to that same healthy host;
-`exit` leaves only the attached console, while `stop` shuts down the host.
+zero loaded engines. It remains alive across model load and unload, and its
+foreground terminal shows server events rather than a chat or operator prompt.
+Invoking `./yvex server` again reports the already active host and exits without
+starting another listener or interactive surface.
 
 ### 4. Load and inspect an engine
 
-At the foreground host prompt, select one complete profile without opening a
-second terminal:
+From another terminal, select one complete profile through deterministic
+control commands:
 
-```text
-profiles
-load N
-models
-status
+```sh
+./yvex server load PROFILE
+./yvex server models
+./yvex server status
 ```
 
 Loading authenticates the named registry profile and creates one process-local
-engine generation. The list uses full aliases; duplicate runtime targets require
-an exact alias or number. Large packages can take several minutes. `models`
-shows the exact alias, generation, lifecycle, backend, and active-work facts
-owned by the live host. Noninteractive operators may still run
-`./yvex server load PROFILE`; external `./yvex server status`,
-`./yvex server models`, and `./yvex server memory` clients remain available
-concurrently.
+engine generation. Profile selection uses an exact alias; duplicate runtime
+targets never select an arbitrary package. Large packages can take several
+minutes. `server models` shows the exact alias, generation, lifecycle, backend,
+and active-work facts owned by the live host. `server status`, `server models`,
+and `server memory` remain available concurrently.
 
 ### 5. Use the engine
 
 ```sh
-./yvex chat --model PROFILE --session main
+./yvex --model PROFILE --session main
 ./yvex run --model PROFILE \
   "Explain attention in one sentence."
 ```

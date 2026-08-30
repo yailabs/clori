@@ -2359,19 +2359,12 @@
       "CLI_projection": true,
       "adapter_argv": [],
       "adapter_id": "chat",
-      "aliases": [
-        {
-          "deprecation": "current",
-          "path": []
-        }
-      ],
+      "aliases": [],
       "architectural_plane": "Run",
       "arguments": [],
       "artifact_requirement": "none",
       "backend_requirement": "none",
-      "command_path": [
-        "chat"
-      ],
+      "command_path": [],
       "daemon_requirement": "required",
       "default_providers": [
         "client.chat"
@@ -7138,6 +7131,12 @@
     }
   ],
   "removed_paths": [
+    {
+      "hint": "run `yvex` for the interactive console",
+      "path": [
+        "chat"
+      ]
+    },
     {
       "hint": "use `yvex compile emit artifact`",
       "path": [

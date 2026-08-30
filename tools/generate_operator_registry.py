@@ -444,9 +444,7 @@ def validate_registry(registry: dict[str, Any]) -> list[dict[str, Any]]:
         )
         path_key = tuple(command_path)
         if projection:
-            if not command_path:
-                fail(f"{where}.command_path", "CLI projection needs a canonical path")
-            if command_path[0] in FORBIDDEN_TOP_LEVEL:
+            if command_path and command_path[0] in FORBIDDEN_TOP_LEVEL:
                 fail(f"{where}.command_path", f"forbidden top-level namespace {command_path[0]!r}")
             if path_key in paths:
                 fail(f"{where}.command_path", f"duplicate canonical path owned by {paths[path_key]}")

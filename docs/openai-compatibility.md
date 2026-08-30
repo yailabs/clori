@@ -67,10 +67,9 @@ engine is loaded. Start the host, then load a startup-ready registry profile:
 ./yvex server
 ```
 
-At the foreground host prompt, run `profiles` and then `load N` or load one
-exact alias. A noninteractive operator may use `./yvex server load PROFILE`
-from another process. The OpenAI listener remains available while the
-foreground console manages engine lifecycle.
+From another process, load one exact alias with `./yvex server load PROFILE`.
+The OpenAI listener remains available while deterministic server commands
+manage engine lifecycle; the foreground host terminal remains a log stream.
 Adapter-to-runtime frame I/O has a bounded 600000 ms default timeout; local
 operators may override it with `--openai-timeout-ms` for their admitted workload.
 

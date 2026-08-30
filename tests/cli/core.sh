@@ -50,7 +50,7 @@ contains "$OUT_DIR/no_args.err" "chat requires a terminal"
 contains "$OUT_DIR/no_args.err" "yvex run TEXT"
 
 run_ok help "$YVEX_BIN" --help
-contains "$OUT_DIR/help.out" "YVEX local inference"
+contains "$OUT_DIR/help.out" "Enter retained interactive chat."
 contains "$OUT_DIR/help.out" "yvex artifact show"
 contains "$OUT_DIR/help.out" "yvex artifact verify"
 contains "$OUT_DIR/help.out" "yvex compile quant plan"

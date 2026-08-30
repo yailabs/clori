@@ -22,7 +22,6 @@ explicit server entrypoint, write terminal streams.
 
 ```text
 yvex                                            # linear interactive console
-yvex chat [--session NAME] [--max-new-tokens N]
 yvex run [options] TEXT
 
 yvex server [server options]
@@ -63,40 +62,35 @@ carry one artifact, runtime binding, target, backend, execution strategy, and
 startup context; composite media runtimes carry an installed component root,
 target and backend. Engine kind and execution strategy are independent facts.
 `model list` marks which entries have a complete
-readable profile and `model show` inspects one entry. The foreground TTY console
-lists complete aliases with `profiles`; its `load MODEL|N` resolves an exact
-alias, a numbered row, or an unambiguous runtime target. Multiple profiles for
-one target require an exact alias or number; the CLI does not invent a preferred
-model policy. The protocol command `server load MODEL` continues to name one
-exact profile. No persisted selection is required or consulted. `server models`
-reads the engine generations actually known to the host.
+readable profile and `model show` inspects one entry. The deterministic
+`server load MODEL` command names one exact profile; the CLI does not invent a
+preferred model policy. No persisted selection is required or consulted.
+`server models` reads the engine generations actually known to the host.
 
 ### Hosted startup semantics
 
-`yvex server` starts the persistent host without opening a package. On a human
-TTY the same foreground process exposes a small operator console for profile
-selection, load, inventory, status, unload, and host stop; external protocol
-clients remain available concurrently. If the configured socket already owns a
-healthy compatible YVEX host, the command attaches that console to the existing
-host instead of creating another listener or engine manager. In an attached
-console, `exit` detaches while `stop` explicitly shuts down the shared host. A
-lifecycle request resolves and
-authenticates the named profile, creates one immutable engine generation,
-establishes its admitted residency, and publishes engine readiness. Unload
-drains and closes that generation without stopping the host. Client requests
-bind to an exact alias and engine generation rather than a mutable
-process-global model selection.
-`yvex chat` and `yvex run` are protocol clients of that resident model; they do
-not link into runtime execution or open weights locally. The complete operator
-sequence and memory interpretation live in the
+`yvex server` starts the persistent host without opening a package. Its
+foreground output is an operational event stream; it never reads stdin as a
+chat or lifecycle command surface. Deterministic `yvex server load|unload`,
+`models`, `status`, `memory`, `log`, and `stop` clients manage and observe the
+host from another process. If the configured socket already owns a healthy
+compatible YVEX host, another `yvex server` invocation reports that fact and
+exits instead of creating a listener, engine manager, or prompt. A lifecycle
+request resolves and authenticates the named profile, creates one immutable
+engine generation, establishes its admitted residency, and publishes engine
+readiness. Unload drains and closes that generation without stopping the host.
+Client requests bind to an exact alias and engine generation rather than a
+mutable process-global model selection. `yvex` and `yvex run` are protocol
+clients of that resident model; they do not link into runtime execution or open
+weights locally. The complete operator sequence and memory interpretation live in the
 [local runtime runbook](../operator-runbook.md).
 
-The empty `yvex` path and explicit `yvex chat` path enter the same linear
-client-owned console over the local protocol. Both require a TTY; `yvex run` is
-the noninteractive one-shot form. A missing host produces one concise refusal
-plus the exact `yvex server` hint; a missing engine points to
-`yvex server load MODEL`. Unknown and duplicate options follow the product
-parser's typed refusal policy.
+The empty `yvex` path is the sole linear client-owned console over the local
+protocol. It requires a TTY; `yvex run` is the noninteractive one-shot form,
+and the retired `yvex chat` spelling refuses with a migration hint. A missing
+host produces one concise refusal plus the exact `yvex server` hint; a missing
+engine points to `yvex server load MODEL`. Unknown and duplicate options follow
+the product parser's typed refusal policy.
 
 The console owns bounded in-memory history, UTF-8 code-point deletion,
 bracketed multiline paste, resize redraw, and two-stage SIGINT/EOF behavior. It
@@ -228,7 +222,7 @@ The OpenAI adapter inside the foreground `yvex server` process is not a third
 terminal renderer. It returns
 the documented compatibility JSON or SSE schema over loopback HTTP. Its
 response objects project typed provider and YVEX protocol facts; they never
-scrape CLI or server-console text. The exact profile lives in
+scrape CLI or server-event text. The exact profile lives in
 [`openai-compatibility.md`](../openai-compatibility.md).
 
 ## Typed event fan-out

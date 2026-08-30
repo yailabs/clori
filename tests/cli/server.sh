@@ -157,7 +157,7 @@ contains "$OUT_DIR/host.out" 'YVEX server · persistent host'
 contains "$OUT_DIR/host.out" 'native verified inference · YVEX'
 contains "$OUT_DIR/host.out" 'engines 0/2'
 contains "$OUT_DIR/host.out" 'load with `yvex server load MODEL`'
-contains "$OUT_DIR/status.json" '"protocol":15'
+contains "$OUT_DIR/status.json" '"protocol":16'
 contains "$OUT_DIR/status.json" '"status":2'
 contains "$OUT_DIR/status.json" '"host_ready":true'
 contains "$OUT_DIR/status.json" '"engine_count":0'
@@ -200,56 +200,66 @@ set -e
 test "$unload_status" -eq 1
 contains "$OUT_DIR/unload.err" 'requested model engine is not loaded'
 
-# A second foreground invocation attaches to the healthy host instead of
-# competing for its Unix/OpenAI listeners.  Leaving that console does not stop
-# the shared process.
-printf 'models\nstatus\nexit\n' |
-    HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 TERM=xterm-256color \
+# A second foreground invocation reports the existing host and exits.  It does
+# not compete for listeners or open a second stdin-driven command surface.
+HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 TERM=xterm-256color \
     script -q -e -c \
         "stty cols 132 rows 44; $YVEX_BIN server" \
-        "$OUT_DIR/attached.typescript" \
+        "$OUT_DIR/attached.typescript" </dev/null \
         >"$OUT_DIR/attached.out" 2>"$OUT_DIR/attached.err"
-contains "$OUT_DIR/attached.typescript" 'STATE      ● READY · ATTACHED'
-contains "$OUT_DIR/attached.typescript" 'server already active'
-contains "$OUT_DIR/attached.typescript" 'Interactive host console connected'
-contains "$OUT_DIR/attached.typescript" 'console detached · YVEX host remains online'
+contains "$OUT_DIR/attached.typescript" 'STATE      ● READY · ALREADY RUNNING'
+contains "$OUT_DIR/attached.typescript" 'no second host or prompt started'
+not_contains "$OUT_DIR/attached.typescript" 'Interactive host console'
+not_contains "$OUT_DIR/attached.typescript" 'yvex[host] >'
 not_contains "$OUT_DIR/attached.typescript" 'listener reservation failed'
 kill -0 "$server_pid"
-run_client server status --json >"$OUT_DIR/status-after-detach.json"
-contains "$OUT_DIR/status-after-detach.json" '"host_ready":true'
+run_client server status --json >"$OUT_DIR/status-after-probe.json"
+contains "$OUT_DIR/status-after-probe.json" '"host_ready":true'
 
 run_client server stop >"$OUT_DIR/stop.out" 2>"$OUT_DIR/stop.err"
 wait "$server_pid"
 server_pid=
 test ! -e "$SOCKET_PATH"
 
-# A foreground TTY owns model lifecycle commands without requiring a second terminal.
-printf 'profiles\nload deepseek4-v4-flash-dspark\nload 2\nmodels\nstatus\nstop\n' |
-    HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 TERM=xterm-256color \
-    script -q -e -c \
+# A foreground TTY owns only server logs.  Lifecycle control remains the same
+# deterministic command plane from another terminal.
+HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 TERM=xterm-256color \
+    script -q -f -e -c \
         "stty cols 132 rows 44; $YVEX_BIN server --openai off --workers 2 --max-engines 2" \
-        "$OUT_DIR/console.typescript" \
-        >"$OUT_DIR/console.out" 2>"$OUT_DIR/console.err"
-contains "$OUT_DIR/console.typescript" 'YVEX SERVER · PERSISTENT HOST'
-contains "$OUT_DIR/console.typescript" 'STATE      ● STARTING'
-contains "$OUT_DIR/console.typescript" 'LOCAL IPC'
-contains "$OUT_DIR/console.typescript" 'CONTROL    profiles · load · models'
-contains "$OUT_DIR/console.typescript" 'Interactive host console ready'
-contains "$OUT_DIR/console.typescript" 'LIFECYCLE  profiles  ·  load MODEL'
-contains "$OUT_DIR/console.typescript" 'OBSERVE    status    ·  help'
-contains "$OUT_DIR/console.typescript" 'yvex[host] >'
-contains "$OUT_DIR/console.typescript" \
-    'structurally complete local profiles · load authenticates artifact + binding'
-contains "$OUT_DIR/console.typescript" "[1] $LEGACY_PROFILE"
-contains "$OUT_DIR/console.typescript" "[2] $PROFILE"
-contains "$OUT_DIR/console.typescript" \
-    'target matches 2 profiles; use an exact alias or number'
-contains "$OUT_DIR/console.typescript" "loading $PROFILE"
-contains "$OUT_DIR/console.typescript" 'runtime binding open failed'
-contains "$OUT_DIR/console.typescript" \
-    'load hint: registry readiness is structural; use `profiles` to select another exact alias or repair this profile'
-contains "$OUT_DIR/console.typescript" "$PROFILE · failed · generation 1"
-contains "$OUT_DIR/console.typescript" 'host ready · engines 0 loaded/1 known/2 max'
+        "$OUT_DIR/server-terminal.typescript" </dev/null \
+        >"$OUT_DIR/server-terminal.out" 2>"$OUT_DIR/server-terminal.err" &
+server_pid=$!
+ready=0
+attempt=0
+while test "$attempt" -lt 100; do
+    if run_client server status --json >"$OUT_DIR/terminal-status.json" 2>/dev/null; then
+        ready=1
+        break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || break
+    attempt=$((attempt + 1))
+    sleep 0.02
+done
+test "$ready" -eq 1 || fail 'terminal foreground host did not become ready'
+set +e
+run_client server load "$PROFILE" >"$OUT_DIR/terminal-load.out" \
+    2>"$OUT_DIR/terminal-load.err"
+load_status=$?
+set -e
+test "$load_status" -eq 1
+contains "$OUT_DIR/terminal-load.err" 'runtime binding open failed'
+run_client server stop >/dev/null
+wait "$server_pid"
+server_pid=
+contains "$OUT_DIR/server-terminal.typescript" 'YVEX SERVER · PERSISTENT HOST'
+contains "$OUT_DIR/server-terminal.typescript" 'STATE      ● STARTING'
+contains "$OUT_DIR/server-terminal.typescript" 'LOCAL IPC'
+contains "$OUT_DIR/server-terminal.typescript" 'LOGS       human events · foreground'
+contains "$OUT_DIR/server-terminal.typescript" 'CONTROL    yvex server load · models'
+contains "$OUT_DIR/server-terminal.typescript" 'HELP       run `yvex` for interactive chat'
+not_contains "$OUT_DIR/server-terminal.typescript" 'Interactive host console'
+not_contains "$OUT_DIR/server-terminal.typescript" 'yvex[host] >'
+not_contains "$OUT_DIR/server-terminal.typescript" 'yvex[multi-engine] >'
 test ! -e "$SOCKET_PATH"
 
 printf 'cli persistent server lifecycle: ok\n'

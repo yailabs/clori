@@ -47,11 +47,10 @@ contracts, operation, and evidence.
 | v0.1 target | [v0.1 record](releases/v0.1.md) |
 | Public changes | [CHANGELOG](../CHANGELOG.md) |
 
-Two selected records retain the empirical boundary immediately preceding the
+One selected record retains the empirical boundary immediately preceding the
 current work:
 
-- [DeepSeek GB10 representation barrier](worklog/2026-08-28-deepseek-gb10-matrix-tile-execution.md);
-- [foreground host lifecycle console repair](worklog/2026-08-28-foreground-host-lifecycle-console.md).
+- [DeepSeek GB10 representation barrier](worklog/2026-08-28-deepseek-gb10-matrix-tile-execution.md).
 
 They are evidence history, not live architecture or project control. Detailed
 retired audits, migrations, milestone plans, and routine worklogs remain

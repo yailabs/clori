@@ -12,7 +12,6 @@
 
 #include <errno.h>
 #include <limits.h>
-#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -50,10 +49,6 @@ typedef struct {
 
 typedef struct {
     yvex_server *server;
-    cli_server_loader_context *loader;
-    const char *socket_path;
-    int attached;
-    int leave_console;
 } cli_server_thread_state;
 
 static int parse_u64(const char *text, unsigned long long *value)
@@ -455,61 +450,23 @@ static int registered_model_load(void *opaque, yvex_server *server,
                : yvex_server_engine_load(server, &selected, &summary, err);
 }
 
-static const char *console_host_state_name(yvex_server_status status)
-{
-    switch (status) {
-    case YVEX_SERVER_STATUS_CONFIGURED: return "configured";
-    case YVEX_SERVER_STATUS_STARTING: return "starting";
-    case YVEX_SERVER_STATUS_READY: return "ready";
-    case YVEX_SERVER_STATUS_STOPPING: return "stopping";
-    case YVEX_SERVER_STATUS_STOPPED: return "stopped";
-    case YVEX_SERVER_STATUS_FAILED: return "failed";
-    }
-    return "unknown";
-}
-
-static const char *console_engine_state_name(yvex_server_engine_state state)
-{
-    switch (state) {
-    case YVEX_SERVER_ENGINE_UNLOADED: return "unloaded";
-    case YVEX_SERVER_ENGINE_LOADING: return "loading";
-    case YVEX_SERVER_ENGINE_LOADED: return "loaded";
-    case YVEX_SERVER_ENGINE_DRAINING: return "draining";
-    case YVEX_SERVER_ENGINE_UNLOADING: return "unloading";
-    case YVEX_SERVER_ENGINE_FAILED: return "failed";
-    }
-    return "unknown";
-}
-
-static int console_remote_connect(
-    const char *socket_path, yvex_client_operation operation,
-    yvex_client_request *request, yvex_client **client, yvex_error *err)
-{
-    yvex_cli_client_request_init(request, operation);
-    return yvex_client_connect(client, socket_path, err);
-}
-
-static int console_remote_message_error(
-    const yvex_client_message *message, const char *where, yvex_error *err)
-{
-    if (message->kind != YVEX_CLIENT_MESSAGE_ERROR) return YVEX_OK;
-    yvex_error_set(err, (yvex_status)message->status, where,
-                   message->reason[0] ? message->reason : "server request failed");
-    return message->status;
-}
-
-static int console_remote_summary(
+static int server_remote_summary(
     const char *socket_path, yvex_server_summary *summary, yvex_error *err)
 {
     yvex_client_request request;
     yvex_client_message message;
     yvex_client *client = NULL;
-    int rc = console_remote_connect(
-        socket_path, YVEX_CLIENT_OP_RUNTIME_STATUS, &request, &client, err);
+    int rc;
 
+    yvex_cli_client_request_init(&request, YVEX_CLIENT_OP_RUNTIME_STATUS);
+    rc = yvex_client_connect(&client, socket_path, err);
     if (rc == YVEX_OK) rc = yvex_client_send(client, &request, err);
     if (rc == YVEX_OK) rc = yvex_client_receive(client, &message, err);
-    if (rc == YVEX_OK) rc = console_remote_message_error(&message, "client.status", err);
+    if (rc == YVEX_OK && message.kind == YVEX_CLIENT_MESSAGE_ERROR) {
+        yvex_error_set(err, (yvex_status)message.status, "client.status",
+                       message.reason[0] ? message.reason : "server request failed");
+        rc = message.status;
+    }
     if (rc == YVEX_OK && message.kind == YVEX_CLIENT_MESSAGE_STATUS)
         *summary = message.runtime;
     else if (rc == YVEX_OK) {
@@ -519,442 +476,6 @@ static int console_remote_summary(
     }
     yvex_client_close(&client);
     return rc;
-}
-
-static int console_remote_engine_snapshot(
-    const char *socket_path,
-    yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES],
-    unsigned long long *count, yvex_error *err)
-{
-    yvex_client_request request;
-    yvex_client_message message;
-    yvex_client *client = NULL;
-    unsigned long long used = 0u;
-    int rc = console_remote_connect(
-        socket_path, YVEX_CLIENT_OP_ENGINE_LIST, &request, &client, err);
-
-    if (rc == YVEX_OK) rc = yvex_client_send(client, &request, err);
-    while (rc == YVEX_OK) {
-        rc = yvex_client_receive(client, &message, err);
-        if (rc != YVEX_OK) break;
-        rc = console_remote_message_error(&message, "client.engines", err);
-        if (rc != YVEX_OK || message.kind == YVEX_CLIENT_MESSAGE_ACK) break;
-        if (message.kind != YVEX_CLIENT_MESSAGE_ENGINE) {
-            yvex_error_set(err, YVEX_ERR_FORMAT, "client.engines",
-                           "server returned an unexpected engine-list response");
-            rc = YVEX_ERR_FORMAT;
-            break;
-        }
-        if (used == YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES) {
-            yvex_error_set(err, YVEX_ERR_BOUNDS, "client.engines",
-                           "server engine catalog exceeds the client bound");
-            rc = YVEX_ERR_BOUNDS;
-            break;
-        }
-        engines[used++] = message.engine;
-    }
-    yvex_client_close(&client);
-    if (rc == YVEX_OK) *count = used;
-    return rc;
-}
-
-static int console_remote_engine_control(
-    const char *socket_path, yvex_client_operation operation,
-    const char *alias, unsigned long long generation,
-    yvex_server_engine_summary *summary, yvex_error *err)
-{
-    yvex_client_request request;
-    yvex_client_message message;
-    yvex_client *client = NULL;
-    int rc = console_remote_connect(
-        socket_path, operation, &request, &client, err);
-
-    if (rc == YVEX_OK) {
-        (void)snprintf(request.model_alias, sizeof(request.model_alias), "%s", alias);
-        request.engine_generation = generation;
-        rc = yvex_client_send(client, &request, err);
-    }
-    if (rc == YVEX_OK) rc = yvex_client_receive(client, &message, err);
-    if (rc == YVEX_OK) rc = console_remote_message_error(&message, "client.engine", err);
-    if (rc == YVEX_OK && message.kind == YVEX_CLIENT_MESSAGE_ENGINE)
-        *summary = message.engine;
-    else if (rc == YVEX_OK) {
-        yvex_error_set(err, YVEX_ERR_FORMAT, "client.engine",
-                       "server returned an unexpected engine response");
-        rc = YVEX_ERR_FORMAT;
-    }
-    yvex_client_close(&client);
-    return rc;
-}
-
-static int console_remote_stop(const char *socket_path, yvex_error *err)
-{
-    yvex_client_request request;
-    yvex_client_message message;
-    yvex_client *client = NULL;
-    int rc = console_remote_connect(
-        socket_path, YVEX_CLIENT_OP_RUNTIME_STOP, &request, &client, err);
-
-    if (rc == YVEX_OK) rc = yvex_client_send(client, &request, err);
-    if (rc == YVEX_OK) rc = yvex_client_receive(client, &message, err);
-    if (rc == YVEX_OK) rc = console_remote_message_error(&message, "client.stop", err);
-    if (rc == YVEX_OK && message.kind != YVEX_CLIENT_MESSAGE_ACK) {
-        yvex_error_set(err, YVEX_ERR_FORMAT, "client.stop",
-                       "server returned an unexpected stop response");
-        rc = YVEX_ERR_FORMAT;
-    }
-    yvex_client_close(&client);
-    return rc;
-}
-
-static int console_summary(const cli_server_thread_state *state,
-                           yvex_server_summary *summary, yvex_error *err)
-{
-    return state->attached
-               ? console_remote_summary(state->socket_path, summary, err)
-               : yvex_server_get_summary(state->server, summary, err);
-}
-
-static int console_engine_snapshot(
-    const cli_server_thread_state *state,
-    yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES],
-    unsigned long long *count, yvex_error *err)
-{
-    return state->attached
-               ? console_remote_engine_snapshot(state->socket_path, engines,
-                                                count, err)
-               : yvex_server_engine_snapshot(
-                     state->server, engines,
-                     YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES, count, err);
-}
-
-static void console_status_render(const cli_server_thread_state *state)
-{
-    yvex_server_summary summary;
-    yvex_error err;
-    if (console_summary(state, &summary, &err) != YVEX_OK) {
-        fprintf(stderr, "yvex server: status: %s\n", yvex_error_message(&err));
-        return;
-    }
-    printf("host %s · engines %llu loaded/%llu known/%llu max · workers %llu"
-           " · sessions %llu · queue %llu/%llu\n",
-           console_host_state_name(summary.status), summary.loaded_engine_count,
-           summary.engine_count, summary.maximum_engines, summary.worker_count,
-           summary.session_count, summary.metrics.queue_depth,
-           summary.metrics.queue_capacity);
-}
-
-static void console_models_render(const cli_server_thread_state *state)
-{
-    yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
-    unsigned long long count = 0u, index;
-    yvex_error err;
-    if (console_engine_snapshot(state, engines, &count, &err) != YVEX_OK) {
-        fprintf(stderr, "yvex server: models: %s\n", yvex_error_message(&err));
-        return;
-    }
-    if (!count) {
-        puts("no model engines known to this host");
-        return;
-    }
-    for (index = 0u; index < count; ++index)
-        printf("  %s · %s · generation %llu · work %llu · sessions %llu\n",
-               engines[index].alias, console_engine_state_name(engines[index].state),
-               engines[index].generation, engines[index].active_work,
-               engines[index].session_count);
-}
-
-static int console_profiles(cli_server_loader_context *context,
-                            const char *selector,
-                            char alias[YVEX_SERVER_MODEL_ALIAS_CAP], int render,
-                            yvex_error *err)
-{
-    yvex_model_registry_options options;
-    yvex_model_registry *registry = NULL;
-    char target_alias[YVEX_SERVER_MODEL_ALIAS_CAP] = "";
-    unsigned long long index, visible = 0u, requested = 0u, target_matches = 0u;
-    int numeric = selector && parse_u64(selector, &requested);
-    int direct_match = 0, rc;
-    memset(&options, 0, sizeof(options));
-    if (alias) alias[0] = '\0';
-    if (pthread_mutex_lock(&context->registry_mutex) != 0) {
-        yvex_error_set(err, YVEX_ERR_STATE, "server.console-profile",
-                       "model registry lock failed");
-        return YVEX_ERR_STATE;
-    }
-    rc = yvex_model_registry_open(&registry, &options, err);
-    if (rc != YVEX_OK) {
-        (void)pthread_mutex_unlock(&context->registry_mutex);
-        return rc;
-    }
-    if (render)
-        puts("structurally complete local profiles · load authenticates artifact + binding");
-    for (index = 0u; index < yvex_model_registry_count(registry); ++index) {
-        const yvex_model_registry_entry *entry =
-            yvex_model_registry_at(registry, index);
-        char entry_alias[YVEX_SERVER_MODEL_ALIAS_CAP];
-        char target[128], backend[8], engine_kind[16], strategy[32];
-        unsigned long long file_size;
-        yvex_error ignored;
-        if (!entry ||
-            yvex_model_registry_startup_validate(entry, &ignored) != YVEX_OK)
-            continue;
-        (void)snprintf(entry_alias, sizeof(entry_alias), "%s", entry->alias);
-        (void)snprintf(target, sizeof(target), "%s", entry->runtime_target);
-        (void)snprintf(backend, sizeof(backend), "%s", entry->runtime_backend);
-        (void)snprintf(engine_kind, sizeof(engine_kind), "%s",
-                       entry->runtime_engine_kind);
-        (void)snprintf(strategy, sizeof(strategy), "%s",
-                       entry->runtime_execution_strategy);
-        file_size = entry->file_size;
-        visible++;
-        if (render)
-            printf("  [%llu] %s\n"
-                   "      %s · %s/%s/%s · %.2f GiB\n",
-                   visible, entry_alias, target, backend, engine_kind, strategy,
-                   (double)file_size / 1073741824.0);
-        if (alias && selector &&
-            ((numeric && visible == requested) ||
-             (!numeric && !strcmp(selector, entry_alias)))) {
-            (void)snprintf(alias, YVEX_SERVER_MODEL_ALIAS_CAP, "%s", entry_alias);
-            direct_match = 1;
-        } else if (alias && selector && !numeric && !strcmp(selector, target)) {
-            target_matches++;
-            (void)snprintf(target_alias, sizeof(target_alias), "%s", entry_alias);
-        }
-    }
-    yvex_model_registry_close(registry);
-    (void)pthread_mutex_unlock(&context->registry_mutex);
-    if (render && !visible) puts("  no structurally complete profile is registered");
-    if (alias && !direct_match && target_matches == 1u)
-        (void)snprintf(alias, YVEX_SERVER_MODEL_ALIAS_CAP, "%s", target_alias);
-    if (alias && !direct_match && target_matches > 1u) {
-        yvex_error_setf(err, YVEX_ERR_STATE, "server.console-profile",
-                        "target matches %llu profiles; use an exact alias or number",
-                        target_matches);
-        return YVEX_ERR_STATE;
-    }
-    if (alias && !alias[0]) {
-        yvex_error_setf(err, YVEX_ERR_STATE, "server.console-profile",
-                        "no startup profile matches: %s",
-                        selector && selector[0] ? selector : "(missing)");
-        return YVEX_ERR_STATE;
-    }
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
-static void console_prompt(const cli_server_thread_state *state)
-{
-    yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
-    unsigned long long count = 0u, index, loaded = 0u;
-    const char *label = "yvex[host]";
-    yvex_cli_terminal_style style;
-    yvex_error err;
-    if (console_engine_snapshot(state, engines, &count, &err) == YVEX_OK)
-        for (index = 0u; index < count; ++index)
-            if (engines[index].state == YVEX_SERVER_ENGINE_LOADED) {
-                loaded++;
-                label = engines[index].target_id[0]
-                            ? engines[index].target_id : engines[index].alias;
-            }
-    if (loaded != 1u) label = loaded ? "yvex[multi-engine]" : "yvex[host]";
-    yvex_cli_terminal_style_get(stdout, &style);
-    printf("%s%s%s > ", style.strong, label, style.reset);
-    (void)fflush(stdout);
-}
-
-static int console_engine_load(cli_server_thread_state *state,
-                               const char *selector)
-{
-    char alias[YVEX_SERVER_MODEL_ALIAS_CAP];
-    yvex_error err;
-    int rc = console_profiles(state->loader, selector, alias, 0, &err);
-    if (rc != YVEX_OK) {
-        fprintf(stderr, "load: %s\n", yvex_error_message(&err));
-        return rc;
-    }
-    printf("loading %s ...\n", alias);
-    (void)fflush(stdout);
-    if (state->attached) {
-        yvex_server_engine_summary summary;
-        rc = console_remote_engine_control(
-            state->socket_path, YVEX_CLIENT_OP_ENGINE_LOAD, alias, 0u,
-            &summary, &err);
-    } else {
-        rc = registered_model_load(state->loader, state->server, alias, &err);
-    }
-    if (rc != YVEX_OK) {
-        fprintf(stderr, "load failed at %s: %s\n", yvex_error_where(&err),
-                yvex_error_message(&err));
-        fputs("load hint: registry readiness is structural; use `profiles` to select another "
-              "exact alias or repair this profile\n", stderr);
-    } else
-        printf("loaded %s\n", alias);
-    return rc;
-}
-
-static int console_engine_unload(cli_server_thread_state *state,
-                                 const char *selector)
-{
-    yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
-    yvex_server_engine_summary result;
-    unsigned long long count = 0u, index, matches = 0u, selected = 0u;
-    yvex_error err;
-    int rc = console_engine_snapshot(state, engines, &count, &err);
-    if (rc != YVEX_OK) return rc;
-    for (index = 0u; index < count; ++index)
-        if (engines[index].state == YVEX_SERVER_ENGINE_LOADED &&
-            (!selector || !selector[0] || !strcmp(selector, engines[index].alias) ||
-             !strcmp(selector, engines[index].target_id))) {
-            selected = index;
-            matches++;
-        }
-    if (matches != 1u) {
-        fprintf(stderr, "unload: %s\n",
-                matches ? "model selection is ambiguous"
-                        : "no matching loaded model engine");
-        return YVEX_ERR_STATE;
-    }
-    rc = state->attached
-             ? console_remote_engine_control(
-                   state->socket_path, YVEX_CLIENT_OP_ENGINE_UNLOAD,
-                   engines[selected].alias, engines[selected].generation,
-                   &result, &err)
-             : yvex_server_engine_unload(
-                   state->server, engines[selected].alias,
-                   engines[selected].generation, &result, &err);
-    if (rc != YVEX_OK)
-        fprintf(stderr, "unload failed at %s: %s\n", yvex_error_where(&err),
-                yvex_error_message(&err));
-    else
-        printf("unloaded %s · host remains ready\n", engines[selected].alias);
-    return rc;
-}
-
-static void console_help(int attached)
-{
-    puts("commands\n"
-         "  profiles              list structurally complete local runtime profiles\n"
-         "  load MODEL|N          load an exact alias, target, or profile number\n"
-         "  models                list engines owned by this host\n"
-         "  unload [MODEL]        unload one exact engine; omit when only one is loaded\n"
-         "  status                show host and resource state\n"
-         "  help                  show these commands\n"
-         "  stop                  stop the host and leave the console");
-    if (attached)
-        puts("  exit                  detach this console; keep the host online");
-}
-
-static void console_line_run(cli_server_thread_state *state, char *line)
-{
-    char *command = line, *argument = NULL, *end;
-    while (*command == ' ' || *command == '\t') command++;
-    end = command + strlen(command);
-    while (end > command &&
-           (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' ' || end[-1] == '\t'))
-        *--end = '\0';
-    if (*command == '/') command++;
-    argument = strpbrk(command, " \t");
-    if (argument) {
-        *argument++ = '\0';
-        while (*argument == ' ' || *argument == '\t') argument++;
-        if (!argument[0]) argument = NULL;
-    }
-    if (!command[0]) return;
-    if (!strcmp(command, "help") || !strcmp(command, "?"))
-        console_help(state->attached);
-    else if (!strcmp(command, "profiles")) {
-        yvex_error err;
-        if (console_profiles(state->loader, NULL, NULL, 1, &err) != YVEX_OK)
-            fprintf(stderr, "profiles: %s\n", yvex_error_message(&err));
-    }
-    else if (!strcmp(command, "models")) console_models_render(state);
-    else if (!strcmp(command, "status")) console_status_render(state);
-    else if (!strcmp(command, "load")) (void)console_engine_load(state, argument);
-    else if (!strcmp(command, "unload")) (void)console_engine_unload(state, argument);
-    else if (!strcmp(command, "stop")) {
-        yvex_error err;
-        int rc = state->attached
-                     ? console_remote_stop(state->socket_path, &err)
-                     : yvex_server_stop(state->server, &err);
-        if (rc != YVEX_OK)
-            fprintf(stderr, "stop: %s\n", yvex_error_message(&err));
-        else
-            state->leave_console = 1;
-    } else if (!strcmp(command, "quit") || !strcmp(command, "exit")) {
-        if (state->attached) {
-            puts("console detached · YVEX host remains online");
-            state->leave_console = 1;
-        } else {
-            yvex_error err;
-            (void)yvex_server_stop(state->server, &err);
-        }
-    } else {
-        fprintf(stderr, "unknown server-console command: %s (type `help`)\n", command);
-    }
-}
-
-static void console_ready_announce(int attached)
-{
-    yvex_cli_terminal_style style;
-
-    yvex_cli_terminal_style_get(stdout, &style);
-    printf("\n  %s● %s%s  %sInteractive host console %s%s\n",
-           style.success, attached ? "ATTACHED" : "READY", style.reset,
-           style.strong, attached ? "connected" : "ready", style.reset);
-    printf("  %sLIFECYCLE%s  profiles  ·  load MODEL  ·  models  ·  unload [MODEL]\n",
-           style.dim, style.reset);
-    printf("  %sOBSERVE%s    status    ·  help        %sSHUTDOWN%s  stop\n",
-           style.dim, style.reset, style.dim, style.reset);
-    printf("  %sExternal Unix and OpenAI clients remain online while you operate here.%s\n",
-           style.dim, style.reset);
-    if (attached) {
-        printf("  %sserver already active · this console uses its existing engine manager%s\n",
-               style.dim, style.reset);
-        printf("  %s`exit` detaches this console; `stop` shuts down the shared host.%s\n",
-               style.dim, style.reset);
-    }
-    fputc('\n', stdout);
-}
-
-static void *operator_console_main(void *opaque)
-{
-    cli_server_thread_state *state = opaque;
-    struct pollfd input = {.fd = STDIN_FILENO, .events = POLLIN | POLLHUP};
-    char line[1024];
-    console_ready_announce(state->attached);
-    console_prompt(state);
-    for (;;) {
-        yvex_server_summary summary;
-        yvex_error err;
-        int ready = poll(&input, 1u, state->attached ? -1 : 250);
-        if (state->leave_console)
-            break;
-        if (!state->attached &&
-            (console_summary(state, &summary, &err) != YVEX_OK ||
-             summary.status != YVEX_SERVER_STATUS_READY))
-            break;
-        if (ready < 0 && errno == EINTR) continue;
-        if (ready < 0 || (input.revents & (POLLERR | POLLNVAL))) break;
-        if (ready > 0 && (input.revents & POLLIN)) {
-            if (!fgets(line, sizeof(line), stdin)) {
-                if (!state->attached)
-                    (void)yvex_server_stop(state->server, &err);
-                break;
-            }
-            console_line_run(state, line);
-            if (!state->leave_console &&
-                console_summary(state, &summary, &err) == YVEX_OK &&
-                summary.status == YVEX_SERVER_STATUS_READY)
-                console_prompt(state);
-        } else if (ready > 0 && (input.revents & POLLHUP)) {
-            if (!state->attached)
-                (void)yvex_server_stop(state->server, &err);
-            break;
-        }
-    }
-    return NULL;
 }
 
 static unsigned int startup_terminal_columns(void)
@@ -1065,7 +586,12 @@ static void startup_announce_wide(const yvex_server_options *options,
 {
     char engines[96], workers[64], protocol[96];
     char local[YVEX_SERVER_SOCKET_PATH_CAP], openai[64];
-    const char *state = summary ? "● READY · ATTACHED" : "● STARTING";
+    const char *state = summary ? "● READY · ALREADY RUNNING" : "● STARTING";
+    const char *logs = summary ? "owned by active host"
+                               : options->console == YVEX_SERVER_CONSOLE_RAW
+                                     ? "raw events · foreground"
+                                     : options->console == YVEX_SERVER_CONSOLE_OFF
+                                           ? "off" : "human events · foreground";
     int openai_enabled = summary ? summary->openai_listener_enabled
                                  : options->openai_enabled;
     unsigned int openai_port = summary ? summary->openai_port
@@ -1107,8 +633,7 @@ static void startup_announce_wide(const yvex_server_options *options,
                      style->strong);
     startup_hero_row(style, startup_logo_line(6u), "PROTOCOL", protocol,
                      style->strong);
-    startup_hero_row(style, startup_logo_line(7u), "CONSOLE",
-                     summary ? "human · attached" : "human · interactive",
+    startup_hero_row(style, startup_logo_line(7u), "LOGS", logs,
                      style->strong);
     startup_hero_row(style, startup_logo_line(8u), NULL, NULL, NULL);
     startup_hero_row(style, startup_logo_line(9u), "LOCAL IPC", local,
@@ -1119,21 +644,23 @@ static void startup_announce_wide(const yvex_server_options *options,
                      "external clients enabled", style->success);
     startup_hero_row(style, startup_logo_line(12u), NULL, NULL, NULL);
     startup_hero_row(style, startup_logo_line(13u), "CONTROL",
-                     "profiles · load · models",
+                     "yvex server load · models",
                      style->strong);
     startup_hero_row(style, startup_logo_line(14u), "OPERATE",
-                     "status · help · unload",
+                     "yvex server status · unload",
                      style->strong);
     startup_hero_row(style, startup_logo_line(15u), "SHUTDOWN", "stop",
                      style->warning);
     startup_hero_row(style, startup_logo_line(16u), NULL, NULL, NULL);
-    startup_hero_row(style, startup_logo_line(17u), "HELP",
-                     "type `help` for the full command map", style->dim);
+    startup_hero_row(style, startup_logo_line(17u), summary ? "RESULT" : "HELP",
+                     summary ? "no second host or prompt started"
+                             : "run `yvex` for interactive chat",
+                     style->dim);
 }
 
 static void startup_announce_compact(const yvex_server_options *options,
                                      const yvex_server_summary *summary,
-                                     const char *endpoint, int interactive,
+                                     const char *endpoint, int human_terminal,
                                      const yvex_cli_terminal_style *style)
 {
     printf("%sYVEX server%s · persistent host\n"
@@ -1154,12 +681,10 @@ static void startup_announce_compact(const yvex_server_options *options,
                        : (unsigned int)options->openai_port);
     else
         printf(" · OpenAI disabled");
-    if (summary && interactive)
-        printf("\n  server already active · attaching this console\n");
-    else if (summary)
-        printf("\n  server already active · host configuration is unchanged\n");
-    else if (interactive)
-        printf("\n  manage this host below · external clients remain available\n");
+    if (summary)
+        printf("\n  server already active · no second host or prompt started\n");
+    else if (human_terminal)
+        printf("\n  logs remain here · manage with `yvex server ...` from another terminal\n");
     else
         printf("\n  load with `yvex server load MODEL`"
                " · stop with Ctrl-C or `yvex server stop`\n");
@@ -1167,7 +692,7 @@ static void startup_announce_compact(const yvex_server_options *options,
 
 static void startup_announce(const yvex_server_options *options,
                              const yvex_server_summary *summary,
-                             int interactive)
+                             int human_terminal)
 {
     char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
     yvex_cli_terminal_style style;
@@ -1178,11 +703,11 @@ static void startup_announce(const yvex_server_options *options,
         endpoint = socket_path;
     yvex_cli_terminal_style_get(stdout, &style);
     columns = startup_terminal_columns();
-    if (interactive && columns >= 104u)
+    if (human_terminal && columns >= 104u)
         startup_announce_wide(options, summary, endpoint, &style, columns);
     else {
-        if (interactive) startup_logo_render(&style);
-        startup_announce_compact(options, summary, endpoint, interactive, &style);
+        if (human_terminal) startup_logo_render(&style);
+        startup_announce_compact(options, summary, endpoint, human_terminal, &style);
     }
     (void)fflush(stdout);
 }
@@ -1193,11 +718,11 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
     yvex_server_summary attached_summary;
     yvex_server *server = NULL;
     cli_server_thread_state thread_state;
-    pthread_t signal_thread, console_thread, operator_thread;
+    pthread_t signal_thread, log_thread;
     sigset_t signals;
     yvex_error err;
-    int rc, signal_ready = 0, console_ready = 0, operator_ready = 0;
-    int interactive;
+    int rc, signal_ready = 0, log_ready = 0;
+    int human_terminal;
     host_options_defaults(&loader.host);
     if (!command_options_parse(&loader, argc, argv, consumed))
         return 2;
@@ -1207,21 +732,14 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
     }
     loader.host.model_loader = registered_model_load;
     loader.host.model_loader_context = &loader;
-    interactive = loader.host.console == YVEX_SERVER_CONSOLE_HUMAN &&
-                  isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
+    human_terminal = loader.host.console == YVEX_SERVER_CONSOLE_HUMAN &&
+                     isatty(STDOUT_FILENO);
     memset(&attached_summary, 0, sizeof(attached_summary));
     yvex_error_clear(&err);
-    rc = console_remote_summary(
+    rc = server_remote_summary(
         loader.host.socket_path, &attached_summary, &err);
     if (rc == YVEX_OK) {
-        startup_announce(&loader.host, &attached_summary, interactive);
-        if (interactive) {
-            memset(&thread_state, 0, sizeof(thread_state));
-            thread_state.loader = &loader;
-            thread_state.socket_path = attached_summary.socket_path;
-            thread_state.attached = 1;
-            (void)operator_console_main(&thread_state);
-        }
+        startup_announce(&loader.host, &attached_summary, human_terminal);
         (void)pthread_mutex_destroy(&loader.registry_mutex);
         return 0;
     }
@@ -1229,7 +747,7 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
         (void)pthread_mutex_destroy(&loader.registry_mutex);
         return server_error(&err, 1);
     }
-    startup_announce(&loader.host, NULL, interactive);
+    startup_announce(&loader.host, NULL, human_terminal);
     (void)sigemptyset(&signals);
     (void)sigaddset(&signals, SIGINT);
     (void)sigaddset(&signals, SIGTERM);
@@ -1244,8 +762,6 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
     }
     memset(&thread_state, 0, sizeof(thread_state));
     thread_state.server = server;
-    thread_state.loader = &loader;
-    thread_state.socket_path = loader.host.socket_path;
     if (pthread_create(&signal_thread, NULL, signal_main, &thread_state) == 0)
         signal_ready = 1;
     else {
@@ -1255,20 +771,11 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
         return 1;
     }
     if (loader.host.console != YVEX_SERVER_CONSOLE_OFF) {
-        void *(*console_main)(void *) =
+        void *(*log_main)(void *) =
             loader.host.console == YVEX_SERVER_CONSOLE_RAW
                 ? raw_console_main : human_console_main;
-        if (pthread_create(&console_thread, NULL, console_main, &thread_state) == 0)
-            console_ready = 1;
-        else {
-            (void)yvex_server_stop(server, &err);
-            rc = YVEX_ERR_STATE;
-        }
-    }
-    if (rc == YVEX_OK && interactive) {
-        if (pthread_create(&operator_thread, NULL, operator_console_main,
-                           &thread_state) == 0)
-            operator_ready = 1;
+        if (pthread_create(&log_thread, NULL, log_main, &thread_state) == 0)
+            log_ready = 1;
         else {
             (void)yvex_server_stop(server, &err);
             rc = YVEX_ERR_STATE;
@@ -1280,10 +787,9 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
         (void)pthread_kill(signal_thread, SIGTERM);
         (void)pthread_join(signal_thread, NULL);
     }
-    if (operator_ready) (void)pthread_join(operator_thread, NULL);
     if (yvex_server_finish(server, &err) != YVEX_OK && rc == YVEX_OK)
         rc = yvex_error_code(&err);
-    if (console_ready) (void)pthread_join(console_thread, NULL);
+    if (log_ready) (void)pthread_join(log_thread, NULL);
     yvex_server_close(&server);
     (void)pthread_mutex_destroy(&loader.registry_mutex);
     return rc == YVEX_OK ? 0 : server_error(&err, 1);

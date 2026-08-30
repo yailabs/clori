@@ -46,7 +46,7 @@ another terminal:
 ./yvex server status
 ./yvex server models
 ./yvex server memory
-./yvex chat --model PROFILE --session main
+./yvex --model PROFILE --session main
 ```
 
 An optional third terminal may run `yvex server log`. Status, logs, and chat

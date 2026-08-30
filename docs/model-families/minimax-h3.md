@@ -40,7 +40,7 @@ promotion rules remain in the [family integration contract](integration.md).
 | Active development line | `models1` shared with the other admitted families |
 | Historical feature ref | `feature/minimax-h3` retains published provenance only |
 | Current status | bounded hosted execution admitted for T2VA and first/last/both keyframe FL2VA; quality, scale, performance and release remain unclaimed |
-| Current boundary | one composite engine generation accepts a prompt plus typed optional `first` and `last` image conditions; `yvex run --model ...` and `yvex chat --model ...` execute the same staged GB10 request and return the atomically published AVI path |
+| Current boundary | one composite engine generation accepts a prompt plus typed optional `first` and `last` image conditions; `yvex run --model ...` and bare `yvex --model ...` execute the same staged GB10 request and return the atomically published AVI path |
 | Shared-substrate obligation | every generic compiler, runtime, server or backend change qualifies both MiniMax and DeepSeek consumers |
 
 Git history and the historical feature ref preserve the accepted intake and
@@ -1152,7 +1152,7 @@ yvex run --model minimax-h3-fl2va-runtime-media \
   --duration 5 --seed 42 PROMPT
 ```
 
-`yvex chat --model ...` accepts the same condition options before attachment.
+Bare `yvex --model ...` accepts the same condition options before attachment.
 Each creative prompt immediately invokes the staged native runtime transaction.
 It does not ask for missing execution parameters,
 and MiniMax-H3 is not presented as a conversational assistant. The model
@@ -1208,8 +1208,8 @@ implementation admits 131,072 rows, its exact chunked-attention workspace is
 resources at 64 GiB. Requests outside these semantic or resource envelopes fail
 before silent canvas, duration, or trajectory reduction.
 
-Historical evidence from 2026-08-14 predates the direct hosted policy. That
-operator-reachable `yvex server` -> `yvex chat` transaction
+Historical evidence from 2026-08-14 predates the direct hosted policy and used
+the explicit interactive spelling that is now retired. That hosted transaction
 accepted “Genera un video dell'eclissi di ieri sera”, asked for the missing
 choices, then executed `smoke`, five seconds, two sigma-grid points, AVI, and
 seed 42. It completed in 560.36 seconds and returned the atomically published

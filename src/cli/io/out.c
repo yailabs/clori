@@ -1570,7 +1570,9 @@ static void render_leaf_usage(FILE *output,
                               const yvex_operator_descriptor *descriptor)
 {
     size_t index;
-    fprintf(output, "usage: yvex %s", descriptor->command_path);
+    fputs("usage: yvex", output);
+    if (descriptor->command_path[0])
+        fprintf(output, " %s", descriptor->command_path);
     for (index = 0u; index < descriptor->argument_count; ++index) {
         const yvex_operator_argument_descriptor *argument = &descriptor->arguments[index];
         if (!strcmp(argument->multiplicity, "many"))
@@ -1612,7 +1614,9 @@ static void render_leaf_help(const yvex_operator_descriptor *descriptor)
 static void render_command_index_line(const yvex_operator_descriptor *descriptor)
 {
     size_t index, width = strlen(descriptor->command_path);
-    printf("  yvex %s", descriptor->command_path);
+    fputs("  yvex", stdout);
+    if (descriptor->command_path[0])
+        printf(" %s", descriptor->command_path);
     for (index = 0u; index < descriptor->argument_count; ++index) {
         const yvex_operator_argument_descriptor *argument = &descriptor->arguments[index];
         if (!strcmp(argument->multiplicity, "many")) {

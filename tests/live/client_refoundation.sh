@@ -141,7 +141,7 @@ grep -E '"output_head_upload_count":[01](,|})' "$root/status.after.json" >/dev/n
 
 mkfifo "$root/repl.input"
 NO_COLOR=1 XDG_RUNTIME_DIR="$runtime" script -q -f -e \
-    -c "$YVEX_BIN chat --session repl-live --max-new-tokens 1" \
+    -c "$YVEX_BIN --session repl-live --max-new-tokens 1" \
     "$root/repl.typescript" <"$root/repl.input" >/dev/null &
 repl_pid=$!
 exec 3>"$root/repl.input"

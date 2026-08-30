@@ -32,12 +32,11 @@ change. Git history preserves implementation chronology.
   protocol v9 facts that distinguish it from still-open continuous batching.
 - Registry-driven command discovery, advanced help, JSON discovery, and Bash,
   Zsh, and Fish completion.
-- One client-owned linear console at both `yvex` and `yvex chat`. It consumes
-  typed protocol/catalog facts for live prefill, committed output, turn metrics,
-  runtime inspection, cancellation, reconnect, and bounded terminal restoration
-  without reading backend-private state. The foreground host also owns a TTY
-  lifecycle console for full profile listing and same-terminal load, inventory,
-  status, unload, and stop.
+- One client-owned linear console at `yvex`. It consumes typed protocol/catalog
+  facts for live prefill, committed output, turn metrics, runtime inspection,
+  cancellation, reconnect, and bounded terminal restoration without reading
+  backend-private state. The foreground server owns host lifetime and log
+  projection only; deterministic `yvex server ...` commands own lifecycle control.
 - Exact source-authored chat/non-think, think-high and think-max conversation
   encoding, including tool continuity and drop-thinking multi-turn behavior.
   Typed reasoning, final, tool and error streams remain separate; REPL and raw
@@ -312,6 +311,9 @@ change. Git history preserves implementation chronology.
 
 ### Removed
 
+- Retired the explicit `yvex chat` spelling and the stdin-driven foreground
+  server operator console. Bare `yvex` is the sole interactive conversation;
+  `yvex server` starts or reports the host and never opens a chat/lifecycle prompt.
 - The separate `yvexd` product, implicit persisted model selection,
   `runtime start`, and duplicate public `watch`/`trace` grammar.
 - Retired the separate `yvex-dev` and `yvex-openai` product executables.

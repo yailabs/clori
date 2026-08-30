@@ -4,8 +4,8 @@ This runbook owns first startup and routine operation of the installed local
 server and clients. Normal operation is registry-first: users list a complete
 local model profile, start the foreground host, load that package as one engine
 generation, and enter chat without exporting paths or repeating internal
-paths. Running `yvex` and `yvex chat` enters the same linear console. It attaches
-to the resident server and uses the same typed session, progress,
+paths. Running `yvex` enters the sole linear console. It attaches to the
+resident server and uses the same typed session, progress,
 runtime-observation, and result facts as noninteractive clients without reading
 backend-private state. Its commands follow the canonical operation registry.
 It is not a capability ledger: consult [`ROADMAP.md`](../ROADMAP.md) for current
@@ -234,21 +234,20 @@ Then start the host in the first terminal:
 ```
 
 Foreground operation is intentional: keep this terminal open. The host owns the
-local socket, OpenAI listener, telemetry, bounded engine manager, and a human
-operator console when stdin and stdout are a TTY. Select and load the intended
-DeepSeek profile directly at its prompt:
+local socket, OpenAI listener, telemetry, and bounded engine manager. Its
+terminal renders operational events but never reads chat or lifecycle commands.
+Select and load the intended DeepSeek profile from another terminal:
 
-```text
-profiles
-load N
-models
+```sh
+./yvex server load PROFILE
+./yvex server models
+./yvex server status
 ```
 
-`profiles` prints complete, untruncated aliases. `load` accepts an exact alias,
-its displayed number, or a runtime target when only one readable profile has
-that target. Multiple matching profiles refuse as ambiguous rather than making
-the CLI a model-selection authority. A second terminal remains optional for
-protocol commands, chat, OpenAI clients, and independent observation.
+Use the exact alias printed by `model list`; multiple profiles for one runtime
+target never make the CLI an implicit model-selection authority. The same
+terminal can then enter chat with bare `yvex`, while other protocol clients and
+OpenAI consumers remain independent.
 
 The host publishes its socket before any engine exists. `server load` resolves
 the selected registry profile, authenticates its package and binding, seals the
@@ -282,7 +281,7 @@ The relevant commands have different responsibilities:
   stopping the host;
 - `yvex server memory` reports current process, mapped, host-resident, and
   device-resident memory facts;
-- `yvex chat` and `yvex run` use the already resident model through the local
+- `yvex` and `yvex run` use the already resident model through the local
   protocol and never create another model copy.
 
 The host keeps the immutable artifact mapping as canonical backing. A compiled
@@ -331,7 +330,7 @@ residency.
 From another terminal, start the ordinary client:
 
 ```sh
-./yvex chat --model minimax-h3-fl2va-runtime-media --session video
+./yvex --model minimax-h3-fl2va-runtime-media --session video
 ```
 
 Submit one creative prompt. The prompt immediately starts native generation;
@@ -383,11 +382,11 @@ per channel with a 10,416 ns duration delta. Peak server RSS was 62.57 GiB
 inside the 88 GiB hard limit, with no residual component residency after the
 turn.
 
-## Foreground host console and client terminal
+## Foreground host and client terminal
 
-One terminal is sufficient to start, load, inspect, unload, and stop the host.
-An optional client terminal uses the same server and model; it does not create
-another model copy.
+The foreground host terminal owns server lifetime and log projection. A second
+terminal uses deterministic control commands or the interactive client; neither
+creates another model copy.
 
 Terminal 1 owns the foreground host lifecycle:
 
@@ -396,33 +395,32 @@ Terminal 1 owns the foreground host lifecycle:
 ```
 
 The foreground terminal opens with the YVEX hero, executable version and local
-protocol, then transitions into the host console and compact operational event
-stream. The banner is a human projection; host readiness remains the typed
-status authority. Load and inspect the selected profile without leaving this
-terminal:
+protocol, then remains a compact operational event stream. The banner is a
+human projection; host readiness remains the typed status authority. It does
+not expose a chat or lifecycle prompt. Load and inspect the selected profile
+from Terminal 2:
 
-```text
-yvex[host] > profiles
-yvex[host] > load N
-deepseek4-v4-flash-dspark > models
+```sh
+./yvex server load PROFILE
+./yvex server models
+./yvex server status
 ```
 
 Running `./yvex server` from another terminal while this compatible host is
-healthy attaches a second operator console to the same engine manager. It does
-not reserve another Unix or OpenAI listener. Use `exit` to detach that console
-without affecting the host; use `stop` only when the shared host itself should
-shut down.
+healthy reports the active host and exits. It neither reserves another Unix or
+OpenAI listener nor opens an stdin-driven prompt. Use `./yvex server stop` only
+when the shared host itself should shut down.
 
-After the engine reports `loaded`, an optional second terminal may run
-`./yvex chat --model PROFILE --session main` or `./yvex server log`. Add
+After the engine reports `loaded`, Terminal 2 may run
+`./yvex --model PROFILE --session main` or `./yvex server log`. Add
 `--verbose` for individual DSpark cycles or `--json` for canonical JSONL. All
 views derive from the same typed event sequence. Default telemetry excludes
 prompt and answer content.
 
 ## Interactive console
 
-Bare `./yvex` and explicit `./yvex chat` open one concise attachment view and a
-prompt labelled with the attached engine's model alias:
+Bare `./yvex` is the one interactive entrypoint. It opens a concise attachment
+view and a prompt labelled with the attached engine's model alias:
 
 ```text
 YVEX 0.1.0 · protocol 16
@@ -609,7 +607,7 @@ specialization, backend, residency, and readiness facts. `server memory`
 separates mapped package, prepared/derived, resident, sequence-state,
 workspace/temporary, process RSS, and backend allocation facts.
 
-Follow typed server activity independently of the foreground console:
+Follow typed server activity independently of the foreground host stream:
 
 ```sh
 ./yvex server log
@@ -617,17 +615,17 @@ Follow typed server activity independently of the foreground console:
 ./yvex server log --json
 ```
 
-The foreground human console and `server log` project each request as one coherent
-unit with stable time, request, session, phase, duration and result fields. They
-group prefill and DSpark cycles, show queue pressure only
-when contended, uses human byte units and named stop reasons, and replaces any
-active progress line with one stable completion or failure summary. It
-suppresses ordinary connection churn, token fragments and profiler detail.
+The foreground server stream and `server log` project each request as one
+coherent unit with stable time, request, session, phase, duration and result
+fields. They group prefill and DSpark cycles, show queue pressure only when
+contended, use human byte units and named stop reasons, and replace any active
+progress line with one stable completion or failure summary. They suppress
+ordinary connection churn, token fragments and profiler detail.
 `server log --verbose` exposes each DSpark cycle. `server log --json` emits the
 canonical complete JSONL event record, including typed detail omitted by the compact
 human view. Prompts and answers remain absent from every projection by default.
 
-Raw server-console JSONL is selected at startup with `--console raw`. Increase
+Raw server-event JSONL is selected at startup with `--console raw`. Increase
 `--trace-level` from `summary` to `stages`, `tokens`, or `full` only when the
 additional volume is required. Text content remains excluded unless the host is
 started with the explicit `--trace-content` opt-in.
@@ -636,9 +634,9 @@ started with the explicit `--trace-content` opt-in.
 
 Release one engine while retaining the host and its other engines:
 
-```text
-deepseek4-v4-flash-dspark > unload
-yvex[host] > status
+```sh
+./yvex server unload PROFILE
+./yvex server status
 ```
 
 Unload enters draining, refuses new work for that generation, resolves active
@@ -691,9 +689,8 @@ separate facts.
 ./yvex server
 ```
 
-Then use `profiles` and `load N` in the foreground host console. A
-noninteractive operator may instead run `./yvex server load PROFILE` from
-another process.
+Then run `./yvex server load PROFILE` from another process. The foreground host
+continues to own only server lifetime and its event stream.
 
 `model list` reads registry entries; `server load MODEL` selects one entry and
 creates a generation; `server models` reads the identities actually known to

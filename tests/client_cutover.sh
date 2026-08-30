@@ -28,8 +28,9 @@ cleanup()
 trap cleanup EXIT HUP INT TERM
 
 "$YVEX_BIN" help >"$root/help"
+grep -F 'usage: yvex [options]' "$root/help" >/dev/null
+grep -F 'Enter retained interactive chat.' "$root/help" >/dev/null
 for expected in \
-    'yvex chat' \
     'yvex run' \
     'yvex server                                     Run the persistent multi-engine host' \
     'yvex server load MODEL' \
@@ -69,6 +70,8 @@ payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert payload['schema'] == 'yvex.command.discovery.v1'
 assert len(payload['registry_identity']) == 64
 paths = {row['command_path'] for row in payload['operations'] if row['projections']['cli']}
+assert '' in paths
+assert 'chat' not in paths
 assert 'server status' in paths
 assert 'server' in paths
 assert 'server load' in paths
@@ -133,8 +136,8 @@ do
     "$YVEX_BIN" $arguments >"$root/out" 2>"$root/err"
 done
 
-# Removed namespaces refuse and provide migration direction without executing aliases.
-for command in evidence graph quant source tensor tokenizer; do
+# Removed namespaces and the retired explicit chat spelling refuse without forwarding.
+for command in chat evidence graph quant source tensor tokenizer; do
     set +e
     "$YVEX_BIN" "$command" >"$root/out" 2>"$root/err"
     status=$?
@@ -179,7 +182,7 @@ grep -F 'failed to open' "$root/out2" >/dev/null
 ! grep -F 'runtime socket' "$root/err" "$root/err2" >/dev/null
 
 set +e
-printf 'hello\n' | "$YVEX_BIN" chat >"$root/out" 2>"$root/err"
+printf 'hello\n' | "$YVEX_BIN" >"$root/out" 2>"$root/err"
 status=$?
 set -e
 test "$status" -eq 2
