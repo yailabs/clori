@@ -32,6 +32,9 @@ static const yvex_backend_component_operations component_operations = {
     .text_encoder_execute = yvex_cuda_text_encoder_execute,
     .text_encoder_multimodal_execute = yvex_cuda_text_encoder_multimodal_execute,
     .joint_transformer_execute = yvex_cuda_transformer_joint_execute,
+    .joint_transformer_prepare = yvex_cuda_transformer_joint_prepare,
+    .joint_transformer_prepared_execute = yvex_cuda_transformer_joint_prepared_execute,
+    .joint_transformer_prepared_release = yvex_cuda_transformer_joint_prepared_release,
     .alias_decoder_execute = yvex_cuda_alias_decoder_execute,
 };
 

@@ -21,6 +21,17 @@ struct yvex_runtime_component_session {
     yvex_backend *backend;
     yvex_device_tensor *workspace;
     unsigned long long workspace_bytes, execution_transaction_leases;
+    yvex_engine_resource_catalog *execution_resources;
+    yvex_engine_resource_handle execution_arena_resource;
+    yvex_engine_resource_handle request_prepared_resource;
+    yvex_engine_resource_handle condition_prepared_resource;
+    yvex_transformer_joint_prepared *joint_prepared;
+    yvex_transformer_joint_prepared_summary joint_prepared_summary;
+    yvex_component_resource_summary resource_summary;
+    char package_identity[YVEX_SHA256_HEX_CAP];
+    char admission_identity[YVEX_SHA256_HEX_CAP];
+    char active_prepared_identity[YVEX_SHA256_HEX_CAP];
+    int prepared_resources_borrowed;
     yvex_runtime_residency_summary summary;
 };
 
@@ -29,6 +40,43 @@ static const yvex_materialized_tensor_binding *component_binding_find(
 static int component_weight_bind(
     const yvex_materialization_session *, const yvex_runtime_residency *,
     const char *, yvex_component_encoded_weight *, yvex_error *);
+
+static int component_joint_prepared_release(void *context, yvex_error *err)
+{
+    yvex_runtime_component_session *session = context;
+    const yvex_backend_component_operations *operations;
+    int rc;
+    if (!session || !session->backend || !session->joint_prepared) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.component-resource",
+                       "prepared component resource ownership is unavailable");
+        return YVEX_ERR_STATE;
+    }
+    operations = yvex_backend_component_operations_get(session->backend);
+    if (!operations || !operations->joint_transformer_prepared_release) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "runtime.component-resource",
+                       "backend cannot release its prepared component resource");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    rc = operations->joint_transformer_prepared_release(
+        session->backend, &session->joint_prepared, err);
+    if (rc == YVEX_OK) {
+        memset(&session->joint_prepared_summary, 0,
+               sizeof(session->joint_prepared_summary));
+        session->resource_summary.ready = 0;
+        session->resource_summary.request_ready = 0;
+        session->resource_summary.condition_ready = 0;
+        session->resource_summary.host_arena_bytes = 0ull;
+        session->resource_summary.device_arena_bytes = 0ull;
+        session->resource_summary.request_prepared_bytes = 0ull;
+        session->resource_summary.condition_prepared_bytes = 0ull;
+        session->resource_summary.allocation_count = 0ull;
+        session->resource_summary.last_execution_allocation_events = 0ull;
+        session->resource_summary.resource_count = 0ull;
+        memset(session->resource_summary.prepared_identity, 0,
+               sizeof(session->resource_summary.prepared_identity));
+    }
+    return rc;
+}
 
 int yvex_runtime_component_session_close(yvex_runtime_component_session **session,
                                          yvex_error *err)
@@ -45,6 +93,18 @@ int yvex_runtime_component_session_close(yvex_runtime_component_session **sessio
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.component-session",
                        "an active execution transaction still retains component resources");
         return YVEX_ERR_STATE;
+    }
+    if (owned->prepared_resources_borrowed) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.component-session",
+                       "prepared execution resources remain borrowed");
+        return YVEX_ERR_STATE;
+    }
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_resource_catalog_close(
+        &owned->execution_resources, &cleanup);
+    if (cleanup_rc != YVEX_OK) {
+        if (err) *err = cleanup;
+        return cleanup_rc;
     }
     *session = NULL;
     if (owned->workspace) {
@@ -84,11 +144,11 @@ static int component_session_prepare_workspace(
     int rc, cleanup_rc;
     if (!session || !session->backend || !bytes || bytes > SIZE_MAX) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component-session.workspace",
-                       "one bounded CUDA component workspace is required");
+                       "one bounded backend component workspace is required");
         return YVEX_ERR_INVALID_ARG;
     }
     if (session->workspace) {
-        if (session->workspace_bytes == bytes) {
+        if (session->workspace_bytes >= bytes) {
             yvex_error_clear(err);
             return YVEX_OK;
         }
@@ -149,6 +209,12 @@ int yvex_runtime_component_session_open(
                        "component execution session allocation failed");
         return YVEX_ERR_NOMEM;
     }
+    yvex_core_text_copy(session->package_identity,
+                        sizeof(session->package_identity),
+                        admission->artifact_identity);
+    yvex_core_text_copy(session->admission_identity,
+                        sizeof(session->admission_identity),
+                        admission->admission_identity);
     yvex_materialization_options_default(&options);
     options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
     if (maximum_host_bytes && maximum_host_bytes < options.max_chunk_bytes)
@@ -180,6 +246,14 @@ int yvex_runtime_component_session_open(
     if (rc == YVEX_OK && backend_kind == YVEX_BACKEND_KIND_CPU)
         rc = yvex_runtime_residency_snapshot(session->residency, &session->summary,
                                              NULL, NULL, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_resource_catalog_open(
+            &session->execution_resources,
+            session->summary.generation ? session->summary.generation : 1ull,
+            session->summary.residency_identity, 4ull, err);
+    if (rc == YVEX_OK)
+        session->resource_summary.schema_version =
+            YVEX_COMPONENT_RESOURCE_SUMMARY_SCHEMA_V1;
     if (rc != YVEX_OK) {
         primary = err ? *err : (yvex_error){0};
         yvex_error_clear(&cleanup);
@@ -216,6 +290,81 @@ static int component_session_workspace_reserve(
     return component_session_prepare_workspace(context, bytes, err);
 }
 
+static int component_resource_handle_present(yvex_engine_resource_handle handle)
+{
+    return handle.engine_generation && handle.slot && handle.generation;
+}
+
+static int component_prepared_resources_borrow(
+    yvex_runtime_component_session *session, yvex_error *err)
+{
+    yvex_engine_resource_handle handles[3];
+    unsigned int count = 0u, acquired = 0u;
+    void *value = NULL;
+    int rc = YVEX_OK;
+    if (!session || !session->execution_resources || !session->joint_prepared)
+        return YVEX_ERR_STATE;
+    handles[count++] = session->execution_arena_resource;
+    if (component_resource_handle_present(session->request_prepared_resource))
+        handles[count++] = session->request_prepared_resource;
+    if (component_resource_handle_present(session->condition_prepared_resource))
+        handles[count++] = session->condition_prepared_resource;
+    while (acquired < count && rc == YVEX_OK) {
+        value = NULL;
+        rc = yvex_runtime_resource_acquire(
+            session->execution_resources, handles[acquired], &value, err);
+        if (rc == YVEX_OK) {
+            acquired++;
+            if (value != session->joint_prepared) {
+                yvex_error_set(err, YVEX_ERR_STATE, "runtime.component-resource",
+                               "prepared resource value disagrees with its owner");
+                rc = YVEX_ERR_STATE;
+            }
+        }
+    }
+    while (rc != YVEX_OK && acquired) {
+        yvex_error cleanup;
+        --acquired;
+        yvex_error_clear(&cleanup);
+        (void)yvex_runtime_resource_drop(
+            session->execution_resources, handles[acquired], &cleanup);
+    }
+    if (rc == YVEX_OK) {
+        session->prepared_resources_borrowed = 1;
+        session->resource_summary.retained_by_transaction =
+            session->execution_transaction_leases != 0ull;
+        yvex_error_clear(err);
+    }
+    return rc;
+}
+
+static int component_prepared_resources_drop(
+    yvex_runtime_component_session *session, yvex_error *err)
+{
+    yvex_engine_resource_handle handles[3];
+    unsigned int count = 0u;
+    int rc = YVEX_OK;
+    if (!session || !session->execution_resources ||
+        !session->prepared_resources_borrowed)
+        return YVEX_OK;
+    handles[count++] = session->execution_arena_resource;
+    if (component_resource_handle_present(session->request_prepared_resource))
+        handles[count++] = session->request_prepared_resource;
+    if (component_resource_handle_present(session->condition_prepared_resource))
+        handles[count++] = session->condition_prepared_resource;
+    while (count && rc == YVEX_OK) {
+        --count;
+        rc = yvex_runtime_resource_drop(
+            session->execution_resources, handles[count], err);
+    }
+    if (rc == YVEX_OK) {
+        session->prepared_resources_borrowed = 0;
+        session->resource_summary.retained_by_transaction = 0;
+        yvex_error_clear(err);
+    }
+    return rc;
+}
+
 static int component_session_transaction_retain(void *context, yvex_error *err)
 {
     yvex_runtime_component_session *session = context;
@@ -239,7 +388,14 @@ static int component_session_transaction_release(void *context, yvex_error *err)
                        "component execution retention is not active");
         return YVEX_ERR_STATE;
     }
+    if (session->execution_transaction_leases == 1ull &&
+        session->prepared_resources_borrowed &&
+        component_prepared_resources_drop(session, err) != YVEX_OK)
+        return yvex_error_code(err);
     session->execution_transaction_leases--;
+    if (!session->execution_transaction_leases)
+        memset(session->active_prepared_identity, 0,
+               sizeof(session->active_prepared_identity));
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -295,6 +451,32 @@ int yvex_component_execution_resource_lease(
     lease->release = component_session_transaction_release;
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+int yvex_component_execution_resource_summary(
+    const yvex_component_execution *execution,
+    yvex_component_resource_summary *summary, yvex_error *err)
+{
+    yvex_runtime_component_session *session;
+    yvex_engine_resource_summary catalog = {0};
+    unsigned long long count = 0ull;
+    int rc;
+    if (summary) memset(summary, 0, sizeof(*summary));
+    if (!component_execution_valid(execution) || !summary) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG,
+                       "component.execution.resource-summary",
+                       "one runtime-owned component execution is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    session = execution->owner_context;
+    rc = yvex_runtime_resource_snapshot(
+        session->execution_resources, &catalog, NULL, 0ull, &count, err);
+    if (rc == YVEX_OK) {
+        session->resource_summary.resource_count = count;
+        session->resource_summary.resource_generation = catalog.generation;
+        *summary = session->resource_summary;
+    }
+    return rc;
 }
 
 int yvex_component_execution_weight_view(
@@ -619,6 +801,266 @@ static int component_joint_weight_bind(
     return rc;
 }
 
+static int component_joint_prepared_identity(
+    const yvex_runtime_component_session *session,
+    const yvex_transformer_joint_request *request,
+    char identity[YVEX_SHA256_HEX_CAP], yvex_error *err)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    if (!session || !request || !request->recipe ||
+        !request->recipe->identity_domain ||
+        !yvex_sha256_hex_valid(request->layout_identity) ||
+        !yvex_sha256_hex_valid(request->condition_identity)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component-resource",
+                       "layout and condition identities are required for preparation");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.joint-execution-preparation.v1") ||
+        !yvex_sha256_update_text(&hash, session->summary.residency_identity) ||
+        !yvex_sha256_update_text(&hash, request->recipe->identity_domain) ||
+        !yvex_sha256_update_text(&hash, request->layout_identity) ||
+        !yvex_sha256_update_text(&hash, request->condition_identity) ||
+        !yvex_sha256_update_text(
+            &hash, request->video_output_physical.physical_identity) ||
+        !yvex_sha256_update_text(
+            &hash, request->audio_output_physical.physical_identity) ||
+        !yvex_sha256_update_u64(&hash, request->video_rows) ||
+        !yvex_sha256_update_u64(&hash, request->audio_rows) ||
+        !yvex_sha256_update_u64(&hash, request->text_rows) ||
+        !yvex_sha256_update_u64(&hash, request->packed_rows) ||
+        !yvex_sha256_update_u64(&hash, request->block_count) ||
+        !yvex_sha256_final(&hash, digest)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.component-resource",
+                       "prepared execution identity could not be sealed");
+        return YVEX_ERR_STATE;
+    }
+    yvex_sha256_hex(digest, identity);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int component_prepared_view_release(void *context, yvex_error *err)
+{
+    (void)context;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int component_joint_resources_evict(
+    yvex_runtime_component_session *session, yvex_error *err)
+{
+    int rc = YVEX_OK;
+    if (!session || session->prepared_resources_borrowed) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.component-resource",
+                       "borrowed prepared resources cannot be invalidated");
+        return YVEX_ERR_STATE;
+    }
+    if (component_resource_handle_present(session->condition_prepared_resource))
+        rc = yvex_runtime_resource_evict(
+            session->execution_resources,
+            &session->condition_prepared_resource, err);
+    if (rc == YVEX_OK &&
+        component_resource_handle_present(session->request_prepared_resource))
+        rc = yvex_runtime_resource_evict(
+            session->execution_resources,
+            &session->request_prepared_resource, err);
+    if (rc == YVEX_OK &&
+        component_resource_handle_present(session->execution_arena_resource))
+        rc = yvex_runtime_resource_evict(
+            session->execution_resources,
+            &session->execution_arena_resource, err);
+    return rc;
+}
+
+static int component_joint_resource_register_one(
+    yvex_runtime_component_session *session, yvex_engine_resource_kind kind,
+    yvex_engine_resource_lifetime lifetime, const char *name,
+    yvex_engine_resource_handle dependency,
+    yvex_engine_resource_bytes bytes, unsigned long long preparation_ns,
+    yvex_engine_resource_release_fn release,
+    yvex_engine_resource_handle *handle, yvex_error *err)
+{
+    yvex_engine_resource_request resource = {0};
+    resource.kind = kind;
+    resource.owner = YVEX_ENGINE_RESOURCE_OWNER_EXECUTION;
+    resource.lifetime = lifetime;
+    resource.numeric_class = kind == YVEX_ENGINE_RESOURCE_WORKSPACE
+                                 ? YVEX_ENGINE_RESOURCE_NUMERIC_STATE
+                                 : YVEX_ENGINE_RESOURCE_NUMERIC_EQUIVALENT_PREPARED;
+    resource.name = name;
+    resource.package_identity = session->package_identity;
+    resource.specialization_identity = session->summary.residency_identity;
+    resource.admission_identity = session->joint_prepared_summary.identity;
+    resource.dependency = dependency;
+    resource.bytes = bytes;
+    resource.preparation_nanoseconds = preparation_ns;
+    resource.value = session->joint_prepared;
+    resource.release = release;
+    resource.release_context = session;
+    resource.ready = 1;
+    resource.evictable = 1;
+    return yvex_runtime_resource_register(
+        session->execution_resources, &resource, handle, err);
+}
+
+static int component_joint_resources_register(
+    yvex_runtime_component_session *session, yvex_error *err)
+{
+    yvex_engine_resource_bytes bytes = {0};
+    yvex_engine_resource_summary catalog = {0};
+    unsigned long long count = 0ull, workspace_bytes;
+    int rc;
+    if (!yvex_core_u64_add(session->joint_prepared_summary.host_arena_bytes,
+                           session->joint_prepared_summary.device_arena_bytes,
+                           &workspace_bytes)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "runtime.component-resource",
+                       "execution arena accounting overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    bytes.host_resident_bytes = session->joint_prepared_summary.host_arena_bytes;
+    bytes.device_resident_bytes = session->joint_prepared_summary.device_arena_bytes;
+    bytes.workspace_bytes = workspace_bytes;
+    rc = component_joint_resource_register_one(
+        session, YVEX_ENGINE_RESOURCE_WORKSPACE,
+        YVEX_ENGINE_RESOURCE_LIFETIME_REQUEST, "joint-execution-arena",
+        (yvex_engine_resource_handle){0}, bytes,
+        session->joint_prepared_summary.preparation_nanoseconds,
+        component_joint_prepared_release,
+        &session->execution_arena_resource, err);
+    memset(&bytes, 0, sizeof(bytes));
+    bytes.prepared_bytes = session->joint_prepared_summary.request_prepared_bytes;
+    if (rc == YVEX_OK && session->joint_prepared_summary.request_ready)
+        rc = component_joint_resource_register_one(
+            session, YVEX_ENGINE_RESOURCE_PREPARED_LAYOUT,
+            YVEX_ENGINE_RESOURCE_LIFETIME_REQUEST, "joint-request-layout",
+            session->execution_arena_resource, bytes, 0ull,
+            component_prepared_view_release,
+            &session->request_prepared_resource, err);
+    memset(&bytes, 0, sizeof(bytes));
+    bytes.prepared_bytes = session->joint_prepared_summary.condition_prepared_bytes;
+    if (rc == YVEX_OK && session->joint_prepared_summary.condition_ready)
+        rc = component_joint_resource_register_one(
+            session, YVEX_ENGINE_RESOURCE_PREPARED_TENSOR,
+            YVEX_ENGINE_RESOURCE_LIFETIME_CONDITION, "joint-condition-state",
+            session->execution_arena_resource, bytes, 0ull,
+            component_prepared_view_release,
+            &session->condition_prepared_resource, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_resource_snapshot(
+            session->execution_resources, &catalog, NULL, 0ull, &count, err);
+    if (rc == YVEX_OK) {
+        session->resource_summary.resource_count = count;
+        session->resource_summary.resource_generation = catalog.generation;
+    }
+    return rc;
+}
+
+static int component_joint_resources_prepare(
+    yvex_runtime_component_session *session,
+    const yvex_backend_component_operations *operations,
+    const yvex_transformer_joint_encoded_weight *external,
+    const yvex_transformer_joint_encoded_weight *blocks,
+    const yvex_transformer_joint_request *request, int *reused,
+    yvex_error *err)
+{
+    char identity[YVEX_SHA256_HEX_CAP];
+    unsigned long long preparation_total;
+    int had_prepared, rc;
+    *reused = 0;
+    rc = component_joint_prepared_identity(session, request, identity, err);
+    if (rc != YVEX_OK) return rc;
+    if (session->active_prepared_identity[0] &&
+        strcmp(session->active_prepared_identity, identity) != 0) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.component-resource",
+                       "one transaction cannot change its prepared execution identity");
+        return YVEX_ERR_STATE;
+    }
+    if (session->joint_prepared &&
+        strcmp(session->joint_prepared_summary.identity, identity) == 0) {
+        *reused = 1;
+    } else {
+        had_prepared = session->joint_prepared != NULL;
+        if (had_prepared) {
+            if (session->resource_summary.rebuild_count == ULLONG_MAX) {
+                yvex_error_set(err, YVEX_ERR_BOUNDS,
+                               "runtime.component-resource.accounting",
+                               "prepared resource rebuild accounting overflowed");
+                return YVEX_ERR_BOUNDS;
+            }
+            rc = component_joint_resources_evict(session, err);
+            if (rc != YVEX_OK) return rc;
+            session->resource_summary.rebuild_count++;
+        }
+        rc = operations->joint_transformer_prepare(
+            session->backend, external, blocks, session->summary.residency_identity,
+            session->summary.encoded_bytes, identity, request,
+            &session->joint_prepared, &session->joint_prepared_summary, err);
+        if (rc != YVEX_OK) return rc;
+        if (session->resource_summary.preparation_count == ULLONG_MAX ||
+            !yvex_core_u64_add(
+                session->resource_summary.preparation_nanoseconds,
+                session->joint_prepared_summary.preparation_nanoseconds,
+                &preparation_total)) {
+            yvex_error cleanup;
+            int cleanup_rc;
+            yvex_error_set(err, YVEX_ERR_BOUNDS,
+                           "runtime.component-resource.accounting",
+                           "prepared resource timing accounting overflowed");
+            yvex_error_clear(&cleanup);
+            cleanup_rc = operations->joint_transformer_prepared_release(
+                session->backend, &session->joint_prepared, &cleanup);
+            if (cleanup_rc != YVEX_OK && err) *err = cleanup;
+            return cleanup_rc == YVEX_OK ? YVEX_ERR_BOUNDS : cleanup_rc;
+        }
+        rc = component_joint_resources_register(session, err);
+        if (rc != YVEX_OK) {
+            yvex_error primary = err ? *err : (yvex_error){0}, cleanup;
+            int cleanup_rc;
+            yvex_error_clear(&cleanup);
+            cleanup_rc = component_joint_resources_evict(session, &cleanup);
+            if (cleanup_rc == YVEX_OK && session->joint_prepared)
+                cleanup_rc = operations->joint_transformer_prepared_release(
+                    session->backend, &session->joint_prepared, &cleanup);
+            if (cleanup_rc != YVEX_OK) {
+                if (err) *err = cleanup;
+                return cleanup_rc;
+            }
+            if (err) *err = primary;
+            return rc;
+        }
+        session->resource_summary.preparation_count++;
+        session->resource_summary.preparation_nanoseconds = preparation_total;
+    }
+    if (!session->prepared_resources_borrowed) {
+        rc = component_prepared_resources_borrow(session, err);
+        if (rc != YVEX_OK) return rc;
+    }
+    if (session->execution_transaction_leases)
+        yvex_core_text_copy(session->active_prepared_identity,
+                            sizeof(session->active_prepared_identity), identity);
+    session->resource_summary.schema_version = YVEX_COMPONENT_RESOURCE_SUMMARY_SCHEMA_V1;
+    session->resource_summary.host_arena_bytes =
+        session->joint_prepared_summary.host_arena_bytes;
+    session->resource_summary.device_arena_bytes =
+        session->joint_prepared_summary.device_arena_bytes;
+    session->resource_summary.request_prepared_bytes =
+        session->joint_prepared_summary.request_prepared_bytes;
+    session->resource_summary.condition_prepared_bytes =
+        session->joint_prepared_summary.condition_prepared_bytes;
+    session->resource_summary.allocation_count =
+        session->joint_prepared_summary.allocation_count;
+    session->resource_summary.ready = 1;
+    session->resource_summary.request_ready =
+        session->joint_prepared_summary.request_ready;
+    session->resource_summary.condition_ready =
+        session->joint_prepared_summary.condition_ready;
+    yvex_core_text_copy(session->resource_summary.prepared_identity,
+                        sizeof(session->resource_summary.prepared_identity), identity);
+    return YVEX_OK;
+}
+
 int yvex_component_joint_transformer_execute(
     const yvex_component_execution *execution, const char *const *external_names,
     unsigned long long external_count, yvex_component_joint_weight_name_fn block_weight_name,
@@ -627,10 +1069,13 @@ int yvex_component_joint_transformer_execute(
 {
     const yvex_backend_transformer_operations *transformer_operations = NULL;
     const yvex_backend_component_operations *component_operations = NULL;
+    yvex_runtime_component_session *session = NULL;
     yvex_transformer_joint_encoded_weight external[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {{0}};
     yvex_transformer_joint_encoded_weight *blocks = NULL;
+    yvex_backend_memory_stats before = {0}, after = {0};
+    yvex_error observation;
     unsigned long long count, index, workspace_bytes = 0ull;
-    int rc = YVEX_OK;
+    int prepared_path = 0, reused = 0, have_before = 0, rc = YVEX_OK;
     if (result) memset(result, 0, sizeof(*result));
     if (!component_execution_valid(execution) || !external_names ||
         external_count != YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT ||
@@ -684,10 +1129,72 @@ int yvex_component_joint_transformer_execute(
     if (rc == YVEX_OK && workspace_bytes)
         rc = execution->workspace_reserve(
             execution->owner_context, workspace_bytes, err);
-    if (rc == YVEX_OK)
-        rc = component_operations->joint_transformer_execute(
-            execution->backend, external, blocks, execution->residency_identity,
-            execution->resident_encoded_bytes, request, result, err);
+    session = execution->owner_context;
+    prepared_path = rc == YVEX_OK &&
+                    yvex_sha256_hex_valid(request->layout_identity) &&
+                    yvex_sha256_hex_valid(request->condition_identity) &&
+                    component_operations->joint_transformer_prepare &&
+                    component_operations->joint_transformer_prepared_execute &&
+                    component_operations->joint_transformer_prepared_release;
+    if (prepared_path)
+        rc = component_joint_resources_prepare(
+            session, component_operations, external, blocks, request, &reused, err);
+    if (rc == YVEX_OK) {
+        yvex_error_clear(&observation);
+        have_before = yvex_backend_get_memory_stats(
+                          execution->backend, &before, &observation) == YVEX_OK;
+    }
+    if (rc == YVEX_OK) {
+        rc = prepared_path
+                 ? component_operations->joint_transformer_prepared_execute(
+                       execution->backend, external, blocks,
+                       execution->residency_identity,
+                       execution->resident_encoded_bytes, session->joint_prepared,
+                       request, result, err)
+                 : component_operations->joint_transformer_execute(
+                       execution->backend, external, blocks,
+                       execution->residency_identity,
+                       execution->resident_encoded_bytes, request, result, err);
+    }
+    if (prepared_path && rc == YVEX_OK) {
+        unsigned long long events = 0ull;
+        if (have_before) {
+            yvex_error_clear(&observation);
+            if (yvex_backend_get_memory_stats(
+                    execution->backend, &after, &observation) == YVEX_OK &&
+                after.allocation_events >= before.allocation_events)
+                events = after.allocation_events - before.allocation_events;
+        }
+        if (session->resource_summary.use_count == ULLONG_MAX ||
+            (reused && session->resource_summary.reuse_count == ULLONG_MAX) ||
+            !yvex_core_u64_add(
+                session->resource_summary.execution_allocation_events,
+                events,
+                &session->resource_summary.execution_allocation_events)) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS,
+                           "runtime.component-resource.accounting",
+                           "prepared execution accounting overflowed");
+            rc = YVEX_ERR_BOUNDS;
+        } else {
+            session->resource_summary.use_count++;
+            session->resource_summary.reuse_count += reused != 0;
+            session->resource_summary.last_execution_allocation_events = events;
+        }
+    }
+    if (prepared_path && !session->execution_transaction_leases &&
+        session->prepared_resources_borrowed) {
+        yvex_error primary = err ? *err : (yvex_error){0};
+        yvex_error cleanup;
+        int cleanup_rc;
+        yvex_error_clear(&cleanup);
+        cleanup_rc = component_prepared_resources_drop(session, &cleanup);
+        if (cleanup_rc != YVEX_OK) {
+            rc = cleanup_rc;
+            if (err) *err = cleanup;
+        } else if (rc != YVEX_OK && err) {
+            *err = primary;
+        }
+    }
     free(blocks);
     return rc;
 }

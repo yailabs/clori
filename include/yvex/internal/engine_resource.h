@@ -37,7 +37,11 @@ typedef enum {
 typedef enum {
     YVEX_ENGINE_RESOURCE_LIFETIME_ENGINE = 0,
     YVEX_ENGINE_RESOURCE_LIFETIME_SESSION,
-    YVEX_ENGINE_RESOURCE_LIFETIME_EXECUTION
+    YVEX_ENGINE_RESOURCE_LIFETIME_EXECUTION,
+    YVEX_ENGINE_RESOURCE_LIFETIME_REQUEST,
+    YVEX_ENGINE_RESOURCE_LIFETIME_CONDITION,
+    YVEX_ENGINE_RESOURCE_LIFETIME_TRAJECTORY,
+    YVEX_ENGINE_RESOURCE_LIFETIME_QUANTUM
 } yvex_engine_resource_lifetime;
 
 typedef enum {
@@ -76,6 +80,7 @@ typedef struct {
     const char *admission_identity;
     yvex_engine_resource_handle dependency;
     yvex_engine_resource_bytes bytes;
+    unsigned long long preparation_nanoseconds;
     void *value;
     yvex_engine_resource_release_fn release;
     void *release_context;
@@ -90,7 +95,8 @@ typedef struct {
     yvex_engine_resource_numeric_class numeric_class;
     yvex_engine_resource_state state;
     yvex_engine_resource_bytes bytes;
-    unsigned long long consumer_count, dependent_count;
+    unsigned long long consumer_count, dependent_count, acquisition_count;
+    unsigned long long preparation_nanoseconds;
     char name[YVEX_ENGINE_RESOURCE_NAME_CAP];
     char package_identity[YVEX_SHA256_HEX_CAP];
     char specialization_identity[YVEX_SHA256_HEX_CAP];
@@ -102,6 +108,7 @@ typedef struct {
     unsigned long long engine_generation, capacity, resource_count;
     unsigned long long generation, registration_count, release_count;
     unsigned long long eviction_count, failed_release_count;
+    unsigned long long acquisition_count, preparation_nanoseconds;
     unsigned long long ready_count, failed_count;
     unsigned long long count_by_kind[YVEX_ENGINE_RESOURCE_KIND_COUNT];
     yvex_engine_resource_bytes bytes;

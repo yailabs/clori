@@ -66,6 +66,7 @@ typedef struct {
     unsigned long long observed_stage_block;
     yvex_transformer_joint_stage observed_stage;
     yvex_transformer_joint_block_result facts;
+    yvex_transformer_joint_prepared *prepared;
 } joint_run;
 static const unsigned int text_zero_row = 0u;
 static int conditioning_refuse(yvex_error *err, yvex_status status, const char *stage,
@@ -79,57 +80,6 @@ static float joint_bf16_value(float value)
     return yvex_quant_bf16_decode(yvex_quant_bf16_encode(value));
 }
 
-static int joint_linear_physical_supported(
-    const yvex_transformer_linear_physical_plan *plan,
-    const char *semantic_domain,
-    const yvex_transformer_linear_requirement *requirement)
-{
-    yvex_error err;
-    return plan && semantic_domain && requirement &&
-           !strcmp(plan->semantic_domain, semantic_domain) &&
-           plan->operation == requirement->operation &&
-           plan->numeric_contract == requirement->publication_contract &&
-           plan->source_dtype == requirement->source_dtype &&
-           plan->bias == requirement->bias &&
-           plan->input_width == requirement->input_width &&
-           plan->output_width == requirement->output_width &&
-           plan->backend == YVEX_BACKEND_KIND_CUDA &&
-           yvex_transformer_linear_physical_validate(plan, &err) == YVEX_OK;
-}
-
-static int joint_recipe_supported(const yvex_transformer_joint_recipe *recipe)
-{
-    return recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V4 &&
-           recipe->qkv_layout == YVEX_TRANSFORMER_QKV_LAYOUT_PER_HEAD_THREE &&
-           recipe->swiglu_layout == YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP &&
-           recipe->identity_domain && recipe->identity_domain[0] &&
-           recipe->hidden_width == JOINT_HIDDEN && recipe->attention_heads == JOINT_HEADS &&
-           recipe->head_dimension == JOINT_HEAD_DIM &&
-           recipe->attention_width == JOINT_ATTENTION_WIDTH &&
-           recipe->ffn_width == JOINT_FFN && recipe->timestep_width == JOINT_TIME &&
-           recipe->rotary_width == JOINT_ROTARY && recipe->modality_count == JOINT_MODALITIES &&
-           recipe->modulation_parameters == JOINT_PARAMETERS &&
-           recipe->block_count == JOINT_BLOCKS && recipe->refiner_block_count == 2ull &&
-           recipe->maximum_timesteps == JOINT_MAX_TIMESTEPS &&
-           recipe->maximum_packed_rows &&
-           recipe->maximum_packed_rows <= JOINT_IMPLEMENTATION_MAX_PACKED_ROWS &&
-           recipe->video_input_width == 96ull && recipe->audio_input_width == 32ull &&
-           recipe->condition_input_width == 5120ull &&
-           recipe->video_output.operation ==
-               YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT &&
-           recipe->video_output.publication_contract ==
-               YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT &&
-           recipe->video_output.source_dtype == YVEX_DTYPE_F32 &&
-           recipe->video_output.input_width == JOINT_HIDDEN &&
-           recipe->video_output.output_width == 96ull && recipe->video_output.bias == 1 &&
-           recipe->audio_output.operation ==
-               YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT &&
-           recipe->audio_output.publication_contract ==
-               YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT &&
-           recipe->audio_output.source_dtype == YVEX_DTYPE_F32 &&
-           recipe->audio_output.input_width == JOINT_HIDDEN &&
-           recipe->audio_output.output_width == 32ull && recipe->audio_output.bias == 1;
-}
 static int joint_facts_add(yvex_transformer_joint_block_result *total,
                           const yvex_backend_operation_facts *part)
 {
@@ -148,9 +98,9 @@ static const yvex_transformer_joint_encoded_weight *joint_weight(
     return run->weights + run->block_index * YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT + slot;
 }
 
-static int joint_weights_validate(const yvex_transformer_joint_encoded_weight *weights,
-                                 unsigned long long block_count,
-                                 unsigned long long *weight_bytes)
+int yvex_cuda_joint_weights_validate(
+    const yvex_transformer_joint_encoded_weight *weights,
+    unsigned long long block_count, unsigned long long *weight_bytes)
 {
     static const unsigned long long rows[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT] = {
         1u, 3u * JOINT_ATTENTION_WIDTH, 1u, 1u, JOINT_HIDDEN,
@@ -187,8 +137,8 @@ static int joint_validate(joint_run *run, const char *residency_identity,
                          unsigned long long *weight_bytes, yvex_error *err)
 {
     unsigned long long row;
-    if (!run || !run->backend || !joint_recipe_supported(run->recipe) ||
-        !joint_weights_validate(run->weights, run->block_count, weight_bytes) ||
+    if (!run || !run->backend || !yvex_cuda_joint_recipe_supported(run->recipe) ||
+        !yvex_cuda_joint_weights_validate(run->weights, run->block_count, weight_bytes) ||
         !yvex_sha256_hex_valid(residency_identity) || resident_bytes < *weight_bytes ||
         !run->hidden || !run->temb || !run->positions || !run->adaln_indices ||
         !run->rows || run->rows > run->recipe->maximum_packed_rows || !run->timesteps ||
@@ -208,59 +158,88 @@ static int joint_validate(joint_run *run, const char *residency_identity,
     return YVEX_OK;
 }
 
-static int joint_tensor_allocate(joint_run *run, joint_device_slot slot,
-                                const char *name, unsigned long long rows,
-                                unsigned long long width, int rank_one, yvex_error *err)
+static int joint_device_descriptor(const joint_run *run, joint_device_slot slot,
+                                   yvex_backend_tensor_desc *descriptor)
 {
-    yvex_backend_tensor_desc descriptor = {0};
-    unsigned long long elements, bytes, next;
-    if (!run || slot >= JOINT_DEVICE_COUNT || !name || !rows || !width ||
-        !yvex_core_u64_mul(rows, width, &elements) ||
-        !yvex_core_u64_mul(elements, sizeof(float), &bytes) ||
-        !yvex_core_u64_add(run->device_bytes, bytes, &next))
-        return conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.allocate",
-                                   "Omni activation allocation geometry overflowed");
-    descriptor.name = name;
-    descriptor.dtype = YVEX_DTYPE_F32;
-    descriptor.rank = rank_one ? 1u : 2u;
-    descriptor.dims[0] = rank_one ? width : rows;
-    descriptor.dims[1] = rank_one ? 0ull : width;
-    descriptor.bytes = bytes;
-    if (yvex_backend_tensor_alloc(run->backend, &descriptor, &run->device[slot], err) != YVEX_OK)
-        return yvex_error_code(err);
-    run->device_bytes = next;
-    return YVEX_OK;
+    static const char *const names[JOINT_DEVICE_COUNT] = {
+        "joint-hidden", "joint-norm", "joint-norm-weight", "joint-temb",
+        "joint-temb-activated", "joint-modulation", "joint-modulation-bias",
+        "joint-qkv", "joint-query", "joint-key", "joint-value", "joint-q-norm",
+        "joint-k-norm", "joint-cosine", "joint-sine", "joint-attention",
+        "joint-update", "joint-fc1", "joint-ff"};
+    unsigned long long rows = run ? run->rows : 0ull, width = 0ull;
+    int rank_one = 0;
+    if (!run || !descriptor || slot >= JOINT_DEVICE_COUNT) return 0;
+    switch (slot) {
+    case JOINT_DEVICE_HIDDEN: case JOINT_DEVICE_NORM: case JOINT_DEVICE_UPDATE:
+        width = JOINT_HIDDEN; break;
+    case JOINT_DEVICE_NORM_WEIGHT:
+        rows = 1ull; width = JOINT_HIDDEN; rank_one = 1; break;
+    case JOINT_DEVICE_TEMB: case JOINT_DEVICE_TEMB_ACTIVATED:
+        rows = run->timesteps; width = JOINT_TIME; break;
+    case JOINT_DEVICE_MODULATION:
+        rows = run->timesteps;
+        width = JOINT_PARAMETERS * JOINT_MODALITIES * JOINT_HIDDEN; break;
+    case JOINT_DEVICE_MODULATION_BIAS:
+        rows = 1ull; width = JOINT_PARAMETERS * JOINT_MODALITIES * JOINT_HIDDEN;
+        rank_one = 1; break;
+    case JOINT_DEVICE_QKV: width = 3ull * JOINT_ATTENTION_WIDTH; break;
+    case JOINT_DEVICE_QUERY: case JOINT_DEVICE_KEY: case JOINT_DEVICE_VALUE:
+    case JOINT_DEVICE_ATTENTION:
+        width = JOINT_ATTENTION_WIDTH; break;
+    case JOINT_DEVICE_Q_NORM: case JOINT_DEVICE_K_NORM:
+        rows = 1ull; width = JOINT_HEAD_DIM; rank_one = 1; break;
+    case JOINT_DEVICE_COSINE: case JOINT_DEVICE_SINE:
+        width = JOINT_ROTARY; break;
+    case JOINT_DEVICE_FC1: width = 2ull * JOINT_FFN; break;
+    case JOINT_DEVICE_FF: width = JOINT_FFN; break;
+    default: return 0;
+    }
+    memset(descriptor, 0, sizeof(*descriptor));
+    descriptor->name = names[slot];
+    descriptor->dtype = YVEX_DTYPE_F32;
+    descriptor->rank = rank_one ? 1u : 2u;
+    descriptor->dims[0] = rank_one ? width : rows;
+    descriptor->dims[1] = rank_one ? 0ull : width;
+    return rows && width && yvex_core_u64_mul(rows, width, &descriptor->bytes) &&
+           yvex_core_u64_mul(descriptor->bytes, sizeof(float), &descriptor->bytes);
 }
 
 static int joint_devices_prepare(joint_run *run, yvex_error *err)
 {
-    int rc;
-#define JOINT_ALLOC(slot, name, rows, width, rank_one) \
-    if (rc == YVEX_OK) rc = joint_tensor_allocate(run, slot, name, rows, width, rank_one, err)
-    rc = joint_tensor_allocate(run, JOINT_DEVICE_HIDDEN, "joint-hidden",
-                              run->rows, JOINT_HIDDEN, 0, err);
-    JOINT_ALLOC(JOINT_DEVICE_NORM, "joint-norm", run->rows, JOINT_HIDDEN, 0);
-    JOINT_ALLOC(JOINT_DEVICE_NORM_WEIGHT, "joint-norm-weight", 1ull, JOINT_HIDDEN, 1);
-    JOINT_ALLOC(JOINT_DEVICE_TEMB, "joint-temb", run->timesteps, JOINT_TIME, 0);
-    JOINT_ALLOC(JOINT_DEVICE_TEMB_ACTIVATED, "joint-temb-activated", run->timesteps, JOINT_TIME, 0);
-    JOINT_ALLOC(JOINT_DEVICE_MODULATION, "joint-modulation", run->timesteps,
-               JOINT_PARAMETERS * JOINT_MODALITIES * JOINT_HIDDEN, 0);
-    JOINT_ALLOC(JOINT_DEVICE_MODULATION_BIAS, "joint-modulation-bias", 1ull,
-               JOINT_PARAMETERS * JOINT_MODALITIES * JOINT_HIDDEN, 1);
-    JOINT_ALLOC(JOINT_DEVICE_QKV, "joint-qkv", run->rows, 3ull * JOINT_ATTENTION_WIDTH, 0);
-    JOINT_ALLOC(JOINT_DEVICE_QUERY, "joint-query", run->rows, JOINT_ATTENTION_WIDTH, 0);
-    JOINT_ALLOC(JOINT_DEVICE_KEY, "joint-key", run->rows, JOINT_ATTENTION_WIDTH, 0);
-    JOINT_ALLOC(JOINT_DEVICE_VALUE, "joint-value", run->rows, JOINT_ATTENTION_WIDTH, 0);
-    JOINT_ALLOC(JOINT_DEVICE_Q_NORM, "joint-q-norm", 1ull, JOINT_HEAD_DIM, 1);
-    JOINT_ALLOC(JOINT_DEVICE_K_NORM, "joint-k-norm", 1ull, JOINT_HEAD_DIM, 1);
-    JOINT_ALLOC(JOINT_DEVICE_COSINE, "joint-cosine", run->rows, JOINT_ROTARY, 0);
-    JOINT_ALLOC(JOINT_DEVICE_SINE, "joint-sine", run->rows, JOINT_ROTARY, 0);
-    JOINT_ALLOC(JOINT_DEVICE_ATTENTION, "joint-attention", run->rows, JOINT_ATTENTION_WIDTH, 0);
-    JOINT_ALLOC(JOINT_DEVICE_UPDATE, "joint-update", run->rows, JOINT_HIDDEN, 0);
-    JOINT_ALLOC(JOINT_DEVICE_FC1, "joint-fc1", run->rows, 2ull * JOINT_FFN, 0);
-    JOINT_ALLOC(JOINT_DEVICE_FF, "joint-ff", run->rows, JOINT_FFN, 0);
-#undef JOINT_ALLOC
-    return rc;
+    unsigned int slot;
+    if (!run) return YVEX_ERR_INVALID_ARG;
+    if (run->prepared) {
+        for (slot = 0u; slot < JOINT_DEVICE_COUNT; ++slot) {
+            yvex_backend_tensor_desc descriptor;
+            if (!joint_device_descriptor(
+                    run, (joint_device_slot)slot, &descriptor))
+                return conditioning_refuse(
+                    err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.arena",
+                    "active execution view geometry overflowed");
+            run->device[slot] = yvex_cuda_execution_arena_device_bind(
+                run->prepared->arena, slot, &descriptor, err);
+            if (!run->device[slot])
+                return conditioning_refuse(
+                    err, YVEX_ERR_STATE, "cuda.transformer.joint.joint.arena",
+                    "prepared execution arena cannot bind the active activation view");
+        }
+        run->device_bytes = run->prepared->summary.device_arena_bytes;
+        return YVEX_OK;
+    }
+    for (slot = 0u; slot < JOINT_DEVICE_COUNT; ++slot) {
+        yvex_backend_tensor_desc descriptor;
+        if (!joint_device_descriptor(run, (joint_device_slot)slot, &descriptor) ||
+            !yvex_core_u64_add(run->device_bytes, descriptor.bytes,
+                               &run->device_bytes))
+            return conditioning_refuse(
+                err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.allocate",
+                "Omni activation allocation geometry overflowed");
+        if (yvex_backend_tensor_alloc(run->backend, &descriptor,
+                                      &run->device[slot], err) != YVEX_OK)
+            return yvex_error_code(err);
+    }
+    return YVEX_OK;
 }
 static int joint_weight_gather(joint_run *run, yvex_transformer_joint_weight_slot slot,
                               yvex_device_tensor *output, yvex_error *err)
@@ -400,8 +379,16 @@ static int joint_rope_tables(joint_run *run, yvex_error *err)
         !yvex_core_u64_mul(elements, sizeof(float), &bytes) || bytes > SIZE_MAX)
         return conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.rope",
                                    "Omni MM-RoPE table geometry overflowed");
-    cosines = (float *)malloc((size_t)bytes);
-    sines = (float *)malloc((size_t)bytes);
+    if (run->prepared && run->prepared->summary.request_ready)
+        return YVEX_OK;
+    cosines = run->prepared
+                  ? yvex_cuda_execution_arena_host(
+                        run->prepared->arena, YVEX_CUDA_JOINT_HOST_ROPE_COSINE)
+                  : (float *)malloc((size_t)bytes);
+    sines = run->prepared
+                ? yvex_cuda_execution_arena_host(
+                      run->prepared->arena, YVEX_CUDA_JOINT_HOST_ROPE_SINE)
+                : (float *)malloc((size_t)bytes);
     if (!cosines || !sines)
         rc = conditioning_refuse(err, YVEX_ERR_NOMEM, "cuda.transformer.joint.joint.rope",
                                  "Omni MM-RoPE table allocation failed");
@@ -432,8 +419,10 @@ static int joint_rope_tables(joint_run *run, yvex_error *err)
          !yvex_core_u64_add(run->facts.h2d_bytes, bytes, &run->facts.h2d_bytes)))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.facts",
                                  "Omni MM-RoPE upload accounting overflowed");
-    free(sines);
-    free(cosines);
+    if (!run->prepared) {
+        free(sines);
+        free(cosines);
+    }
     return rc;
 }
 
@@ -760,6 +749,7 @@ static int joint_compute(joint_run *run, float *staged, yvex_error *err)
 static int joint_devices_release(joint_run *run, int rc, yvex_error *err)
 {
     int slot;
+    if (run && run->prepared) return rc;
     for (slot = JOINT_DEVICE_COUNT - 1; slot >= 0; --slot) {
         yvex_error cleanup;
         int cleanup_rc;
@@ -820,6 +810,7 @@ static int joint_blocks_execute(
     void *stage_observer_context, unsigned long long observed_stage_block,
     yvex_transformer_joint_scope observed_stage_scope,
     yvex_transformer_joint_stage observed_stage,
+    yvex_transformer_joint_prepared *prepared,
     yvex_error *err)
 {
     joint_run run = {0};
@@ -846,10 +837,14 @@ static int joint_blocks_execute(
     run.observed_stage_scope = observed_stage_scope;
     run.observed_stage_block = observed_stage_block;
     run.observed_stage = observed_stage;
+    run.prepared = prepared;
     rc = joint_validate(&run, residency_identity, resident_bytes, output,
                        output_capacity, result, &weight_bytes, err);
     if (rc == YVEX_OK) {
-        staged = (float *)malloc((size_t)run.output_bytes);
+        staged = prepared
+                     ? yvex_cuda_execution_arena_host(
+                           prepared->arena, YVEX_CUDA_JOINT_HOST_BLOCK_STAGED)
+                     : (float *)malloc((size_t)run.output_bytes);
         if (!staged)
             rc = conditioning_refuse(err, YVEX_ERR_NOMEM, "cuda.transformer.joint.joint.output",
                                      "transactional Omni output allocation failed");
@@ -870,7 +865,7 @@ static int joint_blocks_execute(
         published.d2h_bytes = run.facts.d2h_bytes;
         if (!yvex_core_u64_add(run.device_bytes, run.facts.temporary_bytes,
                                &published.device_bytes)) {
-            free(staged);
+            if (!prepared) free(staged);
             return conditioning_refuse(err, YVEX_ERR_BOUNDS,
                 "cuda.transformer.joint.joint.facts", "peak device-byte accounting overflowed");
         }
@@ -880,7 +875,7 @@ static int joint_blocks_execute(
         *result = published;
         yvex_error_clear(err);
     }
-    free(staged);
+    if (!prepared) free(staged);
     return rc;
 }
 int yvex_cuda_transformer_joint_blocks_execute(
@@ -902,7 +897,8 @@ int yvex_cuda_transformer_joint_blocks_execute(
         options ? options->stage_observer_context : NULL,
         options ? options->observed_stage_block : 0ull,
         options ? options->observed_stage_scope : YVEX_TRANSFORMER_JOINT_SCOPE_OMNI,
-        options ? options->observed_stage : YVEX_TRANSFORMER_JOINT_STAGE_COUNT, err);
+        options ? options->observed_stage : YVEX_TRANSFORMER_JOINT_STAGE_COUNT,
+        NULL, err);
 }
 
 typedef enum {
@@ -941,58 +937,6 @@ static int transformer_fact_bytes(unsigned long long *total, unsigned long long 
     return conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.transformer.facts",
                                "transformer transfer accounting overflowed");
 }
-static int transformer_weight_valid(const yvex_transformer_joint_encoded_weight *weight,
-                                    unsigned int qtype, unsigned long long rows,
-                                    unsigned long long width)
-{
-    unsigned long long row_bytes, bytes;
-    return weight && weight->encoded && weight->qtype == qtype &&
-           weight->row_count == rows && weight->row_width == width &&
-           yvex_core_u64_mul(width, qtype == YVEX_GGUF_QTYPE_F32 ? 4ull : 2ull,
-                             &row_bytes) &&
-           yvex_core_u64_mul(rows, row_bytes, &bytes) && weight->row_bytes == row_bytes &&
-           weight->encoded_bytes == bytes;
-}
-
-static int transformer_external_valid(const yvex_transformer_joint_encoded_weight *weights,
-                                      unsigned long long *bytes)
-{
-    static const unsigned int qtypes[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {
-        YVEX_GGUF_QTYPE_F32, YVEX_GGUF_QTYPE_F32, YVEX_GGUF_QTYPE_F32, YVEX_GGUF_QTYPE_F32,
-        YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_F32, YVEX_GGUF_QTYPE_F32,
-        YVEX_GGUF_QTYPE_F32, YVEX_GGUF_QTYPE_F32,
-        YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16,
-        YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16,
-        YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16,
-        YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16,
-        YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16,
-        YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_F32,
-        YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16,
-        YVEX_GGUF_QTYPE_F32, YVEX_GGUF_QTYPE_F32, YVEX_GGUF_QTYPE_F32, YVEX_GGUF_QTYPE_F32,
-    };
-    static const unsigned long long rows[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {
-        5376u, 1u, 5376u, 1u, 5376u, 1u, 5376u, 1u, 2688u, 1u,
-        1u, 21504u, 1u, 1u, 5376u, 1u, 28672u, 5376u,
-        1u, 21504u, 1u, 1u, 5376u, 1u, 28672u, 5376u, 1u,
-        1u, 1u, 10752u, 1u, 96u, 1u, 32u, 1u,
-    };
-    static const unsigned long long widths[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {
-        32u, 5376u, 96u, 5376u, 5120u, 5376u, 256u, 5376u, 5376u, 2688u,
-        5376u, 5376u, 128u, 128u, 7168u, 5376u, 5376u, 14336u,
-        5376u, 5376u, 128u, 128u, 7168u, 5376u, 5376u, 14336u, 5376u,
-        16u, 5376u, 2688u, 10752u, 5376u, 96u, 5376u, 32u,
-    };
-    unsigned long long index, next;
-    if (bytes) *bytes = 0ull;
-    if (!weights || !bytes) return 0;
-    for (index = 0ull; index < YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT; ++index) {
-        if (!transformer_weight_valid(weights + index, qtypes[index], rows[index], widths[index]) ||
-            !yvex_core_u64_add(*bytes, weights[index].encoded_bytes, &next)) return 0;
-        *bytes = next;
-    }
-    return 1;
-}
-
 static int transformer_tensor(yvex_backend *backend, const char *name,
                               unsigned long long rows, unsigned long long width,
                               yvex_device_tensor **out, unsigned long long *bytes,
@@ -1676,145 +1620,120 @@ static int transformer_final_norm(
     return transformer_devices_release(backend, device, COUNT, rc, err);
 }
 
-static int transformer_request_valid(
-    const yvex_transformer_joint_request *request,
-    unsigned long long *video_values, unsigned long long *audio_values,
-    yvex_error *err)
+static int joint_host_extent(unsigned long long rows, unsigned long long width,
+                             unsigned long long element_bytes,
+                             unsigned long long *bytes)
 {
-    unsigned char *seen = NULL;
-    unsigned long long kind, row, total;
-    const unsigned int *indices[3];
-    unsigned long long counts[3];
-    if (!request || !joint_recipe_supported(request->recipe) ||
-        !request->video || !request->audio || !request->conditioning ||
-        !request->timesteps || !request->position_ids || !request->video_indices ||
-        !request->audio_indices || !request->text_indices || !request->timestep_indices ||
-        !request->token_tags || !request->video_output || !request->audio_output ||
-        !request->video_rows || !request->audio_rows || !request->text_rows ||
-        !request->timestep_count || request->timestep_count > JOINT_MAX_TIMESTEPS ||
-        !request->packed_rows ||
-        request->packed_rows > request->recipe->maximum_packed_rows ||
-        !request->block_count || request->block_count > JOINT_BLOCKS ||
-        !joint_linear_physical_supported(
-            &request->video_output_physical, request->recipe->identity_domain,
-            &request->recipe->video_output) ||
-        !joint_linear_physical_supported(
-            &request->audio_output_physical, request->recipe->identity_domain,
-            &request->recipe->audio_output) ||
-        !yvex_core_u64_add(request->video_rows, request->audio_rows, &total) ||
-        !yvex_core_u64_add(total, request->text_rows, &total) || total != request->packed_rows ||
-        !yvex_core_u64_mul(request->video_rows, 96ull, video_values) ||
-        !yvex_core_u64_mul(request->audio_rows, 32ull, audio_values) ||
-        *video_values > request->video_output_capacity ||
-        *audio_values > request->audio_output_capacity)
-        return conditioning_refuse(err, YVEX_ERR_INVALID_ARG, "cuda.transformer.joint.transformer.request",
-                                   "one complete bounded packed joint request is required");
-    seen = calloc((size_t)request->packed_rows, 1u);
-    if (!seen)
-        return conditioning_refuse(err, YVEX_ERR_NOMEM,
-                                   "cuda.transformer.joint.transformer.layout",
-                                   "packed-row partition allocation failed");
-    indices[0] = request->video_indices; counts[0] = request->video_rows;
-    indices[1] = request->text_indices; counts[1] = request->text_rows;
-    indices[2] = request->audio_indices; counts[2] = request->audio_rows;
-    for (kind = 0ull; kind < 3ull; ++kind)
-        for (row = 0ull; row < counts[kind]; ++row) {
-            unsigned int packed = indices[kind][row];
-            /* Input ownership and AdaLN modality are independent: multimodal encoders can
-               publish visual conditioning through the text-width input projection. */
-            if (packed >= request->packed_rows || seen[packed] ||
-                request->token_tags[packed] >= request->recipe->modality_count)
-                {
-                    free(seen);
-                    return conditioning_refuse(err, YVEX_ERR_FORMAT,
-                                               "cuda.transformer.joint.transformer.layout",
-                                               "packed modality indices must form one exact tagged partition");
-                }
-            seen[packed] = 1u;
-        }
-    for (row = 0ull; row < request->packed_rows; ++row)
-        if (!seen[row] || request->timestep_indices[row] >= request->timestep_count ||
-            !isfinite(request->position_ids[row * 3ull]) ||
-            !isfinite(request->position_ids[row * 3ull + 1ull]) ||
-            !isfinite(request->position_ids[row * 3ull + 2ull])) {
-            free(seen);
-            return conditioning_refuse(err, YVEX_ERR_FORMAT, "cuda.transformer.joint.transformer.layout",
-                                       "packed rows require finite positions and admitted timesteps");
-        }
-    for (row = 0ull; row < request->timestep_count; ++row)
-        if (!isfinite(request->timesteps[row]) || request->timesteps[row] < 0.0f ||
-            request->timesteps[row] > 1.0f) {
-            free(seen);
-            return conditioning_refuse(err, YVEX_ERR_FORMAT, "cuda.transformer.joint.transformer.timestep",
-                                       "distinct timesteps must be finite values in [0,1]");
-        }
-    free(seen);
+    unsigned long long values;
+    return yvex_core_u64_mul(rows, width, &values) &&
+           yvex_core_u64_mul(values, element_bytes, bytes);
+}
+
+int yvex_cuda_joint_device_plan(
+    const yvex_transformer_joint_request *request,
+    yvex_backend_tensor_desc *device, unsigned int capacity, yvex_error *err)
+{
+    joint_run run = {0};
+    unsigned int slot;
+    if (!request || !device || capacity != JOINT_DEVICE_COUNT)
+        return conditioning_refuse(
+            err, YVEX_ERR_INVALID_ARG, "cuda.transformer.joint.prepare",
+            "the exact joint device-region capacity is required");
+    run.recipe = request->recipe;
+    run.rows = request->packed_rows;
+    run.timesteps = request->recipe->maximum_timesteps;
+    run.block_count = request->block_count;
+    for (slot = 0u; slot < JOINT_DEVICE_COUNT; ++slot)
+        if (!joint_device_descriptor(&run, (joint_device_slot)slot, device + slot))
+            return conditioning_refuse(
+                err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.prepare",
+                "joint device arena geometry overflowed");
+    yvex_error_clear(err);
     return YVEX_OK;
 }
 
-static int transformer_hash_floats(yvex_sha256 *hash, const float *values,
-                                   unsigned long long count)
+int yvex_cuda_joint_prepare_invariants(
+    yvex_transformer_joint_prepared *prepared, yvex_backend *backend,
+    const yvex_transformer_joint_encoded_weight *external,
+    const yvex_transformer_joint_request *request, yvex_error *err)
 {
-    unsigned long long index;
-    for (index = 0ull; index < count; ++index) {
-        uint32_t bits;
-        memcpy(&bits, values + index, sizeof(bits));
-        if (!yvex_sha256_update_u64(hash, bits)) return 0;
+    joint_run run = {0};
+    yvex_transformer_joint_result facts = {0};
+    float *text_embed, *text_refined;
+    unsigned long long request_bytes, condition_bytes;
+    int rc, skip_optional = getenv("YVEX_TEST_JOINT_PREPARED_OPTIONAL_FAILURE") != NULL;
+    run.backend = backend;
+    run.recipe = request->recipe;
+    run.rows = request->packed_rows;
+    run.timesteps = request->timestep_count;
+    run.block_count = request->block_count;
+    run.positions = request->position_ids;
+    run.inv_freq = (const float *)external[YVEX_TRANSFORMER_JOINT_ROPE_INV_FREQ].encoded;
+    run.prepared = prepared;
+    rc = joint_devices_prepare(&run, err);
+    if (rc == YVEX_OK && !skip_optional) rc = joint_rope_tables(&run, err);
+    if (rc == YVEX_OK && !skip_optional) {
+        prepared->summary.request_ready = 1;
+        if (!joint_host_extent(request->packed_rows, JOINT_ROTARY, sizeof(float),
+                               &request_bytes) ||
+            !yvex_core_u64_mul(request_bytes, 4ull, &request_bytes))
+            rc = conditioning_refuse(
+                err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.prepare",
+                "prepared rotary accounting overflowed");
+        else
+            prepared->summary.request_prepared_bytes = request_bytes;
     }
-    return 1;
+    text_embed = yvex_cuda_execution_arena_host(
+        prepared->arena, YVEX_CUDA_JOINT_HOST_TEXT_EMBED);
+    text_refined = yvex_cuda_execution_arena_host(
+        prepared->arena, YVEX_CUDA_JOINT_HOST_TEXT_REFINED);
+    if (rc == YVEX_OK && !skip_optional &&
+        (!request->stage_observer ||
+         request->observed_stage_scope != YVEX_TRANSFORMER_JOINT_SCOPE_REFINER))
+        rc = transformer_linear_host(
+            run.backend, external + YVEX_TRANSFORMER_JOINT_CONDITION_WEIGHT,
+            external + YVEX_TRANSFORMER_JOINT_CONDITION_BIAS,
+            request->conditioning, request->text_rows, text_embed, 1, NULL,
+            &facts, err);
+    if (rc == YVEX_OK && !skip_optional &&
+        (!request->stage_observer ||
+         request->observed_stage_scope != YVEX_TRANSFORMER_JOINT_SCOPE_REFINER)) {
+        rc = transformer_refine(
+            run.backend, external + YVEX_TRANSFORMER_JOINT_REFINER_WEIGHTS,
+            text_embed, request->text_rows, text_refined, NULL, NULL,
+            YVEX_TRANSFORMER_JOINT_SCOPE_REFINER, 0ull,
+            YVEX_TRANSFORMER_JOINT_STAGE_COUNT, &facts, err);
+        if (rc == YVEX_OK &&
+            !joint_host_extent(request->text_rows, JOINT_HIDDEN, sizeof(float),
+                               &condition_bytes))
+            rc = conditioning_refuse(
+                err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.prepare",
+                "prepared condition accounting overflowed");
+        if (rc == YVEX_OK) {
+            prepared->summary.condition_ready = 1;
+            prepared->summary.condition_prepared_bytes = condition_bytes;
+        }
+    }
+    if (rc == YVEX_OK &&
+        (!yvex_core_u64_add(
+             run.facts.kernel_launches, facts.kernel_launches,
+             &prepared->summary.preparation_kernel_launches) ||
+         !yvex_core_u64_add(
+             run.facts.h2d_bytes, facts.h2d_bytes,
+             &prepared->summary.preparation_h2d_bytes)))
+        rc = conditioning_refuse(
+            err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.prepare",
+            "prepared operation accounting overflowed");
+    if (rc == YVEX_OK)
+        prepared->summary.preparation_d2h_bytes = facts.d2h_bytes;
+    return rc;
 }
 
-static int transformer_execution_identity(
-    const yvex_transformer_joint_request *request,
-    const char *residency_identity, const char *block_identity,
-    const float *video, unsigned long long video_values,
-    const float *audio, unsigned long long audio_values, char output[65])
-{
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    unsigned long long index;
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.transformer.joint.cuda.v1") ||
-        !yvex_sha256_update_text(&hash, request->recipe->identity_domain) ||
-        !yvex_sha256_update_u64(&hash, request->recipe->qkv_layout) ||
-        !yvex_sha256_update_u64(&hash, request->recipe->swiglu_layout) ||
-        !yvex_sha256_update_text(&hash, request->video_output_physical.physical_identity) ||
-        !yvex_sha256_update_text(&hash, request->audio_output_physical.physical_identity) ||
-        !yvex_sha256_update_text(&hash, residency_identity) ||
-        !yvex_sha256_update_text(&hash, block_identity) ||
-        !yvex_sha256_update_u64(&hash, request->video_rows) ||
-        !yvex_sha256_update_u64(&hash, request->audio_rows) ||
-        !yvex_sha256_update_u64(&hash, request->text_rows) ||
-        !yvex_sha256_update_u64(&hash, request->timestep_count) ||
-        !yvex_sha256_update_u64(&hash, request->packed_rows) ||
-        !yvex_sha256_update_u64(&hash, request->block_count) ||
-        !transformer_hash_floats(&hash, request->video, request->video_rows * 96ull) ||
-        !transformer_hash_floats(&hash, request->audio, request->audio_rows * 32ull) ||
-        !transformer_hash_floats(&hash, request->conditioning,
-                                 request->text_rows * 5120ull) ||
-        !transformer_hash_floats(&hash, request->timesteps, request->timestep_count) ||
-        !transformer_hash_floats(&hash, request->position_ids,
-                                 request->packed_rows * 3ull)) return 0;
-    for (index = 0ull; index < request->video_rows; ++index)
-        if (!yvex_sha256_update_u64(&hash, request->video_indices[index])) return 0;
-    for (index = 0ull; index < request->audio_rows; ++index)
-        if (!yvex_sha256_update_u64(&hash, request->audio_indices[index])) return 0;
-    for (index = 0ull; index < request->text_rows; ++index)
-        if (!yvex_sha256_update_u64(&hash, request->text_indices[index])) return 0;
-    for (index = 0ull; index < request->packed_rows; ++index)
-        if (!yvex_sha256_update_u64(&hash, request->timestep_indices[index]) ||
-            !yvex_sha256_update_u64(&hash, request->token_tags[index])) return 0;
-    if (!transformer_hash_floats(&hash, video, video_values) ||
-        !transformer_hash_floats(&hash, audio, audio_values) ||
-        !yvex_sha256_final(&hash, digest)) return 0;
-    yvex_sha256_hex(digest, output);
-    return 1;
-}
-
-int yvex_cuda_transformer_joint_execute(
+static int transformer_joint_execute_impl(
     yvex_backend *backend, const yvex_transformer_joint_encoded_weight *external_weights,
     const yvex_transformer_joint_encoded_weight *block_weights, const char *residency_identity,
     unsigned long long resident_bytes, const yvex_transformer_joint_request *request,
+    yvex_transformer_joint_prepared *prepared,
     yvex_transformer_joint_result *result, yvex_error *err)
 {
     yvex_transformer_joint_result published = {0};
@@ -1827,36 +1746,60 @@ int yvex_cuda_transformer_joint_execute(
     unsigned long long video_values = 0ull, audio_values = 0ull, hidden_values, row, lane;
     int rc;
     if (result) memset(result, 0, sizeof(*result));
-    rc = transformer_request_valid(request, &video_values, &audio_values, err);
+    rc = yvex_cuda_joint_request_valid(
+        request, &video_values, &audio_values, err);
     if (rc == YVEX_OK &&
         (!backend || !result || !yvex_sha256_hex_valid(residency_identity) ||
-         !transformer_external_valid(external_weights, &external_bytes) ||
-         !joint_weights_validate(block_weights, request->block_count, &block_bytes) ||
+         !yvex_cuda_joint_external_valid(external_weights, &external_bytes) ||
+         !yvex_cuda_joint_weights_validate(
+             block_weights, request->block_count, &block_bytes) ||
          !yvex_core_u64_add(external_bytes, block_bytes, &required_bytes) ||
          resident_bytes < required_bytes ||
          !yvex_core_u64_mul(request->packed_rows, JOINT_HIDDEN, &hidden_values) ||
          hidden_values > SIZE_MAX / sizeof(float)))
         rc = conditioning_refuse(err, YVEX_ERR_INVALID_ARG, "cuda.transformer.joint.transformer",
                                  "exact resident Transformer weights and output state are required");
-#define HOST_FLOATS(target, count) \
-    if (rc == YVEX_OK && (!(target = (float *)malloc((size_t)(count) * sizeof(float))))) \
-        rc = conditioning_refuse(err, YVEX_ERR_NOMEM, "cuda.transformer.joint.transformer.host", \
-                                 "transactional Transformer host allocation failed")
-    HOST_FLOATS(video_embed, request ? request->video_rows * JOINT_HIDDEN : 0ull);
-    HOST_FLOATS(audio_embed, request ? request->audio_rows * JOINT_HIDDEN : 0ull);
-    HOST_FLOATS(text_embed, request ? request->text_rows * JOINT_HIDDEN : 0ull);
-    HOST_FLOATS(text_refined, request ? request->text_rows * JOINT_HIDDEN : 0ull);
-    HOST_FLOATS(packed, hidden_values); HOST_FLOATS(block_output, hidden_values);
-    HOST_FLOATS(temb, request ? request->timestep_count * JOINT_TIME : 0ull);
-    HOST_FLOATS(normalized, hidden_values);
-    HOST_FLOATS(all_video, request ? request->packed_rows * 96ull : 0ull);
-    HOST_FLOATS(all_audio, request ? request->packed_rows * 32ull : 0ull);
-    HOST_FLOATS(staged_video, video_values); HOST_FLOATS(staged_audio, audio_values);
+#define HOST_FLOATS(target, count, slot)                                      \
+    if (rc == YVEX_OK) {                                                      \
+        target = prepared                                                     \
+                     ? yvex_cuda_execution_arena_host(prepared->arena, slot)  \
+                     : (float *)malloc((size_t)(count) * sizeof(float));       \
+        if (!target)                                                          \
+            rc = conditioning_refuse(                                         \
+                err, YVEX_ERR_NOMEM, "cuda.transformer.joint.transformer.host", \
+                "transactional Transformer host allocation failed");         \
+    }
+    HOST_FLOATS(video_embed, request ? request->video_rows * JOINT_HIDDEN : 0ull,
+                YVEX_CUDA_JOINT_HOST_VIDEO_EMBED);
+    HOST_FLOATS(audio_embed, request ? request->audio_rows * JOINT_HIDDEN : 0ull,
+                YVEX_CUDA_JOINT_HOST_AUDIO_EMBED);
+    HOST_FLOATS(text_embed, request ? request->text_rows * JOINT_HIDDEN : 0ull,
+                YVEX_CUDA_JOINT_HOST_TEXT_EMBED);
+    HOST_FLOATS(text_refined, request ? request->text_rows * JOINT_HIDDEN : 0ull,
+                YVEX_CUDA_JOINT_HOST_TEXT_REFINED);
+    HOST_FLOATS(packed, hidden_values, YVEX_CUDA_JOINT_HOST_PACKED);
+    HOST_FLOATS(block_output, hidden_values, YVEX_CUDA_JOINT_HOST_BLOCK_OUTPUT);
+    HOST_FLOATS(temb, request ? request->timestep_count * JOINT_TIME : 0ull,
+                YVEX_CUDA_JOINT_HOST_TIME_EMBED);
+    HOST_FLOATS(normalized, hidden_values, YVEX_CUDA_JOINT_HOST_NORMALIZED);
+    HOST_FLOATS(all_video, request ? request->packed_rows * 96ull : 0ull,
+                YVEX_CUDA_JOINT_HOST_ALL_VIDEO);
+    HOST_FLOATS(all_audio, request ? request->packed_rows * 32ull : 0ull,
+                YVEX_CUDA_JOINT_HOST_ALL_AUDIO);
+    HOST_FLOATS(staged_video, video_values, YVEX_CUDA_JOINT_HOST_STAGED_VIDEO);
+    HOST_FLOATS(staged_audio, audio_values, YVEX_CUDA_JOINT_HOST_STAGED_AUDIO);
 #undef HOST_FLOATS
-    if (rc == YVEX_OK && !(adaln = (unsigned int *)malloc(
-                               (size_t)request->packed_rows * sizeof(*adaln))))
-        rc = conditioning_refuse(err, YVEX_ERR_NOMEM, "cuda.transformer.joint.transformer.host",
-                                 "packed AdaLN selection allocation failed");
+    if (rc == YVEX_OK) {
+        adaln = prepared
+                    ? yvex_cuda_execution_arena_host(
+                          prepared->arena, YVEX_CUDA_JOINT_HOST_ADALN)
+                    : (unsigned int *)malloc(
+                          (size_t)request->packed_rows * sizeof(*adaln));
+        if (!adaln)
+            rc = conditioning_refuse(
+                err, YVEX_ERR_NOMEM, "cuda.transformer.joint.transformer.host",
+                "packed AdaLN selection allocation failed");
+    }
     if (rc == YVEX_OK)
         rc = transformer_linear_host(backend, external_weights + YVEX_TRANSFORMER_JOINT_VIDEO_WEIGHT,
                                      external_weights + YVEX_TRANSFORMER_JOINT_VIDEO_BIAS,
@@ -1867,12 +1810,18 @@ int yvex_cuda_transformer_joint_execute(
                                      external_weights + YVEX_TRANSFORMER_JOINT_AUDIO_BIAS,
                                      request->audio, request->audio_rows, audio_embed, 0, NULL,
                                      &published, err);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK &&
+        !(prepared && prepared->summary.condition_ready &&
+          (!request->stage_observer ||
+           request->observed_stage_scope != YVEX_TRANSFORMER_JOINT_SCOPE_REFINER)))
         rc = transformer_linear_host(backend, external_weights + YVEX_TRANSFORMER_JOINT_CONDITION_WEIGHT,
                                      external_weights + YVEX_TRANSFORMER_JOINT_CONDITION_BIAS,
                                      request->conditioning, request->text_rows, text_embed, 1, NULL,
                                      &published, err);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK &&
+        !(prepared && prepared->summary.condition_ready &&
+          (!request->stage_observer ||
+           request->observed_stage_scope != YVEX_TRANSFORMER_JOINT_SCOPE_REFINER)))
         rc = transformer_refine(backend, external_weights + YVEX_TRANSFORMER_JOINT_REFINER_WEIGHTS,
                                 text_embed, request->text_rows, text_refined,
                                 request->stage_observer, request->stage_observer_context,
@@ -1907,7 +1856,7 @@ int yvex_cuda_transformer_joint_execute(
             request->block_observer, request->block_observer_context,
             request->stage_observer, request->stage_observer_context,
             request->observed_stage_block, request->observed_stage_scope,
-            request->observed_stage, err);
+            request->observed_stage, prepared, err);
     if (rc == YVEX_OK &&
         (!yvex_core_u64_add(published.kernel_launches, blocks.kernel_launches,
                             &published.kernel_launches) ||
@@ -1943,7 +1892,7 @@ int yvex_cuda_transformer_joint_execute(
     for (row = 0ull; rc == YVEX_OK && row < request->audio_rows; ++row)
         memcpy(staged_audio + row * 32ull, all_audio + request->audio_indices[row] * 32ull,
                32ull * sizeof(float));
-    if (rc == YVEX_OK && !transformer_execution_identity(
+    if (rc == YVEX_OK && !yvex_cuda_joint_execution_identity(
             request, residency_identity, blocks.execution_identity, staged_video, video_values,
             staged_audio, audio_values, published.execution_identity))
         rc = conditioning_refuse(err, YVEX_ERR_STATE, "cuda.transformer.joint.transformer.identity",
@@ -1957,8 +1906,48 @@ int yvex_cuda_transformer_joint_execute(
         memcpy(published.residency_identity, residency_identity, 65u);
         published.complete = 1; *result = published; yvex_error_clear(err);
     }
-    free(adaln); free(staged_audio); free(staged_video); free(all_audio); free(all_video);
-    free(normalized); free(temb); free(block_output); free(packed); free(text_refined);
-    free(text_embed); free(audio_embed); free(video_embed);
+    if (!prepared) {
+        free(adaln); free(staged_audio); free(staged_video); free(all_audio); free(all_video);
+        free(normalized); free(temb); free(block_output); free(packed); free(text_refined);
+        free(text_embed); free(audio_embed); free(video_embed);
+    }
+    return rc;
+}
+
+int yvex_cuda_transformer_joint_execute(
+    yvex_backend *backend, const yvex_transformer_joint_encoded_weight *external_weights,
+    const yvex_transformer_joint_encoded_weight *block_weights,
+    const char *residency_identity, unsigned long long resident_bytes,
+    const yvex_transformer_joint_request *request,
+    yvex_transformer_joint_result *result, yvex_error *err)
+{
+    return transformer_joint_execute_impl(
+        backend, external_weights, block_weights, residency_identity,
+        resident_bytes, request, NULL, result, err);
+}
+
+int yvex_cuda_transformer_joint_prepared_execute(
+    yvex_backend *backend, const yvex_transformer_joint_encoded_weight *external_weights,
+    const yvex_transformer_joint_encoded_weight *block_weights,
+    const char *residency_identity, unsigned long long resident_bytes,
+    yvex_transformer_joint_prepared *prepared,
+    const yvex_transformer_joint_request *request,
+    yvex_transformer_joint_result *result, yvex_error *err)
+{
+    int rc;
+    if (!prepared || prepared->in_use || prepared->backend != backend ||
+        prepared->summary.schema_version != YVEX_TRANSFORMER_JOINT_PREPARED_SCHEMA_V1 ||
+        !request || !request->layout_identity || !request->condition_identity ||
+        strcmp(prepared->residency_identity, residency_identity) != 0 ||
+        strcmp(prepared->layout_identity, request->layout_identity) != 0 ||
+        strcmp(prepared->condition_identity, request->condition_identity) != 0)
+        return conditioning_refuse(
+            err, YVEX_ERR_STATE, "cuda.transformer.joint.prepared",
+            "one compatible idle prepared execution resource is required");
+    prepared->in_use = 1;
+    rc = transformer_joint_execute_impl(
+        backend, external_weights, block_weights, residency_identity,
+        resident_bytes, request, prepared, result, err);
+    prepared->in_use = 0;
     return rc;
 }

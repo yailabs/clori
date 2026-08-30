@@ -79,7 +79,7 @@ src/backend/private.h	backend	backend.private	generic	private	private-interface	
 src/backend/residency.c	backend	backend.residency	generic	private	resource-lifecycle	runtime,graph	implementation	none
 src/backend/cuda/backend.c	backend.cuda	backend.cuda.backend	backend	private	reusable-algorithm	backend,graph	implementation	none
 src/backend/cuda/capability.c	backend.cuda	backend.cuda.capability	backend	private	reusable-algorithm	backend,graph	implementation	none
-src/backend/cuda/component_ops.h	backend.cuda	backend.cuda.component_ops	backend	private	platform-interface	backend.cuda.capability,backend.cuda.convolution,backend.cuda.joint_transformer,backend.cuda.text_encoder,tests	interface	none
+src/backend/cuda/component_ops.h	backend.cuda	backend.cuda.component_ops	backend	private	platform-interface	backend.cuda.capability,backend.cuda.convolution,backend.cuda.execution_arena,backend.cuda.joint_contract,backend.cuda.joint_transformer,backend.cuda.text_encoder,tests	interface	none
 src/backend/cuda/convolution.c	backend.cuda	backend.cuda.convolution	backend	private	reusable-algorithm	graph.family,backend.cuda.family	implementation	none
 src/backend/cuda/convolution_kernels.cu	backend.cuda	backend.cuda.convolution	backend	private	backend-kernel	graph.family,backend.cuda.family	backend-kernel	none
 src/backend/cuda/errors.c	backend.cuda	backend.cuda.errors	backend	private	reusable-algorithm	backend,graph	implementation	none
@@ -91,6 +91,8 @@ src/backend/cuda/text_encoder.c	backend.cuda	backend.cuda.text_encoder	backend	p
 src/backend/cuda/vision.c	backend.cuda	backend.cuda.vision	backend	private	reusable-algorithm	graph.family,runtime	implementation	none
 src/backend/cuda/families/minimax_h3.c	backend.cuda.family	backend.cuda.family.minimax_h3	family	private	backend-implementation	graph.family,runtime	implementation	none
 src/backend/cuda/joint_transformer.c	backend.cuda	backend.cuda.joint_transformer	backend	private	backend-implementation	graph.family	implementation	none
+src/backend/cuda/execution_arena.c	backend.cuda	backend.cuda.execution_arena	backend	private	resource-lifecycle	backend.cuda.joint_transformer	implementation	none
+src/backend/cuda/joint_contract.c	backend.cuda	backend.cuda.joint_contract	backend	private	resource-lifecycle	runtime.component,backend.cuda.joint_transformer	implementation	none
 src/backend/cuda/info.c	backend.cuda	backend.cuda.info	backend	private	reusable-algorithm	backend,graph	implementation	none
 src/backend/cuda/kernel_primitives.h	backend.cuda	backend.cuda.kernel_primitives	backend	private	platform-interface	backend.cuda.kernels,backend.cuda.moe_kernels,backend.cuda.sampling_kernels,backend.cuda.tensorcore,backend.cuda.transformer	interface	none
 src/backend/cuda/kernels.cu	backend.cuda	backend.cuda.kernels	backend	private	backend-kernel	backend,graph	backend-kernel	none

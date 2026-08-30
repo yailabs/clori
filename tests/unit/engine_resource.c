@@ -67,7 +67,7 @@ int yvex_test_engine_resource(void)
     memset(&request, 0, sizeof(request));
     request.kind = YVEX_ENGINE_RESOURCE_PREPARED_LAYOUT;
     request.owner = YVEX_ENGINE_RESOURCE_OWNER_SPECIALIZATION;
-    request.lifetime = YVEX_ENGINE_RESOURCE_LIFETIME_ENGINE;
+    request.lifetime = YVEX_ENGINE_RESOURCE_LIFETIME_REQUEST;
     request.numeric_class = YVEX_ENGINE_RESOURCE_NUMERIC_EQUIVALENT_PREPARED;
     request.name = "synthetic-layout";
     request.package_identity = package_identity;
@@ -76,6 +76,7 @@ int yvex_test_engine_resource(void)
     request.dependency = package;
     request.bytes.host_resident_bytes = 256ull;
     request.bytes.prepared_bytes = 256ull;
+    request.preparation_nanoseconds = 700ull;
     request.value = &prepared_probe;
     request.release = release_count;
     request.release_context = &prepared_probe;
@@ -130,6 +131,8 @@ int yvex_test_engine_resource(void)
             catalog, &summary, entries, 2ull, &count, &err) == YVEX_OK &&
             count == 1ull && summary.resource_count == 1ull &&
             summary.eviction_count == 1ull &&
+            summary.acquisition_count == 1ull &&
+            summary.preparation_nanoseconds == 700ull &&
             summary.bytes.mapped_package_bytes == 4096ull &&
             summary.bytes.prepared_bytes == 0ull,
         "eviction releases prepared accounting without changing package mapping");

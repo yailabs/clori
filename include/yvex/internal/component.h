@@ -18,6 +18,8 @@ typedef struct yvex_runtime_av_layout_result yvex_runtime_av_layout_result;
 typedef struct yvex_transformer_linear_physical_plan yvex_transformer_linear_physical_plan;
 typedef struct yvex_transformer_joint_request yvex_transformer_joint_request;
 typedef struct yvex_transformer_joint_result yvex_transformer_joint_result;
+typedef struct yvex_transformer_joint_prepared yvex_transformer_joint_prepared;
+typedef struct yvex_transformer_joint_prepared_summary yvex_transformer_joint_prepared_summary;
 typedef struct yvex_alias_decoder_request yvex_alias_decoder_request;
 typedef struct yvex_alias_decoder_result yvex_alias_decoder_result;
 typedef struct yvex_media_condition yvex_media_condition;
@@ -202,10 +204,37 @@ typedef struct yvex_backend_component_operations {
         yvex_backend *, const yvex_component_encoded_weight *,
         const yvex_component_encoded_weight *, const char *, unsigned long long,
         const yvex_transformer_joint_request *, yvex_transformer_joint_result *, yvex_error *);
+    int (*joint_transformer_prepare)(
+        yvex_backend *, const yvex_component_encoded_weight *,
+        const yvex_component_encoded_weight *, const char *, unsigned long long,
+        const char *, const yvex_transformer_joint_request *,
+        yvex_transformer_joint_prepared **,
+        yvex_transformer_joint_prepared_summary *, yvex_error *);
+    int (*joint_transformer_prepared_execute)(
+        yvex_backend *, const yvex_component_encoded_weight *,
+        const yvex_component_encoded_weight *, const char *, unsigned long long,
+        yvex_transformer_joint_prepared *, const yvex_transformer_joint_request *,
+        yvex_transformer_joint_result *, yvex_error *);
+    int (*joint_transformer_prepared_release)(
+        yvex_backend *, yvex_transformer_joint_prepared **, yvex_error *);
     int (*alias_decoder_execute)(
         yvex_backend *, const yvex_alias_decoder_request *, yvex_alias_decoder_result *,
         yvex_error *);
 } yvex_backend_component_operations;
+
+#define YVEX_COMPONENT_RESOURCE_SUMMARY_SCHEMA_V1 1u
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long host_arena_bytes, device_arena_bytes;
+    unsigned long long request_prepared_bytes, condition_prepared_bytes;
+    unsigned long long preparation_nanoseconds, preparation_count;
+    unsigned long long use_count, reuse_count, rebuild_count;
+    unsigned long long allocation_count, execution_allocation_events;
+    unsigned long long last_execution_allocation_events;
+    unsigned long long resource_count, resource_generation;
+    char prepared_identity[YVEX_SHA256_HEX_CAP];
+    int ready, request_ready, condition_ready, retained_by_transaction;
+} yvex_component_resource_summary;
 
 typedef struct yvex_runtime_av_audio_decode_options {
     const float *latent;
@@ -287,6 +316,8 @@ int yvex_runtime_component_session_borrow(
     yvex_runtime_component_session *, yvex_component_execution *, yvex_error *);
 int yvex_component_execution_resource_lease(
     const yvex_component_execution *, yvex_execution_resource_lease *, yvex_error *);
+int yvex_component_execution_resource_summary(
+    const yvex_component_execution *, yvex_component_resource_summary *, yvex_error *);
 int yvex_component_execution_weight_view(
     const yvex_component_execution *, const char *, yvex_component_encoded_weight *,
     yvex_error *);

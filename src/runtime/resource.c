@@ -97,7 +97,7 @@ static int resource_request_valid(
          request->kind == YVEX_ENGINE_RESOURCE_PREPARED_LAYOUT);
     if (!catalog || !request || request->kind >= YVEX_ENGINE_RESOURCE_KIND_COUNT ||
         request->owner > YVEX_ENGINE_RESOURCE_OWNER_EXECUTION ||
-        request->lifetime > YVEX_ENGINE_RESOURCE_LIFETIME_EXECUTION ||
+        request->lifetime > YVEX_ENGINE_RESOURCE_LIFETIME_QUANTUM ||
         request->numeric_class > YVEX_ENGINE_RESOURCE_NUMERIC_STATE ||
         !request->name || !request->name[0] ||
         strlen(request->name) >= YVEX_ENGINE_RESOURCE_NAME_CAP ||
@@ -243,7 +243,7 @@ int yvex_runtime_resource_register(
 {
     engine_resource_slot *slot = NULL, *dependency = NULL;
     yvex_engine_resource_bytes totals;
-    unsigned long long index;
+    unsigned long long index, preparation_total;
     if (handle) memset(handle, 0, sizeof(*handle));
     if (!resource_request_valid(catalog, request) || !handle ||
         !catalog->mutex_ready || pthread_mutex_lock(&catalog->mutex) != 0)
@@ -272,11 +272,14 @@ int yvex_runtime_resource_register(
             break;
         }
     totals = catalog->summary.bytes;
-    if (!slot || !resource_bytes_add(&totals, &request->bytes)) {
+    if (!slot || !resource_bytes_add(&totals, &request->bytes) ||
+        !yvex_core_u64_add(catalog->summary.preparation_nanoseconds,
+                           request->preparation_nanoseconds,
+                           &preparation_total)) {
         (void)pthread_mutex_unlock(&catalog->mutex);
         return resource_refuse(
             err, slot ? YVEX_ERR_BOUNDS : YVEX_ERR_NOMEM,
-            slot ? "engine resource byte accounting overflowed"
+            slot ? "engine resource accounting overflowed"
                  : "engine resource catalog capacity is exhausted");
     }
     catalog->next_generation++;
@@ -295,6 +298,7 @@ int yvex_runtime_resource_register(
     slot->summary.state = request->ready ? YVEX_ENGINE_RESOURCE_READY
                                          : YVEX_ENGINE_RESOURCE_DECLARED;
     slot->summary.bytes = request->bytes;
+    slot->summary.preparation_nanoseconds = request->preparation_nanoseconds;
     slot->summary.evictable = request->evictable != 0;
     yvex_core_text_copy(slot->summary.name, sizeof(slot->summary.name),
                         request->name);
@@ -316,6 +320,7 @@ int yvex_runtime_resource_register(
     catalog->summary.bytes = totals;
     catalog->summary.resource_count++;
     catalog->summary.registration_count++;
+    catalog->summary.preparation_nanoseconds = preparation_total;
     catalog->summary.generation++;
     catalog->summary.count_by_kind[request->kind]++;
     catalog->summary.ready_count += request->ready != 0;
@@ -339,13 +344,17 @@ int yvex_runtime_resource_acquire(
     slot = resource_slot_locked(catalog, handle);
     if (!slot || catalog->summary.closing ||
         slot->summary.state != YVEX_ENGINE_RESOURCE_READY ||
-        slot->summary.consumer_count == ULLONG_MAX) {
+        slot->summary.consumer_count == ULLONG_MAX ||
+        slot->summary.acquisition_count == ULLONG_MAX ||
+        catalog->summary.acquisition_count == ULLONG_MAX) {
         (void)pthread_mutex_unlock(&catalog->mutex);
         return resource_refuse(
             err, YVEX_ERR_STATE,
             "ready non-stale engine resource is required");
     }
     slot->summary.consumer_count++;
+    slot->summary.acquisition_count++;
+    catalog->summary.acquisition_count++;
     *value = slot->value;
     (void)pthread_mutex_unlock(&catalog->mutex);
     yvex_error_clear(err);

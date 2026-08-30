@@ -9,6 +9,7 @@
 #include <yvex/api.h>
 #include <yvex/internal/backend.h>
 
+#include "src/backend/cuda/component_ops.h"
 #include "tests/test.h"
 
 static void make_desc(yvex_backend_tensor_desc *desc,
@@ -133,6 +134,67 @@ static int assert_shared_stream_copy(yvex_backend *owner)
     return 0;
 }
 
+static int assert_execution_arena(yvex_backend *backend)
+{
+    yvex_backend_tensor_desc device[2];
+    yvex_backend_memory_stats before, retained, released;
+    yvex_cuda_execution_arena *arena = NULL;
+    yvex_cuda_execution_arena_summary summary = {0};
+    const unsigned long long host_bytes[2] = {64ull, 128ull};
+    yvex_cuda_execution_arena_plan plan = {
+        device, host_bytes, 2u, 2u};
+    yvex_device_tensor *first, *second;
+    yvex_backend_tensor_desc active;
+    yvex_error err;
+    float input[4] = {1.0f, 2.0f, 3.0f, 4.0f}, output[4] = {0};
+    unsigned char *first_host, *second_host;
+    make_desc(device + 0, "arena-first", 2ull, 2ull);
+    make_desc(device + 1, "arena-second", 2ull, 2ull);
+    YVEX_TEST_ASSERT(
+        yvex_backend_get_memory_stats(backend, &before, &err) == YVEX_OK &&
+            yvex_cuda_execution_arena_open(
+                &arena, backend, &plan, &summary, &err) == YVEX_OK &&
+            arena && summary.device_region_count == 2u &&
+            summary.host_region_count == 2u && summary.allocation_count == 2ull,
+        "open one admitted execution arena");
+    first = yvex_cuda_execution_arena_device(arena, 0u);
+    second = yvex_cuda_execution_arena_device(arena, 1u);
+    first_host = yvex_cuda_execution_arena_host(arena, 0u);
+    second_host = yvex_cuda_execution_arena_host(arena, 1u);
+    YVEX_TEST_ASSERT(
+        first && second && first->data != second->data && first_host &&
+            second_host && first_host != second_host &&
+            yvex_backend_tensor_write(
+                backend, second, input, sizeof(input), &err) == YVEX_OK &&
+            yvex_backend_tensor_read(
+                backend, second, output, sizeof(output), &err) == YVEX_OK &&
+            memcmp(input, output, sizeof(input)) == 0,
+        "arena exposes stable non-overlapping device and host views");
+    make_desc(&active, "arena-active", 1ull, 2ull);
+    second = yvex_cuda_execution_arena_device_bind(
+        arena, 1u, &active, &err);
+    YVEX_TEST_ASSERT(
+        second && second->bytes == sizeof(float) * 2ull &&
+            yvex_backend_tensor_write(
+                backend, second, input, sizeof(float) * 2ull, &err) == YVEX_OK,
+        "arena rebinds an active view within its admitted capacity");
+    first_host[0] = 0x5au;
+    second_host[0] = 0xa5u;
+    YVEX_TEST_ASSERT(
+        first_host[0] == 0x5au && second_host[0] == 0xa5u &&
+            yvex_backend_get_memory_stats(backend, &retained, &err) == YVEX_OK &&
+            retained.allocated_bytes == before.allocated_bytes + summary.device_bytes &&
+            retained.allocation_events == before.allocation_events + 1ull,
+        "arena retains one physical device allocation across view use");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_execution_arena_close(&arena, &err) == YVEX_OK && !arena &&
+            yvex_backend_get_memory_stats(backend, &released, &err) == YVEX_OK &&
+            released.allocated_bytes == before.allocated_bytes &&
+            released.release_events == before.release_events + 1ull,
+        "arena cleanup balances backend ownership");
+    return 0;
+}
+
 int yvex_cuda_test_tensor(void)
 {
     yvex_backend *backend = NULL;
@@ -160,6 +222,8 @@ int yvex_cuda_test_tensor(void)
                      "CUDA virtual page ownership is transactional");
     YVEX_TEST_ASSERT(assert_shared_stream_copy(backend) == 0,
                      "CUDA shared physical owner supports ordered row movement");
+    YVEX_TEST_ASSERT(assert_execution_arena(backend) == 0,
+                     "CUDA execution arena owns persistent non-overlapping views");
 
     rc = yvex_backend_get_memory_stats(backend, &stats, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "initial stats");

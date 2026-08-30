@@ -1508,6 +1508,8 @@ static int t2va_omni_evaluate(void *opaque, const float *video, unsigned long lo
     rc = t2va_conditioned_timesteps(plan, context, video_timestep, audio_timestep, timesteps, &timestep_count, err);
     if (rc != YVEX_OK) return rc;
     request.recipe = &omni_transformer_recipe;
+    request.layout_identity = context->layout_result->layout_identity;
+    request.condition_identity = context->conditioning_identity;
     request.video_output_physical = execution->video_output_physical;
     request.audio_output_physical = execution->audio_output_physical;
     request.video = transformer_video; request.audio = audio;

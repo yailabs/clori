@@ -10,6 +10,7 @@ extern "C" {
 #endif
 
 typedef struct yvex_backend yvex_backend;
+typedef struct yvex_transformer_joint_prepared yvex_transformer_joint_prepared;
 #define YVEX_TRANSFORMER_JOINT_SCHEMA_V1 1u
 #define YVEX_TRANSFORMER_JOINT_SCHEMA_V2 2u
 #define YVEX_TRANSFORMER_JOINT_SCHEMA_V3 3u
@@ -174,6 +175,7 @@ typedef struct yvex_transformer_joint_request {
     const float *video, *audio, *conditioning, *timesteps, *position_ids;
     const unsigned int *video_indices, *audio_indices, *text_indices;
     const unsigned int *timestep_indices, *token_tags;
+    const char *layout_identity, *condition_identity;
     unsigned long long video_rows, audio_rows, text_rows, timestep_count, packed_rows;
     unsigned long long block_count;
     float *video_output, *audio_output;
@@ -186,6 +188,18 @@ typedef struct yvex_transformer_joint_request {
     unsigned long long observed_stage_block;
     yvex_transformer_joint_stage observed_stage;
 } yvex_transformer_joint_request;
+
+#define YVEX_TRANSFORMER_JOINT_PREPARED_SCHEMA_V1 1u
+typedef struct yvex_transformer_joint_prepared_summary {
+    unsigned int schema_version;
+    unsigned long long host_arena_bytes, device_arena_bytes;
+    unsigned long long request_prepared_bytes, condition_prepared_bytes;
+    unsigned long long preparation_nanoseconds, preparation_kernel_launches;
+    unsigned long long preparation_h2d_bytes, preparation_d2h_bytes;
+    unsigned long long allocation_count;
+    char identity[YVEX_SHA256_HEX_CAP];
+    int request_ready, condition_ready;
+} yvex_transformer_joint_prepared_summary;
 
 typedef struct yvex_transformer_joint_result {
     unsigned long long video_rows, audio_rows, text_rows, packed_rows, block_count;

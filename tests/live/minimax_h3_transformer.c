@@ -715,6 +715,9 @@ static int execute_latent(const char *path, const char *conditioning_path,
     yvex_artifact_admission_failure failure;
     yvex_runtime_component_session *session = NULL;
     yvex_component_execution component = {0};
+    yvex_component_resource_summary resources = {0};
+    const int optional_fallback =
+        getenv("YVEX_TEST_JOINT_PREPARED_OPTIONAL_FAILURE") != NULL;
     yvex_minimax_h3_t2va_plan plan;
     yvex_runtime_av_layout_result layout_result;
     yvex_runtime_latent_result latent_result;
@@ -801,6 +804,28 @@ static int execute_latent(const char *path, const char *conditioning_path,
                        "the exact resident latent iteration did not complete");
         rc = YVEX_ERR_STATE;
     }
+    if (rc == YVEX_OK)
+        rc = yvex_component_execution_resource_summary(
+            &component, &resources, &err);
+    if (rc == YVEX_OK &&
+        (!resources.ready || resources.retained_by_transaction ||
+         resources.preparation_count != 1ull || resources.use_count != steps ||
+         resources.reuse_count + 1ull != resources.use_count ||
+         resources.rebuild_count || !resources.host_arena_bytes ||
+         !resources.device_arena_bytes ||
+         (optional_fallback
+              ? (resources.request_ready || resources.condition_ready ||
+                 resources.resource_count != 1ull ||
+                 resources.request_prepared_bytes ||
+                 resources.condition_prepared_bytes)
+              : (!resources.request_ready || !resources.condition_ready ||
+                 resources.resource_count != 3ull ||
+                 !resources.request_prepared_bytes ||
+                 !resources.condition_prepared_bytes)))) {
+        yvex_error_set(&err, YVEX_ERR_STATE, "minimax-h3.resource-proof",
+                       "the iterative request did not retain and reuse its prepared resources");
+        rc = YVEX_ERR_STATE;
+    }
     if (rc == YVEX_OK) {
         unpack.plan = &plan; unpack.video_rows = video; unpack.audio_rows = audio;
         unpack.video_channel_mean = normalization->video_mean;
@@ -822,7 +847,11 @@ static int execute_latent(const char *path, const char *conditioning_path,
         printf("t2va_latent=accepted steps=%u blocks=%llu packed_rows=%llu\n"
                "kernel_launches=%llu peak_device_bytes=%llu\n"
                "execution_quanta=%llu safe_points=%llu transaction_setup_ns=%llu "
-               "safe_point_ns=%llu\nplan_identity=%s\n"
+               "safe_point_ns=%llu\nresource_prepare_ns=%llu arena_host_bytes=%llu "
+               "arena_device_bytes=%llu resource_uses=%llu resource_reuses=%llu "
+               "last_execution_allocations=%llu\nrequest_prepared_bytes=%llu "
+               "condition_prepared_bytes=%llu resource_count=%llu resource_rebuilds=%llu\n"
+               "plan_identity=%s\n"
                "layout_identity=%s\nevaluator_identity=%s\nlatent_identity=%s\n"
                "transformer_chain_identity=%s\nresidency_identity=%s\n"
                "vae_input_identity=%s\n",
@@ -831,6 +860,12 @@ static int execute_latent(const char *path, const char *conditioning_path,
                latent_result.transaction.safe_points,
                latent_result.transaction.setup_nanoseconds,
                latent_result.transaction.safe_point_nanoseconds,
+               resources.preparation_nanoseconds, resources.host_arena_bytes,
+               resources.device_arena_bytes, resources.use_count,
+               resources.reuse_count, resources.last_execution_allocation_events,
+               resources.request_prepared_bytes,
+               resources.condition_prepared_bytes, resources.resource_count,
+               resources.rebuild_count,
                plan.identity, layout_result.layout_identity,
                omni_result.evaluator_identity, latent_result.execution_identity,
                omni_result.execution_chain_identity, omni_result.residency_identity,
@@ -1066,6 +1101,9 @@ static int execute_latent_fixture(
     yvex_artifact_admission_failure failure;
     yvex_runtime_component_session *session = NULL;
     yvex_component_execution component = {0};
+    yvex_component_resource_summary resources = {0};
+    const int optional_fallback =
+        getenv("YVEX_TEST_JOINT_PREPARED_OPTIONAL_FAILURE") != NULL;
     yvex_minimax_h3_t2va_plan plan = {0};
     yvex_runtime_av_layout_result layout_result = {0};
     yvex_runtime_latent_result latent_result = {0};
@@ -1157,6 +1195,28 @@ static int execute_latent_fixture(
                        "the iterative request did not retain one admitted execution resource");
         rc = YVEX_ERR_STATE;
     }
+    if (rc == YVEX_OK)
+        rc = yvex_component_execution_resource_summary(
+            &component, &resources, &err);
+    if (rc == YVEX_OK &&
+        (!resources.ready || resources.retained_by_transaction ||
+         resources.preparation_count != 1ull || resources.use_count != steps ||
+         resources.reuse_count + 1ull != resources.use_count ||
+         resources.rebuild_count || !resources.host_arena_bytes ||
+         !resources.device_arena_bytes ||
+         (optional_fallback
+              ? (resources.request_ready || resources.condition_ready ||
+                 resources.resource_count != 1ull ||
+                 resources.request_prepared_bytes ||
+                 resources.condition_prepared_bytes)
+              : (!resources.request_ready || !resources.condition_ready ||
+                 resources.resource_count != 3ull ||
+                 !resources.request_prepared_bytes ||
+                 !resources.condition_prepared_bytes)))) {
+        yvex_error_set(&err, YVEX_ERR_STATE, "minimax-h3.resource-proof",
+                       "prepared request and condition state did not remain reusable");
+        rc = YVEX_ERR_STATE;
+    }
     if (rc == YVEX_OK &&
         (!file_write(video_output_path, fixture.video_output, video_values) ||
          !file_write(audio_output_path, fixture.audio_output, audio_values)))
@@ -1176,13 +1236,23 @@ static int execute_latent_fixture(
         printf("t2va_latent_request=accepted rows=%llu blocks=%llu steps=%u seed=%llu\n"
                "kernel_launches=%llu peak_device_bytes=%llu\n"
                "execution_quanta=%llu safe_points=%llu transaction_setup_ns=%llu "
-               "safe_point_ns=%llu\nplan_identity=%s\n"
+               "safe_point_ns=%llu\nresource_prepare_ns=%llu arena_host_bytes=%llu "
+               "arena_device_bytes=%llu resource_uses=%llu resource_reuses=%llu "
+               "last_execution_allocations=%llu\nrequest_prepared_bytes=%llu "
+               "condition_prepared_bytes=%llu resource_count=%llu resource_rebuilds=%llu\n"
+               "plan_identity=%s\n"
                "layout_identity=%s\nlatent_identity=%s\ntransformer_chain_identity=%s\n",
                plan.packed_rows, block_count, steps, seed, omni_result.kernel_launches,
                omni_result.peak_device_bytes, latent_result.transaction.completed_quanta,
                latent_result.transaction.safe_points,
                latent_result.transaction.setup_nanoseconds,
                latent_result.transaction.safe_point_nanoseconds,
+               resources.preparation_nanoseconds, resources.host_arena_bytes,
+               resources.device_arena_bytes, resources.use_count,
+               resources.reuse_count, resources.last_execution_allocation_events,
+               resources.request_prepared_bytes,
+               resources.condition_prepared_bytes, resources.resource_count,
+               resources.rebuild_count,
                plan.identity, layout_result.layout_identity,
                latent_result.execution_identity, omni_result.execution_chain_identity);
     else
