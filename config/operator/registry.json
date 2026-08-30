@@ -1413,7 +1413,6 @@
     "documentation_owner": "docs/operator-runbook.md",
     "flag_sets": [],
     "flags": [],
-    "future_TUI_projection": "catalogued",
     "input_schema": "argv.v1",
     "model_requirement": "none",
     "protocol_operation": "none",

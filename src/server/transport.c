@@ -168,7 +168,7 @@ int yvex_server_socket_path(char output[YVEX_SERVER_SOCKET_PATH_CAP],
                           "%s/yvex/yvexd.sock", runtime);
     else
         length = snprintf(output, YVEX_SERVER_SOCKET_PATH_CAP,
-                          "/tmp/yvex-%lu/yvexd.sock", (unsigned long)getuid());
+                          "/tmp/yvex-%lu/yvexd.sock", (unsigned long)geteuid());
     if (length < 0 || length >= (int)YVEX_SERVER_SOCKET_PATH_CAP)
         return transport_refuse(err, YVEX_ERR_BOUNDS,
                                 "canonical socket path exceeds its bound");
@@ -199,7 +199,7 @@ int yvex_client_connect(yvex_client **out, const char *socket_path,
         path = canonical;
     }
     if (strlen(path) >= sizeof(address.sun_path) || lstat(path, &info) != 0 ||
-        !S_ISSOCK(info.st_mode) || info.st_uid != getuid() ||
+        !S_ISSOCK(info.st_mode) || info.st_uid != geteuid() ||
         (info.st_mode & 0077u) != 0u)
         return transport_refuse(
             err, YVEX_ERR_IO,

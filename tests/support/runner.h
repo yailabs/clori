@@ -75,7 +75,7 @@ static int yvex_test_runner_lock_workspace(void)
     if (!path || !path[0]) {
         if (stat(".", &directory) != 0 ||
             snprintf(default_path, sizeof(default_path), "/tmp/yvex-unit-%lu-%lu-%lu.lock",
-                     (unsigned long)getuid(), (unsigned long)directory.st_dev,
+                     (unsigned long)geteuid(), (unsigned long)directory.st_dev,
                      (unsigned long)directory.st_ino) >= (int)sizeof(default_path)) {
             fprintf(stderr, "FAIL: cannot derive test workspace lock path\n");
             return -1;
@@ -84,7 +84,7 @@ static int yvex_test_runner_lock_workspace(void)
     }
     fd = open(path, O_CREAT | O_RDWR | O_NOFOLLOW, 0600);
     if (fd < 0 || fchmod(fd, 0600) != 0 || fstat(fd, &lock) != 0 || !S_ISREG(lock.st_mode) ||
-        lock.st_uid != getuid() || flock(fd, LOCK_EX) != 0) {
+        lock.st_uid != geteuid() || flock(fd, LOCK_EX) != 0) {
         if (fd >= 0) close(fd);
         fprintf(stderr, "FAIL: cannot lock test workspace: %s\n", path);
         return -1;

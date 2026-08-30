@@ -267,9 +267,7 @@ $(OBJ_DIR)/src/runtime/generation_context.o: $(BUILD_COMMIT_HEADER)
 OPERATOR_REGISTRY_CONSUMER_OBJS := $(OBJ_DIR)/src/cli/main.o \
 	$(OBJ_DIR)/src/cli/commands/graph.o \
 	$(OBJ_DIR)/src/cli/io/client.o $(OBJ_DIR)/src/cli/io/out.o \
-	$(OBJ_DIR)/src/cli/input/operator.o $(OBJ_DIR)/src/cli/tui/core.o \
-	$(OBJ_DIR)/src/cli/tui/input.o \
-	$(OBJ_DIR)/src/cli/tui/launcher.o $(OBJ_DIR)/src/cli/tui/render.o
+	$(OBJ_DIR)/src/cli/input/operator.o
 $(OPERATOR_REGISTRY_CONSUMER_OBJS): CPPFLAGS += -I$(BUILD_DIR)/generated
 $(OPERATOR_REGISTRY_CONSUMER_OBJS): $(OPERATOR_REGISTRY_HEADER)
 $(OBJ_DIR)/src/cli/io/client.o: $(BUILD_COMMIT_HEADER)
@@ -302,11 +300,6 @@ CUDA_TEST_RUNNER := $(TEST_DIR)/test_cuda
 TEST_UNIT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(TEST_UNIT_SRCS))
 TEST_REFERENCE_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(TEST_REFERENCE_SRCS))
 TEST_MAIN_OBJ := $(OBJ_DIR)/tests/test.o
-TUI_TEST_SUPPORT_OBJS := $(OBJ_DIR)/src/cli/tui/input.o \
-	$(OBJ_DIR)/src/cli/tui/launcher.o $(OBJ_DIR)/src/cli/tui/render.o \
-	$(OBJ_DIR)/src/cli/tui/state.o $(OBJ_DIR)/src/cli/tui/terminal.o \
-	$(OBJ_DIR)/src/cli/input/operator.o $(OPERATOR_REGISTRY_OBJ)
-
 QUANT_TEST_UNIT_SRCS := $(QA_QUANT_TEST_SRCS)
 QUANT_TEST_UNIT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(QUANT_TEST_UNIT_SRCS))
 QUANT_TEST_RUNNER_OBJ := $(OBJ_DIR)/tests/unit/quant_runner.o
@@ -1635,10 +1628,10 @@ $(QUANT_TEST_RUNNER_OBJ): $(QA_REGISTRY_DIR)/quant_registry.inc tests/support/ru
 $(ARTIFACT_TEST_RUNNER_OBJ): $(QA_REGISTRY_DIR)/artifact_registry.inc tests/support/runner.h
 
 $(TEST_RUNNER): $(TEST_MAIN_OBJ) $(TEST_UNIT_OBJS) $(TEST_REFERENCE_OBJS) \
-	$(TUI_TEST_SUPPORT_OBJS) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX) tests/test.h
+	$(OPENAI_ADAPTER_OBJS) $(LIBYVEX) tests/test.h
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(TEST_MAIN_OBJ) $(TEST_UNIT_OBJS) $(TEST_REFERENCE_OBJS) \
-		$(TUI_TEST_SUPPORT_OBJS) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX) \
+		$(OPENAI_ADAPTER_OBJS) $(LIBYVEX) \
 		$(LDFLAGS) $(LDLIBS) -o $@
 
 $(QUANT_TEST_RUNNER): $(QUANT_TEST_RUNNER_OBJ) $(QUANT_TEST_UNIT_OBJS) $(LIBYVEX) tests/test.h

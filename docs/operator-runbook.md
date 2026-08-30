@@ -3,13 +3,11 @@
 This runbook owns first startup and routine operation of the installed local
 server and clients. Normal operation is registry-first: users list a complete
 local model profile, start the foreground host, load that package as one engine
-generation, and enter
-chat without exporting paths or repeating internal paths. Running `yvex`
-provides the full-screen terminal path over the same catalog and protocol APIs;
-`yvex chat` retains the linear console. Both attach to the resident server and
-use the same typed session, progress, runtime-observation, and result facts as
-noninteractive clients. Neither reads backend-private state. Their commands
-follow the canonical operation registry.
+generation, and enter chat without exporting paths or repeating internal
+paths. Running `yvex` and `yvex chat` enters the same linear console. It attaches
+to the resident server and uses the same typed session, progress,
+runtime-observation, and result facts as noninteractive clients without reading
+backend-private state. Its commands follow the canonical operation registry.
 It is not a capability ledger: consult [`ROADMAP.md`](../ROADMAP.md) for current
 gates.
 
@@ -421,34 +419,13 @@ After the engine reports `loaded`, an optional second terminal may run
 views derive from the same typed event sequence. Default telemetry excludes
 prompt and answer content.
 
-## Full-screen terminal
-
-Running bare `./yvex` opens one conversation transcript and one multiline
-composer. It has no persistent page tabs: `/` discovers typed registry commands
-inside the composer, `Ctrl-O` or `/model` opens a temporary model/profile
-selector, `/runtime` refreshes inline host state, and `?` opens temporary
-shortcut help. Tab completes the selected slash command or moves between fields
-inside a selector; it never changes application screens. Enter sends or
-confirms, while Ctrl-J or Shift-Enter inserts a newline. PageUp and PageDown
-scroll the transcript, and Esc closes an overlay or requests cancellation of an
-active turn.
-
-The composer stays editable while the host or model is unavailable. Sending in
-that state opens the selector and preserves the draft. During an active turn,
-up to eight later messages may be queued against the exact session, engine
-alias, and engine generation. A disconnect, session change, unload, or generation
-change restores affected queued text for review instead of sending it to a
-different runtime identity. Runtime observations and prepared-memory facts are
-rendered inline from typed protocol records; the terminal does not parse human
-output or read backend-private state.
-
 ## Interactive console
 
-Chat opens one concise attachment view and a prompt labelled with the attached
-engine's model alias:
+Bare `./yvex` and explicit `./yvex chat` open one concise attachment view and a
+prompt labelled with the attached engine's model alias:
 
 ```text
-YVEX 0.1.0 · protocol 14
+YVEX 0.1.0 · protocol 16
 
   model      deepseek4-v4-flash-dspark
   variant    abcdef012345

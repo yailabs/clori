@@ -130,16 +130,8 @@ src/cli/io/out.c	cli.io	cli.io.out	generic	private	reusable-algorithm	cli,render
 src/cli/io/private.h	cli.io	cli.io.private	generic	private	private-interface	cli,render	interface	none
 src/cli/main.c	client	client.yvex	entrypoint	private	entrypoint	operator	entrypoint	none
 src/cli/io/client.c	client	client.runtime_lane	generic	private	protocol-client	client.yvex	implementation	none
-src/cli/io/interactive.c	cli.io	cli.io.interactive	generic	private	protocol-client	cli.tui	implementation	none
 src/cli/io/server.c	client	client.server_process	entrypoint	private	foreground-server	operator	entrypoint	none
 src/cli/private.h	client	client.dispatch	generic	private	source-local-interface	client.yvex,client.runtime_lane,client.server_process	interface	none
-src/cli/tui/core.c	cli.tui	cli.tui.application	generic	private	resource-lifecycle	client.yvex	implementation	none
-src/cli/tui/input.c	cli.tui	cli.tui.input	generic	private	reusable-algorithm	cli.tui.application	implementation	none
-src/cli/tui/launcher.c	cli.tui	cli.tui.launcher	generic	private	resource-lifecycle	cli.tui.application	implementation	none
-src/cli/tui/private.h	cli.tui	cli.tui.shared	generic	private	private-interface	cli.tui.application,cli.tui.input,cli.tui.launcher,cli.tui.render,cli.tui.state,cli.tui.terminal	interface	none
-src/cli/tui/render.c	cli.tui	cli.tui.render	generic	private	typed-projection	cli.tui.application	implementation	none
-src/cli/tui/state.c	cli.tui	cli.tui.state	generic	private	reusable-algorithm	cli.tui.application,cli.tui.render,cli.tui.input	implementation	none
-src/cli/tui/terminal.c	cli.tui	cli.tui.terminal	generic	private	resource-lifecycle	cli.tui.application	implementation	none
 src/cli/model_artifacts/artifacts.c	cli.model_artifacts	cli.model_artifacts.artifacts	generic	private	cli-workflow	cli.commands	implementation	none
 src/cli/model_artifacts/context.c	cli.model_artifacts	cli.model_artifacts.context	generic	private	cli-workflow	cli.commands	implementation	none
 src/cli/model_artifacts/download.c	cli.model_artifacts	cli.model_artifacts.download	generic	private	cli-workflow	cli.commands	implementation	none

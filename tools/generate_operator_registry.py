@@ -88,7 +88,6 @@ OPERATION_KEYS = {
     "documentation_owner",
     "flag_sets",
     "flags",
-    "future_TUI_projection",
     "input_schema",
     "lane",
     "model_requirement",
@@ -543,7 +542,7 @@ def validate_registry(registry: dict[str, Any]) -> list[dict[str, Any]]:
         completion_provider = text(operation.get("completion_provider", "none"), f"{where}.completion_provider")
         if completion_provider not in completion_providers:
             fail(f"{where}.completion_provider", f"unknown completion provider {completion_provider!r}")
-        for field in ("test_owner", "documentation_owner", "input_schema", "result_schema", "summary", "side_effects", "future_TUI_projection"):
+        for field in ("test_owner", "documentation_owner", "input_schema", "result_schema", "summary", "side_effects"):
             text(operation.get(field), f"{where}.{field}")
         if projection and visibility not in {"API-only", "test-only", "removed"}:
             if operation["test_owner"] == "none" or operation["documentation_owner"] == "none":
@@ -727,7 +726,7 @@ def render_header(registry: dict[str, Any]) -> str:
         "    const char *superseded_by;",
         "    const char *summary, *input_schema, *result_schema, *side_effects;",
         "    const char *protocol_operation, *adapter_id, *renderer_id;",
-        "    const char *slash_projection, *slash_aliases, *completion_provider, *future_tui_projection;",
+        "    const char *slash_projection, *slash_aliases, *completion_provider;",
         "    const char *test_owner, *documentation_owner, *default_providers, *validator_ids;",
         "    const char *daemon_requirement, *model_requirement, *artifact_requirement, *backend_requirement;",
         "    const char *tty_policy;",
@@ -863,7 +862,7 @@ def render_source(registry: dict[str, Any], operations: list[dict[str, Any]], id
             f"        {c_string(operation['protocol_operation'])}, {c_string(operation['adapter_id'])},",
             f"        {c_string(operation['renderer_id'])}, {c_string(operation['slash_projection'])},",
             f"        {c_string(slash_alias_text)},",
-            f"        {c_string(operation['completion_provider'])}, {c_string(operation['future_TUI_projection'])},",
+            f"        {c_string(operation['completion_provider'])},",
             f"        {c_string(operation['test_owner'])}, {c_string(operation['documentation_owner'])},",
             f"        {c_string(joined(operation['default_providers']))}, {c_string(joined(operation['validator_ids']))},",
             f"        {c_string(operation['requirements']['daemon'])}, {c_string(operation['requirements']['model'])},",

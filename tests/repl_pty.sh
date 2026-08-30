@@ -1,5 +1,5 @@
 #!/bin/sh
-# Exercise the official full-screen client and deterministic CLI isolation through real PTYs.
+# Exercise the scrollback-preserving console and deterministic CLI isolation through real PTYs.
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
@@ -15,14 +15,14 @@ case "$YVEX_TEST_HOST" in
     *) YVEX_TEST_HOST="$(pwd -P)/${YVEX_TEST_HOST#./}" ;;
 esac
 
-root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-tui-pty.XXXXXX")
+root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-repl-pty.XXXXXX")
 runtime="$root/runtime"
 config="$root/config"
 models="$root/models"
 registry="$root/models.local.json"
 socket="$runtime/yvex/yvexd.sock"
 host_pid=
-tui_pid=
+console_job=
 client_pid=
 mkdir -m 700 "$runtime" "$runtime/yvex" "$config" "$models"
 printf '{"schema":"yvex.models.local.v6","models":[]}\n' >"$registry"
@@ -35,9 +35,9 @@ cleanup()
             test -f "$transcript" && tail -c 12000 "$transcript" >&2 || true
         done
     fi
-    if test -n "$tui_pid" && kill -0 "$tui_pid" 2>/dev/null; then
-        kill "$tui_pid" 2>/dev/null || true
-        wait "$tui_pid" 2>/dev/null || true
+    if test -n "$console_job" && kill -0 "$console_job" 2>/dev/null; then
+        kill "$console_job" 2>/dev/null || true
+        wait "$console_job" 2>/dev/null || true
     fi
     if test -n "$host_pid" && kill -0 "$host_pid" 2>/dev/null; then
         kill "$host_pid" 2>/dev/null || true
@@ -62,7 +62,50 @@ wait_for()
     return 1
 }
 
-find_tui_client()
+wait_count()
+{
+    file=$1
+    needle=$2
+    minimum=$3
+    attempt=0
+    while test "$attempt" -lt 400; do
+        count=$(grep -F -c "$needle" "$file" 2>/dev/null || true)
+        test "$count" -ge "$minimum" && return 0
+        attempt=$((attempt + 1))
+        sleep 0.01
+    done
+    echo "timed out waiting for $minimum occurrences of '$needle' in $file" >&2
+    return 1
+}
+
+start_host()
+{
+    "$YVEX_TEST_HOST" "$socket" 2>>"$root/host.err" &
+    host_pid=$!
+    attempt=0
+    while test "$attempt" -lt 400 && test ! -S "$socket"; do
+        kill -0 "$host_pid"
+        attempt=$((attempt + 1))
+        sleep 0.01
+    done
+    test -S "$socket"
+}
+
+stop_host()
+{
+    test -n "$host_pid"
+    kill "$host_pid"
+    wait "$host_pid"
+    host_pid=
+    attempt=0
+    while test "$attempt" -lt 400 && test -e "$socket"; do
+        attempt=$((attempt + 1))
+        sleep 0.01
+    done
+    test ! -e "$socket"
+}
+
+find_console_client()
 {
     for candidate in $(pgrep -x yvex 2>/dev/null || true); do
         if tr '\000' '\n' <"/proc/$candidate/environ" 2>/dev/null |
@@ -74,7 +117,7 @@ find_tui_client()
     return 1
 }
 
-start_tui()
+start_console()
 {
     name=$1
     rows=$2
@@ -95,69 +138,45 @@ start_tui()
         script -q -f -e \
         -c "cd $root; stty rows $rows cols $columns; exec $YVEX_BIN $command" \
         "$transcript" <"$fifo" >"$root/$name.stdout" 2>"$root/$name.stderr" &
-    tui_pid=$!
+    console_job=$!
     exec 3>"$fifo"
-    wait_for "$transcript" 'YVEX'
+    wait_for "$transcript" 'deepseek4-v4-flash-dspark>'
     attempt=0
     while test "$attempt" -lt 400; do
-        client_pid=$(find_tui_client || true)
+        client_pid=$(find_console_client || true)
         test -n "$client_pid" && return 0
         attempt=$((attempt + 1))
         sleep 0.01
     done
-    echo 'timed out finding native TUI client' >&2
+    echo 'timed out finding linear console client' >&2
     return 1
 }
 
-finish_tui()
+finish_console()
 {
     exec 3>&-
-    wait "$tui_pid"
-    tui_pid=
+    wait "$console_job"
+    console_job=
     client_pid=
 }
 
-assert_restored()
+assert_linear_terminal()
 {
     transcript=$1
     esc=$(printf '\033')
-    grep -F "${esc}[?1049h" "$transcript" >/dev/null
-    grep -F "${esc}[?1049l" "$transcript" >/dev/null
-    grep -F "${esc}[?25l" "$transcript" >/dev/null
-    grep -F "${esc}[?25h" "$transcript" >/dev/null
+    ! grep -F "${esc}[?1049h" "$transcript" >/dev/null
+    ! grep -F "${esc}[?1049l" "$transcript" >/dev/null
+    ! grep -F "${esc}[?25l" "$transcript" >/dev/null
+    ! grep -F "${esc}[?25h" "$transcript" >/dev/null
+    ! grep -F "${esc}[48;" "$transcript" >/dev/null
+    ! grep -F "${esc}[40m" "$transcript" >/dev/null
     grep -F "${esc}[?2004h" "$transcript" >/dev/null
     grep -F "${esc}[?2004l" "$transcript" >/dev/null
 }
 
-assert_terminal_background()
-{
-    transcript=$1
-    esc=$(printf '\033')
-    ! grep -F "${esc}[48;" "$transcript" >/dev/null
-    ! grep -F "${esc}[40m" "$transcript" >/dev/null
-}
+start_host
 
-# Offline transcript preserves the same composer and exposes model selection.
-start_tui offline 24 100 '' nocolor
-wait_for "$root/offline.typescript" 'No model loaded'
-wait_for "$root/offline.typescript" 'YVEX (v0.1.0)'
-wait_for "$root/offline.typescript" 'Ask YVEX to do anything'
-kill -INT "$client_pid"
-finish_tui
-assert_restored "$root/offline.typescript"
-assert_terminal_background "$root/offline.typescript"
-
-"$YVEX_TEST_HOST" "$socket" 2>"$root/host.err" &
-host_pid=$!
-attempt=0
-while test "$attempt" -lt 400 && test ! -S "$socket"; do
-    kill -0 "$host_pid"
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test -S "$socket"
-
-# Deterministic commands remain outside alternate-screen mode.
+# Deterministic and redirected commands never emit terminal control sequences.
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --reasoning high \
     --max-new-tokens 3 --strategy greedy REASONING_STREAM \
     >"$root/raw.out" 2>"$root/raw.err"
@@ -165,7 +184,7 @@ printf 'I need to compare the constraints...\nThe valid result is 42.' >"$root/r
 cmp "$root/raw.expected" "$root/raw.out"
 ! grep "$(printf '\033')" "$root/raw.out" >/dev/null
 
-# Non-TTY interactive entrypoints refuse before mutating terminal state.
+# Both spellings resolve to the same console and refuse non-terminal input safely.
 set +e
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" chat </dev/null \
     >"$root/non-tty.out" 2>"$root/non-tty.err"
@@ -176,75 +195,66 @@ bare_status=$?
 set -e
 test "$chat_status" -eq 2
 test "$bare_status" -eq 2
-grep -F 'chat requires a terminal' "$root/non-tty.err" >/dev/null
-grep -F 'chat requires a terminal' "$root/bare.err" >/dev/null
+grep -F 'chat requires a terminal' "$root/non-tty.err" "$root/bare.err" >/dev/null
 ! grep "$(printf '\033')" "$root/non-tty.out" "$root/non-tty.err" \
     "$root/bare.out" "$root/bare.err" >/dev/null
 
-# Explicit chat remains the linear console and never enters alternate-screen mode.
-start_tui linear 24 100 'chat --session linear' nocolor
-wait_for "$root/linear.typescript" 'deepseek4-v4-flash-dspark>'
+# Explicit chat preserves scrollback, streams output, and restores bracketed paste mode.
+start_console explicit 24 100 'chat --session linear' nocolor
 printf 'hello\r' >&3
-wait_for "$root/linear.typescript" 'hello from yvex'
+wait_for "$root/explicit.typescript" 'hello from yvex'
 printf '/quit\r' >&3
-finish_tui
-esc=$(printf '\033')
-! grep -F "${esc}[?1049h" "$root/linear.typescript" >/dev/null
-! grep -F "${esc}[?1049l" "$root/linear.typescript" >/dev/null
-grep -F "${esc}[?2004h" "$root/linear.typescript" >/dev/null
-grep -F "${esc}[?2004l" "$root/linear.typescript" >/dev/null
+finish_console
+assert_linear_terminal "$root/explicit.typescript"
 
-# Connected mode remains one transcript; slash discovery replaces screen tabs.
-start_tui main 32 150 '' color
-wait_for "$root/main.typescript" 'deepseek4-v4-flash-dspark'
-wait_for "$root/main.typescript" '(v0.1.0)'
-wait_for "$root/main.typescript" 'Ask YVEX to do anything'
-printf 'hello\r' >&3
-wait_for "$root/main.typescript" 'hello from yvex'
-printf '/sta' >&3
-wait_for "$root/main.typescript" 'Commands'
-printf '\t' >&3
-wait_for "$root/main.typescript" '/status'
-kill -INT "$client_pid"
-wait_for "$root/main.typescript" 'Composer cleared'
-printf '\033[200~hello\nworld 🌍\033[201~' >&3
-wait_for "$root/main.typescript" 'world 🌍'
+# Bare yvex is the same console. Exercise completion, UTF-8 editing, paste, history, and resize.
+start_console bare 32 150 '' color
+printf '/sta\t\r' >&3
+wait_for "$root/bare.typescript" '/status'
+printf '\033[200~hello\nworld 🌍\033[201~\r' >&3
+wait_count "$root/bare.typescript" 'hello from yvex' 1
+printf '\033[A\r' >&3
+wait_count "$root/bare.typescript" 'hello from yvex' 2
+printf 'world\033[Hhello \033[F 🌍\r' >&3
+wait_for "$root/bare.typescript" 'hello world'
+wait_count "$root/bare.typescript" 'hello from yvex' 3
 printf 'draft-resize' >&3
 kill -WINCH "$client_pid"
-wait_for "$root/main.typescript" 'draft-resize'
+wait_for "$root/bare.typescript" 'draft-resize'
 kill -INT "$client_pid"
-wait_for "$root/main.typescript" 'Composer cleared'
-kill -INT "$client_pid"
-finish_tui
-assert_restored "$root/main.typescript"
-assert_terminal_background "$root/main.typescript"
+wait_for "$root/bare.typescript" '^C'
+printf '/quit\r' >&3
+finish_console
+assert_linear_terminal "$root/bare.typescript"
+
+# A transport loss leaves the draft loop alive; the next request reconnects to a restarted host.
+start_console reconnect 24 100 'chat --session reconnect' nocolor
+stop_host
+printf 'first while offline\r' >&3
+wait_for "$root/reconnect.typescript" '[disconnected]'
+start_host
+printf 'hello after restart\r' >&3
+wait_for "$root/reconnect.typescript" 'reconnected'
+wait_for "$root/reconnect.typescript" 'hello from yvex'
+printf '/quit\r' >&3
+finish_console
+assert_linear_terminal "$root/reconnect.typescript"
 
 # Active generation Ctrl-C crosses the canonical cancellation operation.
-start_tui cancel 24 100 '' nocolor
-wait_for "$root/cancel.typescript" 'deepseek4-v4-flash-dspark'
+start_console cancel 24 100 'chat --session cancel' nocolor
 printf 'WAIT_PREFILL_CANCEL\r' >&3
-wait_for "$root/cancel.typescript" 'Esc to interrupt'
+wait_for "$root/cancel.typescript" 'processing 4 input tokens · 0/4'
 kill -INT "$client_pid"
-wait_for "$root/host.err" 'generation.cancel main'
-wait_for "$root/cancel.typescript" 'native generation cancellation admitted'
-kill -INT "$client_pid"
-finish_tui
-assert_restored "$root/cancel.typescript"
+wait_for "$root/host.err" 'generation.cancel cancel'
+wait_for "$root/cancel.typescript" 'cancelled'
+printf '/quit\r' >&3
+finish_console
+assert_linear_terminal "$root/cancel.typescript"
 
-# Bare `yvex`, EOF, and SIGTERM all restore the terminal transaction.
-start_tui compact 8 40 '' nocolor
-printf '\020quit\r' >&3
-finish_tui
-assert_restored "$root/compact.typescript"
-
-start_tui eof 18 88 '' nocolor
+# Ctrl-D exits with normal terminal restoration and preserved scrollback.
+start_console eof 18 88 'chat --session eof' nocolor
 printf 'preserved-unsubmitted\004' >&3
-finish_tui
-assert_restored "$root/eof.typescript"
+finish_console
+assert_linear_terminal "$root/eof.typescript"
 
-start_tui terminate 20 96 '' nocolor
-kill -TERM "$client_pid"
-finish_tui
-assert_restored "$root/terminate.typescript"
-
-echo 'TUI PTY lifecycle: pass'
+echo 'linear console PTY lifecycle: pass'

@@ -279,9 +279,6 @@ int main(int argc, char **argv)
             if (!strcmp(argv[index], "--first-image") ||
                 !strcmp(argv[index], "--last-image"))
                 return yvex_client_dispatch(operation, argc, argv, consumed);
-        /* The empty-path registry alias owns the official application entrypoint.
-         * An explicit `chat` path retains the linear console contract. */
-        if (consumed == 0u) return yvex_tui_dispatch(argc, argv);
         return yvex_client_dispatch(operation, argc, argv, consumed);
     }
     if (operation->lane == YVEX_OPERATOR_LANE_RUNTIME_CLIENT)

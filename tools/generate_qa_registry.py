@@ -112,7 +112,8 @@ def repository_files(root: Path, pathspec: str) -> list[str]:
     )
     if result.returncode != 0:
         fail("git", result.stderr.strip() or "cannot enumerate tracked files")
-    return sorted(result.stdout.splitlines())
+    return sorted(path for path in result.stdout.splitlines()
+                  if (root / path).is_file())
 
 
 def apply_defaults(registry: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:

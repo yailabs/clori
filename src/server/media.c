@@ -73,7 +73,7 @@ static int output_root_admit(const char *path, char output[YVEX_PATH_CAP], yvex_
     if (!path || path[0] != '/' || (extent = strlen(path)) >= YVEX_PATH_CAP ||
         !extent || strstr(path, "/../") || !strcmp(path + extent - 1u, "/..") ||
         lstat(path, &info) != 0 || !S_ISDIR(info.st_mode) || S_ISLNK(info.st_mode) ||
-        info.st_uid != getuid())
+        info.st_uid != geteuid())
         return media_refuse(err, YVEX_ERR_IO,
                             "media output root must be an existing owned absolute directory");
     yvex_core_text_copy(output, YVEX_PATH_CAP, path);

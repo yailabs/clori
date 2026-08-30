@@ -333,19 +333,19 @@ def resource_locks(registry: dict[str, Any], resources: list[str]) -> Iterator[N
                 runtime_root = Path(os.environ.get("XDG_RUNTIME_DIR", tempfile.gettempdir()))
                 if not runtime_root.is_absolute() or not runtime_root.is_dir() or runtime_root.is_symlink():
                     fail(f"unsafe QA runtime root: {runtime_root}")
-                lock_root = runtime_root / f"yvex-qa-{os.getuid()}" / "locks"
+                lock_root = runtime_root / f"yvex-qa-{os.geteuid()}" / "locks"
             else:
                 lock_root = ROOT / "build/qa/locks"
             lock_root.mkdir(mode=0o700, parents=True, exist_ok=True)
             root_stat = lock_root.stat()
-            if lock_root.is_symlink() or root_stat.st_uid != os.getuid():
+            if lock_root.is_symlink() or root_stat.st_uid != os.geteuid():
                 fail(f"unsafe QA lock root: {lock_root}")
             os.chmod(lock_root, 0o700)
             lock_path = lock_root / f"{resource}.lock"
             descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             os.fchmod(descriptor, 0o600)
             lock_stat = os.fstat(descriptor)
-            if not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_uid != os.getuid():
+            if not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_uid != os.geteuid():
                 os.close(descriptor)
                 fail(f"unsafe QA resource lock: {lock_path}")
             stream = os.fdopen(descriptor, "a+")

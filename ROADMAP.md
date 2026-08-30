@@ -101,7 +101,7 @@ not a replacement historical ledger.
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Documentation architecture | A compact current map links implemented architecture, family records, contracts, operation, development and release owners; retired audits, plans and migrations live in Git history. |
 | Code commentary | Every governed first-party source follows the natural selective-commentary doctrine; the structural guard rejects obsolete templates and boilerplate while production lexical tokens remain unchanged. |
-| Runtime console | The empty `yvex` path is a client-owned full-screen terminal application over public catalog and protocol facts; explicit `yvex chat` retains the linear console. Both render protocol-authored progress, committed output, typed metrics, cancellation and bounded terminal restoration without backend-private reads. |
+| Runtime console | The empty `yvex` path and explicit `yvex chat` path are one client-owned linear, scrollback-preserving console over public protocol facts. It renders protocol-authored progress, committed output, typed metrics, cancellation and bounded terminal restoration without backend-private reads. |
 | Operator surface | The strict generated operation registry drives compiled discovery, help, completion and slash projections; executable tests validate the current graph directly rather than reconciling a frozen audit. |
 | Performance | `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` remains `partial`: startup and bounded profiling are accepted; warm decode remains below admission. |
 

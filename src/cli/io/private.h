@@ -32,38 +32,10 @@ typedef enum {
     YVEX_MODELS_OUTPUT_TABLE,
     YVEX_MODELS_OUTPUT_AUDIT
 } yvex_models_output_mode;
-typedef enum {
-    YVEX_CLI_INTERACTIVE_UNAVAILABLE = 0,
-    YVEX_CLI_INTERACTIVE_CONNECTED,
-    YVEX_CLI_INTERACTIVE_DISCONNECTED,
-    YVEX_CLI_INTERACTIVE_INCOMPATIBLE
-} yvex_cli_interactive_connection;
 typedef struct {
     char alias[YVEX_SERVER_MODEL_ALIAS_CAP];
     unsigned long long generation;
 } yvex_cli_engine_binding;
-typedef struct {
-    unsigned long long maximum_new_tokens;
-    int stochastic, seed_present;
-    unsigned long long seed, top_k;
-    double temperature, top_p, min_p, typical_p;
-    yvex_reasoning_policy reasoning_policy;
-} yvex_cli_interactive_turn;
-typedef enum {
-    YVEX_CLI_INTERACTIVE_MESSAGE = 0,
-    YVEX_CLI_INTERACTIVE_CONNECTION,
-    YVEX_CLI_INTERACTIVE_FAILURE
-} yvex_cli_interactive_event_kind;
-typedef struct {
-    yvex_cli_interactive_event_kind kind;
-    yvex_client_operation operation;
-    yvex_cli_interactive_connection connection;
-    yvex_cli_engine_binding engine;
-    yvex_client_message message;
-    char session[YVEX_SERVER_SESSION_NAME_CAP];
-    char reason[YVEX_SERVER_REASON_CAP];
-} yvex_cli_interactive_event;
-typedef struct yvex_cli_interactive yvex_cli_interactive;
 typedef enum {
     YVEX_MODEL_CATALOG_OUTPUT_TABLE = 0,
     YVEX_MODEL_CATALOG_OUTPUT_AUDIT,
@@ -539,24 +511,6 @@ int yvex_cli_out_vwritef(FILE *fp, const char *fmt, va_list ap);
 int yvex_cli_completion_command(int argc, char **argv, size_t consumed);
 void yvex_cli_client_request_init(yvex_client_request *request, yvex_client_operation operation);
 int yvex_cli_client_request_open(yvex_client **client, const yvex_client_request *request, yvex_error *err);
-int yvex_cli_interactive_open(yvex_cli_interactive **out, yvex_error *err);
-void yvex_cli_interactive_close(yvex_cli_interactive **interactive);
-int yvex_cli_interactive_event_fd(const yvex_cli_interactive *interactive);
-int yvex_cli_interactive_event_take(yvex_cli_interactive *interactive, yvex_cli_interactive_event *event);
-int yvex_cli_interactive_refresh(yvex_cli_interactive *interactive,
-                                 const yvex_cli_engine_binding *engine,
-                                 const char *session);
-int yvex_cli_interactive_request(yvex_cli_interactive *interactive,
-                                 yvex_client_operation operation,
-                                 const yvex_cli_engine_binding *engine,
-                                 const char *subject);
-int yvex_cli_interactive_generate(yvex_cli_interactive *interactive,
-                                  const yvex_cli_engine_binding *engine,
-                                  const char *session,
-                                  const unsigned char *prompt, size_t prompt_count,
-                                  const yvex_cli_interactive_turn *options);
-int yvex_cli_interactive_cancel(const yvex_cli_engine_binding *engine, const char *session);
-int yvex_cli_interactive_detach(const yvex_cli_engine_binding *engine, const char *session);
 int yvex_client_render_help_path(size_t path_count, const char *const *path,
                                  int advanced, int json);
 void yvex_client_render_usage_error(

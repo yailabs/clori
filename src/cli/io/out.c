@@ -1743,7 +1743,6 @@ static void render_discovery_operation(size_t operation_index,
     fputs(",\"slash_aliases\":", stdout);
     discovery_json_list(stdout, descriptor->slash_aliases, ',');
     fputs(",\"protocol\":", stdout); yvex_cli_out_json_string(stdout, descriptor->protocol_operation);
-    fputs(",\"future_tui\":", stdout); yvex_cli_out_json_string(stdout, descriptor->future_tui_projection);
     fputs("},\"deprecation\":", stdout); yvex_cli_out_json_string(stdout, descriptor->deprecation_state);
     fputs(",\"superseded_by\":", stdout);
     discovery_json_list(stdout, descriptor->superseded_by, '|');

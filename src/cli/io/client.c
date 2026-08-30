@@ -1677,14 +1677,14 @@ cleanup:
     (void)sigaction(SIGWINCH, &prior_resize, NULL);
     return result;
 }
-static int chat_command(int argc, char **argv)
+static int chat_command(int argc, char **argv, size_t consumed)
 {
     const char *model = NULL, *session = "main";
     client_turn_options options;
     unsigned long long maximum_new_tokens = 0u;
     int index, saw_model = 0, saw_session = 0, saw_maximum = 0;
     turn_options_init(&options);
-    for (index = 2; index < argc; ++index) {
+    for (index = (int)consumed + 1; index < argc; ++index) {
         if (!strcmp(argv[index], "--model") && !saw_model && index + 1 < argc) {
             model = argv[++index];
             saw_model = 1;
@@ -2054,7 +2054,7 @@ int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
                    ? session_arguments.positionals[0] : NULL;
     }
     switch (operation->runtime_adapter) {
-    case YVEX_OPERATOR_RUNTIME_CHAT: return chat_command(argc, argv);
+    case YVEX_OPERATOR_RUNTIME_CHAT: return chat_command(argc, argv, consumed);
     case YVEX_OPERATOR_RUNTIME_RUN: return run_command(argc, argv);
     case YVEX_OPERATOR_RUNTIME_SERVER_STATUS:
         return server_status(argc > 3 && !strcmp(argv[3], "--json"));

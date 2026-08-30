@@ -276,7 +276,7 @@ static int socket_directory_prepare(const char *socket_path, yvex_error *err)
         return server_refuse(err, YVEX_ERR_IO,
                              "cannot create local runtime directory");
     if (lstat(directory, &info) != 0 || !S_ISDIR(info.st_mode) ||
-        info.st_uid != getuid() || (info.st_mode & 0077u) != 0u)
+        info.st_uid != geteuid() || (info.st_mode & 0077u) != 0u)
         return server_refuse(err, YVEX_ERR_IO,
                              "local runtime directory is not private to this user");
     return YVEX_OK;
@@ -295,7 +295,7 @@ static int stale_socket_clear(const char *path, yvex_error *err)
         return errno == ENOENT ? YVEX_OK
                               : server_refuse(err, YVEX_ERR_IO,
                                               "socket path inspection failed");
-    if (!S_ISSOCK(info.st_mode) || info.st_uid != getuid())
+    if (!S_ISSOCK(info.st_mode) || info.st_uid != geteuid())
         return server_refuse(err, YVEX_ERR_IO,
                              "existing socket path is not an owned socket");
     fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -330,7 +330,7 @@ static int listener_open(yvex_server *server, yvex_error *err)
         return yvex_error_code(err);
     server->lock_fd = open(server->lock_path, O_RDWR | O_CREAT | O_NOFOLLOW, 0600);
     if (server->lock_fd < 0 || fstat(server->lock_fd, &lock_info) != 0 ||
-        !S_ISREG(lock_info.st_mode) || lock_info.st_uid != getuid() ||
+        !S_ISREG(lock_info.st_mode) || lock_info.st_uid != geteuid() ||
         flock(server->lock_fd, LOCK_EX | LOCK_NB) != 0)
         return server_refuse(err, YVEX_ERR_STATE,
                              "another daemon instance owns the runtime lock");

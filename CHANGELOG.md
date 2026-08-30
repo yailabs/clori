@@ -32,13 +32,12 @@ change. Git history preserves implementation chronology.
   protocol v9 facts that distinguish it from still-open continuous batching.
 - Registry-driven command discovery, advanced help, JSON discovery, and Bash,
   Zsh, and Fish completion.
-- A client-owned full-screen terminal application at `yvex`, plus an explicit
-  linear `yvex chat` console. Both consume typed protocol/catalog facts for
-  model selection, live prefill, committed output, turn metrics, runtime
-  inspection, cancellation, and bounded terminal restoration without reading
-  backend-private state. The foreground host also owns a TTY lifecycle console
-  for full profile listing and same-terminal load, inventory, status, unload,
-  and stop.
+- One client-owned linear console at both `yvex` and `yvex chat`. It consumes
+  typed protocol/catalog facts for live prefill, committed output, turn metrics,
+  runtime inspection, cancellation, reconnect, and bounded terminal restoration
+  without reading backend-private state. The foreground host also owns a TTY
+  lifecycle console for full profile listing and same-terminal load, inventory,
+  status, unload, and stop.
 - Exact source-authored chat/non-think, think-high and think-max conversation
   encoding, including tool continuity and drop-thinking multi-turn behavior.
   Typed reasoning, final, tool and error streams remain separate; REPL and raw
