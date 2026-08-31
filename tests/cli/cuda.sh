@@ -20,7 +20,7 @@ contains() {
     grep -F -- "$value" "$file" >/dev/null || fail "$file missing: $value"
 }
 
-"$YVEX_BIN" system cuda >"$OUT_DIR/cuda_info.out" 2>"$OUT_DIR/cuda_info.err"
+"$YVEX_BIN" inspect cuda >"$OUT_DIR/cuda_info.out" 2>"$OUT_DIR/cuda_info.err"
 rc=$?
 if [ "$rc" -eq 5 ]; then
     contains "$OUT_DIR/cuda_info.out" "cuda: unavailable"
@@ -36,7 +36,7 @@ contains "$OUT_DIR/cuda_info.out" "kernel_bundle_architecture:"
 contains "$OUT_DIR/cuda_info.out" "kernel_bundle_identity:"
 contains "$OUT_DIR/cuda_info.out" "status: cuda-info"
 
-"$YVEX_BIN" system cuda bandwidth >"$OUT_DIR/bandwidth.out" 2>"$OUT_DIR/bandwidth.err"
+"$YVEX_BIN" inspect cuda bandwidth >"$OUT_DIR/bandwidth.out" 2>"$OUT_DIR/bandwidth.err"
 rc=$?
 [ "$rc" -eq 0 ] || fail "cuda bandwidth exit code was $rc"
 contains "$OUT_DIR/bandwidth.out" "sample_count: 5"
@@ -69,6 +69,6 @@ rc=$?
 contains "$OUT_DIR/help.out" "yvex inspect backend"
 contains "$OUT_DIR/help.out" "yvex inspect moe"
 contains "$OUT_DIR/help.out" "yvex inspect target"
-contains "$OUT_DIR/help.out" "yvex system cuda"
+contains "$OUT_DIR/help.out" "yvex inspect cuda"
 
 printf 'cli cuda smoke: ok\n'

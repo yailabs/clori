@@ -11,8 +11,8 @@
 #include <string.h>
 
 static const char *const literal_pair_0[] = { "yvex: input requires tokens or prompt",
-    "usage: yvex execute input tokens --model FILE_OR_ALIAS --tokens IDS | "
-    "yvex execute input prompt --model FILE_OR_ALIAS --text TEXT"
+    "usage: yvex inspect input tokens --model FILE_OR_ALIAS --tokens IDS | "
+    "yvex inspect input prompt --model FILE_OR_ALIAS --text TEXT"
 };
 
 static const char *const literal_pair_1[] = { "token_input_status: fail",
@@ -38,8 +38,8 @@ static const char *const literal_lines_2[] = { "prefill_ready: false",
     "logits_ready: false",
     "generation: unsupported"};
 
-static const char *const literal_lines_3[] = { "usage: yvex execute input tokens --model FILE_OR_ALIAS --tokens IDS",
-    "       yvex execute input prompt --model FILE_OR_ALIAS --text TEXT",
+static const char *const literal_lines_3[] = { "usage: yvex inspect input tokens --model FILE_OR_ALIAS --tokens IDS",
+    "       yvex inspect input prompt --model FILE_OR_ALIAS --text TEXT",
     "\nInput parses explicit tokens or tokenizer-backed prompt text into validated token input."};
 
 static int context_tokenizer_open(yvex_model_context *context, yvex_error *err)
@@ -696,7 +696,7 @@ int yvex_tokenizer_command(int arg_count, char **args)
 void yvex_detokenize_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex execute tokenizer decode <path> --ids IDS\n\nDecodes IDs through the exact artifact tokenizer.\n");
+        "usage: yvex inspect tokenizer decode <path> --ids IDS\n\nDecodes IDs through the exact artifact tokenizer.\n");
 }
 
 void yvex_input_help(FILE *fp)
@@ -707,14 +707,14 @@ void yvex_input_help(FILE *fp)
 void yvex_prompt_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex execute tokenizer prompt <path> [--system TEXT] --user TEXT [--assistant TEXT] "
+        "usage: yvex inspect tokenizer prompt <path> [--system TEXT] --user TEXT [--assistant TEXT] "
         "[--tool TEXT] [--thinking] [--tokens]\n\nRenders the exact bounded DeepSeek prompt policy.\n");
 }
 
 void yvex_tokenize_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex execute tokenizer encode <path> --text TEXT [--bos] [--eos] [--pieces]\n\n"
+        "usage: yvex inspect tokenizer encode <path> --text TEXT [--bos] [--eos] [--pieces]\n\n"
         "Encodes an explicit byte span through the exact artifact tokenizer.\n");
 }
 

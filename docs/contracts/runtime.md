@@ -8,7 +8,7 @@ documented separately in [YVEX C API](c-api.md).
 
 ## Parties and scope
 
-The foreground `yvex server`, common runtime, graph/backend, tokenizer,
+The foreground `yvex serve`, common runtime, graph/backend, tokenizer,
 generation, and server owners produce this contract. Native clients, the
 interactive console, the loopback OpenAI adapter, and focused tests consume it.
 

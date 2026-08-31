@@ -28,17 +28,17 @@ contains() {
     grep -F -- "$2" "$1" >/dev/null || fail "$1 missing: $2"
 }
 
-run_code help 0 "$YVEX_BIN" execute component video-vae --help
+run_code help 0 "$YVEX_BIN" bench component video-vae --help
 contains "$OUT_DIR/help.out" "operation: execute.graph.component.video-vae"
 contains "$OUT_DIR/help.out" "--latent-frames"
 contains "$OUT_DIR/help.out" "--latent-height"
 contains "$OUT_DIR/help.out" "--latent-width"
 
-run_code missing 2 "$YVEX_BIN" execute component video-vae
+run_code missing 2 "$YVEX_BIN" bench component video-vae
 contains "$OUT_DIR/missing.err" \
     "requires target, artifact, backend, input file, latent geometry, and output path"
 
-run_code wrong_batch 2 "$YVEX_BIN" execute component video-vae \
+run_code wrong_batch 2 "$YVEX_BIN" bench component video-vae \
     --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend cpu \
     --input-file /tmp/missing.f32 --batch 2 \
     --latent-frames 1 --latent-height 1 --latent-width 2 \
@@ -46,27 +46,27 @@ run_code wrong_batch 2 "$YVEX_BIN" execute component video-vae \
 contains "$OUT_DIR/wrong_batch.err" \
     "Visual VAE requires batch one and three-dimensional latent geometry"
 
-run_code wrong_target 5 "$YVEX_BIN" execute component video-vae \
+run_code wrong_target 5 "$YVEX_BIN" bench component video-vae \
     --target wrong --artifact /tmp/missing.gguf --backend cpu \
     --input-file /tmp/missing.f32 --latent-frames 1 --latent-height 1 --latent-width 1 \
     --out "$OUT_DIR/wrong-target.f32"
 contains "$OUT_DIR/wrong_target.err" \
     "no admitted component execution binding matches target and component"
 
-run_code wrong_backend 2 "$YVEX_BIN" execute component video-vae \
+run_code wrong_backend 2 "$YVEX_BIN" bench component video-vae \
     --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend metal \
     --input-file /tmp/missing.f32 --latent-frames 1 --latent-height 1 --latent-width 1 \
     --out "$OUT_DIR/wrong-backend.f32"
 contains "$OUT_DIR/wrong_backend.err" "unknown backend kind: metal"
 
-run_code cuda_backend 5 "$YVEX_BIN" execute component video-vae \
+run_code cuda_backend 5 "$YVEX_BIN" bench component video-vae \
     --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend cuda \
     --input-file /tmp/missing.f32 --latent-frames 1 --latent-height 1 --latent-width 1 \
     --out "$OUT_DIR/cuda-missing-budget.f32"
 contains "$OUT_DIR/cuda_backend.err" \
     "component execution binding does not admit the requested backend"
 
-run_code unsafe_input 3 "$YVEX_BIN" execute component video-vae \
+run_code unsafe_input 3 "$YVEX_BIN" bench component video-vae \
     --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend cpu \
     --input-file /dev/null --latent-frames 1 --latent-height 1 --latent-width 1 \
     --out "$OUT_DIR/unsafe-input.f32"

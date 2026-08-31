@@ -272,4 +272,4 @@ closed=$(grep -c '^session.close ' "$root/host.err" || true)
 test "$created" -gt 0
 test "$created" = "$closed"
 
-echo 'OpenAI adapter integration: protocol-v15 Chat/Responses/SSE/tool/state/cleanup/refusal passed'
+echo 'OpenAI adapter integration: protocol-v16 Chat/Responses/SSE/tool/state/cleanup/refusal passed'

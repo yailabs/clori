@@ -9,7 +9,7 @@ project these facts but do not own event meaning.
 
 Runtime, server, session, generation, listener, and shutdown owners publish one
 ordered event stream. Consumers are the server raw console, local protocol
-subscribers, status/metrics accumulation, `server log`, and the interactive
+subscribers, status/metrics accumulation, `host logs`, and the interactive
 console.
 
 No consumer scrapes another renderer's text.
@@ -65,12 +65,12 @@ engine or the host.
 
 ## Projections
 
-`yvex server` renders the compact human projection in the owning foreground
-terminal by default. `yvex server log` attaches the same projection from
-another terminal, while `server log --verbose` additionally renders individual
-speculative cycles. `yvex server --console raw` and `yvex server log --json`
-emit canonical JSONL for the admitted trace schema. `server status` is a
-bounded host snapshot and `server models` is the engine-inventory snapshot;
+`yvex serve` renders the compact human projection in the owning foreground
+terminal by default. `yvex host logs` attaches the same projection from
+another terminal, while `host logs --verbose` additionally renders individual
+speculative cycles. `yvex serve --logs json` and `yvex host logs --json`
+emit canonical JSONL for the admitted trace schema. `host status` is a
+bounded host snapshot and `engine list` is the engine-inventory snapshot;
 neither is an event replay. Human projections render retained history plus live
 events in stable semantic categories. They retain operator-significant host,
 engine, session, contended queue, prefill, first-token, aggregate speculative

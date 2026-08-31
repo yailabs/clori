@@ -31,14 +31,14 @@ not_contains() {
 yvex_test_cleanup "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-"$YVEX_BIN" compile emit artifact controlled \
+"$YVEX_BIN" compile artifact emit \
   --out "$MODEL" \
   --model-name integrity-controlled-f16 \
   --arch deepseek \
   --target-qtype F16 \
   --overwrite >"$OUT_DIR/emit.out" 2>"$OUT_DIR/emit.err"
 
-"$YVEX_BIN" compile emit artifact controlled \
+"$YVEX_BIN" compile artifact emit \
   --out "$MODEL_F32" \
   --model-name integrity-controlled-f32 \
   --arch deepseek \

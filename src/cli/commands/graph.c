@@ -303,7 +303,7 @@ typedef struct {
 
 static const yvex_graph_attention_operator_result benchmark_comparison_result_default = {
     .completed = 1, .status = "complete",
-    .command = "profile attention compare",
+    .command = "bench attention benchmark compare",
     .target = "not_applicable", .backend = "not_applicable",
     .scope = "attention_component", .operation_scope = "not_applicable",
     .phase = "not_applicable", .trace_policy = "none",
@@ -456,7 +456,7 @@ static int graph_attention_binding_discover(const char *directory, char *output,
     directory_fd = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (directory_fd < 0) {
         yvex_error_set(err, YVEX_ERR_IO, "graph_attention_cli",
-                       "runtime binding is missing; run `yvex execute attention prepare`");
+                       "runtime binding is missing; run `yvex bench attention prepare`");
         return YVEX_ERR_IO;
     }
     stream = fdopendir(directory_fd);
@@ -493,7 +493,7 @@ static int graph_attention_binding_discover(const char *directory, char *output,
         yvex_error_set(err, count == 0u ? YVEX_ERR_IO : YVEX_ERR_STATE,
                        "graph_attention_cli",
                        count == 0u
-                           ? "runtime binding is missing; run `yvex execute attention prepare`"
+                           ? "runtime binding is missing; run `yvex bench attention prepare`"
                            : "runtime binding registry is ambiguous; use --runtime-binding FILE");
         return count == 0u ? YVEX_ERR_IO : YVEX_ERR_STATE;
     }
@@ -824,7 +824,7 @@ static void graph_attention_prepare_result(
 {
     graph_attention_result_init(args, request, summary, binding_path, result);
     yvex_core_text_copy(result->command, sizeof(result->command),
-                              "execute attention prepare");
+                              "bench attention prepare");
     yvex_core_text_copy(result->backend, sizeof(result->backend), "not_applicable");
     yvex_core_text_copy(result->scope, sizeof(result->scope), "preparation");
 }
@@ -1299,6 +1299,7 @@ static int graph_cli_moe_execute(const yvex_graph_args *args,
                        "MoE execution cancelled before command publication");
         rc = YVEX_ERR_CANCELLED;
     }
+    yvex_core_text_copy(result.command, sizeof(result.command), "bench moe");
     render_rc = yvex_graph_moe_render(yvex_cli_out_stdout(), args->render_mode, &result);
     if (render_rc != YVEX_OK) {
         yvex_error_set(err, render_rc, "graph_moe_cli", "MoE result rendering failed");
@@ -1360,6 +1361,8 @@ static int graph_cli_transformer_execute(
                        "transformer execution cancelled before command publication");
         rc = YVEX_ERR_CANCELLED;
     }
+    yvex_core_text_copy(result.command, sizeof(result.command),
+                        "bench transformer execute");
     render_rc = yvex_graph_transformer_render(
         yvex_cli_out_stdout(), args->render_mode, &result);
     if (render_rc != YVEX_OK) {
@@ -1424,6 +1427,8 @@ static int graph_cli_transformer_decode(
                        "decode execution cancelled before command publication");
         rc = YVEX_ERR_CANCELLED;
     }
+    yvex_core_text_copy(result.command, sizeof(result.command),
+                        "bench transformer decode");
     render_rc = yvex_graph_decode_render(
         yvex_cli_out_stdout(), args->render_mode, &result);
     if (render_rc != YVEX_OK) {
@@ -1480,6 +1485,8 @@ static int graph_cli_transformer_logits(
     request.maximum_device_bytes = args->transformer.maximum_device_bytes;
     rc = yvex_runtime_logits_operator_execute(
         &request, &result, retained_cleanup, err);
+    yvex_core_text_copy(result.command, sizeof(result.command),
+                        "bench transformer logits");
     render_rc = yvex_graph_logits_render(yvex_cli_out_stdout(),
                                          args->render_mode, &result);
     if (render_rc != YVEX_OK) {
@@ -1546,6 +1553,8 @@ static int graph_cli_transformer_sample(
     request.policy.seed = args->transformer.seed;
     rc = yvex_runtime_sampling_operator_execute(
         &request, &result, retained_cleanup, err);
+    yvex_core_text_copy(result.command, sizeof(result.command),
+                        "bench transformer sample");
     render_rc = yvex_graph_sampling_render(yvex_cli_out_stdout(),
                                            args->render_mode, &result);
     if (render_rc != YVEX_OK) {
@@ -1656,6 +1665,8 @@ static int graph_cli_transformer_generate(
                        "generation cancelled before command publication");
         rc = YVEX_ERR_CANCELLED;
     }
+    yvex_core_text_copy(result.command, sizeof(result.command),
+                        "bench transformer generate");
     render_rc = yvex_graph_generation_render(yvex_cli_out_stdout(),
                                               args->render_mode, &result);
     exit_code = rc == YVEX_OK ? (result.completed ? 0 : exit_for_status(YVEX_ERR_STATE))

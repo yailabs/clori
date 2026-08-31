@@ -1550,7 +1550,7 @@ static const char *lane_name(yvex_operator_lane lane)
     switch (lane) {
     case YVEX_OPERATOR_LANE_RUNTIME_CLIENT: return "runtime-client";
     case YVEX_OPERATOR_LANE_OFFLINE_ENGINE: return "offline-engine";
-    case YVEX_OPERATOR_LANE_DAEMON_ENTRYPOINT: return "server-entrypoint";
+    case YVEX_OPERATOR_LANE_DAEMON_ENTRYPOINT: return "host-entrypoint";
     case YVEX_OPERATOR_LANE_REPL_LOCAL: return "REPL-local";
     case YVEX_OPERATOR_LANE_API_ONLY: return "API-only";
     case YVEX_OPERATOR_LANE_TEST_ONLY: return "test-only";
@@ -1769,6 +1769,82 @@ static void render_discovery_json(void)
     }
     fputs("]}\n", stdout);
 }
+
+static int root_group(const char *root)
+{
+    if (!strcmp(root, "chat")) return 0;
+    if (!strcmp(root, "serve") || !strcmp(root, "host") ||
+        !strcmp(root, "engine") || !strcmp(root, "session")) return 1;
+    if (!strcmp(root, "model") || !strcmp(root, "source") ||
+        !strcmp(root, "compile") || !strcmp(root, "artifact") ||
+        !strcmp(root, "profile")) return 2;
+    if (!strcmp(root, "inspect") || !strcmp(root, "bench")) return 3;
+    if (!strcmp(root, "help") || !strcmp(root, "version")) return 4;
+    return 5;
+}
+
+static int root_first_visible(size_t candidate)
+{
+    const yvex_operator_descriptor *row = &yvex_operator_descriptors[candidate];
+    size_t index;
+    if (!row->cli_projection || !row->command_word_count ||
+        row->visibility == YVEX_OPERATOR_VISIBILITY_REMOVED ||
+        root_group(row->command_words[0]) == 5)
+        return 0;
+    for (index = 0u; index < candidate; ++index) {
+        const yvex_operator_descriptor *prior = &yvex_operator_descriptors[index];
+        if (prior->cli_projection && prior->command_word_count &&
+            prior->visibility != YVEX_OPERATOR_VISIBILITY_REMOVED &&
+            !strcmp(prior->command_words[0], row->command_words[0]))
+            return 0;
+    }
+    return 1;
+}
+
+static const char *root_summary(const char *root)
+{
+    static const struct { const char *root; const char *summary; } domains[] = {
+        {"host", "Inspect and control the foreground host."},
+        {"engine", "Load, inspect, and unload engine generations."},
+        {"session", "Manage generation-bound conversation state."},
+        {"model", "Inspect logical model identities and relationships."},
+        {"source", "Acquire, verify, and inspect exact source revisions."},
+        {"artifact", "Inspect and verify immutable compiled packages."},
+        {"profile", "Inspect durable deployment configurations."},
+        {"inspect", "Read bounded system and package evidence."},
+        {"bench", "Run bounded component execution and measurement."},
+    };
+    size_t index;
+    for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
+        const yvex_operator_descriptor *row = &yvex_operator_descriptors[index];
+        if (row->cli_projection && row->command_word_count == 1u &&
+            row->visibility != YVEX_OPERATOR_VISIBILITY_REMOVED &&
+            !strcmp(row->command_words[0], root))
+            return row->summary;
+    }
+    for (index = 0u; index < sizeof(domains) / sizeof(domains[0]); ++index)
+        if (!strcmp(domains[index].root, root)) return domains[index].summary;
+    return "Domain operations.";
+}
+
+static void render_root_map(void)
+{
+    static const char *const labels[] = {"USE", "HOST", "BUILD", "INSPECT", "META"};
+    size_t group, index;
+    puts("YVEX inference/compiler/runtime");
+    for (group = 0u; group < sizeof(labels) / sizeof(labels[0]); ++group) {
+        printf("\n%s\n", labels[group]);
+        for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
+            const yvex_operator_descriptor *row = &yvex_operator_descriptors[index];
+            if (root_first_visible(index) &&
+                root_group(row->command_words[0]) == (int)group)
+                printf("  %-10s %s\n", row->command_words[0],
+                       root_summary(row->command_words[0]));
+        }
+    }
+    puts("\nUse `yvex help COMMAND` for details.");
+}
+
 int yvex_client_render_help_path(size_t path_count, const char *const *path,
                                  int advanced, int json)
 {
@@ -1776,6 +1852,23 @@ int yvex_client_render_help_path(size_t path_count, const char *const *path,
     size_t index, matches = 0u;
     if (json) {
         render_discovery_json();
+        return 0;
+    }
+    if (!path_count) {
+        render_root_map();
+        if (advanced) {
+            puts("\nADVANCED AND ENGINEERING\n");
+            for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
+                const yvex_operator_descriptor *descriptor =
+                    &yvex_operator_descriptors[index];
+                if (descriptor->cli_projection &&
+                    (descriptor->visibility == YVEX_OPERATOR_VISIBILITY_PRODUCT_ADVANCED ||
+                     descriptor->visibility == YVEX_OPERATOR_VISIBILITY_ENGINEERING))
+                    render_command_index_line(descriptor);
+            }
+        } else {
+            puts("Use `yvex help --advanced` for advanced and engineering commands.");
+        }
         return 0;
     }
     for (index = 0u; index < yvex_operator_descriptor_count; ++index) {

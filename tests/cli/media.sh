@@ -21,20 +21,20 @@ truncate -s 144 "$OUT_DIR/video.f32"
 truncate -s 32040 "$OUT_DIR/audio.f32"
 rm -f "$OUT_DIR/first.avi" "$OUT_DIR/second.avi"
 
-"$YVEX_BIN" execute media publish --help >"$OUT_DIR/help.out"
+"$YVEX_BIN" bench media publish --help >"$OUT_DIR/help.out"
 contains "$OUT_DIR/help.out" "operation: execute.media.publish"
 contains "$OUT_DIR/help.out" "--video-file"
 contains "$OUT_DIR/help.out" "--audio-file"
 contains "$OUT_DIR/help.out" "--audio-samples"
 
-"$YVEX_BIN" execute media generate --help >"$OUT_DIR/generate-help.out"
+"$YVEX_BIN" bench media generate --help >"$OUT_DIR/generate-help.out"
 contains "$OUT_DIR/generate-help.out" "operation: execute.media.generate"
 contains "$OUT_DIR/generate-help.out" "--prompt"
 contains "$OUT_DIR/generate-help.out" "--transformer-artifact"
 contains "$OUT_DIR/generate-help.out" "--steps"
 
 set +e
-"$YVEX_BIN" execute media generate \
+"$YVEX_BIN" bench media generate \
     --target refused-family --prompt hello \
     --text-artifact missing --transformer-artifact missing \
     --video-artifact missing --audio-artifact missing \
@@ -43,15 +43,15 @@ set +e
 status=$?
 set -e
 [ "$status" -ne 0 ] || fail "unknown generation target was admitted"
-contains "$OUT_DIR/generate-refused.err" "only the admitted MiniMax-H3 FL2VA target is available"
+contains "$OUT_DIR/generate-refused.err" "the requested target has no admitted media adapter"
 [ ! -e "$OUT_DIR/refused.avi" ] || fail "refused generation published media"
 
-"$YVEX_BIN" execute media publish \
+"$YVEX_BIN" bench media publish \
     --video-file "$OUT_DIR/video.f32" --audio-file "$OUT_DIR/audio.f32" \
     --frames 3 --width 2 --height 2 --audio-samples 4005 \
     --max-host-bytes 1048576 --max-output-bytes 1048576 \
     --out "$OUT_DIR/first.avi" --output audit >"$OUT_DIR/first.out"
-"$YVEX_BIN" execute media publish \
+"$YVEX_BIN" bench media publish \
     --video-file "$OUT_DIR/video.f32" --audio-file "$OUT_DIR/audio.f32" \
     --frames 3 --width 2 --height 2 --audio-samples 4005 \
     --max-host-bytes 1048576 --max-output-bytes 1048576 \
@@ -71,7 +71,7 @@ contains "$OUT_DIR/first.out" "end_user_path_available: false"
 cmp "$OUT_DIR/first.avi" "$OUT_DIR/second.avi" || fail "repeat AVI differs"
 
 set +e
-"$YVEX_BIN" execute media publish \
+"$YVEX_BIN" bench media publish \
     --video-file "$OUT_DIR/video.f32" --audio-file "$OUT_DIR/audio.f32" \
     --frames 3 --width 2 --height 2 --audio-samples 4005 \
     --max-host-bytes 1048576 --max-output-bytes 1048576 \

@@ -124,7 +124,7 @@ static int profile_resolve(const char *name, cli_server_profile *profile,
     entry = yvex_model_registry_find(registry, name);
     if (!entry) {
         yvex_error_setf(err, YVEX_ERR_STATE, "server.model-loader",
-                        "model is not registered: %s", name);
+                        "profile is not registered: %s", name);
         yvex_model_registry_close(registry);
         return YVEX_ERR_STATE;
     }
@@ -135,7 +135,7 @@ static int profile_resolve(const char *name, cli_server_profile *profile,
     }
     if (!profile_copy(profile, entry)) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "server.model-loader",
-                       "registered startup profile exceeds command limits");
+                       "registered profile exceeds command limits");
         yvex_model_registry_close(registry);
         return YVEX_ERR_BOUNDS;
     }
@@ -147,7 +147,7 @@ static int profile_resolve(const char *name, cli_server_profile *profile,
 
 static int server_error(const yvex_error *err, int status)
 {
-    fprintf(stderr, "yvex server: %s: %s\n", yvex_error_where(err),
+    fprintf(stderr, "yvex serve: %s: %s\n", yvex_error_where(err),
             yvex_error_message(err));
     return status;
 }
@@ -166,7 +166,7 @@ static void *signal_main(void *opaque)
     return NULL;
 }
 
-static void *raw_console_main(void *opaque)
+static void *raw_log_main(void *opaque)
 {
     cli_server_thread_state *state = opaque;
     unsigned long long cursor = 0u;
@@ -186,7 +186,7 @@ static void *raw_console_main(void *opaque)
     return NULL;
 }
 
-static void *human_console_main(void *opaque)
+static void *human_log_main(void *opaque)
 {
     cli_server_thread_state *state = opaque;
     yvex_cli_watch_renderer renderer;
@@ -245,9 +245,9 @@ static int option_parse(yvex_server_options *host, const char *flag,
         return parse_u64(value, &host->maximum_engines) &&
                host->maximum_engines <=
                    YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES;
-    else if (!strcmp(flag, "--console")) {
+    else if (!strcmp(flag, "--logs")) {
         if (!strcmp(value, "human")) host->console = YVEX_SERVER_CONSOLE_HUMAN;
-        else if (!strcmp(value, "raw")) host->console = YVEX_SERVER_CONSOLE_RAW;
+        else if (!strcmp(value, "json")) host->console = YVEX_SERVER_CONSOLE_RAW;
         else host->console = YVEX_SERVER_CONSOLE_OFF;
     }
     else if (!strcmp(flag, "--trace-level")) {
@@ -279,7 +279,7 @@ static int command_options_parse(cli_server_loader_context *context,
         }
         if (index + 1 >= argc ||
             !option_parse(&context->host, flag, argv[index + 1])) {
-            fprintf(stderr, "yvex server: invalid option: %s\n", flag);
+            fprintf(stderr, "yvex serve: invalid option: %s\n", flag);
             return 0;
         }
         index++;
@@ -579,54 +579,41 @@ static void startup_logo_render(const yvex_cli_terminal_style *style)
 }
 
 static void startup_announce_wide(const yvex_server_options *options,
-                                  const yvex_server_summary *summary,
                                   const char *endpoint,
                                   const yvex_cli_terminal_style *style,
                                   unsigned int columns)
 {
     char engines[96], workers[64], protocol[96];
     char local[YVEX_SERVER_SOCKET_PATH_CAP], openai[64];
-    const char *state = summary ? "● READY · ALREADY RUNNING" : "● STARTING";
-    const char *logs = summary ? "owned by active host"
-                               : options->console == YVEX_SERVER_CONSOLE_RAW
-                                     ? "raw events · foreground"
-                                     : options->console == YVEX_SERVER_CONSOLE_OFF
-                                           ? "off" : "human events · foreground";
-    int openai_enabled = summary ? summary->openai_listener_enabled
-                                 : options->openai_enabled;
-    unsigned int openai_port = summary ? summary->openai_port
-                                       : options->openai_port;
+    const char *logs = options->console == YVEX_SERVER_CONSOLE_RAW
+                           ? "JSON events · foreground"
+                           : options->console == YVEX_SERVER_CONSOLE_OFF
+                                 ? "off" : "human events · foreground";
     size_t endpoint_width = columns > 64u ? columns - 64u : 24u;
 
-    if (summary)
-        (void)snprintf(engines, sizeof(engines),
-                       "%llu loaded / %llu known / %llu capacity",
-                       summary->loaded_engine_count, summary->engine_count,
-                       summary->maximum_engines);
-    else
-        (void)snprintf(engines, sizeof(engines), "0 / %u capacity",
-                       (unsigned int)options->maximum_engines);
+    (void)snprintf(engines, sizeof(engines), "0 loaded / %u capacity",
+                   (unsigned int)options->maximum_engines);
     (void)snprintf(workers, sizeof(workers), "%llu parallel",
-                   summary ? summary->worker_count : options->worker_count);
+                   options->worker_count);
     (void)snprintf(protocol, sizeof(protocol), "v%u · YVEX %s",
                    YVEX_LOCAL_PROTOCOL_VERSION, yvex_version_string());
     startup_tail_fit(local, sizeof(local), endpoint, endpoint_width);
-    if (openai_enabled)
+    if (options->openai_enabled)
         (void)snprintf(openai, sizeof(openai), "127.0.0.1:%u · loopback",
-                       openai_port);
+                       options->openai_port);
     else
         (void)snprintf(openai, sizeof(openai), "disabled");
 
     fputc('\n', stdout);
     startup_hero_row(style, startup_logo_line(0u), NULL,
-                     "YVEX SERVER · PERSISTENT HOST",
+                     "YVEX HOST · VERIFIED INFERENCE",
                      style->accent);
     startup_hero_row(style, startup_logo_line(1u), NULL,
-                     "native verified inference command center",
+                     "persistent native runtime",
                      style->dim);
     startup_hero_row(style, startup_logo_line(2u), NULL, NULL, NULL);
-    startup_hero_row(style, startup_logo_line(3u), "STATE", state,
-                     summary ? style->success : style->warning);
+    startup_hero_row(style, startup_logo_line(3u), "STATE", "● STARTING",
+                     style->warning);
     startup_hero_row(style, startup_logo_line(4u), "ENGINES", engines,
                      style->strong);
     startup_hero_row(style, startup_logo_line(5u), "WORKERS", workers,
@@ -639,75 +626,51 @@ static void startup_announce_wide(const yvex_server_options *options,
     startup_hero_row(style, startup_logo_line(9u), "LOCAL IPC", local,
                      style->strong);
     startup_hero_row(style, startup_logo_line(10u), "OPENAI", openai,
-                     openai_enabled ? style->success : style->dim);
+                     options->openai_enabled ? style->success : style->dim);
     startup_hero_row(style, startup_logo_line(11u), "ACCESS",
                      "external clients enabled", style->success);
     startup_hero_row(style, startup_logo_line(12u), NULL, NULL, NULL);
-    startup_hero_row(style, startup_logo_line(13u), "CONTROL",
-                     "yvex server load · models",
-                     style->strong);
-    startup_hero_row(style, startup_logo_line(14u), "OPERATE",
-                     "yvex server status · unload",
-                     style->strong);
-    startup_hero_row(style, startup_logo_line(15u), "SHUTDOWN", "stop",
-                     style->warning);
-    startup_hero_row(style, startup_logo_line(16u), NULL, NULL, NULL);
-    startup_hero_row(style, startup_logo_line(17u), summary ? "RESULT" : "HELP",
-                     summary ? "no second host or prompt started"
-                             : "run `yvex` for interactive chat",
-                     style->dim);
 }
 
 static void startup_announce_compact(const yvex_server_options *options,
-                                     const yvex_server_summary *summary,
                                      const char *endpoint, int human_terminal,
                                      const yvex_cli_terminal_style *style)
 {
-    printf("%sYVEX server%s · persistent host\n"
+    printf("%sYVEX host%s · persistent verified inference\n"
            "%snative verified inference%s · YVEX %s · protocol %u\n",
            style->strong, style->reset, style->dim, style->reset,
            yvex_version_string(), YVEX_LOCAL_PROTOCOL_VERSION);
-    if (summary)
-        printf("  engines %llu loaded/%llu known/%llu max · parallel workers=%llu\n",
-               summary->loaded_engine_count, summary->engine_count,
-               summary->maximum_engines, summary->worker_count);
-    else
-        printf("  engines 0/%llu · parallel workers=%llu\n",
-               options->maximum_engines, options->worker_count);
+    printf("  engines 0/%llu · parallel workers=%llu\n",
+           options->maximum_engines, options->worker_count);
     printf("  local endpoint %s", endpoint ? endpoint : "unavailable");
-    if (summary ? summary->openai_listener_enabled : options->openai_enabled)
+    if (options->openai_enabled)
         printf(" · OpenAI 127.0.0.1:%u",
-               summary ? (unsigned int)summary->openai_port
-                       : (unsigned int)options->openai_port);
+               (unsigned int)options->openai_port);
     else
         printf(" · OpenAI disabled");
-    if (summary)
-        printf("\n  server already active · no second host or prompt started\n");
-    else if (human_terminal)
-        printf("\n  logs remain here · manage with `yvex server ...` from another terminal\n");
+    if (human_terminal)
+        printf("\n  foreground host logs follow this report\n");
     else
-        printf("\n  load with `yvex server load MODEL`"
-               " · stop with Ctrl-C or `yvex server stop`\n");
+        printf("\n  foreground host · Ctrl-C to stop\n");
 }
 
 static void startup_announce(const yvex_server_options *options,
-                             const yvex_server_summary *summary,
                              int human_terminal)
 {
     char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
     yvex_cli_terminal_style style;
     unsigned int columns;
     yvex_error err;
-    const char *endpoint = summary ? summary->socket_path : options->socket_path;
+    const char *endpoint = options->socket_path;
     if (!endpoint && yvex_server_socket_path(socket_path, &err) == YVEX_OK)
         endpoint = socket_path;
     yvex_cli_terminal_style_get(stdout, &style);
     columns = startup_terminal_columns();
     if (human_terminal && columns >= 104u)
-        startup_announce_wide(options, summary, endpoint, &style, columns);
+        startup_announce_wide(options, endpoint, &style, columns);
     else {
         if (human_terminal) startup_logo_render(&style);
-        startup_announce_compact(options, summary, endpoint, human_terminal, &style);
+        startup_announce_compact(options, endpoint, human_terminal, &style);
     }
     (void)fflush(stdout);
 }
@@ -727,7 +690,7 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
     if (!command_options_parse(&loader, argc, argv, consumed))
         return 2;
     if (pthread_mutex_init(&loader.registry_mutex, NULL) != 0) {
-        fprintf(stderr, "yvex server: model registry coordinator creation failed\n");
+        fprintf(stderr, "yvex serve: profile registry coordinator creation failed\n");
         return 1;
     }
     loader.host.model_loader = registered_model_load;
@@ -739,15 +702,20 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
     rc = server_remote_summary(
         loader.host.socket_path, &attached_summary, &err);
     if (rc == YVEX_OK) {
-        startup_announce(&loader.host, &attached_summary, human_terminal);
+        fprintf(stderr, "yvex: host already running\n\n"
+                        "  socket:  %s\n\n"
+                        "  inspect:\n"
+                        "    yvex host status\n",
+                attached_summary.socket_path[0] ? attached_summary.socket_path
+                                                : "authoritative default");
         (void)pthread_mutex_destroy(&loader.registry_mutex);
-        return 0;
+        return 1;
     }
     if (rc != YVEX_ERR_IO) {
         (void)pthread_mutex_destroy(&loader.registry_mutex);
         return server_error(&err, 1);
     }
-    startup_announce(&loader.host, NULL, human_terminal);
+    startup_announce(&loader.host, human_terminal);
     (void)sigemptyset(&signals);
     (void)sigaddset(&signals, SIGINT);
     (void)sigaddset(&signals, SIGTERM);
@@ -760,6 +728,8 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
         (void)pthread_mutex_destroy(&loader.registry_mutex);
         return server_error(&err, 1);
     }
+    puts("host ready · Ctrl-C to stop");
+    (void)fflush(stdout);
     memset(&thread_state, 0, sizeof(thread_state));
     thread_state.server = server;
     if (pthread_create(&signal_thread, NULL, signal_main, &thread_state) == 0)
@@ -767,13 +737,13 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
     else {
         yvex_server_close(&server);
         (void)pthread_mutex_destroy(&loader.registry_mutex);
-        fprintf(stderr, "yvex server: signal coordinator creation failed\n");
+        fprintf(stderr, "yvex serve: signal coordinator creation failed\n");
         return 1;
     }
     if (loader.host.console != YVEX_SERVER_CONSOLE_OFF) {
         void *(*log_main)(void *) =
             loader.host.console == YVEX_SERVER_CONSOLE_RAW
-                ? raw_console_main : human_console_main;
+                ? raw_log_main : human_log_main;
         if (pthread_create(&log_thread, NULL, log_main, &thread_state) == 0)
             log_ready = 1;
         else {

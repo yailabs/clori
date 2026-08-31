@@ -174,17 +174,7 @@ assert_linear_terminal()
     grep -F "${esc}[?2004l" "$transcript" >/dev/null
 }
 
-start_host
-
-# Deterministic and redirected commands never emit terminal control sequences.
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --reasoning high \
-    --max-new-tokens 3 --strategy greedy REASONING_STREAM \
-    >"$root/raw.out" 2>"$root/raw.err"
-printf 'I need to compare the constraints...\nThe valid result is 42.' >"$root/raw.expected"
-cmp "$root/raw.expected" "$root/raw.out"
-! grep "$(printf '\033')" "$root/raw.out" >/dev/null
-
-# The root console refuses non-terminal input; the old explicit spelling is retired.
+# Bare YVEX is deterministic help; chat is explicit and terminal-bound.
 set +e
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" chat </dev/null \
     >"$root/non-tty.out" 2>"$root/non-tty.err"
@@ -194,23 +184,43 @@ XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" </dev/null \
 bare_status=$?
 set -e
 test "$chat_status" -eq 2
-test "$bare_status" -eq 2
-grep -F 'removed command: chat' "$root/non-tty.err" >/dev/null
-grep -F 'run `yvex` for the interactive console' "$root/non-tty.err" >/dev/null
-grep -F 'chat requires a terminal' "$root/bare.err" >/dev/null
+test "$bare_status" -eq 0
+grep -F 'chat requires a terminal' "$root/non-tty.err" >/dev/null
+grep -F 'YVEX inference/compiler/runtime' "$root/bare.out" >/dev/null
 ! grep "$(printf '\033')" "$root/non-tty.out" "$root/non-tty.err" \
     "$root/bare.out" "$root/bare.err" >/dev/null
 
-# Root options preserve scrollback, stream output, and restore bracketed paste mode.
-start_console explicit 24 100 '--session linear' nocolor
+# An interactive chat with no host fails as a client and gives the host-start action.
+set +e
+XDG_RUNTIME_DIR="$runtime" NO_COLOR=1 TERM=xterm-256color \
+    script -q -e -c "$YVEX_BIN chat" "$root/no-host.typescript" </dev/null \
+    >"$root/no-host.stdout" 2>"$root/no-host.stderr"
+no_host_status=$?
+set -e
+test "$no_host_status" -eq 1
+grep -F 'start one with `yvex serve`' "$root/no-host.typescript" >/dev/null
+
+# Retired one-shot generation refuses and never contacts or starts a host.
+set +e
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run REASONING_STREAM \
+    >"$root/run.out" 2>"$root/run.err"
+run_status=$?
+set -e
+test "$run_status" -eq 2
+grep -F 'removed command: run' "$root/run.err" >/dev/null
+
+start_host
+
+# Explicit chat preserves scrollback, streams output, and restores bracketed paste mode.
+start_console explicit 24 100 'chat --session linear' nocolor
 printf 'hello\r' >&3
 wait_for "$root/explicit.typescript" 'hello from yvex'
 printf '/quit\r' >&3
 finish_console
 assert_linear_terminal "$root/explicit.typescript"
 
-# Bare yvex is the same console. Exercise completion, UTF-8 editing, paste, history, and resize.
-start_console bare 32 150 '' color
+# Exercise completion, UTF-8 editing, paste, history, and resize in the one public REPL.
+start_console bare 32 150 'chat' color
 printf '/sta\t\r' >&3
 wait_for "$root/bare.typescript" '/status'
 printf '\033[200~hello\nworld 🌍\033[201~\r' >&3
@@ -230,7 +240,7 @@ finish_console
 assert_linear_terminal "$root/bare.typescript"
 
 # A transport loss leaves the draft loop alive; the next request reconnects to a restarted host.
-start_console reconnect 24 100 '--session reconnect' nocolor
+start_console reconnect 24 100 'chat --session reconnect' nocolor
 stop_host
 printf 'first while offline\r' >&3
 wait_for "$root/reconnect.typescript" '[disconnected]'
@@ -243,7 +253,7 @@ finish_console
 assert_linear_terminal "$root/reconnect.typescript"
 
 # Active generation Ctrl-C crosses the canonical cancellation operation.
-start_console cancel 24 100 '--session cancel' nocolor
+start_console cancel 24 100 'chat --session cancel' nocolor
 printf 'WAIT_PREFILL_CANCEL\r' >&3
 wait_for "$root/cancel.typescript" 'processing 4 input tokens · 0/4'
 kill -INT "$client_pid"
@@ -254,7 +264,7 @@ finish_console
 assert_linear_terminal "$root/cancel.typescript"
 
 # Ctrl-D exits with normal terminal restoration and preserved scrollback.
-start_console eof 18 88 '--session eof' nocolor
+start_console eof 18 88 'chat --session eof' nocolor
 printf 'preserved-unsubmitted\004' >&3
 finish_console
 assert_linear_terminal "$root/eof.typescript"

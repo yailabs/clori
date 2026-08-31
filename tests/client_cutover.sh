@@ -28,41 +28,32 @@ cleanup()
 trap cleanup EXIT HUP INT TERM
 
 "$YVEX_BIN" help >"$root/help"
-grep -F 'usage: yvex [options]' "$root/help" >/dev/null
-grep -F 'Enter retained interactive chat.' "$root/help" >/dev/null
+grep -F 'YVEX inference/compiler/runtime' "$root/help" >/dev/null
 for expected in \
-    'yvex run' \
-    'yvex server                                     Run the persistent multi-engine host' \
-    'yvex server load MODEL' \
-    'yvex server models' \
-    'yvex server status' \
-    'yvex session list' \
-    'yvex compile source manifest' \
-    'yvex compile quant plan' \
-    'yvex artifact verify' \
-    'yvex completion'
+    'USE' 'HOST' 'BUILD' 'INSPECT' 'META' \
+    'chat' 'serve' 'host' 'engine' 'session' \
+    'model' 'source' 'artifact' 'profile' 'compile' 'inspect' 'bench'
 do
     grep -F "$expected" "$root/help" >/dev/null
 done
-for retired in 'yvex dev' 'yvex-dev' 'yvex-openai' 'yvex evidence' \
-    'yvex graph' 'yvex quant' 'yvex source' 'yvex tensor' 'yvex tokenizer'; do
+for retired in 'yvex run' 'yvex server' 'yvex-dev' 'yvex-openai'; do
     ! grep -F "$retired" "$root/help" >/dev/null
 done
 
 "$YVEX_BIN" help --advanced >"$root/advanced"
 for expected in \
     'yvex inspect artifact metadata' \
-    'yvex inspect source' \
-    'yvex execute tokenizer encode' \
-    'yvex execute attention run' \
-    'yvex profile attention run' \
-    'yvex system cuda'
+    'yvex inspect source tensors' \
+    'yvex inspect tokenizer encode' \
+    'yvex bench attention execute' \
+    'yvex bench attention profile' \
+    'yvex inspect cuda'
 do
     grep -F "$expected" "$root/advanced" >/dev/null
 done
 
-"$YVEX_BIN" help server log >"$root/leaf-help"
-grep -F 'operation: server.log' "$root/leaf-help" >/dev/null
+"$YVEX_BIN" help host logs >"$root/leaf-help"
+grep -F 'operation: host.logs' "$root/leaf-help" >/dev/null
 "$YVEX_BIN" help --json >"$root/discovery.json"
 python3 - "$root/discovery.json" <<'PY'
 import json, pathlib, sys
@@ -70,22 +61,28 @@ payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert payload['schema'] == 'yvex.command.discovery.v1'
 assert len(payload['registry_identity']) == 64
 paths = {row['command_path'] for row in payload['operations'] if row['projections']['cli']}
-assert '' in paths
-assert 'chat' not in paths
-assert 'server status' in paths
-assert 'server' in paths
-assert 'server load' in paths
-assert 'server unload' in paths
-assert 'server models' in paths
+assert '' not in paths
+assert 'chat' in paths
+assert 'host status' in paths
+assert 'serve' in paths
+assert 'engine load' in paths
+assert 'engine unload' in paths
+assert 'engine list' in paths
 assert 'runtime status' not in paths
-assert 'execute tokenizer encode' in paths
+assert 'inspect tokenizer encode' in paths
+assert 'model list' in paths and 'source list' in paths
+assert 'artifact list' in paths and 'profile list' in paths
+assert not any(path.split(' ', 1)[0] in {'run', 'server'} for path in paths)
 assert not any(path.split(' ', 1)[0] in {
-    'evidence', 'graph', 'quant', 'source', 'tensor', 'tokenizer', 'eval', 'bench'
+    'dev', 'evidence', 'execute', 'graph', 'integrate', 'quant', 'system',
+    'tensor', 'tokenizer', 'eval'
 } for path in paths)
 PY
-"$YVEX_BIN" completion bash >"$root/yvex.bash"
+"$YVEX_BIN" help completion bash >"$root/yvex.bash"
 bash -n "$root/yvex.bash"
-grep -F 'server' "$root/yvex.bash" >/dev/null
+grep -F 'serve' "$root/yvex.bash" >/dev/null
+grep -F 'host status' "$root/yvex.bash" >/dev/null
+! grep -F 'server status' "$root/yvex.bash" >/dev/null
 grep -F -- '--ctx' "$root/yvex.bash" >/dev/null
 grep -F -- '--backend' "$root/yvex.bash" >/dev/null
 
@@ -96,13 +93,13 @@ for arguments in \
     'artifact materialize --help' \
     'inspect artifact metadata --help' \
     'inspect artifact tensors --help' \
-    'execute artifact materialize-gate --help' \
-    'execute artifact model-gate check --help' \
-    'compile emit template --help' \
-    'compile emit artifact --help' \
+    'artifact verify materialization --help' \
+    'artifact verify model --help' \
+    'compile artifact template --help' \
+    'compile artifact emit --help' \
     'inspect attention describe --help' \
-    'execute attention run --help' \
-    'profile attention run --help' \
+    'bench attention execute --help' \
+    'bench attention profile --help' \
     'compile quant plan --help' \
     'compile quant emit --help' \
     'compile quant probe --help' \
@@ -113,31 +110,35 @@ for arguments in \
     'compile quant job --help' \
     'inspect qtype --help' \
     'compile quant convert --help' \
-    'execute input --help' \
+    'inspect input --help' \
     'inspect context --help' \
     'inspect tokenizer --help' \
-    'execute tokenizer encode --help' \
-    'execute tokenizer decode --help' \
-    'execute tokenizer prompt --help' \
+    'inspect tokenizer encode --help' \
+    'inspect tokenizer decode --help' \
+    'inspect tokenizer prompt --help' \
     'compile source manifest --help' \
-    'inspect source --help' \
-    'compile map --help' \
+    'inspect source tensors --help' \
+    'compile tensor map --help' \
     'inspect tensor collection --help' \
     'inspect target --help' \
     'inspect model full --help' \
     'inspect moe --help' \
     'inspect backend --help' \
-    'system cuda --help' \
-    'system accounts --help' \
-    'system paths --help' \
-    'model list --help'
+    'inspect backend cuda --help' \
+    'inspect cuda --help' \
+    'source accounts --help' \
+    'inspect paths --help' \
+    'model list --help' \
+    'source list --help' \
+    'artifact list --help' \
+    'profile list --help'
 do
     # shellcheck disable=SC2086
     "$YVEX_BIN" $arguments >"$root/out" 2>"$root/err"
 done
 
-# Removed namespaces and the retired explicit chat spelling refuse without forwarding.
-for command in chat evidence graph quant source tensor tokenizer; do
+# Removed namespaces and one-shot/server grammar refuse without forwarding.
+for command in run server evidence execute graph quant system tensor tokenizer; do
     set +e
     "$YVEX_BIN" "$command" >"$root/out" 2>"$root/err"
     status=$?
@@ -185,13 +186,19 @@ set +e
 printf 'hello\n' | "$YVEX_BIN" >"$root/out" 2>"$root/err"
 status=$?
 set -e
+test "$status" -eq 0
+grep -F 'YVEX inference/compiler/runtime' "$root/out" >/dev/null
+set +e
+printf 'hello\n' | "$YVEX_BIN" chat >"$root/out" 2>"$root/err"
+status=$?
+set -e
 test "$status" -eq 2
 grep -F 'chat requires a terminal' "$root/err" >/dev/null
 
 for arguments in \
-    'server status --bogus' \
-    'server log --bogus' \
-    'server stop --bogus' \
+    'host status --bogus' \
+    'host logs --bogus' \
+    'host stop --bogus' \
     'session list --bogus' \
     'session show main --json' \
     'model show --bogus'
@@ -205,14 +212,14 @@ do
 done
 
 # One registry-driven parser owns help bypass, types, ranges, duplicates, and relations.
-"$YVEX_BIN" server -h >"$root/out" 2>"$root/err"
-grep -F 'operation: server.host' "$root/out" >/dev/null
+"$YVEX_BIN" serve -h >"$root/out" 2>"$root/err"
+grep -F 'operation: host.serve' "$root/out" >/dev/null
 for arguments in \
-    'server --workers' \
-    'server --workers 0' \
-    'server current extra' \
-    'server current --context 4096' \
-    'compile artifact prepare --out artifact.gguf --out-dir artifacts'
+    'serve --workers' \
+    'serve --workers 0' \
+    'serve current extra' \
+    'serve current --context 4096' \
+    'compile --out artifact.gguf --out-dir artifacts'
 do
     set +e
     # shellcheck disable=SC2086
@@ -223,11 +230,11 @@ do
     grep -F 'usage: yvex' "$root/err" >/dev/null
 done
 set +e
-"$YVEX_BIN" server statu >"$root/out" 2>"$root/err"
+"$YVEX_BIN" serve statu >"$root/out" 2>"$root/err"
 status=$?
 set -e
 test "$status" -eq 2
-grep -F 'usage: yvex server [options]' "$root/err" >/dev/null
+grep -F 'usage: yvex serve [options]' "$root/err" >/dev/null
 
 # Registry discovery remains distinct from the model hosted by a running server. No command writes
 # an implicit startup selection.
@@ -254,14 +261,16 @@ cat >"$registry" <<EOF
 }
 EOF
 HOME="$home_root" "$YVEX_BIN" model list >"$root/out"
-grep -F 'current-model-runtime-profile' "$root/out" >/dev/null
-grep -F 'cuda' "$root/out" >/dev/null
-grep -F 'package-ready' "$root/out" >/dev/null
+grep -F 'v4-flash-dspark' "$root/out" >/dev/null
+grep -F 'profiles=1' "$root/out" >/dev/null
+HOME="$home_root" "$YVEX_BIN" profile list >"$root/profiles"
+grep -F 'current-model-runtime-profile' "$root/profiles" >/dev/null
+grep -F 'backend=cuda' "$root/profiles" >/dev/null
 test ! -e "$home_root/.config/yvex/model.conf"
 
 set +e
 HOME="$home_root" XDG_RUNTIME_DIR="$root/absent-runtime" \
-    "$YVEX_BIN" server load current-model-runtime-profile \
+    "$YVEX_BIN" engine load current-model-runtime-profile \
     >"$root/out2" 2>"$root/err"
 status=$?
 set -e

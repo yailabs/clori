@@ -10,7 +10,7 @@ field layout and bounds.
 
 ## Producer and consumer
 
-The foreground `yvex server` mode is the server and runtime authority.
+The foreground `yvex serve` mode is the server and runtime authority.
 Runtime-client adapters in the same executable and the in-process OpenAI
 adapter are clients. The protocol is carried over one private UID-owned
 Unix-domain socket and is not a public network API.
@@ -68,7 +68,7 @@ result, control/event, or error. Output kind and stream channel must agree;
 diagnostic text cannot reclassify a fragment.
 
 Native generation connections receive identity-sealed tokenizer and prefill
-events from the same telemetry authority as `server log`. Prefill-start,
+events from the same telemetry authority as `host logs`. Prefill-start,
 per-chunk progress, and completion facts let the console update one truthful
 line without timing the asynchronous request locally. Provider/OpenAI requests
 retain their provider stream contract and do not receive these native console

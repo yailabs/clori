@@ -39,16 +39,16 @@ unavailable exact implementations fail closed.
 make -j4 all
 ```
 
-Running `./yvex` enters the one linear, scrollback-preserving interactive
-console. It attaches to the persistent host through the typed client protocol;
-deterministic commands remain the explicit path for model discovery, host
-control, inspection, and scripts. The former `yvex chat` spelling is retired.
+Running `./yvex` prints the compact product command map and exits. Interactive
+generation is always explicit through `./yvex chat`; it is a native client of
+an already-running host and never opens weights or initializes CUDA itself.
 
 ### 2. Find or prepare a model profile
 
 ```sh
 ./yvex model list
-./yvex model show PROFILE
+./yvex profile list
+./yvex profile show PROFILE
 ```
 
 Use an alias printed by `model list` whose startup profile is complete. If no
@@ -57,8 +57,8 @@ exact revision:
 
 ```sh
 ./yvex model search "MODEL"
-./yvex model inspect OWNER/REPOSITORY --revision REVISION
-./yvex model acquire --repo OWNER/REPOSITORY --family FAMILY \
+./yvex source inspect OWNER/REPOSITORY --revision REVISION
+./yvex source acquire --repo OWNER/REPOSITORY --family FAMILY \
   --name LOCAL_NAME --revision EXACT_REVISION --include 'PAYLOAD_PATTERN'
 ```
 
@@ -70,18 +70,18 @@ or, for an already prepared external package, its
 
 ### 3. Start the persistent host
 
-If `./yvex server status` already reports a ready host, use it. Otherwise run
+If `./yvex host status` already reports a ready host, use it. Otherwise run
 this in the first terminal:
 
 ```sh
-./yvex server
+./yvex serve
 ```
 
 The host publishes its private socket and optional loopback OpenAI listener with
 zero loaded engines. It remains alive across model load and unload, and its
-foreground terminal shows server events rather than a chat or operator prompt.
-Invoking `./yvex server` again reports the already active host and exits without
-starting another listener or interactive surface.
+foreground terminal shows the one-time boot report followed by host logs. It
+never reads stdin as an administrative REPL. Invoking `./yvex serve` again
+refuses the duplicate host and exits without attaching as a client.
 
 ### 4. Load and inspect an engine
 
@@ -89,35 +89,35 @@ From another terminal, select one complete profile through deterministic
 control commands:
 
 ```sh
-./yvex server load PROFILE
-./yvex server models
-./yvex server status
+./yvex engine load PROFILE
+./yvex engine list
+./yvex host status
 ```
 
 Loading authenticates the named registry profile and creates one process-local
 engine generation. Profile selection uses an exact alias; duplicate runtime
 targets never select an arbitrary package. Large packages can take several
-minutes. `server models` shows the exact alias, generation, lifecycle, backend,
-and active-work facts owned by the live host. `server status`, `server models`,
-and `server memory` remain available concurrently.
+minutes. `engine list` shows the exact alias, generation, lifecycle, backend,
+and active-work facts owned by the live host. `host status`, `engine list`, and
+`host memory` remain available concurrently.
 
 ### 5. Use the engine
 
 ```sh
-./yvex --model PROFILE --session main
-./yvex run --model PROFILE \
-  "Explain attention in one sentence."
+./yvex chat --model PROFILE --session main
 ```
 
-The named session remains bound to that exact engine generation. If exactly one
-engine is loaded, `--model` may be omitted. With several loaded engines,
-selection must be explicit.
+The named session remains bound to that exact engine generation. Type the
+prompt in the linear REPL. If exactly one engine is loaded, `--model` may be
+omitted; with several loaded engines, selection must be explicit. Programmatic
+inference uses an admitted provider/protocol surface rather than a second
+one-shot CLI generation command.
 
 Unload the engine without stopping the host, or stop the host separately:
 
 ```sh
-./yvex server unload PROFILE
-./yvex server stop
+./yvex engine unload PROFILE
+./yvex host stop
 ```
 
 Discover the current command surface without parsing documentation:
@@ -138,8 +138,9 @@ session, observation, memory, and recovery procedures.
 | `yvex` | Persistent host, native/OpenAI clients, REPL, model lifecycle controls, and bounded offline compilation/inspection/execution operations |
 | `libyvex` | Reusable source, compilation, package, engine, runtime, graph, backend, tokenizer, generation, and media implementation |
 
-Runtime-facing clients cross private local protocol v15. The server entrypoint
-owns host and engine lifecycle in the same executable; client handlers do not
+Runtime-facing native clients cross private local protocol v16. The `serve`
+entrypoint owns host lifetime in the same executable; engine commands own
+loaded-generation lifecycle through that protocol, and client handlers do not
 open weights or initialize CUDA. Finite offline operations close their engine
 resources before exit and never create another persistent host.
 

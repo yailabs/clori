@@ -71,7 +71,7 @@ int yvex_cuda_info_args_parse(int argc, char **argv,
         out->request.kind = YVEX_BACKEND_REPORT_CUDA_BANDWIDTH;
     } else if (argc != 2) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda-info",
-                       "usage: yvex system cuda [bandwidth]");
+                       "usage: yvex inspect cuda [bandwidth]");
         return YVEX_ERR_INVALID_ARG;
     }
     yvex_error_clear(err);

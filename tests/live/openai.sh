@@ -36,7 +36,7 @@ cleanup()
     status=$?
     trap - EXIT HUP INT TERM
     if test -n "$daemon_pid" && kill -0 "$daemon_pid" 2>/dev/null; then
-        XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server stop >/dev/null 2>&1 || true
+        XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host stop >/dev/null 2>&1 || true
         kill "$daemon_pid" 2>/dev/null || true
         wait "$daemon_pid" 2>/dev/null || true
     fi
@@ -59,17 +59,15 @@ cleanup()
 trap cleanup EXIT HUP INT TERM
 
 port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
-HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server \
-    deepseek4-v4-flash-dspark-runtime-openai-live \
-    --backend cuda --ctx 512 --parallel 4 \
-    --console raw --trace-level stages --openai on --openai-port "$port" \
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" serve \
+    --logs json --trace-level stages --openai on --openai-port "$port" \
     --openai-timeout-ms 3600000 >"$root/raw.jsonl" 2>"$root/daemon.err" &
 daemon_pid=$!
 
 ready=0
 attempt=0
 while test "$attempt" -lt 3600; do
-    if XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json \
+    if XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host status --json \
         >"$root/status.json" 2>/dev/null; then
         ready=1
         break
@@ -79,15 +77,17 @@ while test "$attempt" -lt 3600; do
     sleep 1
 done
 test "$ready" -eq 1
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" engine load \
+    deepseek4-v4-flash-dspark-runtime-openai-live >"$root/engine.load"
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host status --json >"$root/status.json"
 grep -F '"model_open_count":1' "$root/status.json" >/dev/null
 grep -F '"artifact_open_count":1' "$root/status.json" >/dev/null
 grep -F '"materialization_count":1' "$root/status.json" >/dev/null
 grep -F '"residency_build_count":1' "$root/status.json" >/dev/null
 grep -F '"openai_enabled":true' "$root/status.json" >/dev/null
 grep -F '"openai_ready":true' "$root/status.json" >/dev/null
-grep -F '"prefill_chunk_tokens":4' "$root/status.json" >/dev/null
-grep -F '"parallel":4' "$root/status.json" >/dev/null
-grep -F '"continuous_batching":true' "$root/status.json" >/dev/null
+grep -F '"parallel":1' "$root/status.json" >/dev/null
+grep -F '"continuous_batching":false' "$root/status.json" >/dev/null
 grep -F "\"openai_port\":$port" "$root/status.json" >/dev/null
 python3 - "$root/status.json" "$ARTIFACT" "$daemon_pid" <<'PY'
 import json, os, sys
@@ -171,7 +171,7 @@ curl --max-time 0.2 -sS -N -H 'Content-Type: application/json' \
     "$base/v1/chat/completions" \
     -d "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a long answer.\"}],\"temperature\":0,\"max_completion_tokens\":64,\"stream\":true}" \
     >"$root/cancel.sse" 2>"$root/cancel.err" || true
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json >"$root/status.after.json"
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host status --json >"$root/status.after.json"
 grep -F '"model_open_count":1' "$root/status.after.json" >/dev/null
 grep -F '"artifact_open_count":1' "$root/status.after.json" >/dev/null
 grep -F '"materialization_count":1' "$root/status.after.json" >/dev/null
@@ -203,7 +203,7 @@ grep -F '"provider":"openai"' "$root/raw.jsonl" >/dev/null
 ! grep -F 'Reply briefly.' "$root/raw.jsonl" >/dev/null
 
 served_pid=$daemon_pid
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server stop >/dev/null
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host stop >/dev/null
 wait "$daemon_pid"
 daemon_pid=
 grep -F '"kind":"runtime.shutdown.complete"' "$root/raw.jsonl" >/dev/null

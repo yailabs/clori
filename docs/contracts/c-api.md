@@ -160,7 +160,7 @@ projections expose the separately versioned
 kind and the corresponding local file or installation accessibility. It does
 not authenticate identities, materialize weights, initialize a backend, or
 establish runtime support. After the persistent host is running,
-`yvex server load MODEL` performs full singular or composite admission and
+`yvex engine load PROFILE` performs full singular or composite admission and
 publishes one new engine generation.
 
 A composite media target follows the same readiness rule. Before publishing
@@ -524,9 +524,9 @@ decode, tokenize, stop, detokenize, or generate.
 ### Internal DeepSeek Attention Operator Boundary
 
 `yvex_graph_attention_operator_execute` is the non-installed typed adapter used
-by the offline `yvex execute attention ...` lane. Inspection and profiling of
+by the offline `yvex bench attention ...` lane. Inspection and profiling of
 the same owner use the `yvex inspect attention ...` and
-`yvex profile attention ...` projections. The adapter consumes a runtime
+`yvex bench attention ...` projections. The adapter consumes a runtime
 binding, common runtime model/session, admitted external artifact, and either a
 canonical diagnostic probe or admitted tensor-file activation input. It never
 calls Make, a test executable, another process or the test-only oracle.
@@ -715,7 +715,7 @@ remain committed-target counts.
 
 `<yvex/server.h>` exposes the local protocol, persistent host, engine manager,
 engine generations, server session, typed event, metrics snapshot, and thin
-protocol-client lifecycles. `yvex server` starts with zero engines;
+protocol-client lifecycles. `yvex serve` starts with zero engines;
 `yvex_server_engine_load`, `yvex_server_engine_unload`, and
 `yvex_server_engine_snapshot` own the in-process lifecycle. Server sessions
 retain independent execution state, exact token ledgers, transcripts, and turn
@@ -734,20 +734,21 @@ routes in the same ELF have separately guarded engine dependencies.
 The offline command lane provides the direct production consumer for the internal ABI:
 
 ```text
-yvex execute attention prepare
+yvex bench attention prepare
 yvex inspect attention describe
 yvex inspect attention capabilities
 yvex inspect attention plan
-yvex execute attention run
-yvex execute attention compare
-yvex inspect attention state|validate|exercise
+yvex bench attention execute
+yvex bench attention compare
+yvex inspect attention state
+yvex bench attention state validate|exercise
 yvex inspect attention residency
-yvex execute attention capture|replay
-yvex profile attention cuda-graph list|inspect|warmup|update|invalidate|release
-yvex profile attention trace|profile|benchmark|qualify
-yvex profile attention compare
-yvex execute moe
-yvex execute transformer run
+yvex bench attention capture|replay
+yvex bench attention graph list|inspect|warmup|update|invalidate|release
+yvex bench attention trace|profile|component|qualify
+yvex bench attention benchmark compare
+yvex bench moe
+yvex bench transformer execute
 ```
 
 `prepare` is the compiler-side producer for an external runtime binding.
@@ -767,12 +768,12 @@ input, not prompt text. Production activation prefill instead selects
 reports `activation_prefill_ready` separately from
 `full_model_prefill_ready`.
 
-`execute moe` requires explicit artifact and runtime-binding paths,
+`bench moe` requires explicit artifact and runtime-binding paths,
 `--backend cpu|cuda`, `--input tensor-file`, `--input-file FILE`, `--scope
 full`, and `--progress off`. It calls the production runtime MoE API directly;
 it does not run a fixture, test executable, Make target, or second process.
 
-`execute transformer run` requires explicit artifact, runtime binding, and a
+`bench transformer execute` requires explicit artifact, runtime binding, and a
 schema-v1 `--input token-ids --input-file FILE`. It accepts `--backend
 cpu|cuda`, `--phase prefill`, positive chunk/context capacities, and
 `--progress off`. It calls the production transformer API directly and reports

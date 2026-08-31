@@ -41,7 +41,18 @@ REQUIREMENTS = {
     "backend": {"none", "optional", "required", "runtime"},
 }
 OLD_EXECUTABLES = {"yvex-dev", "yvex-openai"}
-FORBIDDEN_TOP_LEVEL = {"dev", "evidence", "graph", "quant", "source", "tensor", "tokenizer", "integrate", "eval", "bench"}
+FORBIDDEN_TOP_LEVEL = {
+    "dev",
+    "eval",
+    "evidence",
+    "execute",
+    "graph",
+    "integrate",
+    "quant",
+    "system",
+    "tensor",
+    "tokenizer",
+}
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 FLAG = re.compile(r"^--[a-z0-9][a-z0-9-]*$")
 WORD = re.compile(r"^[a-z0-9][a-z0-9._-]*$")

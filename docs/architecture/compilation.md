@@ -44,7 +44,7 @@ The retained source snapshot is immutable and indexed. Downstream owners
 consume typed facts and exact bounded ranges; they do not rescan source headers
 or infer semantics from filenames.
 
-Payload admission has an explicit bootstrap boundary. `compile source verify`
+Payload admission has an explicit bootstrap boundary. `source verify`
 promotes verified metadata/header provenance to source-manifest v3 only after
 reading every shard and matching its authoritative provider SHA-256. The v3
 manifest lives outside the source snapshot, binds the ordered aggregate payload
@@ -187,9 +187,9 @@ owner deterministically generates an untracked GGUF, admits it through the produ
 contract, compiles the semantic model, operator graph, Physical Execution IR and runtime binding,
 then launches the real foreground host with zero engines, loads the fixture,
 serves it, unloads it without stopping the host, reloads it as a new generation,
-and admits two fitting engines concurrently. The production `server status`,
-`server models`, `server load`, `run`, `server unload`, `server log`, and
-`server stop` paths must return the expected context, text, identities, typed
+and admits two fitting engines concurrently. The production `host status`,
+`engine list`, `engine load`, native generation, `engine unload`, `host logs`, and
+`host stop` paths must return the expected context, text, identities, typed
 completion event, routing refusals, and clean lifecycle. A second build must
 reproduce artifact and binding identities, while a corrupted artifact must
 refuse without terminating the host.

@@ -7,14 +7,14 @@
 #include <string.h>
 #include <unistd.h>
 
-static const char *const literal_pair_0[] = { "       yvex system accounts login PROVIDER [options]",
-    "       yvex system accounts logout PROVIDER [options]"};
+static const char *const literal_pair_0[] = { "       yvex source accounts login PROVIDER [options]",
+    "       yvex source accounts logout PROVIDER [options]"};
 
 static const char *const literal_pair_1[] = { "raw_token_stored_by_yvex: false",
     "boundary: local provider account state only, no tokens stored by YVEX"};
 
 static const char *const literal_lines_0[] = {
-    "       yvex system accounts ensure PROVIDER [--interactive auto|always|never] [--required]",
+    "       yvex source accounts ensure PROVIDER [--interactive auto|always|never] [--required]",
     "\nProviders: huggingface|hf, github|gh.",
     "Hugging Face CLI discovery uses YVEX_HF_CLI, then hf, then legacy huggingface-cli.",
     "GitHub CLI discovery uses YVEX_GH_CLI, then gh.",
@@ -599,10 +599,10 @@ static int command_accounts_logout(int arg_count, char **args)
 
 static void accounts_help_command(FILE *fp)
 {
-    yvex_cli_out_writef(fp, "usage: yvex system accounts providers [--output normal|table|audit]\n");
-    yvex_cli_out_writef(fp, "       yvex system accounts status [--audit | --output normal|table|audit]\n");
+    yvex_cli_out_writef(fp, "usage: yvex source accounts providers [--output normal|table|audit]\n");
+    yvex_cli_out_writef(fp, "       yvex source accounts status [--audit | --output normal|table|audit]\n");
     yvex_cli_out_lines(fp, literal_pair_0, sizeof(literal_pair_0) / sizeof(literal_pair_0[0]));
-    yvex_cli_out_writef(fp, "       yvex system accounts whoami PROVIDER [--audit]\n");
+    yvex_cli_out_writef(fp, "       yvex source accounts whoami PROVIDER [--audit]\n");
     yvex_cli_out_lines(fp, literal_lines_0, sizeof(literal_lines_0) / sizeof(literal_lines_0[0]));
 }
 

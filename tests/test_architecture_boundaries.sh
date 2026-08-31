@@ -851,7 +851,7 @@ if rg -n 'strcmp\([^,]+,[[:space:]]*"/(help|status|runtime|model|memory|sessions
     src/cli; then
     fail "independent slash-command semantic parser remains"
 fi
-if rg -n 'yvex-dev|yvex-openai|"eval"|"bench"' config/operator/registry.json; then
+if rg -n 'yvex-dev|yvex-openai|"eval"' config/operator/registry.json; then
     fail "operator registry exposes retired or unavailable products"
 fi
 if nm -u build/obj/generated/operator/registry.o | grep . >/dev/null; then

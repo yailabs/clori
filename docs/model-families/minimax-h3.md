@@ -40,7 +40,7 @@ promotion rules remain in the [family integration contract](integration.md).
 | Active development line | `models1` shared with the other admitted families |
 | Historical feature ref | `feature/minimax-h3` retains published provenance only |
 | Current status | bounded hosted execution admitted for T2VA and first/last/both keyframe FL2VA; quality, scale, performance and release remain unclaimed |
-| Current boundary | one composite engine generation accepts a prompt plus typed optional `first` and `last` image conditions; `yvex run --model ...` and bare `yvex --model ...` execute the same staged GB10 request and return the atomically published AVI path |
+| Current boundary | one composite engine generation accepts a prompt plus typed optional `first` and `last` image conditions; `yvex chat --model ...` executes the staged GB10 request and returns the atomically published AVI path |
 | Shared-substrate obligation | every generic compiler, runtime, server or backend change qualifies both MiniMax and DeepSeek consumers |
 
 Git history and the historical feature ref preserve the accepted intake and
@@ -551,7 +551,7 @@ decode. `production_api_available: true` through the internal family graph ABI.
 through:
 
 ```sh
-yvex execute component audio-vae \
+yvex bench component audio-vae \
   --target minimax-h3-fl2va --artifact <AUDIO_VAE_GGUF> --backend cuda \
   --input-file <LATENT_F32> --batch 1 --latent-steps 1 \
   --max-device-bytes <CUDA_BUDGET> --out <OUTPUT_F32>
@@ -644,7 +644,7 @@ ABI. `internal_live_runner_available: true`. `operator_command_available: true`
 through:
 
 ```sh
-yvex execute component video-vae \
+yvex bench component video-vae \
   --target minimax-h3-fl2va --artifact <VIDEO_VAE_GGUF> --backend cpu|cuda \
   --input-file <LATENT_F32> --batch 1 \
   --latent-frames <T> --latent-height <H> --latent-width <W> \
@@ -806,7 +806,7 @@ inserted special token; EOS is 151,645 and padding is 151,643.
 The operator command
 
 ```text
-yvex execute tokenizer encode TEXT_ENCODER_GGUF --text 'A red fox jumps over a blue river.'
+yvex inspect tokenizer encode TEXT_ENCODER_GGUF --text 'A red fox jumps over a blue river.'
 ```
 
 produces the exact nine-token sequence
@@ -1044,7 +1044,7 @@ preroll and end-of-stream playback through independent fake audio/video sinks.
 The operator command is:
 
 ```sh
-yvex execute media publish \
+yvex bench media publish \
   --video-file <PLANAR_RGB_F32> --frames <FRAMES> \
   --width <WIDTH> --height <HEIGHT> \
   --fps-numerator 24 --fps-denominator 1 \
@@ -1080,7 +1080,7 @@ The exact bounded command was:
 ROOT=<EXTERNAL_MINIMAX_ROOT>/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08
 systemd-run --user --scope --quiet \
   -p MemoryHigh=76G -p MemoryMax=88G -p MemorySwapMax=0 \
-  ionice -c2 -n7 nice -n 10 yvex execute media generate \
+  ionice -c2 -n7 nice -n 10 yvex bench media generate \
   --target minimax-h3-fl2va \
   --prompt 'A red fox running through a snowy forest' \
   --text-artifact "$ROOT/physical-v3/text_encoder.gguf" \
@@ -1134,7 +1134,7 @@ runs are not benchmarks and establish no useful generation speed.
 ## Direct hosted media projection
 
 The common persistent server now admits MiniMax-H3 as engine kind `media`.
-`yvex server load minimax-h3-fl2va-runtime-media` resolves the immutable
+`yvex engine load minimax-h3-fl2va-runtime-media` resolves the immutable
 component installation, CUDA backend, and media kind from its composite startup
 profile and creates one engine generation; the default owned publication
 directory comes from the common YVEX data path. Protocol v16 carries zero, one,
@@ -1142,18 +1142,18 @@ or two typed image conditions with distinct `first` and `last` roles. The
 normal product surfaces are:
 
 ```text
-yvex run --model minimax-h3-fl2va-runtime-media PROMPT
-yvex run --model minimax-h3-fl2va-runtime-media --first-image IMAGE PROMPT
-yvex run --model minimax-h3-fl2va-runtime-media --last-image IMAGE PROMPT
-yvex run --model minimax-h3-fl2va-runtime-media \
-  --first-image FIRST --last-image LAST PROMPT
-yvex run --model minimax-h3-fl2va-runtime-media \
+yvex chat --model minimax-h3-fl2va-runtime-media
+yvex chat --model minimax-h3-fl2va-runtime-media --first-image IMAGE
+yvex chat --model minimax-h3-fl2va-runtime-media --last-image IMAGE
+yvex chat --model minimax-h3-fl2va-runtime-media \
+  --first-image FIRST --last-image LAST
+yvex chat --model minimax-h3-fl2va-runtime-media \
   --trajectory released --width 1344 --height 768 \
-  --duration 5 --seed 42 PROMPT
+  --duration 5 --seed 42
 ```
 
-Bare `yvex --model ...` accepts the same condition options before attachment.
-Each creative prompt immediately invokes the staged native runtime transaction.
+The creative prompt is entered in the linear client and immediately invokes
+the staged native runtime transaction.
 It does not ask for missing execution parameters,
 and MiniMax-H3 is not presented as a conversational assistant. The model
 registry profile selects the typed media adapter, so the operator does not

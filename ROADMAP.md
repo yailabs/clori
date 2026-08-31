@@ -20,14 +20,15 @@ an NVIDIA DGX Spark / GB10 CUDA system from a complete GGUF artifact produced
 by YVEX. The accepted product topology is:
 
 ```text
-yvex  one public executable with finite client/offline modes and an explicit
-      foreground server mode
+yvex  one public executable with explicit offline, foreground-host, native-client,
+      and external-compatibility roles
 ```
 
-`yvex server` directly enters a persistent foreground host lifecycle with no
-loaded model. Explicit `server load MODEL` and `server unload MODEL` operations
-create and retire identity-bound engine generations while the Unix-domain
-protocol, loopback OpenAI-compatible listener, and telemetry remain alive.
+`yvex serve` directly enters a persistent foreground host lifecycle with no
+loaded engine. Explicit `yvex engine load PROFILE` and
+`yvex engine unload ENGINE` operations create and retire identity-bound engine
+generations while the Unix-domain protocol, loopback OpenAI-compatible listener,
+and telemetry remain alive.
 Runtime-facing clients route to one exact engine generation through the local
 protocol. Finite compiler and engineering operations may link engine owners but
 never become another hosted runtime.
@@ -69,7 +70,7 @@ run, or a self-authored report cannot promote a capability by itself.
 | 2 | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `complete` | One versioned operation authority drives command paths, flags, defaults, validation, help, discovery, protocol projections, slash catalog, and command tests. | `V010.PROJECT.CONTROL.PUBLIC.0` |
 | 3 | `V010.DOCS.INFORMATION.ARCHITECTURE.0` | `complete` | One governed information architecture separates doctrine, reference and implemented architecture, family facts, contracts, operations, development policy, project control, decisions, audits, migrations, releases, and history. | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` |
 | 4 | `V010.REPO.CODE.COMMENTARY.0` | `complete` | Natural selective technical commentary replaces mandatory labeled prose across every governed first-party source while production lexical tokens remain unchanged. | `V010.DOCS.INFORMATION.ARCHITECTURE.0` |
-| 5 | `V010.OPERATOR.REPL.CONSOLE.0` | `complete` | A mature server-backed linear console consumes the canonical operation authority and renders truthful status, progress, metrics, the unified server log, and cancellation; explicit reasoning remains conditional on an admitted typed channel. | `V010.REPO.CODE.COMMENTARY.0` |
+| 5 | `V010.OPERATOR.REPL.CONSOLE.0` | `complete` | A mature host-backed linear chat client consumes the canonical operation authority and renders truthful status, progress, metrics, host logs, and cancellation; explicit reasoning remains conditional on an admitted typed channel. | `V010.REPO.CODE.COMMENTARY.0` |
 | 6 | `V010.REBASE.DEEPSEEK.DSPARK.0` | `complete` | The sole DeepSeek vertical is rebound to the exact DSpark source and reaches target-verified speculative text through the hosted product path. | `V010.OPERATOR.REPL.CONSOLE.0` |
 | 7 | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` | `complete` | Identity-bound execution profiles, Physical Execution IR, prefix-addressable candidate state, shape-safe CUDA admission, exact partial turns, typed device views, and operational projections form one verified execution substrate. | `V010.REBASE.DEEPSEEK.DSPARK.0` |
 | 8 | `V010.REPO.ARCHITECTURE.COMPRESSION.0` | `complete` | One source-membership authority and fewer ceremonial owners, internal ABIs, symbols, build declarations, targets, and duplicate registry facts preserve the accepted execution behavior in a directly navigable repository. | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` |
@@ -97,11 +98,11 @@ not a replacement historical ledger.
 | Artifact and admission | One complete DSpark bootstrap artifact contains the target and drafter; structural, payload, roundtrip, materialization, and one binding containing target/draft/verification plans are admitted outside Git. |
 | Runtime and generation | An authenticated package and deployment specialization open as one immutable engine generation; engine-bound sessions retain exact target KV/token truth and bounded candidate state; target-only and target-verified DSpark text and MiniMax typed media use the same host/runtime/backend substrate. |
 | Application serving | Local protocol v16 and YVEX OpenAI Compatibility Profile v2 share one persistent host, engine manager, session registry, request routing, and telemetry authority; bounded session fork composes immutable prefix sharing with independent semantic state. Protocol v16 carries separate engine-kind/execution-strategy facts, typed first/last image conditions, and identity-bearing media trajectory, canvas, duration, and seed selection without changing text routing. |
-| Product surface | `yvex` is the sole product executable. Its explicit foreground `server` mode starts with zero engines; `server load`, `server unload`, and `server models` control engine generations while `chat` and `run` remain protocol clients and finite compiler/engineering lanes remain bounded offline operations. |
+| Product surface | `yvex` is the sole product executable. `yvex serve` starts the foreground zero-engine host; `engine load`, `engine unload`, and `engine list` control generations; `yvex chat` is the sole public REPL; bare `yvex` renders help; finite compiler and engineering lanes remain bounded offline operations. |
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Documentation architecture | A compact current map links implemented architecture, family records, contracts, operation, development and release owners; retired audits, plans and migrations live in Git history. |
 | Code commentary | Every governed first-party source follows the natural selective-commentary doctrine; the structural guard rejects obsolete templates and boilerplate while production lexical tokens remain unchanged. |
-| Runtime console | The empty `yvex` path and explicit `yvex chat` path are one client-owned linear, scrollback-preserving console over public protocol facts. It renders protocol-authored progress, committed output, typed metrics, cancellation and bounded terminal restoration without backend-private reads. |
+| Runtime console | Explicit `yvex chat` is the sole client-owned linear, scrollback-preserving console over public protocol facts. Bare `yvex` only renders the product command map. Chat renders protocol-authored progress, committed output, typed metrics, cancellation and bounded terminal restoration without backend-private reads. |
 | Operator surface | The strict generated operation registry drives compiled discovery, help, completion and slash projections; executable tests validate the current graph directly rather than reconciling a frozen audit. |
 | Performance | `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` remains `partial`: startup and bounded profiling are accepted; warm decode remains below admission. |
 

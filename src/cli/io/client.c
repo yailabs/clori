@@ -73,7 +73,8 @@ static int client_error(const yvex_error *err)
 {
     fprintf(stderr, "yvex: %s\n", yvex_error_message(err));
     if (yvex_error_code(err) == YVEX_ERR_IO)
-        fprintf(stderr, "hint: run `yvex server`, then `yvex server load MODEL`\n");
+        fprintf(stderr, "hint: start one with `yvex serve`; load a profile with "
+                        "`yvex engine load PROFILE`\n");
     return 1;
 }
 void yvex_cli_client_request_init(yvex_client_request *request, yvex_client_operation operation)
@@ -145,16 +146,6 @@ static int parse_u64(const char *text, unsigned long long *value, int allow_zero
     errno = 0;
     parsed = strtoull(text, &end, 10);
     if (errno || !end || *end || (!allow_zero && !parsed)) return 0;
-    *value = parsed;
-    return 1;
-}
-static int parse_double(const char *text, double *value)
-{
-    char *end = NULL;
-    double parsed;
-    errno = 0;
-    parsed = strtod(text, &end);
-    if (errno || !end || *end || !isfinite(parsed)) return 0;
     *value = parsed;
     return 1;
 }
@@ -299,10 +290,11 @@ static const char *engine_execution_name(
 static void render_status(const yvex_server_summary *status, int json)
 {
     if (json) {
-        printf("{\"protocol\":%u,\"status\":%u,\"host_ready\":%s,"
+        printf("{\"schema\":\"yvex.host.status.v1\",\"protocol\":%u,"
+               "\"status\":%u,\"host_ready\":%s,"
                "\"engine_count\":%llu,\"loaded_engine_count\":%llu,"
                "\"draining_engine_count\":%llu,\"maximum_engines\":%llu,"
-               "\"workers\":%llu,\"sessions\":%llu,\"requests\":%llu,"
+               "\"workers\":%llu,\"session_count\":%llu,\"requests\":%llu,"
                "\"uptime_ns\":%llu,"
                "\"model_open_count\":%llu,\"model_close_count\":%llu,"
                "\"artifact_open_count\":%llu,\"binding_open_count\":%llu,"
@@ -404,7 +396,7 @@ static int runtime_summary_fetch(yvex_server_summary *summary, yvex_error *err)
     yvex_client_close(&client);
     return rc;
 }
-static int server_status(int json)
+static int host_status(int json)
 {
     yvex_server_summary summary;
     yvex_error err;
@@ -504,7 +496,7 @@ static int engine_generation_resolve(const char *alias,
     if (rc == YVEX_OK && !found) {
         rc = YVEX_ERR_STATE;
         yvex_error_set(err, YVEX_ERR_STATE, "client.engine-generation",
-                       "requested model engine is not loaded");
+                       "requested engine is not loaded");
     }
     return rc;
 }
@@ -562,8 +554,8 @@ static int runtime_adapter_session_bound(yvex_operator_runtime_adapter adapter)
     default: return 0;
     }
 }
-static int server_engine_control(yvex_client_operation operation,
-                                 const char *alias)
+static int engine_control(yvex_client_operation operation,
+                          const char *alias)
 {
     yvex_client_request request;
     yvex_client_message message;
@@ -572,7 +564,7 @@ static int server_engine_control(yvex_client_operation operation,
     int rc;
     request_init(&request, operation);
     if (!alias || !alias[0]) {
-        fputs("yvex: server load/unload requires MODEL\n", stderr);
+        fputs("yvex: engine load/unload requires PROFILE or ENGINE\n", stderr);
         return 2;
     }
     snprintf(request.model_alias, sizeof(request.model_alias), "%s", alias);
@@ -596,7 +588,7 @@ static int server_engine_control(yvex_client_operation operation,
     yvex_client_close(&client);
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
-static int server_models(int json)
+static int engine_catalog(const char *filter, int json)
 {
     yvex_client_request request;
     yvex_client_message message;
@@ -606,7 +598,8 @@ static int server_models(int json)
     int rc;
     request_init(&request, YVEX_CLIENT_OP_ENGINE_LIST);
     rc = request_open(&client, &request, &err);
-    if (json) fputs("{\"schema\":\"yvex.server.engines.v1\",\"engines\":[", stdout);
+    if (json && !filter)
+        fputs("{\"schema\":\"yvex.engine.list.v1\",\"engines\":[", stdout);
     while (rc == YVEX_OK) {
         rc = yvex_client_receive(client, &message, &err);
         if (rc != YVEX_OK) break;
@@ -623,16 +616,26 @@ static int server_models(int json)
             rc = YVEX_ERR_FORMAT;
             break;
         }
-        if (json && count) fputc(',', stdout);
+        if (filter && strcmp(filter, message.engine.alias)) continue;
+        if (filter && count) continue;
+        if (json && filter)
+            fputs("{\"schema\":\"yvex.engine.v1\",\"engine\":", stdout);
+        else if (json && count)
+            fputc(',', stdout);
         render_engine(&message.engine, json);
         count++;
     }
-    if (json) fputs("]}\n", stdout);
-    else if (rc == YVEX_OK && !count) puts("no model engines known to this host");
+    if (json && (!filter || count)) fputs(filter ? "}\n" : "]}\n", stdout);
+    else if (rc == YVEX_OK && !count && !filter) puts("no engines known to this host");
+    if (rc == YVEX_OK && filter && !count) {
+        yvex_error_set(&err, YVEX_ERR_STATE, "client.engine",
+                       "requested engine is not known to the host");
+        rc = YVEX_ERR_STATE;
+    }
     yvex_client_close(&client);
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
-static int server_memory(void)
+static int host_memory(void)
 {
     yvex_server_summary summary;
     yvex_error err;
@@ -640,7 +643,7 @@ static int server_memory(void)
     if (rc == YVEX_OK) {
         yvex_cli_terminal_style style;
         yvex_cli_terminal_style_get(stdout, &style);
-        printf("%sserver memory%s · %.2f GiB host · %.2f GiB device · "
+        printf("%shost memory%s · %.2f GiB host · %.2f GiB device · "
                "%.2f GiB mapped · %.2f GiB RSS · %.2f GiB peak RSS\n",
                style.strong, style.reset,
                (double)summary.metrics.resident_host_bytes / 1073741824.0,
@@ -651,7 +654,7 @@ static int server_memory(void)
     }
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
-static int server_log(int json_output, int detailed)
+static int host_logs(int json_output, int detailed)
 {
     yvex_client_request request;
     yvex_client_message message;
@@ -667,7 +670,7 @@ static int server_log(int json_output, int detailed)
         if (rc != YVEX_OK) return client_error(&err);
         render_status(&summary, 0);
         yvex_cli_terminal_style_get(stdout, &style);
-        printf("%sserver log%s · operational history and live events · Ctrl-C to stop\n\n",
+        printf("%shost logs%s · operational history and live events · Ctrl-C to stop\n\n",
                style.accent, style.reset);
         yvex_cli_watch_renderer_open(&watch, detailed);
     }
@@ -825,8 +828,7 @@ static int generation_turn(const client_engine_binding *engine,
                            const client_turn_options *options, int conversation,
                            yvex_server_engine_kind engine_kind,
                            unsigned long long context_capacity,
-                           int *connection_lost)
-{
+                           int *connection_lost) {
     yvex_client_request request;
     yvex_client_message message;
     yvex_client *client = NULL;
@@ -1407,7 +1409,7 @@ static void repl_reasoning_policy(
         return;
     }
     options->reasoning_policy = policy;
-    printf("%sreasoning%s · %s for the next turn\n", style.accent,
+    printf("%sreasoning%s · %s until changed\n", style.accent,
            style.reset, name);
 }
 static int repl_command(const char *line, const client_engine_binding *engine,
@@ -1455,15 +1457,6 @@ static int repl_command(const char *line, const client_engine_binding *engine,
         break;
     case YVEX_OPERATOR_RUNTIME_CONSOLE_STATUS:
         (void)console_status(engine, current);
-        break;
-    case YVEX_OPERATOR_RUNTIME_SERVER_STATUS:
-        (void)server_status(0);
-        break;
-    case YVEX_OPERATOR_RUNTIME_SERVER_MODELS:
-        (void)server_models(0);
-        break;
-    case YVEX_OPERATOR_RUNTIME_SERVER_MEMORY:
-        (void)server_memory();
         break;
     case YVEX_OPERATOR_RUNTIME_SESSION_LIST:
         (void)administration_bound(YVEX_CLIENT_OP_SESSION_LIST, engine, NULL, 1);
@@ -1516,7 +1509,7 @@ static int repl_command(const char *line, const client_engine_binding *engine,
         {
             yvex_cli_terminal_style style;
             yvex_cli_terminal_style_get(stdout, &style);
-            printf("%scommand unavailable in this console%s\n", style.warning, style.reset);
+            printf("%scommand unavailable in chat%s\n", style.warning, style.reset);
         }
         break;
     }
@@ -1556,7 +1549,9 @@ static int chat(const char *model_alias, const char *session_name,
     unsigned long long generated_session = 1u;
     int closed = 0, connected = 1, attached = 0, result = 0;
     if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
-        fprintf(stderr, "yvex: chat requires a terminal; use `yvex run TEXT`\n");
+        fputs("yvex: chat requires a terminal\n"
+              "programmatic inference: use the configured provider API\n",
+              stderr);
         return 2;
     }
     memset(&history, 0, sizeof(history));
@@ -1744,171 +1739,6 @@ static int chat_command(int argc, char **argv, size_t consumed)
         return 2;
     return chat(model, session, maximum_new_tokens, &options);
 }
-/* Parse and execute one complete one-shot policy without inferring strategy. */
-static int run_command(int argc, char **argv)
-{
-    client_engine_binding engine = {0};
-    client_turn_options options;
-    yvex_client_message console;
-    yvex_error err;
-    char ephemeral[YVEX_SERVER_SESSION_NAME_CAP];
-    const char *model = NULL, *session = NULL, *prompt = NULL;
-    int index, owns_session = 0;
-    turn_options_init(&options);
-    for (index = 2; index < argc; ++index) {
-        const char *argument = argv[index];
-        if (!strcmp(argument, "--model") && index + 1 < argc)
-            model = argv[++index];
-        else if (!strcmp(argument, "--session") && index + 1 < argc)
-            session = argv[++index];
-        else if (!strcmp(argument, "--max-new-tokens") && index + 1 < argc) {
-            if (!parse_u64(argv[++index], &options.maximum_new_tokens, 0)) return 2;
-        } else if (!strcmp(argument, "--first-image") && index + 1 < argc) {
-            if (!turn_condition_path(options.first_image, argv[++index])) return 2;
-        } else if (!strcmp(argument, "--last-image") && index + 1 < argc) {
-            if (!turn_condition_path(options.last_image, argv[++index])) return 2;
-        } else if (!strcmp(argument, "--strategy") && index + 1 < argc) {
-            const char *strategy = argv[++index];
-            if (!strcmp(strategy, "greedy")) options.sampling.stochastic = 0;
-            else if (!strcmp(strategy, "stochastic")) options.sampling.stochastic = 1;
-            else return 2;
-            options.text_policy_explicit = 1;
-        } else if (!strcmp(argument, "--reasoning") && index + 1 < argc) {
-            const char *reasoning = argv[++index];
-            if (!strcmp(reasoning, "none"))
-                options.reasoning_policy = YVEX_REASONING_DISABLED;
-            else if (!strcmp(reasoning, "high"))
-                options.reasoning_policy = YVEX_REASONING_ENABLED;
-            else if (!strcmp(reasoning, "max"))
-                options.reasoning_policy = YVEX_REASONING_MAXIMUM;
-            else
-                return 2;
-        } else if (!strcmp(argument, "--seed") && index + 1 < argc) {
-            if (!parse_u64(argv[++index], &options.sampling.seed, 1)) return 2;
-            options.sampling.seed_present = 1;
-        } else if (!strcmp(argument, "--temperature") && index + 1 < argc) {
-            if (!parse_double(argv[++index], &options.sampling.temperature)) return 2;
-            options.text_policy_explicit = 1;
-        } else if (!strcmp(argument, "--top-k") && index + 1 < argc) {
-            if (!parse_u64(argv[++index], &options.sampling.top_k, 1)) return 2;
-            options.text_policy_explicit = 1;
-        } else if (!strcmp(argument, "--top-p") && index + 1 < argc) {
-            if (!parse_double(argv[++index], &options.sampling.top_p)) return 2;
-            options.text_policy_explicit = 1;
-        } else if (!strcmp(argument, "--min-p") && index + 1 < argc) {
-            if (!parse_double(argv[++index], &options.sampling.min_p)) return 2;
-            options.text_policy_explicit = 1;
-        } else if (!strcmp(argument, "--typical-p") && index + 1 < argc) {
-            if (!parse_double(argv[++index], &options.sampling.typical_p)) return 2;
-            options.text_policy_explicit = 1;
-        } else if (!strcmp(argument, "--trajectory") && index + 1 < argc) {
-            const char *trajectory = argv[++index];
-            if (options.media_execution.trajectory !=
-                YVEX_CLIENT_MEDIA_TRAJECTORY_DEFAULT) return 2;
-            if (!strcmp(trajectory, "preview"))
-                options.media_execution.trajectory =
-                    YVEX_CLIENT_MEDIA_TRAJECTORY_PREVIEW;
-            else if (!strcmp(trajectory, "released"))
-                options.media_execution.trajectory =
-                    YVEX_CLIENT_MEDIA_TRAJECTORY_RELEASED;
-            else return 2;
-        } else if (!strcmp(argument, "--width") && index + 1 < argc) {
-            if (options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_WIDTH ||
-                !parse_u64(argv[++index], &options.media_execution.width, 0)) return 2;
-            options.media_execution.present |= YVEX_CLIENT_MEDIA_EXECUTION_WIDTH;
-        } else if (!strcmp(argument, "--height") && index + 1 < argc) {
-            if (options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT ||
-                !parse_u64(argv[++index], &options.media_execution.height, 0)) return 2;
-            options.media_execution.present |= YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT;
-        } else if (!strcmp(argument, "--duration") && index + 1 < argc) {
-            if (options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_DURATION ||
-                !parse_duration_milliseconds(
-                    argv[++index], &options.media_execution.duration_milliseconds)) return 2;
-            options.media_execution.present |= YVEX_CLIENT_MEDIA_EXECUTION_DURATION;
-        } else if (argument[0] == '-') {
-            fprintf(stderr, "yvex: unknown run option: %s\n", argument);
-            return 2;
-        } else if (!prompt)
-            prompt = argument;
-        else {
-            fprintf(stderr, "yvex: run accepts one prompt argument\n");
-            return 2;
-        }
-    }
-    if ((model && (!model[0] || strlen(model) >= YVEX_SERVER_MODEL_ALIAS_CAP)) ||
-        !prompt || options.sampling.temperature <= 0.0 || options.sampling.top_p <= 0.0 ||
-        options.sampling.top_p > 1.0 || options.sampling.min_p < 0.0 ||
-        options.sampling.min_p > 1.0 || options.sampling.typical_p <= 0.0 ||
-        options.sampling.typical_p > 1.0 ||
-        (!!(options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_WIDTH) !=
-         !!(options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT))) {
-        fprintf(stderr,
-                "yvex: run requires one prompt and an explicit valid strategy policy\n");
-        return 2;
-    }
-    if (model)
-        (void)snprintf(engine.alias, sizeof(engine.alias), "%s", model);
-    if (!session) {
-        (void)snprintf(ephemeral, sizeof(ephemeral), "run-%lu",
-                       (unsigned long)getpid());
-        session = ephemeral;
-        owns_session = 1;
-        if (administration_bound(YVEX_CLIENT_OP_SESSION_NEW, &engine, session,
-                                 -1) != 0)
-            return 1;
-    }
-    if (console_status_fetch(&engine, session, &console, &err) != YVEX_OK ||
-        engine_binding_capture(&engine, &console.console, &err) != YVEX_OK) {
-        if (owns_session)
-            (void)administration_bound(YVEX_CLIENT_OP_SESSION_CLOSE, &engine,
-                                       session, -1);
-        return client_error(&err);
-    }
-    if (console.engine_kind == YVEX_SERVER_ENGINE_MEDIA) {
-        if (options.text_policy_explicit ||
-            options.reasoning_policy <= YVEX_REASONING_MAXIMUM ||
-            options.maximum_new_tokens) {
-            fprintf(stderr, "yvex: text sampling options are unavailable for media generation\n");
-            if (owns_session)
-                (void)administration_bound(YVEX_CLIENT_OP_SESSION_CLOSE, &engine,
-                                           session, -1);
-            return 2;
-        }
-    } else if (options.first_image[0] || options.last_image[0] ||
-               options.media_execution.trajectory !=
-                   YVEX_CLIENT_MEDIA_TRAJECTORY_DEFAULT ||
-               options.media_execution.present) {
-        fprintf(stderr, "yvex: media options require a media engine\n");
-        if (owns_session)
-            (void)administration_bound(YVEX_CLIENT_OP_SESSION_CLOSE, &engine,
-                                       session, -1);
-        return 2;
-    } else if ((options.sampling.stochastic && !options.sampling.seed_present) ||
-               (!options.sampling.stochastic &&
-                (options.sampling.seed_present ||
-                 options.sampling.temperature != 1.0 ||
-                 options.sampling.top_k || options.sampling.top_p != 1.0 ||
-                 options.sampling.min_p != 0.0 ||
-                 options.sampling.typical_p != 1.0))) {
-        fprintf(stderr, "yvex: run requires an explicit valid strategy policy\n");
-        if (owns_session)
-            (void)administration_bound(YVEX_CLIENT_OP_SESSION_CLOSE, &engine,
-                                       session, -1);
-        return 2;
-    }
-    {
-        int status = generation_turn(&engine, session,
-                                     (const unsigned char *)prompt,
-                                     (unsigned long long)strlen(prompt),
-                                     &options, 0,
-                                     console.engine_kind,
-                                     console.console.context_capacity, NULL);
-        if (owns_session)
-            (void)administration_bound(YVEX_CLIENT_OP_SESSION_CLOSE, &engine,
-                                       session, -1);
-        return status;
-    }
-}
 static int help_command(int argc, char **argv, size_t consumed)
 {
     const char *path[16];
@@ -2004,7 +1834,7 @@ static void render_console_status(const yvex_client_message *message, int startu
         puts("\n");
         return;
     }
-    printf("%sconsole%s · ", style.strong, style.reset);
+    printf("%schat%s · ", style.strong, style.reset);
     printf("%s · %s · %s · variant %.12s · %s%s%s · %s · "
            "session %s · position %llu · turns %llu",
            target, backend_name(status->backend),
@@ -2055,30 +1885,39 @@ int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
     }
     switch (operation->runtime_adapter) {
     case YVEX_OPERATOR_RUNTIME_CHAT: return chat_command(argc, argv, consumed);
-    case YVEX_OPERATOR_RUNTIME_RUN: return run_command(argc, argv);
-    case YVEX_OPERATOR_RUNTIME_SERVER_STATUS:
-        return server_status(argc > 3 && !strcmp(argv[3], "--json"));
-    case YVEX_OPERATOR_RUNTIME_SERVER_LOAD:
-        return server_engine_control(YVEX_CLIENT_OP_ENGINE_LOAD, name);
-    case YVEX_OPERATOR_RUNTIME_SERVER_UNLOAD:
-        return server_engine_control(YVEX_CLIENT_OP_ENGINE_UNLOAD, name);
-    case YVEX_OPERATOR_RUNTIME_SERVER_MODELS:
-        return server_models(argc > 3 && !strcmp(argv[3], "--json"));
-    case YVEX_OPERATOR_RUNTIME_SERVER_MEMORY: return server_memory();
-    case YVEX_OPERATOR_RUNTIME_SERVER_LOG: {
+    case YVEX_OPERATOR_RUNTIME_HOST_STATUS: {
+        int json = 0, index;
+        for (index = (int)consumed + 1; index < argc; ++index)
+            json |= !strcmp(argv[index], "--json");
+        return host_status(json);
+    }
+    case YVEX_OPERATOR_RUNTIME_ENGINE_LOAD:
+        return engine_control(YVEX_CLIENT_OP_ENGINE_LOAD, name);
+    case YVEX_OPERATOR_RUNTIME_ENGINE_UNLOAD:
+        return engine_control(YVEX_CLIENT_OP_ENGINE_UNLOAD, name);
+    case YVEX_OPERATOR_RUNTIME_ENGINE_CATALOG: {
+        int json = 0, index;
+        const char *filter = !strcmp(operation->operation_id, "engine.show")
+                                 ? name : NULL;
+        for (index = (int)consumed + 1; index < argc; ++index)
+            json |= !strcmp(argv[index], "--json");
+        return engine_catalog(filter, json);
+    }
+    case YVEX_OPERATOR_RUNTIME_HOST_MEMORY: return host_memory();
+    case YVEX_OPERATOR_RUNTIME_HOST_LOGS: {
         int json = 0, detailed = 0, index;
-        for (index = 3; index < argc; ++index) {
+        for (index = (int)consumed + 1; index < argc; ++index) {
             json |= !strcmp(argv[index], "--json");
             detailed |= !strcmp(argv[index], "--verbose");
         }
         if (json && detailed) {
-            fputs("yvex: server log accepts either --verbose or --json, not both\n",
+            fputs("yvex: host logs accepts either --verbose or --json, not both\n",
                   stderr);
             return 2;
         }
-        return server_log(json, detailed);
+        return host_logs(json, detailed);
     }
-    case YVEX_OPERATOR_RUNTIME_SERVER_STOP:
+    case YVEX_OPERATOR_RUNTIME_HOST_STOP:
         return administration_bound(YVEX_CLIENT_OP_RUNTIME_STOP, NULL, NULL, 0);
     case YVEX_OPERATOR_RUNTIME_SESSION_NEW:
         return administration_bound(YVEX_CLIENT_OP_SESSION_NEW, session_engine,

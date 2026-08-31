@@ -63,12 +63,12 @@ The normal server command enables the default loopback listener before any
 engine is loaded. Start the host, then load a startup-ready registry profile:
 
 ```sh
-./yvex model list
-./yvex server
+./yvex profile list
+./yvex serve
 ```
 
-From another process, load one exact alias with `./yvex server load PROFILE`.
-The OpenAI listener remains available while deterministic server commands
+From another process, load one exact alias with `./yvex engine load PROFILE`.
+The OpenAI listener remains available while deterministic host and engine commands
 manage engine lifecycle; the foreground host terminal remains a log stream.
 Adapter-to-runtime frame I/O has a bounded 600000 ms default timeout; local
 operators may override it with `--openai-timeout-ms` for their admitted workload.

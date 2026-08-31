@@ -19,7 +19,7 @@ finish()
     trap - EXIT HUP INT TERM
     if test -n "$server_pid" && kill -0 "$server_pid" 2>/dev/null; then
         HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" \
-            "$YVEX_BIN" server stop >/dev/null 2>&1 || true
+            "$YVEX_BIN" host stop >/dev/null 2>&1 || true
         wait "$server_pid" 2>/dev/null || true
     fi
     yvex_test_cleanup_preserving_status "$status" "$OUT_DIR"
@@ -89,9 +89,9 @@ cat >"$HOME_ROOT/.local/share/yvex/models.local.json" <<EOF
 }
 EOF
 
-"$YVEX_BIN" server --help >"$OUT_DIR/help.out" 2>"$OUT_DIR/help.err"
-contains "$OUT_DIR/help.out" 'usage: yvex server [options]'
-contains "$OUT_DIR/help.out" 'Run the persistent multi-engine host in the foreground.'
+"$YVEX_BIN" serve --help >"$OUT_DIR/help.out" 2>"$OUT_DIR/help.err"
+contains "$OUT_DIR/help.out" 'usage: yvex serve [options]'
+contains "$OUT_DIR/help.out" 'Run the persistent YVEX host in the foreground.'
 contains "$OUT_DIR/help.out" '--workers'
 contains "$OUT_DIR/help.out" '--max-engines'
 contains "$OUT_DIR/help.out" '--openai'
@@ -100,25 +100,25 @@ contains "$OUT_DIR/help.out" '--openai'
 ! grep -F -- '--generation-mode' "$OUT_DIR/help.out" >/dev/null
 ! grep -F -- '--media-artifact-root' "$OUT_DIR/help.out" >/dev/null
 
-"$YVEX_BIN" server load --help >"$OUT_DIR/load-help.out"
-"$YVEX_BIN" server unload --help >"$OUT_DIR/unload-help.out"
-"$YVEX_BIN" server models --help >"$OUT_DIR/models-help.out"
-contains "$OUT_DIR/load-help.out" 'usage: yvex server load MODEL'
-contains "$OUT_DIR/unload-help.out" 'usage: yvex server unload MODEL'
-contains "$OUT_DIR/models-help.out" 'usage: yvex server models [options]'
+"$YVEX_BIN" engine load --help >"$OUT_DIR/load-help.out"
+"$YVEX_BIN" engine unload --help >"$OUT_DIR/unload-help.out"
+"$YVEX_BIN" engine list --help >"$OUT_DIR/models-help.out"
+contains "$OUT_DIR/load-help.out" 'usage: yvex engine load PROFILE'
+contains "$OUT_DIR/unload-help.out" 'usage: yvex engine unload ENGINE'
+contains "$OUT_DIR/models-help.out" 'usage: yvex engine list [options]'
 
 set +e
-"$YVEX_BIN" server --backend cpu >"$OUT_DIR/backend.out" 2>"$OUT_DIR/backend.err"
+"$YVEX_BIN" serve --backend cpu >"$OUT_DIR/backend.out" 2>"$OUT_DIR/backend.err"
 backend_status=$?
-"$YVEX_BIN" server --workers 0 >"$OUT_DIR/workers.out" 2>"$OUT_DIR/workers.err"
+"$YVEX_BIN" serve --workers 0 >"$OUT_DIR/workers.out" 2>"$OUT_DIR/workers.err"
 workers_status=$?
-"$YVEX_BIN" server --max-engines 0 >"$OUT_DIR/engines.out" 2>"$OUT_DIR/engines.err"
+"$YVEX_BIN" serve --max-engines 0 >"$OUT_DIR/engines.out" 2>"$OUT_DIR/engines.err"
 engines_status=$?
-"$YVEX_BIN" server --openai remote >"$OUT_DIR/remote.out" 2>"$OUT_DIR/remote.err"
+"$YVEX_BIN" serve --openai remote >"$OUT_DIR/remote.out" 2>"$OUT_DIR/remote.err"
 remote_status=$?
-"$YVEX_BIN" server --openai-port 0 >"$OUT_DIR/port.out" 2>"$OUT_DIR/port.err"
+"$YVEX_BIN" serve --openai-port 0 >"$OUT_DIR/port.out" 2>"$OUT_DIR/port.err"
 port_status=$?
-"$YVEX_BIN" server --openai on --openai off \
+"$YVEX_BIN" serve --openai on --openai off \
     >"$OUT_DIR/duplicate.out" 2>"$OUT_DIR/duplicate.err"
 duplicate_status=$?
 set -e
@@ -137,14 +137,14 @@ contains "$OUT_DIR/port.err" 'invalid value for --openai-port: 0'
 contains "$OUT_DIR/duplicate.err" 'duplicate flag: --openai'
 
 HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" \
-    "$YVEX_BIN" server --console off --openai off --workers 2 --max-engines 2 \
+    "$YVEX_BIN" serve --logs off --openai off --workers 2 --max-engines 2 \
     >"$OUT_DIR/host.out" 2>"$OUT_DIR/host.err" &
 server_pid=$!
 
 ready=0
 attempt=0
 while test "$attempt" -lt 100; do
-    if run_client server status --json >"$OUT_DIR/status.json" 2>"$OUT_DIR/status.err"; then
+    if run_client host status --json >"$OUT_DIR/status.json" 2>"$OUT_DIR/status.err"; then
         ready=1
         break
     fi
@@ -153,10 +153,11 @@ while test "$attempt" -lt 100; do
     sleep 0.02
 done
 test "$ready" -eq 1 || fail 'persistent host did not become ready'
-contains "$OUT_DIR/host.out" 'YVEX server · persistent host'
+contains "$OUT_DIR/host.out" 'YVEX host · persistent verified inference'
 contains "$OUT_DIR/host.out" 'native verified inference · YVEX'
 contains "$OUT_DIR/host.out" 'engines 0/2'
-contains "$OUT_DIR/host.out" 'load with `yvex server load MODEL`'
+contains "$OUT_DIR/host.out" 'host ready · Ctrl-C to stop'
+contains "$OUT_DIR/status.json" '"schema":"yvex.host.status.v1"'
 contains "$OUT_DIR/status.json" '"protocol":16'
 contains "$OUT_DIR/status.json" '"status":2'
 contains "$OUT_DIR/status.json" '"host_ready":true'
@@ -167,56 +168,61 @@ contains "$OUT_DIR/status.json" '"workers":2'
 contains "$OUT_DIR/status.json" '"model_open_count":0'
 contains "$OUT_DIR/status.json" '"openai_enabled":false'
 
-run_client server models --json >"$OUT_DIR/models-empty.json"
-contains "$OUT_DIR/models-empty.json" '"schema":"yvex.server.engines.v1"'
+run_client engine list --json >"$OUT_DIR/models-empty.json"
+contains "$OUT_DIR/models-empty.json" '"schema":"yvex.engine.list.v1"'
 contains "$OUT_DIR/models-empty.json" '"engines":[]'
 
 set +e
-run_client server load absent >"$OUT_DIR/load-absent.out" 2>"$OUT_DIR/load-absent.err"
+run_client engine load absent >"$OUT_DIR/load-absent.out" 2>"$OUT_DIR/load-absent.err"
 absent_status=$?
-run_client server load "$PROFILE" >"$OUT_DIR/load.out" 2>"$OUT_DIR/load.err"
+run_client engine load "$PROFILE" >"$OUT_DIR/load.out" 2>"$OUT_DIR/load.err"
 load_status=$?
 set -e
 test "$absent_status" -eq 1
 test "$load_status" -eq 1
-contains "$OUT_DIR/load-absent.err" 'model is not registered: absent'
+contains "$OUT_DIR/load-absent.err" 'profile is not registered: absent'
 contains "$OUT_DIR/load.err" 'runtime binding open failed'
 
-run_client server status --json >"$OUT_DIR/status-after-failure.json"
+run_client host status --json >"$OUT_DIR/status-after-failure.json"
 contains "$OUT_DIR/status-after-failure.json" '"host_ready":true'
 contains "$OUT_DIR/status-after-failure.json" '"engine_count":1'
 contains "$OUT_DIR/status-after-failure.json" '"loaded_engine_count":0'
 contains "$OUT_DIR/status-after-failure.json" '"model_open_count":0'
-run_client server models --json >"$OUT_DIR/models-failed.json"
+run_client engine list --json >"$OUT_DIR/models-failed.json"
 contains "$OUT_DIR/models-failed.json" "\"alias\":\"$PROFILE\""
 contains "$OUT_DIR/models-failed.json" '"generation":1'
 contains "$OUT_DIR/models-failed.json" '"state":"failed"'
 contains "$OUT_DIR/models-failed.json" '"execution_ready":false'
 
 set +e
-run_client server unload "$PROFILE" >"$OUT_DIR/unload.out" 2>"$OUT_DIR/unload.err"
+run_client engine unload "$PROFILE" >"$OUT_DIR/unload.out" 2>"$OUT_DIR/unload.err"
 unload_status=$?
 set -e
 test "$unload_status" -eq 1
-contains "$OUT_DIR/unload.err" 'requested model engine is not loaded'
+contains "$OUT_DIR/unload.err" 'requested engine is not loaded'
 
 # A second foreground invocation reports the existing host and exits.  It does
 # not compete for listeners or open a second stdin-driven command surface.
+set +e
 HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 TERM=xterm-256color \
     script -q -e -c \
-        "stty cols 132 rows 44; $YVEX_BIN server" \
+        "stty cols 132 rows 44; $YVEX_BIN serve" \
         "$OUT_DIR/attached.typescript" </dev/null \
         >"$OUT_DIR/attached.out" 2>"$OUT_DIR/attached.err"
-contains "$OUT_DIR/attached.typescript" 'STATE      ● READY · ALREADY RUNNING'
-contains "$OUT_DIR/attached.typescript" 'no second host or prompt started'
+duplicate_host_status=$?
+set -e
+test "$duplicate_host_status" -eq 1
+contains "$OUT_DIR/attached.typescript" 'yvex: host already running'
+contains "$OUT_DIR/attached.typescript" 'yvex host status'
+not_contains "$OUT_DIR/attached.typescript" 'YVEX HOST · VERIFIED INFERENCE'
 not_contains "$OUT_DIR/attached.typescript" 'Interactive host console'
 not_contains "$OUT_DIR/attached.typescript" 'yvex[host] >'
 not_contains "$OUT_DIR/attached.typescript" 'listener reservation failed'
 kill -0 "$server_pid"
-run_client server status --json >"$OUT_DIR/status-after-probe.json"
+run_client host status --json >"$OUT_DIR/status-after-probe.json"
 contains "$OUT_DIR/status-after-probe.json" '"host_ready":true'
 
-run_client server stop >"$OUT_DIR/stop.out" 2>"$OUT_DIR/stop.err"
+run_client host stop >"$OUT_DIR/stop.out" 2>"$OUT_DIR/stop.err"
 wait "$server_pid"
 server_pid=
 test ! -e "$SOCKET_PATH"
@@ -225,14 +231,14 @@ test ! -e "$SOCKET_PATH"
 # deterministic command plane from another terminal.
 HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 TERM=xterm-256color \
     script -q -f -e -c \
-        "stty cols 132 rows 44; $YVEX_BIN server --openai off --workers 2 --max-engines 2" \
+        "stty cols 132 rows 44; $YVEX_BIN serve --openai off --workers 2 --max-engines 2" \
         "$OUT_DIR/server-terminal.typescript" </dev/null \
         >"$OUT_DIR/server-terminal.out" 2>"$OUT_DIR/server-terminal.err" &
 server_pid=$!
 ready=0
 attempt=0
 while test "$attempt" -lt 100; do
-    if run_client server status --json >"$OUT_DIR/terminal-status.json" 2>/dev/null; then
+    if run_client host status --json >"$OUT_DIR/terminal-status.json" 2>/dev/null; then
         ready=1
         break
     fi
@@ -242,21 +248,23 @@ while test "$attempt" -lt 100; do
 done
 test "$ready" -eq 1 || fail 'terminal foreground host did not become ready'
 set +e
-run_client server load "$PROFILE" >"$OUT_DIR/terminal-load.out" \
+run_client engine load "$PROFILE" >"$OUT_DIR/terminal-load.out" \
     2>"$OUT_DIR/terminal-load.err"
 load_status=$?
 set -e
 test "$load_status" -eq 1
 contains "$OUT_DIR/terminal-load.err" 'runtime binding open failed'
-run_client server stop >/dev/null
+run_client host stop >/dev/null
 wait "$server_pid"
 server_pid=
-contains "$OUT_DIR/server-terminal.typescript" 'YVEX SERVER · PERSISTENT HOST'
+contains "$OUT_DIR/server-terminal.typescript" 'YVEX HOST · VERIFIED INFERENCE'
 contains "$OUT_DIR/server-terminal.typescript" 'STATE      ● STARTING'
 contains "$OUT_DIR/server-terminal.typescript" 'LOCAL IPC'
 contains "$OUT_DIR/server-terminal.typescript" 'LOGS       human events · foreground'
-contains "$OUT_DIR/server-terminal.typescript" 'CONTROL    yvex server load · models'
-contains "$OUT_DIR/server-terminal.typescript" 'HELP       run `yvex` for interactive chat'
+contains "$OUT_DIR/server-terminal.typescript" 'host ready · Ctrl-C to stop'
+not_contains "$OUT_DIR/server-terminal.typescript" 'CONTROL'
+not_contains "$OUT_DIR/server-terminal.typescript" 'OPERATE'
+not_contains "$OUT_DIR/server-terminal.typescript" 'type help'
 not_contains "$OUT_DIR/server-terminal.typescript" 'Interactive host console'
 not_contains "$OUT_DIR/server-terminal.typescript" 'yvex[host] >'
 not_contains "$OUT_DIR/server-terminal.typescript" 'yvex[multi-engine] >'

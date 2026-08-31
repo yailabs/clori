@@ -15,9 +15,8 @@
 | Comparability | not-applicable |
 | Publishability | reviewed |
 
-Command note: this record preserves the interactive spelling used at its
-checkpoint. The current interactive entrypoint is bare `yvex`; the explicit
-`yvex chat` spelling is retired.
+Command note: this record uses the current explicit `yvex chat` client
+spelling; bare `yvex` now prints the product command map.
 
 ## Before
 
@@ -90,8 +89,8 @@ separate from MiniMax preprocessing policy.
 
 Protocol v14 and the typed media request carry up to one `first` and one `last` image condition.
 Duplicate roles, unsupported kinds, unreadable images and incompatible condition geometry fail
-before publication. `yvex run` and the then-current `yvex chat` spelling expose `--first-image`
-and `--last-image`; prompt contents remain opaque and select no execution policy.
+before publication. The native `yvex chat` client exposes `--first-image` and
+`--last-image`; prompt contents remain opaque and select no execution policy.
 
 Generic CUDA owners gained the reusable Qwen3-VL vision operations, Conv2D/Conv3D support needed by
 the encoder, group normalization and GELU. The third admitted MiniMax family projection composes

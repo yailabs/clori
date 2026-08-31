@@ -20,7 +20,7 @@
   <g transform="translate(35 605)"><rect class="client-box" width="165" height="125" rx="12"/><text class="text" x="82" y="38">SDKs / apps</text><text class="small" x="82" y="66">loopback HTTP/SSE</text><text class="small" x="82" y="88">OpenAI profile v1</text><text class="small" x="82" y="108">external clients</text></g>
 
   <rect class="host" x="285" y="115" width="720" height="750" rx="18"/>
-  <text class="section" x="645" y="151" fill="#6d28d9" text-anchor="middle">yvex server · persistent host + OpenAI</text>
+  <text class="section" x="645" y="151" fill="#6d28d9" text-anchor="middle">yvex serve · persistent host + OpenAI</text>
 
   <rect class="group" x="320" y="180" width="650" height="140" rx="12"/>
   <text class="text" x="645" y="210">Host-owned engine generations</text>

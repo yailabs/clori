@@ -6,7 +6,7 @@ flowchart LR
         source --> compiler --> artifact
     end
 
-    subgraph host[B. Run — persistent yvex server]
+    subgraph host[B. Run — persistent yvex serve]
         protocol[Private local protocol]
         openai[Loopback OpenAI adapter]
         sessions[Engine manager<br/>+ generation-bound sessions]
@@ -28,8 +28,8 @@ flowchart LR
     subgraph interact[D. Interact]
         raw[Raw trace]
         watch[Engine watch]
-        chat[REPL / chat]
-        run[yvex run]
+        chat[yvex chat]
+        admin[yvex host / engine / session]
         apps[SDKs / applications]
     end
 
@@ -38,7 +38,7 @@ flowchart LR
     events --> raw
     events --> watch
     protocol <--> chat
-    protocol <--> run
+    protocol <--> admin
     openai <--> apps
 
     offline[yvex<br/>offline engineering lane]

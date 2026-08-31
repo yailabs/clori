@@ -37,8 +37,8 @@ with open(path, "wb") as f:
     f.write(b"0" * 64)
 PY
 
-"$YVEX_BIN" compile map --arch deepseek4 --native-source "$OUT_DIR/native" --limit 10 > "$OUT_DIR/map.out" 2> "$OUT_DIR/map.err" || fail "tensor-map failed"
-grep 'compile map: deepseek4' "$OUT_DIR/map.out" >/dev/null || fail "missing heading"
+"$YVEX_BIN" compile tensor map --arch deepseek4 --native-source "$OUT_DIR/native" --limit 10 > "$OUT_DIR/map.out" 2> "$OUT_DIR/map.err" || fail "tensor-map failed"
+grep 'compile tensor map: deepseek4' "$OUT_DIR/map.out" >/dev/null || fail "missing heading"
 grep 'native=embed.weight' "$OUT_DIR/map.out" >/dev/null || fail "missing embed row"
 grep 'role=token_embedding' "$OUT_DIR/map.out" >/dev/null || fail "missing role"
 grep 'target=token_embd.weight' "$OUT_DIR/map.out" >/dev/null || fail "missing target"
@@ -46,7 +46,7 @@ grep 'status=mapped' "$OUT_DIR/map.out" >/dev/null || fail "missing mapped statu
 grep 'target_shape=unknown' "$OUT_DIR/map.out" >/dev/null || fail "missing no-template target shape"
 grep 'status: tensor-map' "$OUT_DIR/map.out" >/dev/null || fail "missing command status"
 
-"$YVEX_BIN" compile map \
+"$YVEX_BIN" compile tensor map \
   --arch deepseek4 \
   --native-source "$OUT_DIR/native" \
   --template tests/fixtures/gguf/valid-tokenizer-simple.gguf \
@@ -56,5 +56,5 @@ grep 'target=token_embd.weight' "$OUT_DIR/template.out" >/dev/null || fail "miss
 grep 'target_shape=\[4,8\]' "$OUT_DIR/template.out" >/dev/null || fail "missing template shape"
 grep 'transform=transpose' "$OUT_DIR/template.out" >/dev/null || fail "missing transpose"
 
-"$YVEX_BIN" compile map --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" || fail "help tensor-map failed"
-grep 'usage: yvex compile map' "$OUT_DIR/help.out" >/dev/null || fail "missing help"
+"$YVEX_BIN" compile tensor map --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" || fail "help tensor-map failed"
+grep 'usage: yvex compile tensor map' "$OUT_DIR/help.out" >/dev/null || fail "missing help"

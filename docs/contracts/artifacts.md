@@ -62,7 +62,7 @@ snapshot but may not claim upstream verification. The ordered aggregate
 payload identity and per-shard trust facts are published atomically in the
 canonical source manifest outside the repository.
 
-The canonical operator projection is `yvex compile source verify --source DIR
+The canonical operator projection is `yvex source verify --source DIR
 --models-root DIR --source-manifest FILE`. It is finite, reads every shard on
 first publication, refuses missing provider SHA-256 authority, and never
 materializes or hosts a model. Reopening an unchanged upstream-verified v3

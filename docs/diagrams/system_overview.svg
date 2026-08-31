@@ -49,7 +49,7 @@
 
   <text class="section" x="655" y="126" fill="#6d28d9">B. Run</text>
   <rect class="run-panel" x="645" y="145" width="445" height="510" rx="15"/>
-  <text class="text" x="867" y="181">yvex server · persistent host</text>
+  <text class="text" x="867" y="181">yvex serve · persistent host</text>
   <rect class="box" x="680" y="205" width="375" height="70" rx="10"/>
   <text class="text" x="867" y="234">Server listeners</text>
   <text class="small" x="867" y="257">private Unix protocol · loopback HTTP/SSE</text>
@@ -101,11 +101,11 @@
   <text class="text" x="1465" y="297">Engine watch</text>
   <text class="small" x="1465" y="318">compact operations</text>
   <rect class="orange-box" x="1380" y="360" width="170" height="65" rx="10"/>
-  <text class="text" x="1465" y="387">yvex</text>
-  <text class="small" x="1465" y="408">multi-turn streaming</text>
+  <text class="text" x="1465" y="387">yvex chat</text>
+  <text class="small" x="1465" y="408">native interactive client</text>
   <rect class="orange-box" x="1380" y="450" width="170" height="65" rx="10"/>
-  <text class="text" x="1465" y="477">yvex run</text>
-  <text class="small" x="1465" y="498">one-shot client</text>
+  <text class="text" x="1465" y="477">host · engine · session</text>
+  <text class="small" x="1465" y="498">native admin clients</text>
   <rect class="orange-box" x="1380" y="540" width="170" height="75" rx="10"/>
   <text class="text" x="1465" y="568">OpenAI clients</text>
   <text class="small" x="1465" y="590">HTTP/SSE · SDKs/apps</text>

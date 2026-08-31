@@ -41,18 +41,18 @@ package ancestry through every call.
 
 ## Persistent host and engine lifecycle
 
-`yvex server` starts one foreground host with its Unix listener, optional
+`yvex serve` starts one foreground host with its Unix listener, optional
 loopback OpenAI listener, telemetry, bounded external request capacity, and an
 empty engine manager. Host readiness does not require a loaded model.
 
-`server load MODEL` resolves one local registry profile and creates a new
+`engine load PROFILE` resolves one local registry profile and creates a new
 engine generation. A text profile opens one authenticated artifact and runtime
 binding; a composite MiniMax profile opens its component set under one logical
 engine. The engine becomes routable only after package admission,
 specialization, required resources, scheduler, tokenizer/component objects, and
 execution capability are ready.
 
-`server unload MODEL` moves the exact generation to draining, refuses new
+`engine unload ENGINE` moves the exact generation to draining, refuses new
 leases, requests cancellation of active work, waits for its bounded work count,
 closes sessions and model resources, and leaves the host and other engines
 alive. Reloading the same alias creates another generation. A session or
