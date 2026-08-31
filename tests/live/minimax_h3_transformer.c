@@ -1159,7 +1159,7 @@ static int execute_latent_fixture(
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
-            80ull * 1024ull * 1024ull * 1024ull, 4ull * 1024ull * 1024ull * 1024ull, &err);
+            80ull * 1024ull * 1024ull * 1024ull, 16ull * 1024ull * 1024ull * 1024ull, &err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_borrow(session, &component, &err);
     layout_request.plan = &plan;
