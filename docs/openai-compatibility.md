@@ -67,8 +67,8 @@ engine is loaded. Start the host, then load a startup-ready registry profile:
 ./yvex serve
 ```
 
-From another process, load one exact alias with `./yvex engine load PROFILE`.
-The OpenAI listener remains available while deterministic host and engine commands
+From another terminal, select one exact deployment with `./yvex engine load`;
+automation may pass the exact alias as `./yvex engine load PROFILE`. The OpenAI listener remains available while deterministic host and engine commands
 manage engine lifecycle; the foreground host terminal remains a log stream.
 Adapter-to-runtime frame I/O has a bounded 600000 ms default timeout; local
 operators may override it with `--openai-timeout-ms` for their admitted workload.

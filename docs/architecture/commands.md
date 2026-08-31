@@ -19,9 +19,10 @@ process role according to TTY state, loaded engines, or host presence.
 | Session | mutable conversation/generation state bound to one exact engine generation |
 | Host | foreground process owning engines, sessions, scheduling, execution, listeners, and logs |
 
-These names are not aliases. In particular, a profile is not a loaded engine,
-and listing logical models never duplicates a model merely because it has
-several profiles.
+These names are not aliases. In particular, a profile is not a loaded engine.
+The default logical-model projection contains deployable models only; source
+records without authenticated lineage remain visible under `source`, and one
+model with several profiles still appears once.
 
 ## Product grammar
 
@@ -80,8 +81,8 @@ administration is performed from another process with `host`, `engine`, and
 `yvex chat` is the sole public REPL. It requires a TTY and connects to the
 private local protocol. It opens no artifacts, initializes no CUDA state,
 starts no host, and loads no engine. A missing host produces the explicit
-`yvex serve` remediation; a missing engine points to `yvex engine load
-PROFILE`.
+`yvex serve` remediation; a missing engine points to interactive `yvex engine
+load`.
 
 The linear editor preserves scrollback and owns bounded history, UTF-8
 deletion, bracketed paste, resize redraw, cancellation, and terminal
@@ -101,11 +102,14 @@ acquire, and host-stop operations are deliberately absent from the REPL.
 
 ### Hosted administration
 
-`host` addresses the already-running process. `engine load PROFILE` resolves
-one exact deployment profile and creates an immutable process-local engine
-generation; `engine unload ENGINE` drains that generation without stopping the
-host. Session commands address server-owned mutable state and cross the same
-private protocol. None of these clients opens a package directly.
+`host` addresses the already-running process. `engine load` on a terminal
+offers a linear model/deployment chooser; its numeric rows are temporary
+rendering conveniences and resolve to one exact profile identity before the
+native request. `engine load PROFILE` is the deterministic automation form.
+Both create an immutable process-local engine generation; `engine unload
+ENGINE` drains that generation without stopping the host. Session commands
+address server-owned mutable state and cross the same private protocol. None of
+these clients opens a package directly.
 
 ### Offline work
 

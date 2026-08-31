@@ -232,7 +232,7 @@ change. Git history preserves implementation chronology.
 - Native generation renders explicit reasoning and final output as distinct
   typed channels and flushes the completed model stream before metrics.
 - Model hosting now uses the explicit foreground `yvex serve` host plus
-  `engine load PROFILE` and `engine unload ENGINE`. Status, engine inventory,
+  interactive `engine load` or scripted `engine load PROFILE`, and `engine unload ENGINE`. Status, engine inventory,
   memory, logs and shutdown use the public `host` noun;
   `host logs [--json]` is the sole observability stream.
 - Generation plan ABI v5 now binds the compiled workload-profile identity, so

@@ -262,10 +262,10 @@ cat >"$registry" <<EOF
 EOF
 HOME="$home_root" "$YVEX_BIN" model list >"$root/out"
 grep -F 'v4-flash-dspark' "$root/out" >/dev/null
-grep -F 'profiles=1' "$root/out" >/dev/null
+grep -F '1 artifact · 1 profile (1 runnable)' "$root/out" >/dev/null
 HOME="$home_root" "$YVEX_BIN" profile list >"$root/profiles"
 grep -F 'current-model-runtime-profile' "$root/profiles" >/dev/null
-grep -F 'backend=cuda' "$root/profiles" >/dev/null
+grep -F 'cuda/text/speculative' "$root/profiles" >/dev/null
 test ! -e "$home_root/.config/yvex/model.conf"
 
 set +e

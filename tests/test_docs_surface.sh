@@ -76,8 +76,8 @@ require_text README.md '## Documentation'
 require_text README.md '## Current limits'
 require_text README.md './yvex model list'
 require_text README.md './yvex serve'
-require_text README.md './yvex engine load PROFILE'
-require_text README.md './yvex chat --model PROFILE --session main'
+require_text README.md './yvex engine load'
+require_text README.md './yvex chat --session main'
 reject_text README.md 'yvex run'
 reject_text README.md 'yvex server'
 reject_text README.md 'Active Next:'
@@ -149,7 +149,7 @@ printf '%s\n' "$serve_help" | grep -F -- 'operation: host.serve' >/dev/null ||
 printf '%s\n' "$serve_help" | grep -F -- 'engine load' >/dev/null &&
   fail 'serve help embeds engine administration'
 engine_help=$(./yvex help engine)
-printf '%s\n' "$engine_help" | grep -F -- 'yvex engine load PROFILE' >/dev/null ||
+printf '%s\n' "$engine_help" | grep -F -- 'yvex engine load [PROFILE]' >/dev/null ||
   fail 'engine help lacks explicit profile load'
 printf '%s\n' "$engine_help" | grep -F -- 'yvex engine unload ENGINE' >/dev/null ||
   fail 'engine help lacks independent unload'

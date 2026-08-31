@@ -23,12 +23,14 @@ inspect exact profiles and load the selected DeepSeek deployment:
 ```sh
 ./yvex profile list
 ./yvex profile show PROFILE
-./yvex engine load PROFILE
+./yvex engine load
 ```
 
-Use a profile whose execution strategy is `dspark` for speculative execution.
-No model path or environment variable is required during normal operation.
-`engine load` authenticates the selected artifact and binding, seals the
+The terminal chooser groups the runnable profiles under one logical DeepSeek
+model and exposes their physical artifact and binding differences. Choose
+the desired deployment by number; scripts instead call `engine load PROFILE`.
+No model path, copied alias, or environment variable is required during normal
+interactive operation. `engine load` authenticates the selected artifact and binding, seals the
 deployment specialization, and creates one immutable engine generation. The
 host itself starts with zero engines and stays alive across load and unload.
 Importing an existing artifact into the registry is a one-time advanced
@@ -43,7 +45,7 @@ another terminal:
 ./yvex host status
 ./yvex engine list
 ./yvex host memory
-./yvex chat --model PROFILE --session main
+./yvex chat --session main
 ```
 
 An optional third terminal may run `yvex host logs`. Status, logs, and chat

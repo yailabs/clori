@@ -600,15 +600,15 @@ test -f "$REG"
 
 "$YVEX_BIN" profile list --models-root "$CATALOG_ROOT" --registry "$REG" > "$ROOT/list.out"
 grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/list.out"
-grep 'backend=cpu' "$ROOT/list.out"
-grep 'strategy=speculative' "$ROOT/list.out"
+grep 'DEPLOYMENT PROFILES' "$ROOT/list.out"
+grep 'cpu/text/speculative' "$ROOT/list.out"
 grep 'context=4096' "$ROOT/list.out"
-grep 'launchable=yes' "$ROOT/list.out"
+grep 'runnable' "$ROOT/list.out"
 
 "$YVEX_BIN" profile list --models-root "$CATALOG_ROOT" --registry "$REG" --output table \
   > "$ROOT/list-table.out"
 grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/list-table.out"
-grep 'launchable=yes' "$ROOT/list-table.out"
+grep 'runnable' "$ROOT/list-table.out"
 
 "$YVEX_BIN" profile list --models-root "$CATALOG_ROOT" --registry "$REG" --json \
   > "$ROOT/list-audit.out"
@@ -659,8 +659,47 @@ JSON
 "$YVEX_BIN" profile list --models-root "$CATALOG_ROOT" --registry "$REG" \
   > "$ROOT/list-composite.out"
 grep 'minimax-h3-fl2va-runtime-media' "$ROOT/list-composite.out"
-grep 'launchable=yes' "$ROOT/list-composite.out"
-grep 'backend=cuda' "$ROOT/list-composite.out"
+grep 'runnable' "$ROOT/list-composite.out"
+grep 'cuda/media/not-applicable' "$ROOT/list-composite.out"
+
+"$YVEX_BIN" model list --models-root "$CATALOG_ROOT" --registry "$REG" \
+  > "$ROOT/library-friendly.out"
+grep '^MODELS$' "$ROOT/library-friendly.out"
+grep 'deepseek4-v4-flash-dspark.*runnable' "$ROOT/library-friendly.out"
+grep 'minimax-h3-fl2va.*runnable' "$ROOT/library-friendly.out"
+! grep 'provider:huggingface' "$ROOT/library-friendly.out"
+"$YVEX_BIN" source list --models-root "$RECON_ROOT" --registry "$REG" \
+  > "$ROOT/sources-friendly.out"
+grep '^SOURCES$' "$ROOT/sources-friendly.out"
+grep 'model binding:' "$ROOT/sources-friendly.out"
+"$YVEX_BIN" artifact list --models-root "$CATALOG_ROOT" --registry "$REG" \
+  > "$ROOT/artifacts-friendly.out"
+grep '^ARTIFACTS$' "$ROOT/artifacts-friendly.out"
+grep 'runnable profiles' "$ROOT/artifacts-friendly.out"
+! grep 'ready=' "$ROOT/artifacts-friendly.out"
+"$YVEX_BIN" model list --models-root "$CATALOG_ROOT" --registry "$REG" --json \
+  > "$ROOT/library-friendly.json"
+"$YVEX_BIN" artifact list --models-root "$CATALOG_ROOT" --registry "$REG" --json \
+  > "$ROOT/artifacts-friendly.json"
+"$YVEX_BIN" profile list --models-root "$CATALOG_ROOT" --registry "$REG" --json \
+  > "$ROOT/profiles-friendly.json"
+python3 - "$ROOT/library-friendly.json" "$ROOT/artifacts-friendly.json" \
+  "$ROOT/profiles-friendly.json" <<'PY'
+import json
+import sys
+
+models = json.load(open(sys.argv[1], encoding="utf-8"))["models"]
+artifacts = json.load(open(sys.argv[2], encoding="utf-8"))["artifacts"]
+profiles = json.load(open(sys.argv[3], encoding="utf-8"))["profiles"]
+assert {model["display_name"] for model in models} == {
+    "deepseek4-v4-flash-dspark",
+    "minimax-h3-fl2va",
+}
+assert all(artifact["profile_count"] == 1 for artifact in artifacts)
+assert all(artifact["launchable_profile_count"] == 1 for artifact in artifacts)
+assert all(profile["deployment_class"] for profile in profiles)
+assert all("runtime_binding" in profile for profile in profiles)
+PY
 "$YVEX_BIN" profile show minimax-h3-fl2va-runtime-media --registry "$REG" --audit \
   > "$ROOT/show-composite.out"
 grep 'runtime_profile: composite' "$ROOT/show-composite.out"

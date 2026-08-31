@@ -45,7 +45,8 @@ package ancestry through every call.
 loopback OpenAI listener, telemetry, bounded external request capacity, and an
 empty engine manager. Host readiness does not require a loaded model.
 
-`engine load PROFILE` resolves one local registry profile and creates a new
+Engine load resolves one exact local registry profile—through the TTY chooser
+or an explicit `engine load PROFILE` automation argument—and creates a new
 engine generation. A text profile opens one authenticated artifact and runtime
 binding; a composite MiniMax profile opens its component set under one logical
 engine. The engine becomes routable only after package admission,

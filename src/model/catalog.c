@@ -622,7 +622,7 @@ static int library_identity_registry(const yvex_model_registry_entry *entry,
     local_copy(summary->model, sizeof(summary->model), model);
     local_copy(summary->runtime_target, sizeof(summary->runtime_target), target);
     local_copy(summary->display_name, sizeof(summary->display_name),
-               model[0] ? model : target[0] ? target : alias);
+               target[0] ? target : model[0] ? model : alias);
     return YVEX_OK;
 }
 

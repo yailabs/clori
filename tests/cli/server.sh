@@ -103,9 +103,26 @@ contains "$OUT_DIR/help.out" '--openai'
 "$YVEX_BIN" engine load --help >"$OUT_DIR/load-help.out"
 "$YVEX_BIN" engine unload --help >"$OUT_DIR/unload-help.out"
 "$YVEX_BIN" engine list --help >"$OUT_DIR/models-help.out"
-contains "$OUT_DIR/load-help.out" 'usage: yvex engine load PROFILE'
+contains "$OUT_DIR/load-help.out" 'usage: yvex engine load [PROFILE]'
 contains "$OUT_DIR/unload-help.out" 'usage: yvex engine unload ENGINE'
 contains "$OUT_DIR/models-help.out" 'usage: yvex engine list [options]'
+
+set +e
+run_client engine load >"$OUT_DIR/load-nontty.out" 2>"$OUT_DIR/load-nontty.err"
+load_nontty_status=$?
+printf '2\n' | HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 \
+    TERM=xterm-256color script -q -e -c "$YVEX_BIN engine load" \
+    "$OUT_DIR/load-selector.typescript" >"$OUT_DIR/load-selector.out" \
+    2>"$OUT_DIR/load-selector.err"
+load_selector_status=$?
+set -e
+test "$load_nontty_status" -eq 2
+test "$load_selector_status" -eq 1
+contains "$OUT_DIR/load-nontty.err" 'engine load requires PROFILE when input is not a terminal'
+contains "$OUT_DIR/load-selector.typescript" 'Select a model'
+contains "$OUT_DIR/load-selector.typescript" 'Select a deployment'
+contains "$OUT_DIR/load-selector.typescript" "profile $PROFILE"
+contains "$OUT_DIR/load-selector.typescript" "Loading profile: $PROFILE"
 
 set +e
 "$YVEX_BIN" serve --backend cpu >"$OUT_DIR/backend.out" 2>"$OUT_DIR/backend.err"

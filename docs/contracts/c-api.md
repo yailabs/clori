@@ -160,8 +160,9 @@ projections expose the separately versioned
 kind and the corresponding local file or installation accessibility. It does
 not authenticate identities, materialize weights, initialize a backend, or
 establish runtime support. After the persistent host is running,
-`yvex engine load PROFILE` performs full singular or composite admission and
-publishes one new engine generation.
+the engine-load operation performs full singular or composite admission and
+publishes one new engine generation. The TTY CLI selects a profile
+interactively; API and noninteractive clients always supply its exact identity.
 
 A composite media target follows the same readiness rule. Before publishing
 `READY`, the server opens the tokenizer and every component artifact, reconciles

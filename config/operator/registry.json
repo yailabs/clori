@@ -3765,7 +3765,7 @@
       "lane": "offline-engine",
       "operation_id": "model.list",
       "result_schema": "yvex.model.list.v1",
-      "summary": "List exact logical models without duplicating their profiles.",
+      "summary": "List deployable logical models; unbound records remain under source.",
       "visibility": "product-default"
     },
     {
@@ -4607,7 +4607,7 @@
       "model_requirement": "registry-model",
       "operation_id": "artifact.list",
       "result_schema": "yvex.artifact.list.v1",
-      "summary": "List immutable local artifacts grouped by logical model.",
+      "summary": "Group immutable artifacts by model and runnable deployment use.",
       "visibility": "product-default"
     },
     {
@@ -4828,7 +4828,7 @@
       "lane": "offline-engine",
       "operation_id": "source.list",
       "result_schema": "yvex.source.list.v1",
-      "summary": "List exact acquired source revisions.",
+      "summary": "List exact source revisions and their authenticated model binding.",
       "visibility": "product-default"
     },
     {
@@ -4878,7 +4878,7 @@
       "lane": "offline-engine",
       "operation_id": "profile.list",
       "result_schema": "yvex.profile.list.v1",
-      "summary": "List durable deployment profiles.",
+      "summary": "Group distinct physical deployment profiles by logical model.",
       "visibility": "product-default"
     },
     {
@@ -5116,9 +5116,9 @@
       "arguments": [
         {
           "completion_provider": "model-registry",
-          "multiplicity": "one",
+          "multiplicity": "optional",
           "name": "PROFILE",
-          "required": true,
+          "required": false,
           "validator": "syntax.name",
           "value_type": "name"
         }
@@ -5133,7 +5133,7 @@
       "operation_id": "engine.load",
       "protocol_operation": "engine.load",
       "side_effects": "load model engine",
-      "summary": "Load one exact deployment profile as an engine generation.",
+      "summary": "Load a deployment profile, selecting interactively on a terminal when omitted.",
       "visibility": "product-default"
     },
     {
@@ -5343,14 +5343,14 @@
       ]
     },
     {
-      "hint": "use `yvex engine load PROFILE`",
+      "hint": "use `yvex engine load` (or pass PROFILE for automation)",
       "path": [
         "model",
         "use"
       ]
     },
     {
-      "hint": "use `yvex engine load PROFILE`",
+      "hint": "use `yvex engine load` (or pass PROFILE for automation)",
       "path": [
         "model",
         "select"

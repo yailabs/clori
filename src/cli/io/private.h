@@ -64,6 +64,7 @@ typedef struct {
     const char *registry_path;
     yvex_model_catalog_output_mode output_mode;
 } yvex_cli_model_list_options;
+int yvex_cli_profile_select(char *alias, size_t capacity);
 typedef enum {
     YVEX_CLI_FIELD_TEXT = 0,
     YVEX_CLI_FIELD_TEXT_ARRAY,

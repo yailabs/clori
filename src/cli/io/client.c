@@ -2,7 +2,6 @@
  * Runtime-facing commands are deliberately thin local-protocol clients. Even though the yvex ELF
  * also contains finite offline-engine adapters, this lane cannot open artifacts, initialize CUDA,
  * or call generation directly; every hosted client operation crosses the server protocol boundary.
- *
  * The file also owns the linear interactive console. Operation identity and argument schemas come
  * from the compiled registry; terminal state and rendering remain client-owned projections.
  */
@@ -62,19 +61,16 @@ typedef struct {
     size_t count;
 } client_repl_history;
 static volatile sig_atomic_t repl_signal_state;
-static int console_status(const client_engine_binding *engine,
-                          const char *session_name);
+static int console_status(const client_engine_binding *engine, const char *session_name);
 static int console_status_fetch(const client_engine_binding *engine,
-                                const char *session_name,
-                                yvex_client_message *message,
+                                const char *session_name, yvex_client_message *message,
                                 yvex_error *err);
 static void render_console_status(const yvex_client_message *message, int startup);
 static int client_error(const yvex_error *err)
 {
     fprintf(stderr, "yvex: %s\n", yvex_error_message(err));
     if (yvex_error_code(err) == YVEX_ERR_IO)
-        fprintf(stderr, "hint: start one with `yvex serve`; load a profile with "
-                        "`yvex engine load PROFILE`\n");
+        fprintf(stderr, "hint: start one with `yvex serve`; then use `yvex engine load`\n");
     return 1;
 }
 void yvex_cli_client_request_init(yvex_client_request *request, yvex_client_operation operation)
@@ -98,16 +94,14 @@ void yvex_cli_client_request_init(yvex_client_request *request, yvex_client_oper
     request->reasoning_policy = YVEX_REASONING_DISABLED;
 }
 #define request_init yvex_cli_client_request_init
-static void request_engine_bind(yvex_client_request *request,
-                                const client_engine_binding *engine)
+static void request_engine_bind(yvex_client_request *request, const client_engine_binding *engine)
 {
     if (!engine) return;
     (void)snprintf(request->model_alias, sizeof(request->model_alias), "%s",
                    engine->alias);
     request->engine_generation = engine->generation;
 }
-static int engine_binding_capture(client_engine_binding *engine,
-                                  const yvex_console_status *status,
+static int engine_binding_capture(client_engine_binding *engine, const yvex_console_status *status,
                                   yvex_error *err)
 {
     if (!engine || !status || !status->model_alias[0] ||
@@ -554,17 +548,22 @@ static int runtime_adapter_session_bound(yvex_operator_runtime_adapter adapter)
     default: return 0;
     }
 }
-static int engine_control(yvex_client_operation operation,
-                          const char *alias)
+static int engine_control(yvex_client_operation operation, const char *alias)
 {
+    char selected[YVEX_SERVER_MODEL_ALIAS_CAP];
     yvex_client_request request;
     yvex_client_message message;
     yvex_client *client = NULL;
     yvex_error err;
     int rc;
+    if (operation == YVEX_CLIENT_OP_ENGINE_LOAD && (!alias || !alias[0])) {
+        rc = yvex_cli_profile_select(selected, sizeof(selected));
+        if (rc || !selected[0]) return rc;
+        alias = selected;
+    }
     request_init(&request, operation);
     if (!alias || !alias[0]) {
-        fputs("yvex: engine load/unload requires PROFILE or ENGINE\n", stderr);
+        fputs("yvex: engine unload requires ENGINE\n", stderr);
         return 2;
     }
     snprintf(request.model_alias, sizeof(request.model_alias), "%s", alias);

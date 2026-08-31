@@ -25,8 +25,8 @@ yvex  one public executable with explicit offline, foreground-host, native-clien
 ```
 
 `yvex serve` directly enters a persistent foreground host lifecycle with no
-loaded engine. Explicit `yvex engine load PROFILE` and
-`yvex engine unload ENGINE` operations create and retire identity-bound engine
+loaded engine. Interactive `yvex engine load` (or deterministic automation via
+`yvex engine load PROFILE`) and `yvex engine unload ENGINE` create and retire identity-bound engine
 generations while the Unix-domain protocol, loopback OpenAI-compatible listener,
 and telemetry remain alive.
 Runtime-facing clients route to one exact engine generation through the local

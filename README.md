@@ -47,13 +47,19 @@ an already-running host and never opens weights or initializes CUDA itself.
 
 ```sh
 ./yvex model list
+./yvex source list
+./yvex artifact list
 ./yvex profile list
 ./yvex profile show PROFILE
 ```
 
-Use an alias printed by `model list` whose startup profile is complete. If no
-suitable profile exists, discover a remote representation before acquiring an
-exact revision:
+`model list` shows one row per deployable logical model; source records without
+an authenticated model binding remain under `source list` instead of appearing
+as duplicate models. `artifact list` groups physical packages by model and
+reports how many runnable profiles consume each one. `profile list` expands the
+distinct physical deployment choices and their binding differences. If no
+suitable profile exists, discover
+a remote representation before acquiring an exact revision:
 
 ```sh
 ./yvex model search "MODEL"
@@ -85,26 +91,26 @@ refuses the duplicate host and exits without attaching as a client.
 
 ### 4. Load and inspect an engine
 
-From another terminal, select one complete profile through deterministic
-control commands:
+From another terminal, select one complete deployment interactively:
 
 ```sh
-./yvex engine load PROFILE
+./yvex engine load
 ./yvex engine list
 ./yvex host status
 ```
 
-Loading authenticates the named registry profile and creates one process-local
-engine generation. Profile selection uses an exact alias; duplicate runtime
-targets never select an arbitrary package. Large packages can take several
-minutes. `engine list` shows the exact alias, generation, lifecycle, backend,
-and active-work facts owned by the live host. `host status`, `engine list`, and
-`host memory` remain available concurrently.
+On a terminal, `engine load` first selects the logical model and then one of its
+runnable physical deployments. The numeric choices are temporary display
+indices; the protocol still receives the exact profile identity. Automation
+uses `engine load PROFILE` explicitly and never receives an implicit default.
+Loading authenticates that profile and creates one process-local engine
+generation. Large packages can take several minutes. `engine list` shows its
+exact alias, generation, lifecycle, backend, and active-work facts.
 
 ### 5. Use the engine
 
 ```sh
-./yvex chat --model PROFILE --session main
+./yvex chat --session main
 ```
 
 The named session remains bound to that exact engine generation. Type the
@@ -116,7 +122,7 @@ one-shot CLI generation command.
 Unload the engine without stopping the host, or stop the host separately:
 
 ```sh
-./yvex engine unload PROFILE
+./yvex engine unload ENGINE
 ./yvex host stop
 ```
 

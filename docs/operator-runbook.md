@@ -15,8 +15,10 @@ gates.
 
 Builds provide one executable product. `yvex serve` owns the private Unix
 listener and bounded loopback OpenAI-compatible listener in the foreground.
-`yvex engine load PROFILE` opens a registered package as one engine generation;
-several engine generations may coexist within the admitted host bound. Other
+Interactive `yvex engine load` selects a registered deployment and opens it as
+one engine generation; automation supplies the same exact identity as `yvex
+engine load PROFILE`. Several engine generations may coexist within the
+admitted host bound. Other
 `yvex` modes own native clients and finite offline engineering operations.
 
 Loading an engine requires one complete registry startup profile. A text runtime
@@ -29,11 +31,12 @@ artifact or text-runtime binding. Inspect the local lifecycle catalog first:
 ./yvex profile list
 ```
 
-The table keeps acquired source, package readiness, and observed engine state
-separate. Only a `package-ready` profile can cross the engine boundary. Use
-`profile show NAME` for the exact artifact and startup facts. If the
-table has no ready package, complete the appropriate acquisition and preparation
-path or the one-time
+The table groups physical deployments under their logical model and exposes the
+artifact class, artifact identity, binding label, backend, engine kind,
+strategy, context, and startup status that distinguish them. Only a `runnable`
+profile can cross the engine boundary. Use `profile show NAME` for the exact
+artifact and startup facts. If the table has no runnable profile, complete the
+appropriate acquisition and preparation path or the one-time
 [registration procedure](#registering-an-existing-model). Backend selection is
 part of that profile and never falls back silently.
 
@@ -114,8 +117,11 @@ Use the local catalog to find the next legal state:
 ./yvex profile show PROFILE --audit
 ```
 
-`source list` reports acquired revision truth and `profile list` reports
-deployment configurations without opening payloads or engines. A moving
+`model list` shows deployable logical models, while `source list` reports exact
+source records and explicitly marks those without a model binding. `artifact
+list` groups immutable packages by model and counts the runnable profiles using
+each package. `profile list` reports the distinct deployment configurations
+without opening payloads or engines. A moving
 provider reference is shown as
 `moving-reference`; it is not silently promoted to immutable source evidence.
 Package identities and startup facts remain available through `artifact show`
@@ -125,12 +131,14 @@ residency or serving activity. The lifecycle handoff is explicit:
 
 ```sh
 ./yvex serve
-./yvex engine load PROFILE
+./yvex engine load
 ./yvex engine list
 ```
 
-`engine list` consumes the public engine inventory but does not open or manage
-an engine. `engine load` and `engine unload` remain the lifecycle authority.
+The TTY chooser resolves its temporary numeric selections to an exact profile
+identity. Noninteractive callers use `engine load PROFILE`. `engine list`
+consumes the public engine inventory but does not open or manage an engine;
+`engine load` and `engine unload` remain the lifecycle authority.
 
 Hugging Face credentials remain owned by `yvex source accounts` and the
 official provider CLI. Discovery arguments, tables, JSON, receipts, and logs do
@@ -236,18 +244,20 @@ Then start the host in the first terminal:
 Foreground operation is intentional: keep this terminal open. The host owns the
 local socket, OpenAI listener, telemetry, and bounded engine manager. Its
 terminal renders operational events but never reads chat or lifecycle commands.
-Select and load the intended DeepSeek profile from another terminal:
+Select and load the intended DeepSeek deployment from another terminal:
 
 ```sh
-./yvex engine load PROFILE
+./yvex engine load
 ./yvex engine list
 ./yvex host status
 ```
 
-Use the exact alias printed by `profile list`; multiple profiles for one runtime
-target never make the CLI an implicit model-selection authority. The same
-terminal can then enter chat with `yvex chat`, while other protocol clients and
-OpenAI consumers remain independent.
+The chooser first presents one logical model and then its physically distinct
+runnable profiles. It shows their artifact and binding differences and
+submits the selected exact alias; no profile name needs to be copied. Scripts
+must still provide that alias explicitly. The same terminal can then enter chat
+with `yvex chat`, while other protocol clients and OpenAI consumers remain
+independent.
 
 The host publishes its socket before any engine exists. `engine load` resolves
 the selected registry profile, authenticates its package and binding, seals the
@@ -273,11 +283,11 @@ The relevant commands have different responsibilities:
 - `yvex profile list` reads the deployment registry and marks complete readable
   startup profiles;
 - `yvex serve` starts the model-neutral persistent host;
-- `yvex engine load NAME` opens and authenticates the named profile's artifact
+- `yvex engine load PROFILE` opens and authenticates the named profile's artifact
   and binding, constructs compiler-selected residency, and publishes one engine
   generation;
 - `yvex engine list` reports the generations actually known to the host;
-- `yvex engine unload NAME` drains and closes the selected generation without
+- `yvex engine unload ENGINE` drains and closes the selected generation without
   stopping the host;
 - `yvex host memory` reports current process, mapped, host-resident, and
   device-resident memory facts;
@@ -401,7 +411,7 @@ not expose a chat or lifecycle prompt. Load and inspect the selected profile
 from Terminal 2:
 
 ```sh
-./yvex engine load PROFILE
+./yvex engine load
 ./yvex engine list
 ./yvex host status
 ```
@@ -411,8 +421,8 @@ healthy refuses the duplicate and exits. It neither reserves another Unix or
 OpenAI listener nor opens an stdin-driven prompt. Use `./yvex host stop` only
 when the shared host itself should shut down.
 
-After the engine reports `loaded`, Terminal 2 may run
-`./yvex chat --model PROFILE --session main` or `./yvex host logs`. Add
+After the sole engine reports `loaded`, Terminal 2 may run
+`./yvex chat --session main` or `./yvex host logs`. Add
 `--verbose` for individual DSpark cycles or `--json` for canonical JSONL. All
 views derive from the same typed event sequence. Default telemetry excludes
 prompt and answer content.
@@ -620,7 +630,7 @@ started with the explicit `--trace-content` opt-in.
 Release one engine while retaining the host and its other engines:
 
 ```sh
-./yvex engine unload PROFILE
+./yvex engine unload ENGINE
 ./yvex host status
 ```
 
@@ -674,13 +684,14 @@ separate facts.
 ./yvex serve
 ```
 
-Then run `./yvex engine load PROFILE` from another process. The foreground host
-continues to own only server lifetime and its event stream.
+Then run interactive `./yvex engine load` from another terminal. Automation may
+run `./yvex engine load PROFILE`. The foreground host continues to own only
+server lifetime and its event stream.
 
-`profile list` reads registry entries; `engine load PROFILE` selects one entry and
-creates a generation; `engine list` reads the identities actually known to
-the resident host. Loading and unloading an engine does not require restarting
-the host.
+`profile list` reads and groups registry entries; `engine load` resolves one
+exact entry and creates a generation; `engine list` reads the identities
+actually known to the resident host. Loading and unloading an engine does not
+require restarting the host.
 
 Generation mode is part of the startup profile. `dspark` requires a binding
 that contains target, draft, and target-verification plans; `target-only` is
@@ -707,7 +718,7 @@ fallback.
 ## Recovery
 
 - Missing socket: run `yvex serve` and wait for `host status` to report the
-  host ready, then use `yvex engine load PROFILE`.
+  host ready, then use interactive `yvex engine load`.
 - Stale or unsafe socket: verify UID, mode, runtime-directory ownership, and
   singleton-lock ownership; never delete another user's socket.
 - Binding or artifact mismatch: select the binding for that exact artifact
@@ -719,7 +730,7 @@ fallback.
 - Queue refusal: wait for current work or reduce client concurrency; do not
   launch another server against the same socket.
 - OpenAI `503 runtime_unavailable`: start the host with `yvex serve`, load the
-  selected package with `yvex engine load PROFILE`, and confirm host and engine
+  selected package with `yvex engine load`, and confirm host and engine
   readiness through `yvex host status --json` and `yvex engine list --json`.
 - OpenAI `422 unsupported_parameter`: remove the named unsupported field;
   fields are never ignored silently.
