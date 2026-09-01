@@ -11,6 +11,7 @@
 
 enum {
     TRANSFORMER_BLOCK = 128u,
+    GQA_HEAD_DIMENSION_MAX = 256u,
     GQA_QUERIES_PER_BLOCK = 4u,
     GQA_BLAS_BLOCK = 256u,
     GQA_WORK_ALIGNMENT = 256u,
@@ -688,7 +689,7 @@ static int attention_requirement_validate(
         requirement->mask < YVEX_TRANSFORMER_ATTENTION_MASK_FULL ||
         requirement->mask > YVEX_TRANSFORMER_ATTENTION_MASK_CAUSAL ||
         requirement->numeric_contract != YVEX_TRANSFORMER_ATTENTION_NUMERIC_EXACT_F32 ||
-        requirement->head_dimension > TRANSFORMER_BLOCK ||
+        requirement->head_dimension > GQA_HEAD_DIMENSION_MAX ||
         requirement->query_dtype != YVEX_DTYPE_F32 ||
         requirement->key_dtype != YVEX_DTYPE_F32 ||
         requirement->value_dtype != YVEX_DTYPE_F32 ||
@@ -785,7 +786,7 @@ int yvex_cuda_transformer_gqa(
     if (facts) memset(facts, 0, sizeof(*facts));
     if (!state || !facts || !tokens || !query_heads || !kv_heads || query_heads % kv_heads ||
         (causal != 0 && causal != 1) ||
-        !head_dim || head_dim > TRANSFORMER_BLOCK ||
+        !head_dim || head_dim > GQA_HEAD_DIMENSION_MAX ||
         !yvex_core_u64_mul(tokens, query_heads, &rows) ||
         !yvex_core_u64_mul(rows, head_dim, &query_elements) ||
         !yvex_core_u64_mul(tokens, kv_heads, &kv_elements) ||
@@ -820,7 +821,9 @@ int yvex_cuda_transformer_gqa(
             &query_heads, &kv_heads, &head_dim, &scale, &causal,
         };
         rc = transformer_launch(
-            backend, state->gqa_function, (unsigned int)grid_rows,
+            backend, head_dim > TRANSFORMER_BLOCK ? state->gqa_wide_function
+                                                  : state->gqa_function,
+            (unsigned int)grid_rows,
             2u * (unsigned int)head_dim * sizeof(float), parameters,
             "cuda.transformer.gqa", facts, err);
     }

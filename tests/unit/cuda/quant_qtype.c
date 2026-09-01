@@ -2336,6 +2336,130 @@ static int quant_cuda_attention_small(yvex_backend *backend)
     return 0;
 }
 
+static void quant_gqa_grouped_reference(
+    const float *query, const float *key, const float *value, float *output,
+    unsigned long long tokens, unsigned long long query_heads,
+    unsigned long long key_value_heads, unsigned long long head_dimension,
+    int causal)
+{
+    const float scale = 1.0f / sqrtf((float)head_dimension);
+    unsigned long long token, query_head, source, lane;
+
+    for (token = 0ull; token < tokens; ++token)
+        for (query_head = 0ull; query_head < query_heads; ++query_head) {
+            unsigned long long key_value_head =
+                query_head / (query_heads / key_value_heads);
+            unsigned long long visible = causal ? token + 1ull : tokens;
+            float maximum = -INFINITY, denominator = 0.0f;
+            float *destination = output +
+                (token * query_heads + query_head) * head_dimension;
+
+            for (source = 0ull; source < visible; ++source) {
+                float score = 0.0f;
+                for (lane = 0ull; lane < head_dimension; ++lane)
+                    score += query[(token * query_heads + query_head) *
+                                       head_dimension + lane] *
+                             key[(source * key_value_heads + key_value_head) *
+                                     head_dimension + lane];
+                if (score * scale > maximum) maximum = score * scale;
+            }
+            memset(destination, 0,
+                   (size_t)head_dimension * sizeof(*destination));
+            for (source = 0ull; source < visible; ++source) {
+                float score = 0.0f, probability;
+                for (lane = 0ull; lane < head_dimension; ++lane)
+                    score += query[(token * query_heads + query_head) *
+                                       head_dimension + lane] *
+                             key[(source * key_value_heads + key_value_head) *
+                                     head_dimension + lane];
+                probability = expf(score * scale - maximum);
+                denominator += probability;
+                for (lane = 0ull; lane < head_dimension; ++lane)
+                    destination[lane] += probability *
+                        value[(source * key_value_heads + key_value_head) *
+                                  head_dimension + lane];
+            }
+            for (lane = 0ull; lane < head_dimension; ++lane)
+                destination[lane] /= denominator;
+        }
+}
+
+static int quant_cuda_attention_qwen_geometry(yvex_backend *backend)
+{
+    enum { TOKENS = 3u, QUERY_HEADS = 24u, KV_HEADS = 4u, HEAD_DIM = 256u };
+    const unsigned long long query_count =
+        (unsigned long long)TOKENS * QUERY_HEADS * HEAD_DIM;
+    const unsigned long long key_value_count =
+        (unsigned long long)TOKENS * KV_HEADS * HEAD_DIM;
+    const size_t query_bytes = (size_t)query_count * sizeof(float);
+    const size_t key_value_bytes = (size_t)key_value_count * sizeof(float);
+    yvex_device_tensor *query = NULL, *key = NULL, *value = NULL, *output = NULL;
+    float *query_values = malloc(query_bytes), *key_values = malloc(key_value_bytes);
+    float *values = malloc(key_value_bytes), *result = malloc(query_bytes);
+    float *reference = malloc(query_bytes);
+    yvex_backend_operation_facts facts;
+    yvex_error err;
+    unsigned long long workspace_bytes = ULLONG_MAX, index;
+    int causal;
+
+    YVEX_TEST_ASSERT(query_values && key_values && values && result && reference,
+                     "Qwen exact-attention oracle storage allocates");
+    for (index = 0ull; index < query_count; ++index)
+        query_values[index] = (float)((int)((index * 3ull) % 29ull) - 14) / 32.0f;
+    for (index = 0ull; index < key_value_count; ++index) {
+        key_values[index] = (float)((int)((index * 5ull + 1ull) % 31ull) - 15) / 32.0f;
+        values[index] = (float)((int)((index * 7ull + 2ull) % 37ull) - 18) / 16.0f;
+    }
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "qwen-gqa-query", YVEX_DTYPE_F32,
+                          query_values, query_bytes, &query, &err) &&
+            quant_cuda_tensor(backend, "qwen-gqa-key", YVEX_DTYPE_F32,
+                              key_values, key_value_bytes, &key, &err) &&
+            quant_cuda_tensor(backend, "qwen-gqa-value", YVEX_DTYPE_F32,
+                              values, key_value_bytes, &value, &err) &&
+            quant_cuda_tensor(backend, "qwen-gqa-output", YVEX_DTYPE_F32,
+                              NULL, query_bytes, &output, &err) &&
+            quant_attention_workspace(
+                backend, TOKENS, QUERY_HEADS, KV_HEADS, HEAD_DIM,
+                &workspace_bytes, &err) == YVEX_OK && workspace_bytes == 0ull,
+        "Qwen 24/4/256 grouped-query geometry admits without score workspace");
+    for (causal = 0; causal <= 1; ++causal) {
+        YVEX_TEST_ASSERT(
+            quant_attention_execute(
+                backend, query, key, value, output, TOKENS, QUERY_HEADS,
+                KV_HEADS, HEAD_DIM, causal, &facts, &err) == YVEX_OK &&
+                facts.kernel_launches == 1ull &&
+                yvex_backend_tensor_read(
+                    backend, output, result, query_bytes, &err) == YVEX_OK,
+            "Qwen 256-wide grouped-query attention executes on CUDA");
+        quant_gqa_grouped_reference(
+            query_values, key_values, values, reference, TOKENS, QUERY_HEADS,
+            KV_HEADS, HEAD_DIM, causal);
+        for (index = 0ull; index < query_count; ++index)
+            YVEX_TEST_ASSERT(
+                fabsf(result[index] - reference[index]) <
+                    2e-4f * (1.0f + fabsf(reference[index])),
+                "Qwen grouped-query attention matches the scalar oracle");
+    }
+    YVEX_TEST_ASSERT(
+        quant_attention_workspace(
+            backend, TOKENS, QUERY_HEADS, KV_HEADS, HEAD_DIM + 1u,
+            &workspace_bytes, &err) == YVEX_ERR_UNSUPPORTED,
+        "exact attention rejects head dimensions beyond the admitted bound");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &query, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &key, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &value, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK,
+        "Qwen exact-attention tensors release cleanly");
+    free(reference);
+    free(result);
+    free(values);
+    free(key_values);
+    free(query_values);
+    return 0;
+}
+
 static void quant_gqa_source_reference(const float *query, const float *key,
                                        const float *value, float *output,
                                        unsigned int tokens, unsigned int head_dim,
@@ -3316,6 +3440,8 @@ int yvex_cuda_test_quant_qtype(void)
                      "dense transformer activation primitives");
     YVEX_TEST_ASSERT(quant_cuda_attention_small(backend) == 0,
                      "small exact-attention oracle");
+    YVEX_TEST_ASSERT(quant_cuda_attention_qwen_geometry(backend) == 0,
+                     "Qwen 24/4/256 exact-attention geometry");
     YVEX_TEST_ASSERT(quant_cuda_gqa_blas(backend) == 0,
                      "scalable exact accelerated attention");
     YVEX_TEST_ASSERT(quant_cuda_gqa_large(backend) == 0,

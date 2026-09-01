@@ -211,6 +211,8 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(rotary_half_plain_function)},
     {"yvex_gqa_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(gqa_function)},
+    {"yvex_gqa_wide_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(gqa_wide_function)},
     {"yvex_gqa_softmax_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(gqa_softmax_function)},
     {"yvex_gqa_softmax_warp_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,

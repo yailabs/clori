@@ -134,27 +134,29 @@ extern "C" __global__ void yvex_rotary_half_plain_f32(
 }
 
 /* Four warp-owned queries reuse K/V while online softmax avoids a second Q/K traversal. */
-extern "C" __global__ void yvex_gqa_f32(
+template <unsigned int Slots>
+__device__ __forceinline__ void yvex_gqa_f32_body(
     const float *query, const float *key, const float *value, float *output,
     unsigned long long tokens, unsigned long long query_heads,
-    unsigned long long kv_heads, unsigned long long head_dim, float scale, int causal)
+    unsigned long long kv_heads, unsigned long long head_dim, float scale, int causal,
+    float *scratch)
 {
-    extern __shared__ float scratch[];
     const unsigned int warp = threadIdx.x / warpSize, lane = threadIdx.x % warpSize;
     const unsigned int queries_per_block = blockDim.x / warpSize;
     unsigned long long query_tile = blockIdx.x / query_heads, query_head = blockIdx.x % query_heads;
     unsigned long long token = query_tile * queries_per_block + warp;
     unsigned long long kv_head = query_head / (query_heads / kv_heads);
     unsigned long long maximum_visible, visible, source, dim;
-    float query_lanes[4] = {0.0f}, accumulated[4] = {0.0f};
+    float query_lanes[Slots] = {0.0f}, accumulated[Slots] = {0.0f};
     float maximum = -INFINITY, denominator = 0.0f;
     unsigned int slot, active;
     if (!query || !key || !value || !output || !tokens || !kv_heads ||
-        !query_heads || query_heads % kv_heads || !head_dim || queries_per_block > 4u) return;
+        !query_heads || query_heads % kv_heads || !head_dim ||
+        head_dim > (unsigned long long)Slots * warpSize || queries_per_block > 4u) return;
     active = token < tokens;
     visible = causal ? token + 1ull : tokens;
     maximum_visible = causal ? min(tokens, (query_tile + 1ull) * queries_per_block) : tokens;
-    for (slot = 0u; slot < 4u; ++slot) {
+    for (slot = 0u; slot < Slots; ++slot) {
         dim = (unsigned long long)lane + (unsigned long long)slot * warpSize;
         if (active && dim < head_dim)
             query_lanes[slot] = query[(token * query_heads + query_head) * head_dim + dim];
@@ -167,7 +169,7 @@ extern "C" __global__ void yvex_gqa_f32(
             scratch[head_dim + dim] = value[(source * kv_heads + kv_head) * head_dim + dim];
         }
         __syncthreads();
-        for (slot = 0u; slot < 4u; ++slot) {
+        for (slot = 0u; slot < Slots; ++slot) {
             dim = (unsigned long long)lane + (unsigned long long)slot * warpSize;
             if (active && source < visible && dim < head_dim)
                 dot += query_lanes[slot] * scratch[dim];
@@ -180,7 +182,7 @@ extern "C" __global__ void yvex_gqa_f32(
             old_scale = maximum == -INFINITY ? 0.0f : expf(maximum - new_maximum);
             weight = expf(dot - new_maximum);
             denominator = denominator * old_scale + weight;
-            for (slot = 0u; slot < 4u; ++slot) {
+            for (slot = 0u; slot < Slots; ++slot) {
                 dim = (unsigned long long)lane + (unsigned long long)slot * warpSize;
                 if (dim < head_dim)
                     accumulated[slot] = accumulated[slot] * old_scale + weight * scratch[head_dim + dim];
@@ -189,11 +191,31 @@ extern "C" __global__ void yvex_gqa_f32(
         }
         __syncthreads();
     }
-    for (slot = 0u; slot < 4u; ++slot) {
+    for (slot = 0u; slot < Slots; ++slot) {
         dim = (unsigned long long)lane + (unsigned long long)slot * warpSize;
         if (active && dim < head_dim && denominator > 0.0f)
             output[(token * query_heads + query_head) * head_dim + dim] = accumulated[slot] / denominator;
     }
+}
+
+extern "C" __global__ void yvex_gqa_f32(
+    const float *query, const float *key, const float *value, float *output,
+    unsigned long long tokens, unsigned long long query_heads,
+    unsigned long long kv_heads, unsigned long long head_dim, float scale, int causal)
+{
+    extern __shared__ float scratch[];
+    yvex_gqa_f32_body<4u>(query, key, value, output, tokens, query_heads,
+                          kv_heads, head_dim, scale, causal, scratch);
+}
+
+extern "C" __global__ void yvex_gqa_wide_f32(
+    const float *query, const float *key, const float *value, float *output,
+    unsigned long long tokens, unsigned long long query_heads,
+    unsigned long long kv_heads, unsigned long long head_dim, float scale, int causal)
+{
+    extern __shared__ float scratch[];
+    yvex_gqa_f32_body<8u>(query, key, value, output, tokens, query_heads,
+                          kv_heads, head_dim, scale, causal, scratch);
 }
 
 /* Source attention normalizes in F32; only the completed attention output is BF16-rounded. */
