@@ -309,7 +309,8 @@ PY
 # unavailable provider-object hash proof, and is visible through
 # the model-level lifecycle commands.  The fake provider creates only tiny
 # structurally valid shards; no production model payload is downloaded.
-YVEX_FAKE_HF_AUTH=1 "$YVEX_BIN" model pull hf://MiniMaxAI/MiniMax-H3 \
+YVEX_FAKE_HF_AUTH=1 YVEX_FAKE_HF_LOCAL_CACHE=1 \
+    "$YVEX_BIN" model pull hf://MiniMaxAI/MiniMax-H3 \
     --format safetensors --name pulled-h3 --family minimax-h3 \
     --models-root "$MODELS_ROOT" --json >"$ROOT/hf-pull.json"
 python3 - "$ROOT/hf-pull.json" <<'PY'
@@ -327,6 +328,7 @@ assert len(item["local_content_digest"]) == 64
 assert item["upstream_identity_verified"] is True
 assert item["payload_hash_verified"] is False
 PY
+test -f "$MODELS_ROOT/hf/minimax-h3/pulled-h3/.cache/huggingface/download/config.json.metadata"
 "$YVEX_BIN" model status pulled-h3 --models-root "$MODELS_ROOT" \
     --json >"$ROOT/hf-status.json"
 python3 - "$ROOT/hf-status.json" <<'PY'

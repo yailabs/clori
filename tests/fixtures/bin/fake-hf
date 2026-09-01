@@ -267,5 +267,11 @@ while [ "$i" -le "$steps" ]; do
   i=$((i + 1))
 done
 
+if [ "${YVEX_FAKE_HF_LOCAL_CACHE:-0}" = "1" ]; then
+  mkdir -p "$local_dir/.cache/huggingface/download"
+  printf 'provider transfer metadata\n' \
+    > "$local_dir/.cache/huggingface/download/config.json.metadata"
+fi
+
 printf 'fake-hf: complete\n'
 printf 'fake-hf: downloaded repo=%s local_dir=%s\n' "$repo" "$local_dir"

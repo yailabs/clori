@@ -319,11 +319,30 @@ static int model_download_walk_tree(const char *root,
             unsigned long long bytes = st.st_size > 0 ? (unsigned long long)st.st_size : 0ull;
             if (walk->scan) {
                 yvex_model_download_source_scan *scan = walk->scan;
+                int acquisition_cache =
+                    model_download_name_starts_with(rel_path, ".cache/") ||
+                    model_download_name_contains(rel_path, "/.cache/");
 
-                scan->file_count++;
-                scan->total_regular_file_bytes += bytes;
-                if (yvex_source_ends_with(rel_path, ".safetensors")) scan->safetensors_count++;
-                if (yvex_source_ends_with(rel_path, ".gguf")) scan->gguf_count++;
+                if (acquisition_cache) {
+                    scan->cache_file_count++;
+                } else {
+                    scan->file_count++;
+                    scan->total_regular_file_bytes += bytes;
+                    if (yvex_source_ends_with(rel_path, ".safetensors"))
+                        scan->safetensors_count++;
+                    if (yvex_source_ends_with(rel_path, ".gguf")) scan->gguf_count++;
+                    if (strcmp(base, "config.json") == 0) scan->config_present = 1;
+                    if (strcmp(base, "tokenizer.json") == 0 ||
+                        strcmp(base, "tokenizer.model") == 0 ||
+                        strcmp(base, "tokenizer_config.json") == 0 ||
+                        model_download_name_starts_with(base, "tokenizer."))
+                        scan->tokenizer_present = 1;
+                    if (bytes > scan->largest_file_bytes) {
+                        scan->largest_file_bytes = bytes;
+                        snprintf(scan->largest_file_name, sizeof(scan->largest_file_name), "%s",
+                                 rel_path);
+                    }
+                }
                 if (yvex_source_ends_with(rel_path, ".lock")) {
                     unsigned long long idx = scan->lock_count;
                     if (idx < YVEX_MODEL_DOWNLOAD_PATTERN_CAP) {
@@ -338,20 +357,6 @@ static int model_download_walk_tree(const char *root,
                     yvex_source_ends_with(rel_path, ".tmp") ||
                     model_download_name_contains(rel_path, ".part"))
                     scan->partial_file_count++;
-                if (model_download_name_starts_with(rel_path, ".cache/") ||
-                    model_download_name_contains(rel_path, "/.cache/"))
-                    scan->cache_file_count++;
-                if (strcmp(base, "config.json") == 0) scan->config_present = 1;
-                if (strcmp(base, "tokenizer.json") == 0 ||
-                    strcmp(base, "tokenizer.model") == 0 ||
-                    strcmp(base, "tokenizer_config.json") == 0 ||
-                    model_download_name_starts_with(base, "tokenizer."))
-                    scan->tokenizer_present = 1;
-                if (bytes > scan->largest_file_bytes) {
-                    scan->largest_file_bytes = bytes;
-                    snprintf(scan->largest_file_name, sizeof(scan->largest_file_name), "%s",
-                             rel_path);
-                }
             }
             if (walk->safetensors && yvex_source_ends_with(rel_path, ".safetensors")) {
                 const char *status = model_download_safetensors_file_status(abs_path);
