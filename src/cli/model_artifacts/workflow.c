@@ -2,10 +2,12 @@
 #define _POSIX_C_SOURCE 200809L
 #include "src/cli/model_artifacts/private.h"
 
+#include <sys/stat.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <yvex/internal/source_distribution.h>
 
 #define PRODUCT_COLUMN_CAP 10u
 
@@ -37,6 +39,24 @@ typedef struct {
     yvex_cli_loaded_model_fact models[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
     unsigned long long count;
 } product_runtime_view;
+
+typedef struct {
+    const char *role;
+    char path[YVEX_PATH_CAP];
+    char format[16];
+    char precision[96];
+    char size[32];
+    char state[24];
+    unsigned long long bytes;
+    int present;
+} product_component_fact;
+
+typedef struct {
+    product_component_fact items[4];
+    unsigned int count;
+    unsigned long long bytes;
+    int complete;
+} product_composite_fact;
 
 static void product_runtime_open(product_runtime_view *view)
 {
@@ -118,14 +138,23 @@ static const char *product_origin(const yvex_local_source_record *source,
     return model->artifact_count ? "local" : "unknown";
 }
 
-static const char *product_source_state(const yvex_local_source_record *source)
+static const char *product_source_state(const yvex_model_library_entry *model,
+                                        const yvex_local_source_record *source)
 {
-    if (!source || !strcmp(source->acquisition_state, "source-missing") ||
-        source->blocker[0]) return "BLOCKED";
+    if (!source) return "UNBOUND";
+    if (!strcmp(source->acquisition_state, "source-remote")) return "REMOTE";
+    if (!strcmp(source->acquisition_state, "source-missing"))
+        return !strcmp(source->storage_kind, "external") ? "BLOCKED" : "REMOTE";
+    if (!strcmp(source->acquisition_state, "source-partial")) return "BLOCKED";
     if (!strcmp(source->storage_kind, "external")) return "EXTERNAL";
     if (!strcmp(source->storage_kind, "remote")) return "REMOTE";
+    if (!source->family[0] || !strcmp(source->family, "unknown"))
+        return "UNSUPPORTED";
+    if (model && model->identity_kind ==
+                     YVEX_MODEL_IDENTITY_PROVIDER_REPOSITORY_REVISION)
+        return "UNBOUND";
     if (!strcmp(source->verification_state, "payload-verified")) return "VERIFIED";
-    return source->path[0] ? "SOURCE" : "BLOCKED";
+    return source->path[0] ? "SOURCE" : "UNBOUND";
 }
 
 static const char *product_model_state(const yvex_model_library *library,
@@ -133,7 +162,7 @@ static const char *product_model_state(const yvex_model_library *library,
                                        const yvex_model_library_entry *model)
 {
     unsigned long long index;
-    int verified = 0, external = 0, acquired = 0, remote = 0;
+    int verified = 0, external = 0, acquired = 0, remote = 0, blocked = 0;
     if (model->profile_launchable) return "READY";
     if (model->profile_count) return "BLOCKED";
     if (model->artifact_count) return "PREPARING";
@@ -141,20 +170,37 @@ static const char *product_model_state(const yvex_model_library *library,
          ++index) {
         const yvex_local_source_record *source =
             yvex_model_library_source_at(library, model_index, index);
-        if (!source || !strcmp(source->acquisition_state, "source-missing") ||
-            source->blocker[0])
+        if (!source) continue;
+        if (!strcmp(source->acquisition_state, "source-remote") ||
+            (!strcmp(source->acquisition_state, "source-missing") &&
+             strcmp(source->storage_kind, "external"))) {
+            remote = 1;
             continue;
+        }
+        if (!strcmp(source->acquisition_state, "source-partial") ||
+            (!strcmp(source->acquisition_state, "source-missing") &&
+             !strcmp(source->storage_kind, "external"))) {
+            blocked = 1;
+            continue;
+        }
         if (!strcmp(source->storage_kind, "external")) external = 1;
         else if (!strcmp(source->storage_kind, "remote")) remote = 1;
         else if (!strcmp(source->verification_state, "payload-verified"))
             verified = 1;
         else if (source->path[0]) acquired = 1;
     }
+    if ((verified || acquired || external) &&
+        (!model->family[0] || !strcmp(model->family, "unknown")))
+        return "UNSUPPORTED";
+    if ((verified || acquired || external) &&
+        model->identity_kind == YVEX_MODEL_IDENTITY_PROVIDER_REPOSITORY_REVISION)
+        return "UNBOUND";
     if (verified) return "VERIFIED";
     if (external) return "EXTERNAL";
     if (acquired) return "SOURCE";
     if (remote || model->remote_available) return "REMOTE";
-    return "BLOCKED";
+    if (blocked) return "BLOCKED";
+    return "UNBOUND";
 }
 
 static unsigned long long product_representation_count(
@@ -188,6 +234,100 @@ static void product_size(char out[32], unsigned long long bytes, int known)
     }
     if (!unit) snprintf(out, 32u, "%llu %s", bytes, units[unit]);
     else snprintf(out, 32u, "%.2f %s", value, units[unit]);
+}
+
+static void product_component_precision(product_component_fact *component)
+{
+    yvex_artifact_options options = {component->path, 1, 0};
+    yvex_artifact *artifact = NULL;
+    yvex_gguf *gguf = NULL;
+    yvex_error err;
+    const char *types[8];
+    unsigned int type_count = 0u;
+    unsigned long long index;
+    size_t used = 0u;
+    yvex_error_clear(&err);
+    if (yvex_artifact_open(&artifact, &options, &err) != YVEX_OK ||
+        yvex_gguf_open(&gguf, artifact, &err) != YVEX_OK) {
+        snprintf(component->precision, sizeof(component->precision), "%s",
+                 "metadata unavailable");
+        yvex_gguf_close(gguf);
+        yvex_artifact_close(artifact);
+        return;
+    }
+    for (index = 0u; index < yvex_gguf_tensor_count(gguf); ++index) {
+        const yvex_gguf_tensor_info *tensor = yvex_gguf_tensor_at(gguf, index);
+        unsigned int type;
+        if (!tensor || !tensor->ggml_type_name) continue;
+        for (type = 0u; type < type_count; ++type)
+            if (!strcmp(types[type], tensor->ggml_type_name)) break;
+        if (type == type_count && type_count < 8u)
+            types[type_count++] = tensor->ggml_type_name;
+    }
+    component->precision[0] = '\0';
+    for (index = 0u; index < type_count; ++index) {
+        int written = snprintf(component->precision + used,
+                               sizeof(component->precision) - used,
+                               "%s%s", index ? "/" : "", types[index]);
+        if (written < 0 || (size_t)written >= sizeof(component->precision) - used)
+            break;
+        used += (size_t)written;
+    }
+    if (!component->precision[0])
+        snprintf(component->precision, sizeof(component->precision), "%s", "unknown");
+    yvex_gguf_close(gguf);
+    yvex_artifact_close(artifact);
+}
+
+static int product_composite_build(product_composite_fact *out,
+                                   const yvex_model_runtime_profile_fact *profile,
+                                   int inspect_precision)
+{
+    const yvex_component_variant_adapter *adapter;
+    yvex_media_target_profile target = {0};
+    const char *roles[] = {"text encoder", "transformer", "video VAE", "audio VAE"};
+    const char *paths[4];
+    yvex_error err;
+    unsigned int index;
+    if (!out) return 0;
+    memset(out, 0, sizeof(*out));
+    if (!profile || strcmp(profile->profile, "composite") ||
+        !profile->installation[0] || !profile->runtime_target[0])
+        return 0;
+    adapter = yvex_graph_component_variant_find(profile->runtime_target);
+    if (!adapter || !adapter->media_target_profile) return 0;
+    yvex_error_clear(&err);
+    if (adapter->media_target_profile(&target, &err) != YVEX_OK) return 0;
+    paths[0] = target.text_artifact;
+    paths[1] = target.transformer_artifact;
+    paths[2] = target.video_artifact;
+    paths[3] = target.audio_artifact;
+    out->count = 4u;
+    out->complete = 1;
+    for (index = 0u; index < out->count; ++index) {
+        product_component_fact *component = &out->items[index];
+        struct stat status;
+        component->role = roles[index];
+        snprintf(component->format, sizeof(component->format), "%s", "GGUF");
+        if (!paths[index] || !paths[index][0] ||
+            snprintf(component->path, sizeof(component->path), "%s/%s",
+                     profile->installation, paths[index]) >= (int)sizeof(component->path) ||
+            stat(component->path, &status) != 0 || !S_ISREG(status.st_mode)) {
+            snprintf(component->state, sizeof(component->state), "%s", "MISSING");
+            snprintf(component->precision, sizeof(component->precision), "%s", "--");
+            out->complete = 0;
+            continue;
+        }
+        component->present = 1;
+        component->bytes = (unsigned long long)status.st_size;
+        out->bytes += component->bytes;
+        product_size(component->size, component->bytes, 1);
+        snprintf(component->state, sizeof(component->state), "%s", "PRESENT");
+        snprintf(component->precision, sizeof(component->precision), "%s",
+                 "metadata-defined");
+        if (inspect_precision) product_component_precision(component);
+    }
+    return 1;
 }
 
 static void product_source_location(char out[YVEX_PATH_CAP],
@@ -273,10 +413,12 @@ static void product_fact_build(product_model_fact *fact,
     snprintf(fact->origin, sizeof(fact->origin), "%s",
              product_origin(fact->source, fact->model));
     if (fact->profile && !strcmp(fact->profile->profile, "composite")) {
+        product_composite_fact composite;
         snprintf(fact->format, sizeof(fact->format), "%s", "composite");
-        snprintf(fact->precision, sizeof(fact->precision), "%s",
-                 "component-defined");
-        snprintf(fact->size, sizeof(fact->size), "%s", "varies");
+        snprintf(fact->precision, sizeof(fact->precision), "%s", "mixed components");
+        if (product_composite_build(&composite, fact->profile, 0) && composite.complete)
+            product_size(fact->size, composite.bytes, 1);
+        else snprintf(fact->size, sizeof(fact->size), "%s", "composite");
         snprintf(fact->location, sizeof(fact->location), "%s",
                  fact->profile->installation[0] ? fact->profile->installation
                                                 : fact->artifact
@@ -316,7 +458,7 @@ static void product_fact_build(product_model_fact *fact,
         snprintf(fact->size, sizeof(fact->size), "%s", "--");
     }
     snprintf(fact->state, sizeof(fact->state), "%s",
-             source ? product_source_state(source)
+             source ? product_source_state(fact->model, source)
                     : product_model_state(library, model_index, fact->model));
     if (loaded) {
         snprintf(fact->state, sizeof(fact->state), "%s", "LOADED");
@@ -326,7 +468,16 @@ static void product_fact_build(product_model_fact *fact,
         snprintf(fact->execution, sizeof(fact->execution), "%s", fact->profile->backend);
     else if (fact->model->profile_launchable)
         snprintf(fact->execution, sizeof(fact->execution), "%s", "select variant");
-    else snprintf(fact->execution, sizeof(fact->execution), "%s", "not admitted");
+    else if (fact->model->identity_kind ==
+             YVEX_MODEL_IDENTITY_PROVIDER_REPOSITORY_REVISION)
+        snprintf(fact->execution, sizeof(fact->execution), "%s", "unbound source");
+    else if (!strcmp(fact->state, "REMOTE"))
+        snprintf(fact->execution, sizeof(fact->execution), "%s", "not acquired");
+    else if (!strcmp(fact->state, "UNBOUND"))
+        snprintf(fact->execution, sizeof(fact->execution), "%s", "not linked");
+    else if (!strcmp(fact->state, "UNSUPPORTED"))
+        snprintf(fact->execution, sizeof(fact->execution), "%s", "unsupported");
+    else snprintf(fact->execution, sizeof(fact->execution), "%s", "not prepared");
     variants = product_representation_count(fact->model);
     snprintf(fact->variants, sizeof(fact->variants), "%llu", variants);
 }
@@ -641,6 +792,33 @@ static void product_json_artifact(const yvex_model_artifact_fact *artifact)
                         artifact->file_size, artifact->tensor_count);
 }
 
+static void product_json_components(
+    const yvex_model_runtime_profile_fact *profile)
+{
+    product_composite_fact composite;
+    unsigned int index;
+    yvex_cli_out_fputs("[", stdout);
+    if (product_composite_build(&composite, profile, 1))
+        for (index = 0u; index < composite.count; ++index) {
+            const product_component_fact *component = &composite.items[index];
+            if (index) yvex_cli_out_char(stdout, ',');
+            yvex_cli_out_fputs("{\"role\":", stdout);
+            yvex_cli_out_json_string(stdout, component->role);
+            yvex_cli_out_fputs(",\"path\":", stdout);
+            yvex_cli_out_json_string(stdout, component->path);
+            yvex_cli_out_fputs(",\"format\":", stdout);
+            yvex_cli_out_json_string(stdout, component->format);
+            yvex_cli_out_fputs(",\"quant_precision\":", stdout);
+            yvex_cli_out_json_string(stdout, component->precision);
+            yvex_cli_out_fputs(",\"state\":", stdout);
+            yvex_cli_out_json_string(stdout, component->state);
+            yvex_cli_out_writef(stdout, ",\"size_bytes\":%llu,\"present\":%s}",
+                                component->bytes,
+                                component->present ? "true" : "false");
+        }
+    yvex_cli_out_char(stdout, ']');
+}
+
 static void product_json_profile(const yvex_model_runtime_profile_fact *profile)
 {
     yvex_cli_out_fputs("{\"identity\":", stdout);
@@ -686,6 +864,10 @@ static void product_json_model(const yvex_model_library *library,
     yvex_cli_out_json_string(stdout, fact.execution);
     yvex_cli_out_fputs(",\"location\":", stdout);
     yvex_cli_out_json_string(stdout, fact.location);
+    yvex_cli_out_fputs(",\"selected_profile\":", stdout);
+    if (fact.profile) yvex_cli_out_json_string(stdout, fact.profile->alias);
+    else yvex_cli_out_fputs("null", stdout);
+    yvex_cli_out_fputs(",\"recommendation\":null", stdout);
     yvex_cli_out_writef(stdout, ",\"representation_count\":%llu",
                         product_representation_count(fact.model));
     yvex_cli_out_fputs(",\"sources\":[", stdout);
@@ -703,7 +885,9 @@ static void product_json_model(const yvex_model_library *library,
         if (index) yvex_cli_out_char(stdout, ',');
         product_json_profile(yvex_model_library_profile_at(library, model_index, index));
     }
-    yvex_cli_out_fputs("],\"loaded_engines\":[", stdout);
+    yvex_cli_out_fputs("],\"components\":", stdout);
+    product_json_components(fact.profile);
+    yvex_cli_out_fputs(",\"loaded_engines\":[", stdout);
     {
         unsigned long long emitted = 0u;
         for (index = 0u; runtime && index < runtime->count; ++index) {
@@ -749,13 +933,21 @@ static void show_key_table(const product_model_fact *fact)
         {"FIELD", 10u, 22u, YVEX_CLI_TABLE_LEFT, 0},
         {"VALUE", 20u, 100u, YVEX_CLI_TABLE_LEFT, 1}
     };
-    const char *keys[] = {"Name", "Catalog record", "Identity", "Family", "State", "Execution"};
-    const char *values[] = {fact->selector, fact->model->display_name, fact->model->identity,
-                            fact->model->family, fact->state, fact->execution};
-    yvex_cli_table_cell cells[6][2];
-    yvex_cli_table_row rows[6];
+    const char *lineage =
+        fact->model->identity_kind == YVEX_MODEL_IDENTITY_PROVIDER_REPOSITORY_REVISION
+            ? "provider source; no authenticated target lineage"
+            : fact->model->identity_kind == YVEX_MODEL_IDENTITY_TARGET
+                  ? "authenticated runtime target"
+                  : "catalog identity";
+    const char *keys[] = {"Name", "Catalog record", "Identity", "Family", "State",
+                          "Execution", "Lineage", "Recommendation"};
+    const char *values[] = {fact->selector, fact->model->display_name,
+                            fact->model->identity, fact->model->family,
+                            fact->state, fact->execution, lineage, "not recorded"};
+    yvex_cli_table_cell cells[8][2];
+    yvex_cli_table_row rows[8];
     size_t index;
-    for (index = 0u; index < 6u; ++index) {
+    for (index = 0u; index < 8u; ++index) {
         cells[index][0] = (yvex_cli_table_cell){keys[index], YVEX_CLI_TABLE_PLAIN};
         cells[index][1] = (yvex_cli_table_cell){values[index],
             index == 0u ? YVEX_CLI_TABLE_ACCENT
@@ -766,7 +958,7 @@ static void show_key_table(const product_model_fact *fact)
                 ? fact->model->identity : NULL,
             YVEX_CLI_TABLE_DIM};
     }
-    (void)yvex_cli_table_render(stdout, columns, 2u, rows, 6u);
+    (void)yvex_cli_table_render(stdout, columns, 2u, rows, 8u);
 }
 
 static void show_sources(const yvex_model_library *library, unsigned long long model_index)
@@ -861,6 +1053,53 @@ static void show_artifacts(const yvex_model_library *library, unsigned long long
     free(rows); free(storage);
 }
 
+static void show_components(const yvex_model_runtime_profile_fact *profile)
+{
+    static const yvex_cli_table_column columns[] = {
+        {"COMPONENT", 10u, 18u, YVEX_CLI_TABLE_LEFT, 0},
+        {"FORMAT", 6u, 10u, YVEX_CLI_TABLE_LEFT, 0},
+        {"QUANT/PRECISION", 12u, 32u, YVEX_CLI_TABLE_LEFT, 0},
+        {"SIZE", 8u, 12u, YVEX_CLI_TABLE_RIGHT, 0},
+        {"STATE", 7u, 10u, YVEX_CLI_TABLE_LEFT, 0},
+        {"LOCATION", 20u, 100u, YVEX_CLI_TABLE_LEFT, 1}
+    };
+    product_composite_fact composite;
+    product_table_row storage[4];
+    yvex_cli_table_row rows[4];
+    unsigned int index;
+    if (!product_composite_build(&composite, profile, 1)) {
+        yvex_cli_out_fputs("  composite component profile unavailable\n", stdout);
+        return;
+    }
+    memset(storage, 0, sizeof(storage));
+    for (index = 0u; index < composite.count; ++index) {
+        const product_component_fact *component = &composite.items[index];
+        product_cell(&storage[index], 0u, component->role, YVEX_CLI_TABLE_ACCENT);
+        product_cell(&storage[index], 1u, component->format, YVEX_CLI_TABLE_PLAIN);
+        product_cell(&storage[index], 2u, component->precision, YVEX_CLI_TABLE_PLAIN);
+        product_cell(&storage[index], 3u, component->size, YVEX_CLI_TABLE_PLAIN);
+        product_cell(&storage[index], 4u, component->state,
+                     component->present ? YVEX_CLI_TABLE_SUCCESS
+                                        : YVEX_CLI_TABLE_ERROR);
+        product_cell(&storage[index], 5u, component->path, YVEX_CLI_TABLE_DIM);
+        storage[index].row.cells = storage[index].cells;
+        rows[index] = storage[index].row;
+    }
+    (void)yvex_cli_table_render(stdout, columns, 6u, rows, composite.count);
+    if (composite.complete) {
+        char total[32];
+        product_size(total, composite.bytes, 1);
+        yvex_cli_out_writef(stdout,
+                            "\n  composite total %s across %u runtime components\n",
+                            total, composite.count);
+    } else
+        yvex_cli_out_fputs("\n  composite incomplete: one or more components are missing\n",
+                           stdout);
+    yvex_cli_out_fputs(
+        "  component presence is not a content digest or release recommendation\n",
+        stdout);
+}
+
 static void show_runtime(const yvex_model_library *library,
                          unsigned long long model_index,
                          const product_runtime_view *runtime)
@@ -927,7 +1166,9 @@ static void show_runtime(const yvex_model_library *library,
         (void)yvex_cli_table_render(stdout, columns, 10u, rows, (size_t)count);
         yvex_cli_out_fputs(
             "\n  DEPLOYS counts exact registered deployment revisions; inspect "
-            "`yvex profile list` for advanced history.\n",
+            "`yvex profile list` for advanced history.\n"
+            "  SELECTED is the current local deployment choice; no release "
+            "recommendation is recorded.\n",
             stdout);
     }
     else yvex_cli_out_fputs("  not launchable; run `yvex model prepare MODEL`\n", stdout);
@@ -992,6 +1233,49 @@ int yvex_model_catalog_show_command(int arg_count, char **args)
         yvex_cli_out_fputs("yvex: model show requires MODEL\n", stderr);
         return 2;
     }
+    if (strstr(args[3], "://")) {
+        yvex_source_locator locator;
+        yvex_remote_inspect_options inspect = {0};
+        yvex_local_catalog_options local_options = {0};
+        yvex_remote_catalog *remote = NULL;
+        yvex_local_catalog *local = NULL;
+        yvex_error err;
+        rc = model_local_list_options_parse(arg_count, args, 4, "model show", 0u,
+                                            &cli);
+        if (rc) return rc;
+        yvex_error_clear(&err);
+        rc = yvex_source_locator_parse(args[3], &locator, &err);
+        if (rc != YVEX_OK)
+            return print_yvex_error(&err, exit_for_status(rc));
+        if (locator.kind != YVEX_SOURCE_LOCATOR_HUGGINGFACE) {
+            yvex_cli_out_writef(stderr,
+                                "yvex: model show remote transport unavailable: %s\n",
+                                yvex_source_locator_kind_name(locator.kind));
+            return 3;
+        }
+        inspect.provider = YVEX_ACCOUNT_PROVIDER_HUGGINGFACE;
+        inspect.repository = locator.repository;
+        inspect.revision = locator.revision_present ? locator.revision : NULL;
+        rc = yvex_remote_model_inspect(&remote, &inspect, &err);
+        local_options.models_root = cli.models_root;
+        if (rc == YVEX_OK) rc = yvex_local_catalog_open(&local, &local_options, &err);
+        if (rc != YVEX_OK) {
+            if (!strcmp(yvex_error_message(&err), "provider authentication is required"))
+                yvex_cli_out_fputs(
+                    "yvex: provider authentication required\n"
+                    "run:\n  yvex source accounts login huggingface\n",
+                    stderr);
+            else print_yvex_error(&err, exit_for_status(rc));
+            yvex_local_catalog_close(local);
+            yvex_remote_catalog_close(remote);
+            return exit_for_status(rc);
+        }
+        rc = yvex_remote_catalog_render(stdout, remote, local,
+                                        cli.output_mode, 1);
+        yvex_local_catalog_close(local);
+        yvex_remote_catalog_close(remote);
+        return rc == YVEX_OK ? 0 : 1;
+    }
     rc = product_library_open(arg_count, args, 4, "model show", 0u,
                               &library, &cli);
     if (rc) return rc;
@@ -1016,6 +1300,10 @@ int yvex_model_catalog_show_command(int arg_count, char **args)
     yvex_cli_out_fputs("\nORIGIN / SOURCE\n", stdout);
     show_sources(library, model_index);
     yvex_cli_out_fputs("\nREPRESENTATIONS\n", stdout);
+    if (fact.profile && !strcmp(fact.profile->profile, "composite")) {
+        show_components(fact.profile);
+        yvex_cli_out_fputs("\nCATALOG ARTIFACT RECORDS\n", stdout);
+    }
     show_artifacts(library, model_index);
     yvex_cli_out_fputs("\nRUNTIME\n", stdout);
     show_runtime(library, model_index, &runtime);

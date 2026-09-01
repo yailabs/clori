@@ -149,6 +149,35 @@ static int revision_immutable(const char *revision)
     return 1;
 }
 
+static void pull_product_name(const char *repository,
+                              char out[YVEX_REMOTE_NAME_CAP])
+{
+    const unsigned char *source = (const unsigned char *)strrchr(repository, '/');
+    size_t used = 0u;
+    source = source ? source + 1u : (const unsigned char *)repository;
+    while (*source && used + 1u < YVEX_REMOTE_NAME_CAP) {
+        unsigned char value = *source++;
+        if (isalnum(value)) out[used++] = (char)tolower(value);
+        else if ((value == '-' || value == '_' || value == '.') && used &&
+                 out[used - 1u] != '-')
+            out[used++] = value == '_' ? '-' : (char)value;
+        else if (used && out[used - 1u] != '-') out[used++] = '-';
+    }
+    while (used && (out[used - 1u] == '-' || out[used - 1u] == '.')) used--;
+    out[used] = '\0';
+    if (!out[0]) snprintf(out, YVEX_REMOTE_NAME_CAP, "%s", "model");
+}
+
+static const char *pull_family(const model_pull_options *options,
+                               const yvex_remote_model *remote)
+{
+    if (options->family && model_download_family_valid(options->family))
+        return options->family;
+    if (remote->family[0] && model_download_family_valid(remote->family))
+        return remote->family;
+    return "unknown";
+}
+
 typedef struct {
     char ordinal[12];
     char files[24];
@@ -271,13 +300,17 @@ static int pull_remote_download(int argc, char **argv,
 {
     char *download_argv[64];
     char expected[32];
-    const char *name = options->name ? options->name : strrchr(locator->repository, '/') + 1u;
-    const char *prepare_selector = name;
+    char derived_name[YVEX_REMOTE_NAME_CAP];
+    const char *name;
+    const char *prepare_selector;
     const yvex_source_target_identity *target =
         yvex_source_target_identity_find_repository(locator->repository);
     int count = 0, rc;
     unsigned int index;
     (void)argc;
+    pull_product_name(locator->repository, derived_name);
+    name = options->name ? options->name : derived_name;
+    prepare_selector = name;
     download_argv[count++] = argv[0];
     download_argv[count++] = "models";
     download_argv[count++] = "download";
@@ -285,7 +318,7 @@ static int pull_remote_download(int argc, char **argv,
 #define PULL_ARG(flag_, value_) do { download_argv[count++] = (flag_); \
                                      download_argv[count++] = (char *)(value_); } while (0)
     PULL_ARG("--repo", locator->repository);
-    PULL_ARG("--family", options->family ? options->family : remote->family);
+    PULL_ARG("--family", pull_family(options, remote));
     PULL_ARG("--name", name);
     PULL_ARG("--revision", remote->resolved_revision);
     PULL_ARG("--models-root", models_root);
@@ -313,6 +346,11 @@ static int pull_remote_download(int argc, char **argv,
                             name, locator->repository, remote->resolved_revision,
                             representation->format, representation->precision,
                             representation->size_known ? expected : "unknown");
+    if (!options->json)
+        yvex_cli_out_writef(stdout, "family      %s%s%s\n\n",
+                            pull_family(options, remote),
+                            remote->family_evidence[0] ? " · " : "",
+                            remote->family_evidence);
     rc = yvex_models_download_surface_command(count, download_argv);
     if (target && !strcmp(target->upstream_revision, remote->resolved_revision))
         prepare_selector = target->target_id;
@@ -348,10 +386,9 @@ static int pull_remote(int argc, char **argv, const model_pull_options *options,
         yvex_remote_catalog_close(catalog);
         return 1;
     }
-    if ((!options->family && !remote->family[0]) ||
-        !model_download_family_valid(options->family ? options->family : remote->family)) {
+    if (options->family && !model_download_family_valid(options->family)) {
         yvex_cli_out_fputs(
-            "yvex: model family is not recognized; pass a canonical --family for source registration\n",
+            "yvex: model pull --family override must be a canonical lower-case key\n",
             stderr);
         yvex_remote_catalog_close(catalog);
         return 2;
@@ -376,7 +413,10 @@ static int pull_remote(int argc, char **argv, const model_pull_options *options,
     if (options->reference) {
         yvex_source_reference_options reference = {0};
         yvex_source_reference_result result;
-        const char *name = options->name ? options->name : strrchr(locator->repository, '/') + 1u;
+        char derived_name[YVEX_REMOTE_NAME_CAP];
+        const char *name;
+        pull_product_name(locator->repository, derived_name);
+        name = options->name ? options->name : derived_name;
         if (options->dry_run) {
             if (options->json) {
                 yvex_cli_out_fputs(
@@ -404,7 +444,7 @@ static int pull_remote(int argc, char **argv, const model_pull_options *options,
         reference.locator = locator;
         reference.models_root = models_root;
         reference.name = name;
-        reference.family = options->family ? options->family : remote->family;
+        reference.family = pull_family(options, remote);
         reference.resolved_revision = remote->resolved_revision;
         reference.format = representation->format;
         reference.precision = representation->precision;

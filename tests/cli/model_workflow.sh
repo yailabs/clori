@@ -167,7 +167,7 @@ managed = by_name["tiny-managed"]
 assert external["state"] == "EXTERNAL"
 assert external["origin"] == "local"
 assert external["format"] == "gguf"
-assert external["execution"] == "not admitted"
+assert external["execution"] == "not prepared"
 assert external["sources"][0]["storage"] == "external"
 assert managed["state"] == "VERIFIED"
 assert managed["format"] == "multiple"
@@ -268,6 +268,37 @@ assert re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", item["revision"])
 assert item["origin"].endswith("@" + item["revision"])
 PY
 ! grep -A2 '^  download$' "$YVEX_FAKE_HF_LOG" >/dev/null
+
+# Porcelain derives a stable name and authenticated family metadata.  An
+# unknown family is still a valid exact remote source record, not a failed
+# acquisition, and remote facts are inspectable through model show.
+YVEX_FAKE_HF_DISCOVERY_MODE=tiny \
+    "$YVEX_BIN" model show hf://community/unknown-model \
+    --models-root "$MODELS_ROOT" >"$ROOT/remote-show.out"
+contains "$ROOT/remote-show.out" 'repository  community/unknown-model'
+contains "$ROOT/remote-show.out" 'family      unknown'
+contains "$ROOT/remote-show.out" 'REPRESENTATIONS'
+YVEX_FAKE_HF_DISCOVERY_MODE=tiny \
+    "$YVEX_BIN" model pull hf://community/unknown-model --reference \
+    --format gguf --models-root "$MODELS_ROOT" --json \
+    >"$ROOT/unknown-reference.json"
+python3 - "$ROOT/unknown-reference.json" <<'PY'
+import json, sys
+item = json.load(open(sys.argv[1], encoding="utf-8"))
+assert item["model"] == "unknown-model"
+assert item["state"] == "REMOTE"
+assert item["format"] == "gguf"
+PY
+"$YVEX_BIN" model list --models-root "$MODELS_ROOT" --registry "$REGISTRY" \
+    --json >"$ROOT/models-with-unknown.json"
+python3 - "$ROOT/models-with-unknown.json" <<'PY'
+import json, sys
+models = json.load(open(sys.argv[1], encoding="utf-8"))["models"]
+item = next(model for model in models if model["selector"] == "unknown-model")
+assert item["family"] == "unknown"
+assert item["state"] == "REMOTE"
+assert item["execution"] == "unbound source"
+PY
 
 # A real bounded provider pull uses the existing acquisition owner, pins the
 # immutable revision, records local content identity without promoting it to
