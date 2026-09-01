@@ -354,6 +354,10 @@ YVEX_FAKE_HF_RESOLVED_SHA=62af8fffb2f7030cac4de2f0169f5b8d1101b646 \
     --format safetensors --name dry-run-dspark --family deepseek \
     --models-root "$MODELS_ROOT" --dry-run >"$ROOT/deepseek-pull-dry-run.out"
 contains "$ROOT/deepseek-pull-dry-run.out" 'status: model-download-dry-run'
+contains "$ROOT/deepseek-pull-dry-run.out" 'model-download: plan target=dry-run-dspark'
+contains "$ROOT/deepseek-pull-dry-run.out" 'stage: download planned (dry-run)'
+! grep 'model-download: start' "$ROOT/deepseek-pull-dry-run.out" >/dev/null
+! grep 'stage: download running' "$ROOT/deepseek-pull-dry-run.out" >/dev/null
 ! grep 'tick: elapsed=' "$ROOT/deepseek-pull-dry-run.out" >/dev/null
 test ! -e "$MODELS_ROOT/hf/deepseek/dry-run-dspark"
 test ! -e "$MODELS_ROOT/reports/deepseek/dry-run-dspark.download.receipt"

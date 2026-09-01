@@ -39,7 +39,8 @@ static void model_download_restore_provider_signal_handlers(
     const struct sigaction *old_term);
 static void model_download_print_start_progress(
     const yvex_model_download_report *report,
-    yvex_model_download_progress_mode effective_mode);
+    yvex_model_download_progress_mode effective_mode,
+    int dry_run);
 static void model_download_print_tick_progress(
     const char *source_dir,
     time_t started_at,
@@ -888,7 +889,7 @@ int model_download_run_hf(const yvex_cli_models_download_options *options,
     args[n] = NULL;
 
     effective_mode = model_download_effective_progress_mode(options->progress_mode);
-    model_download_print_start_progress(report, effective_mode);
+    model_download_print_start_progress(report, effective_mode, options->dry_run);
     return provider_process_run_streaming(
         args,
         options->dry_run ? "/dev/null" : report->stdout_log_path,
@@ -1113,17 +1114,20 @@ static const char *const download_status_lines[] = {
 
 static void model_download_print_start_progress(
     const yvex_model_download_report *report,
-    yvex_model_download_progress_mode effective_mode)
+    yvex_model_download_progress_mode effective_mode,
+    int dry_run)
 {
     if (!report || effective_mode == YVEX_MODEL_DOWNLOAD_PROGRESS_OFF) {
         return;
     }
-    yvex_cli_out_writef(stdout, "model-download: start target=%s\n", report->target_id);
+    yvex_cli_out_writef(stdout, "model-download: %s target=%s\n",
+                        dry_run ? "plan" : "start", report->target_id);
     yvex_cli_out_writef(stdout, "provider: %s\n", report->provider);
     yvex_cli_out_writef(stdout, "repo: %s\n", report->repo_id);
     yvex_cli_out_writef(stdout, "source: %s\n", report->local_source_dir);
     yvex_cli_out_writef(stdout, "stage: account-provider %s\n", report->stage_account_provider);
-    yvex_cli_out_writef(stdout, "stage: download running\n");
+    yvex_cli_out_writef(stdout, "stage: download %s\n",
+                        dry_run ? "planned (dry-run)" : "running");
     fflush(stdout);
 }
 
