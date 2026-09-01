@@ -467,6 +467,26 @@ static int neutral_transformer_attention(
     return YVEX_ERR_UNSUPPORTED;
 }
 
+static int neutral_gated_delta_workspace(
+    const yvex_gated_delta_plan *plan, unsigned long long tokens,
+    unsigned long long *bytes, yvex_error *err)
+{
+    (void)plan;
+    return neutral_workspace(tokens, bytes, err);
+}
+
+static int neutral_gated_delta(
+    yvex_backend *backend, const yvex_gated_delta_plan *plan,
+    const yvex_gated_delta_device_request *request,
+    yvex_gated_delta_device_result *result,
+    yvex_backend_operation_facts *facts, yvex_error *err)
+{
+    (void)backend; (void)plan; (void)request; (void)err;
+    if (result) *result = (yvex_gated_delta_device_result){0};
+    if (facts) *facts = (yvex_backend_operation_facts){0};
+    return YVEX_ERR_UNSUPPORTED;
+}
+
 int main(void)
 {
     const yvex_backend_sampling_operations sampling = {
@@ -476,10 +496,14 @@ int main(void)
     const yvex_backend_transformer_operations transformer = {
         .attention_workspace_required = neutral_transformer_workspace,
         .attention_execute = neutral_transformer_attention,
+        .gated_delta_workspace_required = neutral_gated_delta_workspace,
+        .gated_delta_execute = neutral_gated_delta,
     };
     const yvex_backend_encoded_operations encoded = {0};
     return !sampling.workspace_required || !sampling.select_greedy_rows ||
            !transformer.attention_workspace_required || !transformer.attention_execute ||
+           !transformer.gated_delta_workspace_required ||
+           !transformer.gated_delta_execute ||
            encoded.matvec || encoded.gather;
 }
 EOF

@@ -11,6 +11,7 @@
 #include <yvex/internal/device_view.h>
 #include <yvex/internal/execution_observation.h>
 #include <yvex/internal/moe.h>
+#include <yvex/internal/sequence_mixer.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -285,6 +286,13 @@ struct yvex_backend_transformer_operations {
                                         unsigned long long *, yvex_error *);
     int (*attention_execute)(yvex_backend *, const yvex_transformer_attention_request *,
                              yvex_backend_operation_facts *, yvex_error *);
+    int (*gated_delta_workspace_required)(const yvex_gated_delta_plan *,
+                                          unsigned long long,
+                                          unsigned long long *, yvex_error *);
+    int (*gated_delta_execute)(yvex_backend *, const yvex_gated_delta_plan *,
+                               const yvex_gated_delta_device_request *,
+                               yvex_gated_delta_device_result *,
+                               yvex_backend_operation_facts *, yvex_error *);
     int (*linear_workspace_required)(const yvex_transformer_linear_compile_request *,
                                      unsigned long long *, yvex_error *);
     int (*linear_compile)(yvex_backend *, const yvex_transformer_linear_compile_request *,

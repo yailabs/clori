@@ -67,9 +67,9 @@
     },
     {
       "id": "stateful-sequence-mixer",
-      "patterns": ["src/graph/sequence_mixer*.c", "include/yvex/internal/sequence_mixer.h", "tests/unit/sequence_mixer.c"],
+      "patterns": ["src/graph/sequence_mixer*.c", "src/backend/cuda/sequence_mixer*", "include/yvex/internal/sequence_mixer.h", "include/yvex/internal/transformer.h", "tests/unit/sequence_mixer.c", "tests/unit/cuda/sequence_mixer.c"],
       "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],
-      "tests": ["unit.sequence_mixer", "integration.tiny-vertical"],
+      "tests": ["unit.sequence_mixer", "cuda.sequence_mixer", "integration.tiny-vertical"],
       "reason": "stateful sequence mixing requires numerical, cached-decode, rollback, and composed runtime evidence"
     },
     {

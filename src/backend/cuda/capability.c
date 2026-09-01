@@ -25,6 +25,8 @@ static const yvex_backend_transformer_operations transformer_operations = {
     .final = yvex_cuda_transformer_final,
     .attention_workspace_required = yvex_cuda_transformer_attention_workspace_required,
     .attention_execute = yvex_cuda_transformer_attention_execute,
+    .gated_delta_workspace_required = yvex_cuda_gated_delta_workspace_required,
+    .gated_delta_execute = yvex_cuda_gated_delta_execute,
     .linear_workspace_required = yvex_cuda_transformer_linear_workspace_required,
     .linear_compile = yvex_cuda_transformer_linear_compile,
     .linear_execute = yvex_cuda_transformer_linear_execute,
@@ -265,6 +267,10 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(vector_update_function)},
     {"yvex_clamp_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(clamp_function)},
+    {"yvex_gated_delta_convolution_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(gated_delta_convolution_function)},
+    {"yvex_gated_delta_recurrence_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(gated_delta_recurrence_function)},
 };
 #define CUDA_KERNEL_BINDING_COUNT (sizeof(cuda_kernel_bindings) / sizeof(cuda_kernel_bindings[0]))
 #undef CUDA_HANDLE_OFFSET

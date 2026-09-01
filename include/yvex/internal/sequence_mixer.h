@@ -88,6 +88,36 @@ typedef struct {
     int complete, cancelled;
 } yvex_gated_delta_cpu_result;
 
+/* Device execution consumes family-owned projections and parameters while preserving the same
+ * sealed recurrence and caller-owned candidate-state contract as the portable CPU authority.
+ * A backend may mutate only next_state/output; committed state is always read-only. */
+typedef struct {
+    unsigned long long token_count;
+    const yvex_device_tensor *projected_qkv;
+    const yvex_device_tensor *projected_output_gate;
+    const yvex_device_tensor *projected_beta;
+    const yvex_device_tensor *projected_decay;
+    const yvex_device_tensor *convolution_weight;
+    const yvex_device_tensor *decay_log;
+    const yvex_device_tensor *time_bias;
+    const yvex_device_tensor *normalization_weight;
+    const yvex_device_tensor *convolution_state;
+    const yvex_device_tensor *recurrent_state;
+    yvex_device_tensor *next_convolution_state;
+    yvex_device_tensor *next_recurrent_state;
+    yvex_device_tensor *output;
+    int (*cancel_requested)(void *context);
+    void *cancel_context;
+} yvex_gated_delta_device_request;
+
+typedef struct {
+    unsigned long long token_count, output_values;
+    unsigned long long convolution_state_values, recurrent_state_values;
+    unsigned long long recurrent_matrix_updates, accumulated_values;
+    unsigned long long execution_chunks;
+    int complete, cancelled;
+} yvex_gated_delta_device_result;
+
 int yvex_gated_delta_plan_seal(
     yvex_gated_delta_plan *plan, const yvex_gated_delta_requirement *requirement,
     yvex_error *err);

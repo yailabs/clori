@@ -62,6 +62,14 @@ int yvex_cuda_transformer_attention_workspace_required(
 int yvex_cuda_transformer_attention_execute(
     yvex_backend *backend, const yvex_transformer_attention_request *request,
     yvex_backend_operation_facts *facts, yvex_error *err);
+int yvex_cuda_gated_delta_workspace_required(
+    const yvex_gated_delta_plan *plan, unsigned long long token_count,
+    unsigned long long *bytes, yvex_error *err);
+int yvex_cuda_gated_delta_execute(
+    yvex_backend *backend, const yvex_gated_delta_plan *plan,
+    const yvex_gated_delta_device_request *request,
+    yvex_gated_delta_device_result *result,
+    yvex_backend_operation_facts *facts, yvex_error *err);
 int yvex_cuda_transformer_dense_decoder_execute(
     yvex_backend *backend, const yvex_transformer_dense_decoder_request *request,
     yvex_transformer_dense_decoder_result *result, yvex_error *err);

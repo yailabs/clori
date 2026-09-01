@@ -13,8 +13,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-typedef int CUresult;
-typedef int CUdevice;
+typedef int CUresult, CUdevice;
 typedef void *CUcontext, *CUmodule, *CUfunction, *CUstream, *CUevent, *CUgraph;
 typedef void *CUgraphExec, *CUgraphNode;
 typedef unsigned long long CUdeviceptr;
@@ -285,6 +284,7 @@ typedef struct {
     CUfunction conv2d_function, group_norm_silu_function;
     CUfunction alias_up_function, alias_down_function;
     CUfunction vector_update_function, clamp_function;
+    CUfunction gated_delta_convolution_function, gated_delta_recurrence_function;
     yvex_cuda_kernel_bundle_state kernel_bundle_state;
     yvex_backend_capability_reason kernel_bundle_reason;
     yvex_backend_operation_variant kernel_bundle_failure_variant;
