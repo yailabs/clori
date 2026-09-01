@@ -275,6 +275,14 @@ static int deepseek_tokenizer_policy(yvex_tokenizer_family_policy *out, yvex_err
         YVEX_TOKENIZER_MODEL_BPE_BYTELEVEL, YVEX_TOKENIZER_PROMPT_CONVERSATION, err) == YVEX_OK;
 }
 static const yvex_family_compiler_adapter deepseek_compiler;
+static const yvex_model_deployment_defaults deepseek_deployment_defaults = {
+    .schema_version = YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_V1,
+    .logical_family = "deepseek4",
+    .logical_model = "v4-flash-dspark",
+    .quant_preset = YVEX_DEEPSEEK_QUANT_RELEASE_PROFILE_NAME,
+    .backend = "cuda",
+    .engine_kind = "text",
+    .execution_strategy = "speculative"};
 static const yvex_graph_execution_binding deepseek_execution = {
     .schema_version = YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1,
     .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
@@ -284,6 +292,7 @@ static const yvex_graph_execution_binding deepseek_execution = {
     .operator_family_key = "deepseek",
     .operator_artifact_filename = YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME,
     .source_manifest_filename = YVEX_SOURCE_RELEASE_MANIFEST_LEAF,
+    .deployment_defaults = &deepseek_deployment_defaults,
     .model = yvex_model_register_deepseek_v4,
     .compiler = &deepseek_compiler,
     .api = &yvex_attention_execution_api};

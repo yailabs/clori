@@ -6,6 +6,7 @@
 #include <yvex/internal/family_catalog.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/deployment.h>
 #include <yvex/internal/tokenizer.h>
 #include <yvex/gguf.h>
 #include <yvex/quant.h>
@@ -51,7 +52,16 @@ static const yvex_family_descriptor *family_descriptor_at(size_t index)
     if ((descriptor->execution &&
          (!execution || execution->schema_version != YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1 ||
           !execution->compiler || strcmp(execution->target_id, descriptor->target_id) != 0 ||
-          strcmp(execution->compiler->family, descriptor->family) != 0)) ||
+          strcmp(execution->compiler->family, descriptor->family) != 0 ||
+          !execution->deployment_defaults ||
+          execution->deployment_defaults->schema_version !=
+              YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_V1 ||
+          !execution->deployment_defaults->logical_family ||
+          !execution->deployment_defaults->logical_model ||
+          !execution->deployment_defaults->quant_preset ||
+          !execution->deployment_defaults->backend ||
+          !execution->deployment_defaults->engine_kind ||
+          !execution->deployment_defaults->execution_strategy)) ||
         (descriptor->component &&
          (!component || component->schema_version != YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 ||
           !component->family || strcmp(component->target_id, descriptor->target_id) != 0 ||

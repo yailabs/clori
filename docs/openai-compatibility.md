@@ -60,16 +60,19 @@ by the preceding call IDs. HTTP state stores typed fields; it never reconstructs
 this history from rendered final text.
 
 The normal server command enables the default loopback listener before any
-engine is loaded. Start the host, then load a startup-ready registry profile:
+model is loaded. Inspect the logical model catalog and start the host:
 
 ```sh
-./yvex profile list
+./yvex model list --wide
 ./yvex serve
 ```
 
-From another terminal, select one exact deployment with `./yvex engine load`;
-automation may pass the exact alias as `./yvex engine load PROFILE`. The OpenAI listener remains available while deterministic host and engine commands
-manage engine lifecycle; the foreground host terminal remains a log stream.
+From another terminal, run `./yvex model load` for the linear TTY selector, or
+`./yvex model load MODEL` in automation. The porcelain resolves an exact
+profile and the host creates an exact engine generation; neither is guessed
+from display-name similarity. The OpenAI listener remains available while
+deterministic host and model commands manage residency, and the foreground host
+terminal remains a log stream.
 Adapter-to-runtime frame I/O has a bounded 600000 ms default timeout; local
 operators may override it with `--openai-timeout-ms` for their admitted workload.
 

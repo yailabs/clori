@@ -45,18 +45,21 @@ package ancestry through every call.
 loopback OpenAI listener, telemetry, bounded external request capacity, and an
 empty engine manager. Host readiness does not require a loaded model.
 
-Engine load resolves one exact local registry profile—through the TTY chooser
-or an explicit `engine load PROFILE` automation argument—and creates a new
-engine generation. A text profile opens one authenticated artifact and runtime
-binding; a composite MiniMax profile opens its component set under one logical
-engine. The engine becomes routable only after package admission,
+Porcelain `model load` resolves one logical model and selected representation
+to an exact local registry profile and creates a new engine generation. A TTY
+can select model and variant from linear tables; automation supplies `MODEL`
+and `--variant` when needed. Advanced `engine load PROFILE` retains the exact
+plumbing operation for qualification. A text profile opens one authenticated
+artifact and runtime binding; a composite MiniMax profile opens its component
+set under one logical engine. The engine becomes routable only after package admission,
 specialization, required resources, scheduler, tokenizer/component objects, and
 execution capability are ready.
 
-`engine unload ENGINE` moves the exact generation to draining, refuses new
-leases, requests cancellation of active work, waits for its bounded work count,
-closes sessions and model resources, and leaves the host and other engines
-alive. Reloading the same alias creates another generation. A session or
+`model unload MODEL` resolves the resident generation and moves it to draining;
+advanced `engine unload ENGINE` addresses the generation directly. Unload
+refuses new leases, requests cancellation of active work, waits for its bounded
+work count, closes sessions and model resources, and leaves the host and other
+engines alive. Reloading the same deployment creates another generation. A session or
 response state from the old generation cannot attach to the replacement.
 
 The host can own several engines when their admitted resources fit. Current

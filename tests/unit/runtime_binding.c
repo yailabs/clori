@@ -2529,6 +2529,20 @@ static int test_runtime_family_neutrality(void)
 
     YVEX_TEST_ASSERT(deepseek != NULL && deepseek->api != NULL,
                      "compiled family identity resolves through graph execution registry");
+    YVEX_TEST_ASSERT(
+        deepseek->deployment_defaults &&
+            deepseek->deployment_defaults->schema_version ==
+                YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_V1 &&
+            strcmp(deepseek->deployment_defaults->logical_family, "deepseek4") == 0 &&
+            strcmp(deepseek->deployment_defaults->logical_model,
+                   "v4-flash-dspark") == 0 &&
+            strcmp(deepseek->deployment_defaults->quant_preset,
+                   "deepseek-v4-flash-dspark-q8_0-q2_k-v1") == 0 &&
+            strcmp(deepseek->deployment_defaults->backend, "cuda") == 0 &&
+            strcmp(deepseek->deployment_defaults->engine_kind, "text") == 0 &&
+            strcmp(deepseek->deployment_defaults->execution_strategy,
+                   "speculative") == 0,
+        "qualified family publishes one exact porcelain deployment default");
     YVEX_TEST_ASSERT(strcmp(deepseek->operator_family_key, "deepseek") == 0 &&
                          strcmp(deepseek->source_manifest_filename,
                                 YVEX_SOURCE_RELEASE_MANIFEST_LEAF) == 0 &&

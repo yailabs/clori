@@ -55,7 +55,9 @@ include/yvex/internal/tokenizer.h	tokenizer	tokenizer.family_policy	generic	priv
 src/runtime/private.h	runtime	runtime.private	generic	private	internal-abi	runtime	interface	none
 include/yvex/internal/source.h	source	source.internal	generic	private	internal-abi	model,compilation	interface	none
 include/yvex/internal/source_catalog.h	source	source.catalog	generic	private	internal-abi	source,model,graph	interface	none
+include/yvex/internal/source_distribution.h	source	source.distribution	generic	private	internal-abi	source,model.catalog,cli	interface	none
 include/yvex/internal/source_payload.h	source	source.payload	generic	private	internal-abi	model,compilation,cli	interface	none
+include/yvex/internal/cli_table.h	cli.io	cli.io.table	generic	private	internal-abi	cli.render,cli.model_artifacts,client	interface	none
 include/yvex/materialization.h	abi	abi.materialization	generic	public	public-abi	repository	interface	none
 include/yvex/model.h	abi	abi.model	generic	public	public-abi	repository	interface	none
 include/yvex/provider.h	abi	abi.provider	generic	public	public-abi	repository	interface	none
@@ -130,6 +132,7 @@ src/cli/io/out.c	cli.io	cli.io.out	generic	private	reusable-algorithm	cli,render
 src/cli/io/private.h	cli.io	cli.io.private	generic	private	private-interface	cli,render	interface	none
 src/cli/main.c	client	client.yvex	entrypoint	private	entrypoint	operator	entrypoint	none
 src/cli/io/client.c	client	client.runtime_lane	generic	private	protocol-client	client.yvex	implementation	none
+src/cli/io/model.c	client	client.model_runtime	generic	private	protocol-client	client.runtime_lane,model.catalog	implementation	none
 src/cli/io/server.c	client	client.server_process	entrypoint	private	foreground-server	operator	entrypoint	none
 src/cli/private.h	client	client.dispatch	generic	private	source-local-interface	client.yvex,client.runtime_lane,client.server_process	interface	none
 src/cli/model_artifacts/artifacts.c	cli.model_artifacts	cli.model_artifacts.artifacts	generic	private	cli-workflow	cli.commands	implementation	none
@@ -137,6 +140,10 @@ src/cli/model_artifacts/context.c	cli.model_artifacts	cli.model_artifacts.contex
 src/cli/model_artifacts/download.c	cli.model_artifacts	cli.model_artifacts.download	generic	private	cli-workflow	cli.commands	implementation	none
 src/cli/model_artifacts/fullmodel.c	cli.model_artifacts	cli.model_artifacts.fullmodel	generic	private	cli-workflow	cli.commands	implementation	none
 src/cli/model_artifacts/models.c	cli.model_artifacts	cli.model_artifacts.models	generic	private	cli-workflow	cli.commands	implementation	none
+src/cli/model_artifacts/workflow.c	cli.model_artifacts	cli.model_artifacts.workflow	generic	private	cli-workflow	model.catalog,cli.io	implementation	none
+src/cli/model_artifacts/workflow_distribution.c	cli.model_artifacts	cli.model_artifacts.workflow-distribution	generic	private	cli-workflow	source.distribution,model.catalog,cli.io	implementation	none
+src/cli/model_artifacts/workflow_prepare.c	cli.model_artifacts	cli.model_artifacts.workflow-prepare	generic	private	cli-workflow	source,quant,compilation,runtime,model.catalog	implementation	none
+src/cli/model_artifacts/workflow_select.c	cli.model_artifacts	cli.model_artifacts.workflow-select	generic	private	cli-workflow	model.catalog,cli.io,client.model_runtime	implementation	none
 src/cli/model_artifacts/moe.c	cli.model_artifacts	cli.model_artifacts.moe	generic	private	cli-workflow	cli.commands	implementation	none
 src/cli/model_artifacts/private.h	cli.model_artifacts	cli.model_artifacts.private	generic	private	private-interface	cli.commands,cli.render	interface	none
 src/cli/model_artifacts/prepare.c	cli.model_artifacts	cli.model_artifacts.prepare	generic	private	cli-workflow	cli.commands	implementation	none
@@ -149,7 +156,9 @@ src/cli/render/media.c	cli.render	cli.render.media	generic	private	typed-project
 src/cli/render/model_artifacts.c	cli.render	cli.render.model_artifacts	generic	private	typed-projection	cli.commands,cli.model_artifacts	implementation	none
 src/cli/render/model_target.c	cli.render	cli.render.model_target	generic	private	typed-projection	cli.commands,cli.model_artifacts	implementation	none
 src/cli/render/private.h	cli.render	cli.render.private	generic	private	private-interface	cli	interface	none
+src/cli/render/runtime.c	cli.render	cli.render.runtime	generic	private	typed-projection	client.runtime_lane	implementation	none
 src/cli/render/source.c	cli.render	cli.render.source	generic	private	typed-projection	cli.commands,cli.model_artifacts	implementation	none
+src/cli/io/table.c	cli.io	cli.io.table	generic	private	reusable-algorithm	cli.render,cli.model_artifacts,client	implementation	none
 src/core/fs.c	core	core.fs	generic	private	file-serialization	repository	implementation	none
 src/core/sha256.c	core	core.sha256	generic	private	reusable-algorithm	repository	implementation	none
 src/core/shard_index.c	core	core.shard_index	generic	private	reusable-algorithm	repository	implementation	none
@@ -295,6 +304,7 @@ src/server/session_lifecycle.c	server	server.session_lifecycle	generic	private	r
 src/server/state_store.c	server	server.session_state_store	generic	private	persisted-schema	server.session,tests	implementation	none
 src/server/telemetry.c	server	server.telemetry	generic	private	resource-lifecycle	server.core,server.session	implementation	none
 src/source/catalog.c	source	source.catalog	generic	private	reusable-algorithm	source,model,graph	implementation	none
+src/source/distribution.c	source	source.distribution	generic	private	file-serialization	model.catalog,cli	implementation	none
 src/source/inventory.c	source	source.inventory	generic	private	reusable-algorithm	model,compilation	implementation	none
 src/core/json.c	core	core.json	generic	private	bounded-parser	source,gguf	implementation	none
 src/source/native_weights.c	source	source.native_weights	generic	private	reusable-algorithm	model,compilation	implementation	none

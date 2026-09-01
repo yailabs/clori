@@ -46,10 +46,11 @@ omits() {
 }
 
 run_ok no_args "$YVEX_BIN"
-contains "$OUT_DIR/no_args.out" "YVEX inference/compiler/runtime"
-contains "$OUT_DIR/no_args.out" "HOST"
+contains "$OUT_DIR/no_args.out" "YVEX inference runtime"
+contains "$OUT_DIR/no_args.out" "RUNTIME"
 contains "$OUT_DIR/no_args.out" "serve"
 contains "$OUT_DIR/no_args.out" "chat"
+contains "$OUT_DIR/no_args.out" "model"
 omits "$OUT_DIR/no_args.out" "yvex run"
 
 run_code chat_non_tty 2 "$YVEX_BIN" chat
@@ -57,10 +58,18 @@ contains "$OUT_DIR/chat_non_tty.err" "chat requires a terminal"
 contains "$OUT_DIR/chat_non_tty.err" "configured provider API"
 
 run_ok help "$YVEX_BIN" --help
-contains "$OUT_DIR/help.out" "YVEX inference/compiler/runtime"
+contains "$OUT_DIR/help.out" "YVEX inference runtime"
 contains "$OUT_DIR/help.out" "USE"
-contains "$OUT_DIR/help.out" "BUILD"
-contains "$OUT_DIR/help.out" "INSPECT"
+contains "$OUT_DIR/help.out" "RUNTIME"
+contains "$OUT_DIR/help.out" "TOOLS"
+contains "$OUT_DIR/help.out" "META"
+contains "$OUT_DIR/help.out" "model search -> model pull -> model prepare -> serve -> model load -> chat"
+contains "$OUT_DIR/help.out" "yvex model pull SOURCE"
+contains "$OUT_DIR/help.out" "yvex model prepare MODEL"
+contains "$OUT_DIR/help.out" "yvex model load [MODEL]"
+contains "$OUT_DIR/help.out" "yvex model push MODEL DESTINATION"
+contains "$OUT_DIR/help.out" "yvex host logs"
+contains "$OUT_DIR/help.out" "yvex host memory"
 omits "$OUT_DIR/help.out" "yvex run"
 omits "$OUT_DIR/help.out" "yvex server"
 
@@ -115,7 +124,7 @@ contains "$OUT_DIR/unknown.err" "unknown command: unknown"
 run_code unknown_help 2 "$YVEX_BIN" help unknown
 contains "$OUT_DIR/unknown_help.err" "unknown help path unknown"
 
-for retired in inspect materialize quant-policy metadata tensor-map model-target fullmodel; do
+for retired in materialize quant-policy metadata tensor-map model-target fullmodel; do
     run_code "retired_$retired" 2 "$YVEX_BIN" "$retired"
     contains "$OUT_DIR/retired_$retired.err" "unknown command: $retired"
 done

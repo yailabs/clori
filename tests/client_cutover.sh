@@ -28,13 +28,17 @@ cleanup()
 trap cleanup EXIT HUP INT TERM
 
 "$YVEX_BIN" help >"$root/help"
-grep -F 'YVEX inference/compiler/runtime' "$root/help" >/dev/null
+grep -F 'YVEX inference runtime' "$root/help" >/dev/null
 for expected in \
-    'USE' 'HOST' 'BUILD' 'INSPECT' 'META' \
-    'chat' 'serve' 'host' 'engine' 'session' \
-    'model' 'source' 'artifact' 'profile' 'compile' 'inspect' 'bench'
+    'USE' 'RUNTIME' 'TOOLS' 'META' \
+    'chat' 'serve' 'host' 'model' 'inspect' 'help' 'version' \
+    'MODEL COMMANDS' 'HOST CONTROL' 'yvex model pull SOURCE' \
+    'yvex model load [MODEL]' 'yvex host logs' 'yvex host memory'
 do
     grep -F "$expected" "$root/help" >/dev/null
+done
+for plumbing in engine session source artifact profile compile bench; do
+    ! grep -E "^  $plumbing[[:space:]]" "$root/help" >/dev/null
 done
 for retired in 'yvex run' 'yvex server' 'yvex-dev' 'yvex-openai'; do
     ! grep -F "$retired" "$root/help" >/dev/null
@@ -46,8 +50,7 @@ for expected in \
     'yvex inspect source tensors' \
     'yvex inspect tokenizer encode' \
     'yvex bench attention execute' \
-    'yvex bench attention profile' \
-    'yvex inspect cuda'
+    'yvex bench attention profile'
 do
     grep -F "$expected" "$root/advanced" >/dev/null
 done
@@ -68,6 +71,18 @@ assert 'serve' in paths
 assert 'engine load' in paths
 assert 'engine unload' in paths
 assert 'engine list' in paths
+assert 'model search' in paths
+assert 'model pull' in paths
+assert 'model prepare' in paths
+assert 'model load' in paths
+assert 'model unload' in paths
+assert 'model push' in paths
+assert 'source accounts providers' in paths
+assert 'source accounts status' in paths
+assert 'source accounts whoami' in paths
+assert 'source accounts login' in paths
+assert 'source accounts logout' in paths
+assert 'source accounts ensure' in paths
 assert 'runtime status' not in paths
 assert 'inspect tokenizer encode' in paths
 assert 'model list' in paths and 'source list' in paths
@@ -187,7 +202,7 @@ printf 'hello\n' | "$YVEX_BIN" >"$root/out" 2>"$root/err"
 status=$?
 set -e
 test "$status" -eq 0
-grep -F 'YVEX inference/compiler/runtime' "$root/out" >/dev/null
+grep -F 'YVEX inference runtime' "$root/out" >/dev/null
 set +e
 printf 'hello\n' | "$YVEX_BIN" chat >"$root/out" 2>"$root/err"
 status=$?
@@ -200,7 +215,6 @@ for arguments in \
     'host logs --bogus' \
     'host stop --bogus' \
     'session list --bogus' \
-    'session show main --json' \
     'model show --bogus'
 do
     set +e
@@ -260,9 +274,11 @@ cat >"$registry" <<EOF
   }]
 }
 EOF
-HOME="$home_root" "$YVEX_BIN" model list >"$root/out"
+HOME="$home_root" XDG_RUNTIME_DIR="$root/absent-runtime" \
+    "$YVEX_BIN" model list >"$root/out"
 grep -F 'v4-flash-dspark' "$root/out" >/dev/null
-grep -F '1 artifact · 1 profile (1 runnable)' "$root/out" >/dev/null
+grep -F 'READY' "$root/out" >/dev/null
+grep -F 'cuda' "$root/out" >/dev/null
 HOME="$home_root" "$YVEX_BIN" profile list >"$root/profiles"
 grep -F 'current-model-runtime-profile' "$root/profiles" >/dev/null
 grep -F 'cuda/text/speculative' "$root/profiles" >/dev/null

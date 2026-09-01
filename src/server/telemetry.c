@@ -408,6 +408,32 @@ int yvex_server_telemetry_next(server_telemetry *telemetry,
     return YVEX_OK;
 }
 /*
+ * Capture the exact upper sequence bound for a finite retained-history projection.
+ *
+ * The caller may then consume through this sequence with non-blocking next calls.
+ * Events published after the snapshot remain owned by continuous subscribers.
+ */
+int yvex_server_telemetry_latest_sequence(server_telemetry *telemetry,
+                                      unsigned long long *sequence,
+                                      yvex_error *err)
+{
+    if (!telemetry || !sequence || pthread_mutex_lock(&telemetry->mutex) != 0) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.telemetry.snapshot",
+                       "telemetry and sequence output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (telemetry->closing) {
+        (void)pthread_mutex_unlock(&telemetry->mutex);
+        yvex_error_set(err, YVEX_ERR_STATE, "server.telemetry.snapshot",
+                       "telemetry is closed");
+        return YVEX_ERR_STATE;
+    }
+    *sequence = telemetry->next_sequence - 1u;
+    (void)pthread_mutex_unlock(&telemetry->mutex);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+/*
  * Copy current process metrics from the same authority as events.
  *
  * Refuses absent ownership.

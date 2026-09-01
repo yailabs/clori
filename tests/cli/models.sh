@@ -401,14 +401,13 @@ assert source["verification_state"] == "payload-verified"
 assert source["size_bytes"] == 144016000740
 PY
 
-YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model search "MiniMax H3" --limit 2 \
+COLUMNS=240 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model search "MiniMax H3" --limit 2 \
   --models-root "$RECON_ROOT" \
   > "$ROOT/search.out"
 grep 'REMOTE MODELS · "MiniMax H3"' "$ROOT/search.out"
-grep 'MODEL / REPOSITORY.*KIND.*FAMILY.*PARAMS.*FORMAT.*LOCAL.*YVEX' "$ROOT/search.out"
-grep 'MiniMaxAI/MiniMax-H3' "$ROOT/search.out"
-grep 'full model.*minimax-h3.*source.*supported' "$ROOT/search.out"
-grep 'unsloth/MiniMax-H3-GGUF.*conversion.*inspect' "$ROOT/search.out"
+grep 'MODEL.*PROVIDER.*REPOSITORY.*ARCH.*FORMATS.*SIZE.*STATE.*YVEX.*LOCATION' "$ROOT/search.out"
+grep 'MiniMax-H3.*Hugging Face.*MiniMaxAI/MiniMax-H3.*safetensors.*source.*supported.*hf://MiniMaxAI/MiniMax-H3@' "$ROOT/search.out"
+grep 'MiniMax-H3-GGUF.*Hugging Face.*unsloth/MiniMax-H3-GGUF.*gguf.*remote.*inspect.*hf://unsloth/MiniMax-H3-GGUF@' "$ROOT/search.out"
 ! grep 'package-preparation\|source-ingest\|physical-inspection' "$ROOT/search.out"
 
 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model search "MiniMax H3" --all --json \
@@ -530,8 +529,8 @@ grep 'remote revision or reference was not found' "$ROOT/inspect-revision-missin
 ! grep -A2 '^  download$' "$FAKE_HF_LOG"
 
 expect_rc 2 "$YVEX_BIN" model search MiniMax --interactive \
-  > "$ROOT/search-interactive.out" 2> "$ROOT/search-interactive.err"
-grep 'model search --interactive requires a terminal' "$ROOT/search-interactive.err"
+    > "$ROOT/search-interactive.out" 2> "$ROOT/search-interactive.err"
+grep 'model search: unknown flag: --interactive' "$ROOT/search-interactive.err"
 
 YVEX_FAKE_HF_RESOLVED_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   YVEX_HF_CLI="$FAKE_HF" expect_rc 1 "$YVEX_BIN" source inspect MiniMaxAI/MiniMax-H3 \
@@ -626,7 +625,7 @@ PY
 
 "$YVEX_BIN" profile list --models-root "$CATALOG_ROOT" --registry "$REG" --output nope \
   > "$ROOT/list-bad-output.out" 2> "$ROOT/list-bad-output.err" && exit 1 || true
-grep 'model list --output requires table|audit|json' "$ROOT/list-bad-output.err"
+grep 'model plumbing --output requires table|audit|json' "$ROOT/list-bad-output.err"
 
 "$YVEX_BIN" profile show deepseek4-v4-flash-dspark-selected-embed --registry "$REG" > "$ROOT/inspect.out"
 grep 'model: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/inspect.out"
@@ -665,8 +664,8 @@ grep 'cuda/media/not-applicable' "$ROOT/list-composite.out"
 "$YVEX_BIN" model list --models-root "$CATALOG_ROOT" --registry "$REG" \
   > "$ROOT/library-friendly.out"
 grep '^MODELS$' "$ROOT/library-friendly.out"
-grep 'deepseek4-v4-flash-dspark.*runnable' "$ROOT/library-friendly.out"
-grep 'minimax-h3-fl2va.*runnable' "$ROOT/library-friendly.out"
+grep 'v4-flash-dspark.*READY.*cpu' "$ROOT/library-friendly.out"
+grep 'minimax-h3-fl2va.*READY.*cuda' "$ROOT/library-friendly.out"
 ! grep 'provider:huggingface' "$ROOT/library-friendly.out"
 "$YVEX_BIN" source list --models-root "$RECON_ROOT" --registry "$REG" \
   > "$ROOT/sources-friendly.out"
@@ -691,7 +690,7 @@ import sys
 models = json.load(open(sys.argv[1], encoding="utf-8"))["models"]
 artifacts = json.load(open(sys.argv[2], encoding="utf-8"))["artifacts"]
 profiles = json.load(open(sys.argv[3], encoding="utf-8"))["profiles"]
-assert {model["display_name"] for model in models} == {
+assert {model["name"] for model in models} == {
     "deepseek4-v4-flash-dspark",
     "minimax-h3-fl2va",
 }
@@ -833,6 +832,12 @@ grep 'stage: account-provider skipped' "$ROOT/download-dry-run.out"
 grep 'payload_loaded: false' "$ROOT/download-dry-run.out"
 grep 'gguf_created: false' "$ROOT/download-dry-run.out"
 grep 'generation: unsupported' "$ROOT/download-dry-run.out"
+! grep 'tick: elapsed=' "$ROOT/download-dry-run.out"
+test ! -e "$DOWNLOAD_ROOT/hf/gemma/gemma-4-12b-it"
+test ! -e "$DOWNLOAD_ROOT/reports/gemma/gemma-4-12b-it.download.receipt"
+test ! -e "$DOWNLOAD_ROOT/reports/gemma/gemma-4-12b-it.download.active.json"
+test ! -e "$DOWNLOAD_ROOT/logs/gemma-4-12b-it.download.stdout.log"
+test ! -e "$DOWNLOAD_ROOT/logs/gemma-4-12b-it.download.stderr.log"
 
 YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire gemma-4-12b-it --models-root "$DOWNLOAD_ROOT" --auth auto --audit > "$ROOT/download-gemma.out"
 grep 'status: model-download-pass' "$ROOT/download-gemma.out"
@@ -890,7 +895,7 @@ source = next(
 )
 assert source["representation"] == "gguf"
 assert source["acquisition_state"] == "source-acquired"
-assert source["verification_state"] == "recorded-unverified"
+assert source["verification_state"] == "revision-verified"
 assert source["blocker"] == ""
 PY
 

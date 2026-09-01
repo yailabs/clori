@@ -34,7 +34,32 @@ void yvex_context_help(FILE *fp);
 int yvex_fullmodel_command(int arg_count, char **args);
 void yvex_fullmodel_help(FILE *fp);
 int yvex_models_command(int arg_count, char **args);
+int yvex_model_profile_create_adapter(int arg_count, char **args,
+                                      int render_result);
 void yvex_models_help(FILE *fp);
+int yvex_model_catalog_list_command(int arg_count, char **args);
+int yvex_model_catalog_show_command(int arg_count, char **args);
+int yvex_model_catalog_search_local(
+    const yvex_cli_model_search_options *options);
+int yvex_model_pull_command(int arg_count, char **args);
+int yvex_model_pull_lifecycle_command(int arg_count, char **args);
+int yvex_model_push_command(int arg_count, char **args);
+int yvex_model_prepare_command(int arg_count, char **args);
+const char *yvex_cli_model_selector(const yvex_model_library_entry *model);
+int yvex_cli_model_find(const yvex_model_library *library, const char *selector,
+                        unsigned long long *model_index);
+typedef struct {
+    unsigned long long model_index, profile_index, revision_count;
+    int selected;
+    const yvex_model_library_entry *model;
+    const yvex_model_runtime_profile_fact *profile;
+    const yvex_model_artifact_fact *artifact;
+    char ordinal[16], variant[YVEX_REMOTE_PRECISION_CAP + 24u];
+    char format[YVEX_REMOTE_FORMAT_CAP], precision[YVEX_REMOTE_PRECISION_CAP], size[32];
+} yvex_cli_model_profile_candidate;
+unsigned long long yvex_cli_model_profile_candidates(
+    const yvex_model_library *library, unsigned long long model_index, int text_only,
+    yvex_cli_model_profile_candidate out[YVEX_MODELS_ARTIFACT_ROWS_CAP]);
 int model_search_options_parse(int arg_count,
                                char **args,
                                int start,
@@ -43,9 +68,15 @@ int model_remote_inspect_options_parse(int arg_count,
                                        char **args,
                                        int start,
                                        yvex_cli_model_inspect_options *options);
+enum {
+    YVEX_MODEL_LOCAL_OPTIONS_DETAIL = 1u,
+    YVEX_MODEL_LOCAL_OPTIONS_LEGACY_OUTPUT = 2u
+};
 int model_local_list_options_parse(int arg_count,
                                    char **args,
                                    int start,
+                                   const char *command,
+                                   unsigned int allowed,
                                    yvex_cli_model_list_options *options);
 int yvex_remote_catalog_render(FILE *fp,
                                const yvex_remote_catalog *catalog,

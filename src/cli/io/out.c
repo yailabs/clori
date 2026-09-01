@@ -1180,19 +1180,16 @@ void yvex_cli_out_repl_catalog(void)
            style.reset, style.dim, style.reset);
     puts("\n");
 }
-
 void yvex_cli_out_line(FILE *fp, const char *text)
 {
     (void)yvex_cli_out_puts(fp, text);
     (void)yvex_cli_out_char(fp, '\n');
 }
-
 void yvex_cli_out_lines(FILE *fp,
                         const char *const *lines,
                         size_t line_count)
 {
     size_t i;
-
     if (!lines) {
         return;
     }
@@ -1200,17 +1197,14 @@ void yvex_cli_out_lines(FILE *fp,
         yvex_cli_out_line(fp, lines[i]);
     }
 }
-
 void yvex_cli_out_kv_str(FILE *fp, const char *key, const char *value)
 {
     (void)yvex_cli_out_writef(fp, "%s: %s\n", key ? key : "", value ? value : "");
 }
-
 void yvex_cli_out_kv_bool(FILE *fp, const char *key, int value)
 {
     yvex_cli_out_kv_str(fp, key, value ? "true" : "false");
 }
-
 int yvex_cli_out_fields(FILE *fp,
                         const void *object,
                         const yvex_cli_field_spec *fields,
@@ -1218,7 +1212,6 @@ int yvex_cli_out_fields(FILE *fp,
 {
     const unsigned char *base = object;
     size_t i;
-
     if (!object || (!fields && field_count != 0u)) {
         return -1;
     }
@@ -1227,7 +1220,6 @@ int yvex_cli_out_fields(FILE *fp,
         const void *value = base + field->offset;
         const char *text;
         int rc;
-
         switch (field->kind) {
         case YVEX_CLI_FIELD_TEXT:
             text = *(const char *const *)value;
@@ -1279,14 +1271,12 @@ int yvex_cli_out_fields(FILE *fp,
     }
     return 0;
 }
-
 int print_yvex_error(const yvex_error *err, int exit_code)
 {
     yvex_cli_out_writef(stderr, "yvex: %s: %s\n", yvex_error_where(err),
                         yvex_error_message(err));
     return exit_code;
 }
-
 int exit_for_status(int status)
 {
     switch (status) {
@@ -1303,7 +1293,6 @@ int exit_for_status(int status)
         return 1;
     }
 }
-
 /*
  * Parse one complete unsigned integer without accepting signs or suffixes.
  *
@@ -1313,7 +1302,6 @@ int parse_ull_allow_zero(const char *text, unsigned long long *out)
 {
     char *end = NULL;
     unsigned long long value;
-
     if (!text || !out || text[0] == '\0' || text[0] == '-') return 0;
     errno = 0;
     value = strtoull(text, &end, 10);
@@ -1321,25 +1309,20 @@ int parse_ull_allow_zero(const char *text, unsigned long long *out)
     *out = value;
     return 1;
 }
-
 int parse_positive_ull(const char *text, unsigned long long *out)
 {
     return parse_ull_allow_zero(text, out) && *out != 0;
 }
-
 int parse_uint_allow_zero(const char *text, unsigned int *out)
 {
     unsigned long long value;
-
     if (!out || !parse_ull_allow_zero(text, &value) || value > UINT32_MAX) return 0;
     *out = (unsigned int)value;
     return 1;
 }
-
 void print_quoted_bytes(const char *data, unsigned long long len)
 {
     unsigned long long i;
-
     yvex_cli_out_writef(stdout, "\"");
     for (i = 0; i < len; ++i) {
         unsigned char ch = (unsigned char)data[i];
@@ -1359,13 +1342,11 @@ void print_quoted_bytes(const char *data, unsigned long long len)
     }
     yvex_cli_out_writef(stdout, "\"");
 }
-
 int open_artifact_for_gguf(const char *path, yvex_artifact **artifact, yvex_error *err)
 {
     yvex_artifact_options options;
     yvex_model_ref ref;
     int rc;
-
     memset(&options, 0, sizeof(options));
     memset(&ref, 0, sizeof(ref));
     rc = yvex_model_ref_resolve(&ref, path, NULL, err);
@@ -1376,11 +1357,9 @@ int open_artifact_for_gguf(const char *path, yvex_artifact **artifact, yvex_erro
     yvex_model_ref_clear(&ref);
     return rc;
 }
-
 void print_tensor_dims(const unsigned long long *dims, unsigned int rank)
 {
     unsigned int i;
-
     yvex_cli_out_writef(stdout, "[");
     for (i = 0; i < rank; ++i) {
         if (i > 0) yvex_cli_out_writef(stdout, ",");
@@ -1388,28 +1367,23 @@ void print_tensor_dims(const unsigned long long *dims, unsigned int rank)
     }
     yvex_cli_out_writef(stdout, "]");
 }
-
 void print_native_dims(const unsigned long long *dims, unsigned int rank)
 {
     print_tensor_dims(dims, rank);
 }
-
 void print_token_ids(const yvex_tokens *tokens)
 {
     unsigned long long i;
-
     yvex_cli_out_writef(stdout, "ids:");
     for (i = 0; i < tokens->len; ++i) yvex_cli_out_writef(stdout, " %u", tokens->ids[i]);
     yvex_cli_out_writef(stdout, "\n");
 }
-
 int parse_id_list(const char *text, unsigned int **out_ids, unsigned long long *out_len)
 {
     unsigned int *ids = NULL;
     unsigned long long len = 0;
     unsigned long long capacity = 0;
     const char *cursor = text;
-
     if (!text || !out_ids || !out_len) return 0;
     *out_ids = NULL;
     *out_len = 0;
@@ -1417,7 +1391,6 @@ int parse_id_list(const char *text, unsigned int **out_ids, unsigned long long *
         char *end = NULL;
         unsigned long value = strtoul(cursor, &end, 10);
         unsigned int *next;
-
         if (end == cursor || value > UINT32_MAX) goto fail;
         if (len == capacity) {
             unsigned long long next_capacity = capacity == 0 ? 8 : capacity * 2u;
@@ -1585,6 +1558,21 @@ static void render_leaf_usage(FILE *output,
     if (descriptor->flag_count) fputs(" [options]", output);
     fputc('\n', output);
 }
+static const char *flag_value_name(const yvex_operator_flag_descriptor *flag)
+{
+    if (strcmp(flag->enum_values, "none")) return flag->enum_values;
+    if (!strcmp(flag->value_type, "u64")) return "N";
+    if (!strcmp(flag->value_type, "number")) return "NUMBER";
+    if (!strcmp(flag->value_type, "path")) return "PATH";
+    if (!strcmp(flag->value_type, "name")) return "NAME";
+    if (!strcmp(flag->value_type, "text")) return "TEXT";
+    return "VALUE";
+}
+static void render_metadata_text(const char *value)
+{
+    for (; *value; ++value)
+        if (*value == '|') fputs(", ", stdout); else fputc(*value, stdout);
+}
 static void render_leaf_help(const yvex_operator_descriptor *descriptor)
 {
     size_t index;
@@ -1596,16 +1584,29 @@ static void render_leaf_help(const yvex_operator_descriptor *descriptor)
         puts("\noptions:");
         for (index = 0u; index < descriptor->flag_count; ++index) {
             const yvex_operator_flag_descriptor *flag = &descriptor->flags[index];
-            printf("  %-24s", flag->name);
-            if (flag->takes_value) {
-                if (strcmp(flag->enum_values, "none"))
-                    printf(" %s", flag->enum_values);
-                else if (!strcmp(flag->value_type, "u64"))
-                    fputs(" N", stdout);
-                else
-                    fputs(" VALUE", stdout);
+            char syntax[384];
+            const char *separator = "";
+            snprintf(syntax, sizeof(syntax), "%s%s%s", flag->name,
+                     flag->takes_value ? " " : "",
+                     flag->takes_value ? flag_value_name(flag) : "");
+            printf("  %-42s", syntax);
+            if (!strcmp(flag->multiplicity, "repeatable")) {
+                fputs("repeatable", stdout); separator = "; ";
             }
-            if (strcmp(flag->aliases, "none")) fputs("  (alias available)", stdout);
+            if (strcmp(flag->range, "delegated")) {
+                printf("%srange %s", separator, flag->range); separator = "; ";
+            }
+            if (strcmp(flag->dependencies, "none")) {
+                printf("%srequires ", separator); render_metadata_text(flag->dependencies);
+                separator = "; ";
+            }
+            if (strcmp(flag->conflicts, "none")) {
+                printf("%sconflicts ", separator); render_metadata_text(flag->conflicts);
+                separator = "; ";
+            }
+            if (strcmp(flag->aliases, "none")) {
+                printf("%salias ", separator); render_metadata_text(flag->aliases);
+            }
             fputc('\n', stdout);
         }
     }
@@ -1773,14 +1774,11 @@ static void render_discovery_json(void)
 static int root_group(const char *root)
 {
     if (!strcmp(root, "chat")) return 0;
-    if (!strcmp(root, "serve") || !strcmp(root, "host") ||
-        !strcmp(root, "engine") || !strcmp(root, "session")) return 1;
-    if (!strcmp(root, "model") || !strcmp(root, "source") ||
-        !strcmp(root, "compile") || !strcmp(root, "artifact") ||
-        !strcmp(root, "profile")) return 2;
-    if (!strcmp(root, "inspect") || !strcmp(root, "bench")) return 3;
-    if (!strcmp(root, "help") || !strcmp(root, "version")) return 4;
-    return 5;
+    if (!strcmp(root, "serve") || !strcmp(root, "model") ||
+        !strcmp(root, "host")) return 1;
+    if (!strcmp(root, "inspect")) return 2;
+    if (!strcmp(root, "help") || !strcmp(root, "version")) return 3;
+    return 4;
 }
 
 static int root_first_visible(size_t candidate)
@@ -1788,13 +1786,13 @@ static int root_first_visible(size_t candidate)
     const yvex_operator_descriptor *row = &yvex_operator_descriptors[candidate];
     size_t index;
     if (!row->cli_projection || !row->command_word_count ||
-        row->visibility == YVEX_OPERATOR_VISIBILITY_REMOVED ||
-        root_group(row->command_words[0]) == 5)
+        row->visibility != YVEX_OPERATOR_VISIBILITY_PRODUCT_DEFAULT ||
+        root_group(row->command_words[0]) == 4)
         return 0;
     for (index = 0u; index < candidate; ++index) {
         const yvex_operator_descriptor *prior = &yvex_operator_descriptors[index];
         if (prior->cli_projection && prior->command_word_count &&
-            prior->visibility != YVEX_OPERATOR_VISIBILITY_REMOVED &&
+            prior->visibility == YVEX_OPERATOR_VISIBILITY_PRODUCT_DEFAULT &&
             !strcmp(prior->command_words[0], row->command_words[0]))
             return 0;
     }
@@ -1807,7 +1805,7 @@ static const char *root_summary(const char *root)
         {"host", "Inspect and control the foreground host."},
         {"engine", "Load, inspect, and unload engine generations."},
         {"session", "Manage generation-bound conversation state."},
-        {"model", "Inspect logical model identities and relationships."},
+        {"model", "Find, pull, prepare, load, and manage models."},
         {"source", "Acquire, verify, and inspect exact source revisions."},
         {"artifact", "Inspect and verify immutable compiled packages."},
         {"profile", "Inspect durable deployment configurations."},
@@ -1829,9 +1827,9 @@ static const char *root_summary(const char *root)
 
 static void render_root_map(void)
 {
-    static const char *const labels[] = {"USE", "HOST", "BUILD", "INSPECT", "META"};
+    static const char *const labels[] = {"USE", "RUNTIME", "TOOLS", "META"};
     size_t group, index;
-    puts("YVEX inference/compiler/runtime");
+    puts("YVEX inference runtime");
     for (group = 0u; group < sizeof(labels) / sizeof(labels[0]); ++group) {
         printf("\n%s\n", labels[group]);
         for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
@@ -1845,6 +1843,29 @@ static void render_root_map(void)
     puts("\nUse `yvex help COMMAND` for details.");
 }
 
+static void render_default_namespace(const char *root, const char *title)
+{
+    size_t index;
+    printf("\n%s\n", title);
+    for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
+        const yvex_operator_descriptor *descriptor =
+            &yvex_operator_descriptors[index];
+        if (descriptor->cli_projection && descriptor->command_word_count > 1u &&
+            descriptor->visibility == YVEX_OPERATOR_VISIBILITY_PRODUCT_DEFAULT &&
+            !strcmp(descriptor->command_words[0], root))
+            render_command_index_line(descriptor);
+    }
+}
+
+static void render_product_grammar(void)
+{
+    puts("\nLIFECYCLE\n"
+         "  model search -> model pull -> model prepare -> serve -> model load -> chat\n"
+         "  model push distributes; model unload changes runtime residency.");
+    render_default_namespace("model", "MODEL COMMANDS");
+    render_default_namespace("host", "HOST CONTROL");
+}
+
 int yvex_client_render_help_path(size_t path_count, const char *const *path,
                                  int advanced, int json)
 {
@@ -1856,6 +1877,7 @@ int yvex_client_render_help_path(size_t path_count, const char *const *path,
     }
     if (!path_count) {
         render_root_map();
+        render_product_grammar();
         if (advanced) {
             puts("\nADVANCED AND ENGINEERING\n");
             for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
@@ -1907,7 +1929,6 @@ int yvex_client_render_help_path(size_t path_count, const char *const *path,
 void yvex_cli_json_begin(FILE *fp) {
     yvex_cli_out_line(fp, "{");
 }
-
 void yvex_cli_json_end(FILE *fp) {
     yvex_cli_out_line(fp, "}");
 }

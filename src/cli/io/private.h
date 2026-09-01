@@ -8,8 +8,10 @@
 #include <time.h>
 #include <yvex/artifact.h>
 #include <yvex/backend.h>
+#include <yvex/catalog.h>
 #include <yvex/core.h>
 #include <yvex/gguf.h>
+#include <yvex/internal/cli_table.h>
 #include <yvex/model.h>
 #include <yvex/registry.h>
 #include <yvex/server.h>
@@ -30,12 +32,34 @@ typedef enum {
 typedef enum {
     YVEX_MODELS_OUTPUT_NORMAL = 0,
     YVEX_MODELS_OUTPUT_TABLE,
-    YVEX_MODELS_OUTPUT_AUDIT
+    YVEX_MODELS_OUTPUT_AUDIT,
+    YVEX_MODELS_OUTPUT_JSON
 } yvex_models_output_mode;
 typedef struct {
     char alias[YVEX_SERVER_MODEL_ALIAS_CAP];
     unsigned long long generation;
 } yvex_cli_engine_binding;
+typedef struct {
+    char model_selector[YVEX_MODEL_LIBRARY_ID_CAP];
+    char model_name[YVEX_MODEL_LIBRARY_NAME_CAP];
+    char family[YVEX_REMOTE_FAMILY_CAP];
+    char profile_alias[YVEX_MODEL_LIBRARY_NAME_CAP];
+    char variant[YVEX_REMOTE_PRECISION_CAP + 24u];
+    char artifact_identity[YVEX_MODEL_ARTIFACT_ID_CAP];
+    char format[YVEX_REMOTE_FORMAT_CAP];
+    char quant_precision[YVEX_REMOTE_PRECISION_CAP];
+    char backend[32];
+    char engine_kind[32];
+    char execution_strategy[32];
+    char runtime_target[YVEX_MODEL_LIBRARY_NAME_CAP];
+    unsigned long long representation_bytes;
+    unsigned long long context_capacity;
+} yvex_cli_model_profile_selection;
+typedef struct {
+    yvex_cli_model_profile_selection model;
+    yvex_cli_engine_binding engine;
+    unsigned long long session_count;
+} yvex_cli_loaded_model_fact;
 typedef enum {
     YVEX_MODEL_CATALOG_OUTPUT_TABLE = 0,
     YVEX_MODEL_CATALOG_OUTPUT_AUDIT,
@@ -49,7 +73,6 @@ typedef struct {
     const char *models_root;
     unsigned int page;
     unsigned int page_size;
-    int interactive;
     yvex_model_catalog_output_mode output_mode;
 } yvex_cli_model_search_options;
 typedef struct {
@@ -63,8 +86,24 @@ typedef struct {
     const char *models_root;
     const char *registry_path;
     yvex_model_catalog_output_mode output_mode;
+    int all_representations;
+    int wide;
 } yvex_cli_model_list_options;
-int yvex_cli_profile_select(char *alias, size_t capacity);
+int yvex_cli_model_profile_select(const char *model, const char *variant,
+                                  int text_only,
+                                  yvex_cli_model_profile_selection *selection);
+int yvex_cli_model_profile_resolve_alias(
+    const char *alias, yvex_cli_model_profile_selection *selection);
+int yvex_cli_model_load_command(int argc, char **argv, size_t consumed);
+int yvex_cli_model_unload_command(int argc, char **argv, size_t consumed);
+int yvex_cli_model_loaded_select(const char *model, const char *variant,
+                                 int text_only,
+                                 yvex_cli_engine_binding *binding,
+                                 yvex_cli_model_profile_selection *selection);
+int yvex_cli_loaded_models_snapshot(yvex_cli_loaded_model_fact *models,
+                                    unsigned long long capacity,
+                                    unsigned long long *count,
+                                    yvex_error *err);
 typedef enum {
     YVEX_CLI_FIELD_TEXT = 0,
     YVEX_CLI_FIELD_TEXT_ARRAY,
@@ -91,6 +130,7 @@ typedef struct {
     const char *warning;
     const char *error;
 } yvex_cli_terminal_style;
+
 typedef enum {
     YVEX_CLI_STREAM_STYLE_NORMAL = 0,
     YVEX_CLI_STREAM_STYLE_DIM,
@@ -238,6 +278,8 @@ typedef struct yvex_model_download_report {
     char account_hint[128];
     char accounts_state_path[YVEX_PATH_CAP];
     char token_env_name[64];
+    char source_payload_digest[65], representation_format[YVEX_REMOTE_FORMAT_CAP];
+    char representation_precision[YVEX_REMOTE_PRECISION_CAP];
     char created_at[32];
     char top_blocker[128];
     char error[256];
@@ -268,6 +310,7 @@ typedef struct yvex_model_download_report {
     int orphan_check_performed;
     int partial_source_preserved;
     int lock_files_deleted;
+    int upstream_identity_verified, remote_lookup_performed, payload_hash_verified;
     pid_t provider_pid;
     pid_t provider_process_group;
     char child_exit_status[32];
@@ -495,6 +538,7 @@ int models_registry_open(yvex_model_registry **registry, const char *registry_pa
 int yvex_operator_paths_resolve_target(const yvex_operator_paths *operator_paths,
                                        const char *family, const char *kind, char *out, size_t cap,
                                        int *out_exists, yvex_error *err);
+int yvex_quant_command_execute(int arg_count, char **args, int render_result);
 
 /* JSON output. */
 void yvex_cli_out_json_string(FILE *fp, const char *text);

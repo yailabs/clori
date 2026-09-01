@@ -1134,20 +1134,20 @@ runs are not benchmarks and establish no useful generation speed.
 ## Direct hosted media projection
 
 The common persistent server now admits MiniMax-H3 as engine kind `media`.
-`yvex engine load minimax-h3-fl2va-runtime-media` resolves the immutable
-component installation, CUDA backend, and media kind from its composite startup
-profile and creates one engine generation; the default owned publication
+`yvex model load minimax-h3-fl2va` resolves the immutable component
+installation, CUDA backend, and media kind from its composite startup profile
+and creates one engine generation; the default owned publication
 directory comes from the common YVEX data path. Protocol v16 carries zero, one,
 or two typed image conditions with distinct `first` and `last` roles. The
 normal product surfaces are:
 
 ```text
-yvex chat --model minimax-h3-fl2va-runtime-media
-yvex chat --model minimax-h3-fl2va-runtime-media --first-image IMAGE
-yvex chat --model minimax-h3-fl2va-runtime-media --last-image IMAGE
-yvex chat --model minimax-h3-fl2va-runtime-media \
+yvex chat --model minimax-h3-fl2va
+yvex chat --model minimax-h3-fl2va --first-image IMAGE
+yvex chat --model minimax-h3-fl2va --last-image IMAGE
+yvex chat --model minimax-h3-fl2va \
   --first-image FIRST --last-image LAST
-yvex chat --model minimax-h3-fl2va-runtime-media \
+yvex chat --model minimax-h3-fl2va \
   --trajectory released --width 1344 --height 768 \
   --duration 5 --seed 42
 ```

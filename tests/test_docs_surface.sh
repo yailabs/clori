@@ -76,8 +76,8 @@ require_text README.md '## Documentation'
 require_text README.md '## Current limits'
 require_text README.md './yvex model list'
 require_text README.md './yvex serve'
-require_text README.md './yvex engine load'
-require_text README.md './yvex chat --session main'
+require_text README.md './yvex model load'
+require_text README.md './yvex chat'
 reject_text README.md 'yvex run'
 reject_text README.md 'yvex server'
 reject_text README.md 'Active Next:'
@@ -118,20 +118,33 @@ done
 test ! -e ./yvexd || fail 'retired hidden server executable remains'
 if test -x ./yvex; then
   help=$(./yvex)
-  for command in 'chat' 'serve' 'host' 'engine' 'session' 'model' 'source' 'artifact' 'profile'
+  for command in 'chat' 'serve' 'host' 'model' 'inspect' 'help' 'version'
   do
     printf '%s\n' "$help" | grep -F "$command" >/dev/null ||
       fail "built yvex help lacks canonical command: $command"
+  done
+  for plumbing in 'engine' 'session' 'source' 'artifact' 'profile' 'compile' 'bench'
+  do
+    printf '%s\n' "$help" | grep -F "  $plumbing " >/dev/null &&
+      fail "built yvex help exposes advanced root: $plumbing"
   done
   for retired in 'yvex run' 'yvex server'; do
     printf '%s\n' "$help" | grep -F "$retired" >/dev/null &&
       fail "built yvex help exposes retired command: $retired"
   done
   advanced=$(./yvex help --advanced)
-  for command in 'yvex bench attention execute'
+  for command in 'yvex bench attention execute' 'yvex engine load [PROFILE]' \
+                 'yvex source list' 'yvex artifact list' 'yvex profile list'
   do
     printf '%s\n' "$advanced" | grep -F "$command" >/dev/null ||
       fail "advanced help lacks canonical command: $command"
+  done
+  model_help=$(./yvex help model)
+  for command in 'yvex model search' 'yvex model pull' 'yvex model prepare' \
+                 'yvex model load' 'yvex model unload' 'yvex model push'
+  do
+    printf '%s\n' "$model_help" | grep -F "$command" >/dev/null ||
+      fail "model help lacks porcelain command: $command"
   done
   session_help=$(./yvex help session)
   printf '%s\n' "$session_help" | grep -F 'yvex session cancel' >/dev/null ||

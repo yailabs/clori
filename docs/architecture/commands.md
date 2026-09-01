@@ -20,11 +20,12 @@ process role according to TTY state, loaded engines, or host presence.
 | Host | foreground process owning engines, sessions, scheduling, execution, listeners, and logs |
 
 These names are not aliases. In particular, a profile is not a loaded engine.
-The default logical-model projection contains deployable models only; source
-records without authenticated lineage remain visible under `source`, and one
-model with several profiles still appears once.
+They are exact plumbing authorities, but they are not peer concepts in the
+ordinary product workflow. The porcelain `model` projection joins them only by
+authenticated lineage and presents one logical model with its source and
+representation variants. Similar display names never create lineage.
 
-## Product grammar
+## Product grammar and plumbing
 
 ```text
 yvex
@@ -34,21 +35,41 @@ yvex help --json
 yvex version
 
 yvex serve
-yvex chat
+yvex chat [--model MODEL]
 
 yvex host status|logs|stop
-yvex host memory
-yvex engine list|show|load|unload
-yvex session list|new|show|attach|detach|reset|cancel|close
-
-yvex model list|show
-yvex source list|show|inspect|verify|acquire
-yvex artifact list|show|verify|status|materialize
-yvex profile list|show|create|verify|remove|scan
-yvex compile ...
 yvex inspect ...
+
+yvex model search|pull|prepare|load|unload|list|show|push
+yvex model status|stop
+```
+
+The memorable lifecycle is:
+
+```text
+search -> pull -> prepare -> load -> chat
+                    push -> outward distribution
+```
+
+`pull` and `push` move or reference representations. `load` and `unload`
+change runtime residency. Those meanings never overlap. Exact engineering
+plumbing remains available through `help --advanced`:
+
+```text
+yvex source ...
+yvex artifact ...
+yvex profile ...
+yvex engine ...
+yvex session ...
+yvex compile ...
 yvex bench ...
 ```
+
+Provider account plumbing is registry-addressable as `source accounts
+providers|status|whoami|login|logout|ensure`. These are distinct operations,
+not opaque arguments passed through one generic command row. Human tables and
+redacted JSON share the same account observations; credential ownership stays
+with the installed provider CLI.
 
 Bare `yvex` prints the compact command map and exits successfully. It never
 starts, attaches to, or probes a host and never enters chat. Interactive human
@@ -81,8 +102,7 @@ administration is performed from another process with `host`, `engine`, and
 `yvex chat` is the sole public REPL. It requires a TTY and connects to the
 private local protocol. It opens no artifacts, initializes no CUDA state,
 starts no host, and loads no engine. A missing host produces the explicit
-`yvex serve` remediation; a missing engine points to interactive `yvex engine
-load`.
+`yvex serve` remediation; a missing engine points to `yvex model load`.
 
 The linear editor preserves scrollback and owns bounded history, UTF-8
 deletion, bracketed paste, resize redraw, cancellation, and terminal
@@ -100,26 +120,41 @@ Reasoning policy persists for the attached session until changed. The client
 does not describe it as a next-turn-only setting. Load, unload, compile,
 acquire, and host-stop operations are deliberately absent from the REPL.
 
-### Hosted administration
+### Hosted model use and exact administration
 
-`host` addresses the already-running process. `engine load` on a terminal
-offers a linear model/deployment chooser; its numeric rows are temporary
-rendering conveniences and resolve to one exact profile identity before the
-native request. `engine load PROFILE` is the deterministic automation form.
-Both create an immutable process-local engine generation; `engine unload
-ENGINE` drains that generation without stopping the host. Session commands
+`host` addresses the already-running process. Porcelain `model load` accepts a
+logical model selector and resolves only its proven launchable
+representations. With no model on a TTY it renders a small linear model
+selector; if that model has several valid deployments it renders a second
+variant selector. Numeric rows are temporary conveniences. Before the native
+request, the CLI has resolved one exact profile identity; the host then creates
+an immutable process-local engine generation. Non-TTY ambiguity fails and
+requires `MODEL` and `--variant` rather than guessing.
+
+`model unload MODEL` resolves the resident exact generation and drains it
+without stopping the host. Advanced `engine load PROFILE` and `engine unload
+ENGINE` remain deterministic plumbing for qualification and exact lifecycle
+inspection, but ordinary users never need a profile alias. Session commands
 address server-owned mutable state and cross the same private protocol. None of
 these clients opens a package directly.
 
 ### Offline work
 
-Model and source commands inspect semantic/provenance truth. Artifact commands
-inspect immutable compiled packages. Profile commands inspect deployment
-configuration. `compile` owns the admitted high-level source-to-artifact path;
-specialized compiler phases remain discoverable below it. Bounded component
-execution and measurement live under `bench`; read-only engineering evidence
-lives under `inspect`. Offline commands neither require nor start a host unless
-their named domain is explicitly hosted.
+`model search` discovers without downloading. `model pull` parses one
+deterministic source locator, pins remote provider identity before acquisition,
+and delegates to source ownership. Local pull explicitly chooses a managed copy
+or verified external reference. `model prepare` delegates verification,
+compilation, artifact emission, and deployment creation to their existing
+owners; it does not manufacture support when a family lacks a full-package
+binding. `model push` exports one exact chosen representation and never means
+runtime loading.
+
+Source commands inspect exact provenance, artifact commands inspect immutable
+compiled packages, and profile commands inspect deployment configuration.
+Specialized compiler phases remain discoverable below `compile`. Bounded
+component execution and measurement live under `bench`; read-only engineering
+evidence lives under `inspect`. Offline commands neither require nor start a
+host.
 
 ## Protocol planes
 

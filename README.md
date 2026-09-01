@@ -43,36 +43,37 @@ Running `./yvex` prints the compact product command map and exits. Interactive
 generation is always explicit through `./yvex chat`; it is a native client of
 an already-running host and never opens weights or initializes CUDA itself.
 
-### 2. Find or prepare a model profile
-
-```sh
-./yvex model list
-./yvex source list
-./yvex artifact list
-./yvex profile list
-./yvex profile show PROFILE
-```
-
-`model list` shows one row per deployable logical model; source records without
-an authenticated model binding remain under `source list` instead of appearing
-as duplicate models. `artifact list` groups physical packages by model and
-reports how many runnable profiles consume each one. `profile list` expands the
-distinct physical deployment choices and their binding differences. If no
-suitable profile exists, discover
-a remote representation before acquiring an exact revision:
+### 2. Find, pull, and prepare a model
 
 ```sh
 ./yvex model search "MODEL"
-./yvex source inspect OWNER/REPOSITORY --revision REVISION
-./yvex source acquire --repo OWNER/REPOSITORY --family FAMILY \
-  --name LOCAL_NAME --revision EXACT_REVISION --include 'PAYLOAD_PATTERN'
+./yvex model pull hf://OWNER/REPOSITORY
+./yvex model list
+./yvex model show MODEL
+./yvex model prepare MODEL
 ```
 
-Acquisition creates local source truth, not a ready engine package. Follow the
-runbook's
-[discovery and preparation procedure](docs/operator-runbook.md#discover-acquire-and-prepare-a-model)
-or, for an already prepared external package, its
-[registration procedure](docs/operator-runbook.md#registering-an-existing-model).
+The product workflow is `search -> pull -> prepare -> load -> chat`. Search is
+discovery only. Pull resolves an immutable provider revision and acquires or
+records one selected representation; it never loads the runtime. If a
+repository offers several representation classes, a terminal shows a linear
+selector, while automation supplies `--format` and, when necessary,
+`--variant`. Local files and directories use the same command:
+
+```sh
+./yvex model pull /mnt/models/MODEL --managed
+./yvex model pull /mnt/external/MODEL --reference
+./yvex model pull hf://OWNER/REPOSITORY --format gguf --prepare
+```
+
+`--managed` makes a verified copy in YVEX-owned storage; `--reference` records
+an exact external dependency without duplicating its bytes. `model list` is one
+logical-model catalog, not a registry dump. It exposes origin, selected format,
+quantization or precision, size, product state, execution backend, variant
+count, and location. `model show` expands the exact source, artifact, profile,
+and loaded-generation lineage. Unsupported family compilation or provider
+transport fails explicitly; a source record is never relabelled READY merely
+because its bytes exist.
 
 ### 3. Start the persistent host
 
@@ -89,40 +90,40 @@ foreground terminal shows the one-time boot report followed by host logs. It
 never reads stdin as an administrative REPL. Invoking `./yvex serve` again
 refuses the duplicate host and exits without attaching as a client.
 
-### 4. Load and inspect an engine
+### 4. Load a model
 
-From another terminal, select one complete deployment interactively:
+From another terminal, select a launchable model and representation:
 
 ```sh
-./yvex engine load
-./yvex engine list
+./yvex model load
+./yvex model list --wide
 ./yvex host status
 ```
 
-On a terminal, `engine load` first selects the logical model and then one of its
-runnable physical deployments. The numeric choices are temporary display
-indices; the protocol still receives the exact profile identity. Automation
-uses `engine load PROFILE` explicitly and never receives an implicit default.
-Loading authenticates that profile and creates one process-local engine
-generation. Large packages can take several minutes. `engine list` shows its
-exact alias, generation, lifecycle, backend, and active-work facts.
+With no argument, `model load` displays an ordinary line-oriented selector; it
+never asks the user to copy a profile alias or export a shell variable. A
+script uses `model load MODEL` and adds `--variant VARIANT` only when several
+valid representations exist. Internally YVEX still resolves the exact artifact
+and deployment profile and creates one process-local engine generation.
+Advanced operators can inspect that generation with `engine list --json`.
 
 ### 5. Use the engine
 
 ```sh
-./yvex chat --session main
+./yvex chat
 ```
 
-The named session remains bound to that exact engine generation. Type the
-prompt in the linear REPL. If exactly one engine is loaded, `--model` may be
-omitted; with several loaded engines, selection must be explicit. Programmatic
-inference uses an admitted provider/protocol surface rather than a second
-one-shot CLI generation command.
+The client session remains bound to that exact engine generation. Type the
+prompt in the linear REPL. If exactly one text model is loaded it is selected
+automatically. With several loaded text models, a terminal shows a model
+selector; automation uses `./yvex chat --model MODEL`. Programmatic inference
+uses an admitted provider/protocol surface rather than a second one-shot CLI
+generation command.
 
-Unload the engine without stopping the host, or stop the host separately:
+Unload the model without stopping the host, or stop the host separately:
 
 ```sh
-./yvex engine unload ENGINE
+./yvex model unload MODEL
 ./yvex host stop
 ```
 

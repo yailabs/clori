@@ -9,30 +9,30 @@ gates live in [`ROADMAP.md`](../../ROADMAP.md).
 
 ## Product path
 
-List the local startup profiles, inspect the admitted DeepSeek entry, start the
-persistent host, then load the package as one engine generation:
+Inspect the logical catalog, start the persistent host, then load DeepSeek as
+one exact engine generation:
 
 ```sh
-./yvex profile list
+./yvex model list --wide
+./yvex model show v4-flash-dspark
 ./yvex serve
 ```
 
 The foreground host has no administrative prompt. From another terminal,
-inspect exact profiles and load the selected DeepSeek deployment:
+load the logical model:
 
 ```sh
-./yvex profile list
-./yvex profile show PROFILE
-./yvex engine load
+./yvex model load v4-flash-dspark
+./yvex model list --wide
 ```
 
-The terminal chooser groups the runnable profiles under one logical DeepSeek
-model and exposes their physical artifact and binding differences. Choose
-the desired deployment by number; scripts instead call `engine load PROFILE`.
-No model path, copied alias, or environment variable is required during normal
-interactive operation. `engine load` authenticates the selected artifact and binding, seals the
-deployment specialization, and creates one immutable engine generation. The
-host itself starts with zero engines and stays alive across load and unload.
+If several runnable physical variants exist, a terminal shows their format,
+precision, size, backend, and mode and accepts a number or exact variant.
+Automation supplies `--variant VARIANT`. No model path, copied profile alias,
+or environment variable is required. `model load` authenticates the resolved
+artifact and binding, seals the deployment specialization, and creates one
+immutable engine generation. The host itself starts with zero engines and
+stays alive across load and unload.
 Importing an existing artifact into the registry is a one-time advanced
 operation documented in the
 [operator runbook](../operator-runbook.md#registering-an-existing-model), not
@@ -43,9 +43,9 @@ another terminal:
 
 ```sh
 ./yvex host status
-./yvex engine list
+./yvex model list --wide
 ./yvex host memory
-./yvex chat --session main
+./yvex chat --model v4-flash-dspark --session main
 ```
 
 An optional third terminal may run `yvex host logs`. Status, logs, and chat
@@ -74,7 +74,7 @@ commit.
 
 ## Target-only and DSpark modes
 
-Generation mode belongs to the named startup profile. `engine list --json`
+Generation mode belongs to the resolved startup profile. Advanced `engine list --json`
 reports the mode of each loaded generation. There is no per-turn fallback
 switch.
 

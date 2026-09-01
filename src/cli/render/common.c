@@ -130,10 +130,7 @@ static const char *const literal_lines_2[] = {
     "action: planned", "manifest: skipped", "native_inventory: skipped",
     "boundary: no payload downloaded, runtime unsupported"};
 
-static const char *const literal_lines_3[] = {"upstream_identity_verified: false",
-                                              "remote_lookup_performed: false",
-                                              "payload_hash_verified: false",
-                                              "payload_loaded: false",
+static const char *const literal_lines_3[] = {"payload_loaded: false",
                                               "gguf_created: false",
                                               "materialized: false",
                                               "runtime_ready: false",
@@ -228,6 +225,18 @@ static const yvex_render_field_spec download_audit_source_fields[] = {
     DOWNLOAD_FIELD("stdout_log", YVEX_RENDER_FIELD_TEXT_ARRAY, stdout_log_path, "unknown"),
     DOWNLOAD_FIELD("stderr_log", YVEX_RENDER_FIELD_TEXT_ARRAY, stderr_log_path, "unknown"),
     DOWNLOAD_FIELD("created_at", YVEX_RENDER_FIELD_TEXT_ARRAY, created_at, "unknown"),
+    DOWNLOAD_FIELD("representation_format", YVEX_RENDER_FIELD_TEXT_ARRAY,
+                   representation_format, "unknown"),
+    DOWNLOAD_FIELD("representation_precision", YVEX_RENDER_FIELD_TEXT_ARRAY,
+                   representation_precision, "unknown"),
+    DOWNLOAD_FIELD("source_payload_digest", YVEX_RENDER_FIELD_TEXT_ARRAY,
+                   source_payload_digest, "unknown"),
+    DOWNLOAD_FIELD("upstream_identity_verified", YVEX_RENDER_FIELD_BOOL,
+                   upstream_identity_verified, NULL),
+    DOWNLOAD_FIELD("remote_lookup_performed", YVEX_RENDER_FIELD_BOOL,
+                   remote_lookup_performed, NULL),
+    DOWNLOAD_FIELD("payload_hash_verified", YVEX_RENDER_FIELD_BOOL,
+                   payload_hash_verified, NULL),
 };
 
 #undef DOWNLOAD_FIELD
@@ -339,6 +348,8 @@ int parse_models_output_mode(const char *value, yvex_models_output_mode *mode) {
         *mode = YVEX_MODELS_OUTPUT_TABLE;
     else if (strcmp(value, "audit") == 0)
         *mode = YVEX_MODELS_OUTPUT_AUDIT;
+    else if (strcmp(value, "json") == 0)
+        *mode = YVEX_MODELS_OUTPUT_JSON;
     else
         return 0;
     return 1;
@@ -1117,6 +1128,18 @@ static void model_download_print_normal(const yvex_cli_models_download_options *
                             report->source_scan.file_count, report->source_scan.partial_file_count,
                             report->source_scan.safetensors_count, report->source_scan.gguf_count,
                             bytes_text);
+        yvex_cli_out_writef(stdout, "representation: %s precision=%s\n",
+                            report->representation_format[0]
+                                ? report->representation_format : "unknown",
+                            report->representation_precision[0]
+                                ? report->representation_precision : "unknown");
+        yvex_cli_out_writef(stdout, "local_content_digest: %s\n",
+                            report->source_payload_digest[0]
+                                ? report->source_payload_digest : "unavailable");
+        yvex_cli_out_writef(stdout,
+                            "verification: revision=%s provider-payload-hash=%s\n",
+                            report->upstream_identity_verified ? "verified" : "unverified",
+                            report->payload_hash_verified ? "verified" : "unavailable");
         yvex_cli_out_writef(stdout, "manifest: %s\n",
                             report->source_manifest_written ? report->manifest_path : "skipped");
         yvex_cli_out_writef(stdout, "native_inventory: %s\n",
@@ -1251,12 +1274,55 @@ static void model_download_print_audit(const yvex_cli_models_download_options *o
         yvex_cli_out_writef(stdout, "reason: %s\n", report->error);
 }
 
+static void model_download_print_json(const yvex_model_download_report *report)
+{
+    yvex_cli_out_fputs("{\"schema\":\"yvex.model.pull.v1\",\"status\":", stdout);
+    yvex_cli_out_json_string(stdout, report->status);
+    yvex_cli_out_fputs(",\"model\":", stdout);
+    yvex_cli_out_json_string(stdout, report->target_id);
+    yvex_cli_out_fputs(",\"family\":", stdout);
+    yvex_cli_out_json_string(stdout, report->family);
+    yvex_cli_out_fputs(",\"provider\":", stdout);
+    yvex_cli_out_json_string(stdout, report->provider);
+    yvex_cli_out_fputs(",\"repository\":", stdout);
+    yvex_cli_out_json_string(stdout, report->repo_id);
+    yvex_cli_out_fputs(",\"revision\":", stdout);
+    yvex_cli_out_json_string(stdout, report->revision);
+    yvex_cli_out_fputs(",\"location\":", stdout);
+    yvex_cli_out_json_string(stdout, report->local_source_dir);
+    yvex_cli_out_fputs(",\"format\":", stdout);
+    yvex_cli_out_json_string(stdout, report->representation_format);
+    yvex_cli_out_fputs(",\"precision\":", stdout);
+    yvex_cli_out_json_string(stdout, report->representation_precision);
+    yvex_cli_out_fputs(",\"local_content_digest\":", stdout);
+    yvex_cli_out_json_string(stdout, report->source_payload_digest);
+    yvex_cli_out_writef(
+        stdout,
+        ",\"files\":%llu,\"partial_files\":%llu,"
+        "\"safetensors_files\":%llu,\"gguf_files\":%llu,\"bytes\":%llu,"
+        "\"upstream_identity_verified\":%s,\"payload_hash_verified\":%s,"
+        "\"interrupted\":%s,\"report\":",
+        report->source_scan.file_count, report->source_scan.partial_file_count,
+        report->source_scan.safetensors_count, report->source_scan.gguf_count,
+        report->source_scan.total_regular_file_bytes,
+        report->upstream_identity_verified ? "true" : "false",
+        report->payload_hash_verified ? "true" : "false",
+        report->interrupted ? "true" : "false");
+    yvex_cli_out_json_string(stdout, report->download_report_path);
+    yvex_cli_out_fputs(",\"reason\":", stdout);
+    yvex_cli_out_json_string(stdout, report->error[0] ? report->error
+                                                       : report->top_blocker);
+    yvex_cli_out_fputs("}\n", stdout);
+}
+
 static void model_download_print(const yvex_cli_models_download_options *options,
                                  const yvex_model_download_report *report) {
     if (options && options->output_mode == YVEX_MODELS_OUTPUT_AUDIT) {
         model_download_print_audit(options, report);
     } else if (options && options->output_mode == YVEX_MODELS_OUTPUT_TABLE) {
         model_download_print_table(report);
+    } else if (options && options->output_mode == YVEX_MODELS_OUTPUT_JSON) {
+        model_download_print_json(report);
     } else {
         model_download_print_normal(options, report);
     }
@@ -1438,9 +1504,13 @@ int model_download_write_json_sidecar(const char *path, const char *schema,
     write_field(fp, "", "stderr_log", report->stderr_log_path, 1);
     write_field(fp, "", "created_at", report->created_at, 1);
     write_field(fp, "", "yvex_version", yvex_version_string(), 1);
-    write_bool_field(fp, "", "upstream_identity_verified", 0, 1);
-    write_bool_field(fp, "", "remote_lookup_performed", 0, 1);
-    write_bool_field(fp, "", "payload_hash_verified", 0, 1);
+    write_field(fp, "", "representation_format", report->representation_format, 1);
+    write_field(fp, "", "representation_precision", report->representation_precision, 1);
+    write_field(fp, "", "source_payload_digest", report->source_payload_digest, 1);
+    write_bool_field(fp, "", "upstream_identity_verified",
+                     report->upstream_identity_verified, 1);
+    write_bool_field(fp, "", "remote_lookup_performed", report->remote_lookup_performed, 1);
+    write_bool_field(fp, "", "payload_hash_verified", report->payload_hash_verified, 1);
     write_bool_field(fp, "", "force_sidecars", options->force_sidecars, 1);
     write_bool_field(fp, "", "yes", options->yes, 1);
     yvex_cli_out_writef(fp, "  \"boundary\": {\n");

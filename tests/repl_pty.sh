@@ -186,7 +186,7 @@ set -e
 test "$chat_status" -eq 2
 test "$bare_status" -eq 0
 grep -F 'chat requires a terminal' "$root/non-tty.err" >/dev/null
-grep -F 'YVEX inference/compiler/runtime' "$root/bare.out" >/dev/null
+grep -F 'YVEX inference runtime' "$root/bare.out" >/dev/null
 ! grep "$(printf '\033')" "$root/non-tty.out" "$root/non-tty.err" \
     "$root/bare.out" "$root/bare.err" >/dev/null
 
@@ -198,7 +198,8 @@ XDG_RUNTIME_DIR="$runtime" NO_COLOR=1 TERM=xterm-256color \
 no_host_status=$?
 set -e
 test "$no_host_status" -eq 1
-grep -F 'start one with `yvex serve`' "$root/no-host.typescript" >/dev/null
+grep -F 'start one with:' "$root/no-host.typescript" >/dev/null
+grep -F 'yvex serve' "$root/no-host.typescript" >/dev/null
 
 # Retired one-shot generation refuses and never contacts or starts a host.
 set +e

@@ -6,6 +6,7 @@
 #include "src/cli/render/private.h"
 #include "src/cli/model_artifacts/private.h"
 #include <yvex/internal/model_artifact.h>
+#include <yvex/internal/source_distribution.h>
 
 #include <ctype.h>
 #include <dirent.h>
@@ -748,13 +749,13 @@ static int download_paths_prepare(const yvex_cli_models_download_options *option
             sizeof(report->native_inventory_path), "%s", identity->resolved.native_inventory_path);
     }
     if (rc != YVEX_OK) return print_yvex_error(err, exit_for_status(rc));
-    if (!create_paths) return YVEX_OK;
     if (!model_download_source_path_allowed(operator_paths, report->local_source_dir, report)) {
         snprintf(report->status, sizeof(report->status), "model-download-blocked");
         snprintf(report->stage_resolve_paths, sizeof(report->stage_resolve_paths), "fail");
         return model_download_finish(options, report);
     }
     snprintf(report->stage_resolve_paths, sizeof(report->stage_resolve_paths), "pass");
+    if (!create_paths) return YVEX_OK;
     {
         const char *paths[] = { report->local_source_dir, report->receipt_path,
             report->active_receipt_path, report->last_receipt_path,
@@ -887,6 +888,10 @@ static int download_account_admit(const yvex_cli_models_download_options *option
                  observation->next[0] ? observation->next : "yvex source accounts login provider");
         return model_download_finish(options, report);
     }
+    if (options->dry_run) {
+        *admitted = 1;
+        return 0;
+    }
     rc = model_download_write_receipt(report->receipt_path, options, report,
                                       token_present, err);
     if (rc != YVEX_OK) {
@@ -905,8 +910,12 @@ static int download_source_finalize(const yvex_cli_models_download_options *opti
 {
     yvex_source_manifest_options manifest_options;
     yvex_source_manifest_summary manifest_summary;
+    yvex_source_locator source_locator;
+    yvex_source_representation_fact representation;
     yvex_native_weight_options native_options;
     yvex_native_weight_table *native_table = NULL;
+    const char *precision = NULL;
+    unsigned long long tensor_index;
     int rc;
 
     rc = model_download_scan_source(report->local_source_dir, &report->source_scan, err);
@@ -957,6 +966,22 @@ static int download_source_finalize(const yvex_cli_models_download_options *opti
                                                                  &report->native_summary, err);
         if (rc == YVEX_OK) rc = model_download_write_native_inventory_json(
             report->native_inventory_path, report->local_source_dir, native_table, err);
+        for (tensor_index = 0u; rc == YVEX_OK &&
+             tensor_index < yvex_native_weight_table_count(native_table);
+             ++tensor_index) {
+            const yvex_native_weight_info *tensor =
+                yvex_native_weight_table_at(native_table, tensor_index);
+            const char *dtype = tensor ? yvex_native_dtype_name(tensor->dtype) : NULL;
+            if (!dtype || !dtype[0]) continue;
+            if (!precision) precision = dtype;
+            else if (strcmp(precision, dtype)) {
+                precision = "MIXED";
+                break;
+            }
+        }
+        if (precision)
+            snprintf(report->representation_precision,
+                     sizeof(report->representation_precision), "%s", precision);
         yvex_native_weight_table_close(native_table);
         if (rc != YVEX_OK) {
             snprintf(report->status, sizeof(report->status), "model-download-fail");
@@ -967,6 +992,35 @@ static int download_source_finalize(const yvex_cli_models_download_options *opti
         report->native_inventory_written = 1;
         snprintf(report->stage_native_inventory, sizeof(report->stage_native_inventory), "pass");
     }
+    memset(&source_locator, 0, sizeof(source_locator));
+    memset(&representation, 0, sizeof(representation));
+    rc = yvex_source_locator_parse(report->local_source_dir, &source_locator, err);
+    if (rc == YVEX_OK)
+        rc = yvex_source_representation_inspect_local(&source_locator,
+                                                       &representation, err);
+    if (rc != YVEX_OK || representation.size_bytes !=
+                             report->source_scan.total_regular_file_bytes) {
+        snprintf(report->status, sizeof(report->status), "model-download-fail");
+        snprintf(report->error, sizeof(report->error), "%s",
+                 rc == YVEX_OK ? "source changed while recording its content identity"
+                               : yvex_error_message(err));
+        return model_download_finish(options, report);
+    }
+    snprintf(report->source_payload_digest, sizeof(report->source_payload_digest),
+             "%s", representation.digest);
+    snprintf(report->representation_format, sizeof(report->representation_format),
+             "%s", representation.format);
+    report->remote_lookup_performed = 1;
+    if (provider_kind == YVEX_ACCOUNT_PROVIDER_HUGGINGFACE) {
+        size_t length = strlen(report->revision), index;
+        report->upstream_identity_verified = length == 40u || length == 64u;
+        for (index = 0u; report->upstream_identity_verified && index < length; ++index)
+            report->upstream_identity_verified =
+                isxdigit((unsigned char)report->revision[index]) != 0;
+    }
+    /* The local digest records content identity. Provider object hashes are
+     * not exposed by the admitted CLI, so it is not upstream payload proof. */
+    report->payload_hash_verified = 0;
     snprintf(report->status, sizeof(report->status), "%s",
              options->resume ? "model-download-resume-pass" : "model-download-pass");
     rc = model_download_write_json_sidecar(report->download_report_path,
@@ -1016,7 +1070,8 @@ static int command_models_download_execute(int arg_count, char **args, int start
                                    &provider_kind, &identity, &err, 0);
     if (rc != 0) return rc;
     rc = download_paths_prepare(&options, &report, &operator_paths,
-                                provider_kind, &identity, &err, 1);
+                                provider_kind, &identity, &err,
+                                options.dry_run ? 0 : 1);
     if (rc != 0) return rc;
 
     {

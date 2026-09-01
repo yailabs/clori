@@ -44,6 +44,26 @@ typedef struct {
     yvex_media_avi_result publication;
 } yvex_cli_media_report;
 
+typedef struct {
+    char name[YVEX_SERVER_SESSION_NAME_CAP];
+    char state[24];
+    unsigned long long position;
+    unsigned long long turns;
+    int ready;
+} yvex_cli_session_table_fact;
+void yvex_cli_host_status_render(FILE *fp, const yvex_server_summary *status,
+                                 int json);
+void yvex_cli_host_memory_render(FILE *fp, const yvex_server_summary *status,
+                                 int json);
+int yvex_cli_session_table_render(FILE *fp,
+                                  const yvex_cli_session_table_fact *facts,
+                                  size_t count);
+int yvex_cli_session_json_render(FILE *fp,
+                                 const yvex_cli_session_table_fact *facts,
+                                 size_t count, int list);
+void yvex_cli_session_table_fact_set(yvex_cli_session_table_fact *fact,
+                                     const yvex_client_message *message);
+
 int yvex_media_publish_render(FILE *fp, yvex_graph_report_mode mode,
                               const yvex_cli_media_report *report);
 int yvex_media_generate_render(FILE *, yvex_graph_report_mode, const char *,

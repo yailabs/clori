@@ -1,152 +1,162 @@
 # YVEX Operator Runbook — Local Runtime
 
 This runbook owns first startup and routine operation of the installed local
-server and clients. Normal operation is registry-first: users list a complete
-local model profile, start the foreground host, load that package as one engine
-generation, and enter chat without exporting paths or repeating internal
-paths. Running `yvex chat` enters the sole linear console. It attaches to the
-resident server and uses the same typed session, progress,
-runtime-observation, and result facts as noninteractive clients without reading
-backend-private state. Its commands follow the canonical operation registry.
-It is not a capability ledger: consult [`ROADMAP.md`](../ROADMAP.md) for current
-gates.
+runtime and clients. The normal product workflow is:
+
+```text
+search -> pull -> prepare -> load -> chat
+                    push -> outward distribution
+```
+
+Users select logical models; they do not copy deployment profile aliases into
+shell variables. Exact source revisions, artifacts, profiles, engine
+generations, and sessions remain authoritative beneath this porcelain and are
+available through advanced commands. `yvex chat` is the sole linear console
+and remains a native client of the resident host. This is not a capability
+ledger; consult [`ROADMAP.md`](../ROADMAP.md) for current gates.
 
 ## Prerequisites
 
 Builds provide one executable product. `yvex serve` owns the private Unix
 listener and bounded loopback OpenAI-compatible listener in the foreground.
-Interactive `yvex engine load` selects a registered deployment and opens it as
-one engine generation; automation supplies the same exact identity as `yvex
-engine load PROFILE`. Several engine generations may coexist within the
-admitted host bound. Other
-`yvex` modes own native clients and finite offline engineering operations.
+`yvex model load` resolves a launchable logical model to an exact deployment
+and asks that host to create an engine generation. Several generations may
+coexist within the admitted host bound. Other `yvex` modes own native clients
+and finite offline engineering operations.
 
-Loading an engine requires one complete registry startup profile. A text runtime
+Loading a model requires one complete registry startup profile. A text runtime
 binds one admitted GGUF to its exact runtime binding, target, backend, and
 context capacity. A composite runtime instead binds an installed component root
 to its target, backend, and capability mode without inventing a singular
-artifact or text-runtime binding. Inspect the local lifecycle catalog first:
+artifact or text-runtime binding. Inspect the product catalog first:
 
 ```sh
-./yvex profile list
+./yvex model list --wide
+./yvex model show MODEL
 ```
 
-The table groups physical deployments under their logical model and exposes the
-artifact class, artifact identity, binding label, backend, engine kind,
-strategy, context, and startup status that distinguish them. Only a `runnable`
-profile can cross the engine boundary. Use `profile show NAME` for the exact
-artifact and startup facts. If the table has no runnable profile, complete the
-appropriate acquisition and preparation path or the one-time
+The table contains one row per proven logical model and exposes its selected
+format, quantization or precision, representation size, state, backend,
+location, and number of alternatives. `model show` expands the exact lineage.
+Only READY models can cross the engine boundary. If none is ready, complete the
+pull and preparation path or the one-time advanced
 [registration procedure](#registering-an-existing-model). Backend selection is
-part of that profile and never falls back silently.
+part of the resolved deployment and never falls back silently.
+
+Provider credentials remain owned by the installed provider CLI; YVEX records
+only redacted observations and never persists a raw token. Discover the exact
+implemented account operations and inspect current state with:
+
+```sh
+./yvex help source accounts
+./yvex source accounts providers --output table
+./yvex source accounts status --output table
+./yvex source accounts whoami huggingface --output table
+```
+
+Authentication and removal remain explicit:
+
+```sh
+./yvex source accounts login huggingface
+./yvex source accounts logout huggingface
+```
+
+The Hugging Face integration delegates credentials to the installed `hf`
+client; the GitHub integration delegates them to `gh`. `--json` provides the
+complete redacted machine projection. Account commands never print a token.
 
 ## Discover, acquire, and prepare a model
 
-The normal model lifecycle is explicit:
-
-```text
-remote model -> representation -> exact revision -> acquired source
-             -> verified source or inspected GGUF -> YVEX package
-             -> local catalog -> engine handoff
-```
-
-Search Hugging Face metadata without downloading payloads:
+Search remote or local catalogs without downloading payloads:
 
 ```sh
 ./yvex model search "MiniMax H3"
 ./yvex model search "Qwen" --author Qwen --page 1 --limit 20
+./yvex model search "local-name" --provider local
 ```
 
-The primary view is a compact YVEX-ranked catalog: canonical full models,
-conversions, adapters, components, deltas, and derivatives remain distinct.
-Family affinity does not make an adapter or component an interchangeable full
-model. Product-facing `LOCAL` and `YVEX` columns summarize lifecycle state;
-provider rank and internal support stages remain available through `--audit`.
-Use `--all` to retain the full bounded provider result set. Search may show
-unsupported models, and remote availability never implies source ingest,
-package readiness, or engine capability. `--json` returns the typed
-`yvex.remote-model-catalog.v2` record used by noninteractive consumers;
-`--interactive` offers a terminal drill-down while calling the same domain API.
-
-Inspect one repository before selecting a representation:
+Remote availability and YVEX support are separate columns. Search never pulls,
+prepares, or loads anything. Acquire one representation with a deterministic
+locator:
 
 ```sh
-./yvex source inspect MiniMaxAI/MiniMax-H3
-./yvex source inspect MiniMaxAI/MiniMax-H3 --revision REVISION --audit
+./yvex model pull hf://OWNER/REPOSITORY
+./yvex model pull hf://OWNER/REPOSITORY@IMMUTABLE_REVISION --format safetensors
+./yvex model pull hf://OWNER/GGUF_REPOSITORY --format gguf --variant VARIANT
+./yvex model pull hf://OWNER/REPOSITORY --format safetensors --dry-run
 ```
 
-Without `--revision`, inspection requests the provider default and reports the
-immutable revision currently resolved for it. An explicit tag, branch, or SHA
-is resolved separately; a missing ref is reported as a revision error rather
-than a missing repository. Inspection also reconciles exact repository and
-revision identities with historical acquisition manifests and package
-provenance. If only another revision is local, the UI reports that distinction
-instead of claiming the current remote snapshot is installed.
+If the locator omits `@REVISION`, YVEX resolves the current provider reference
+to an immutable identity before acquisition and reports the repository,
+revision, chosen representation, and bytes. Multiple representation classes or
+variants produce a line-oriented TTY selector. Non-TTY callers must pass
+`--format` and, when still ambiguous, `--variant`; no provider file glob is
+required in the normal workflow. Credentials come from the existing provider
+account owner and tokens are never printed.
 
-The representation table lists safetensors and GGUF candidates separately.
-Safetensors precision comes from provider metadata when present. Remote GGUF
-qtypes inferred from filenames remain explicitly provisional until the acquired
-container passes YVEX GGUF inspection. A provider-reported base model is
-retained as lineage; repositories without that evidence remain separate.
+`--dry-run` is the safe metadata-only acquisition check: it resolves the
+immutable provider revision and representation inventory, but downloads no
+payload and creates no YVEX source, catalog, receipt, or transfer-log state.
 
-Acquire only after choosing the repository, representation, and immutable
-revision:
+Local files and directories use the same distribution verb:
 
 ```sh
-./yvex source acquire --repo OWNER/NAME --family FAMILY --name LOCAL_NAME \
-  --revision EXACT_REVISION --include '*.safetensors' --models-root /srv/yvex
-
-./yvex source acquire --repo OWNER/GGUF_REPOSITORY --family FAMILY \
-  --name LOCAL_NAME --revision EXACT_REVISION --include 'selected-file.gguf' \
-  --models-root /srv/yvex
+./yvex model pull /mnt/models/MODEL --managed
+./yvex model pull file:///mnt/models/model.gguf --managed
+./yvex model pull /mnt/external/MODEL --reference
 ```
 
-The first path creates an acquired source. Source verification, semantic
-compilation, physical policy, and transformation remain distinct preparation
-stages. The second path retains the GGUF qtype as acquired physical truth;
-compatible GGUF may be admitted directly after structural, family, role, qtype,
-layout, and package checks, while incompatible containers require an explicit
-repack. YVEX does not requantize a compatible external GGUF merely to relabel it.
+`--managed` creates and verifies a durable YVEX-owned copy. `--reference`
+records a verified external dependency without copying tens of gigabytes; if
+the path disappears the model becomes BLOCKED. In a TTY, omitting both asks
+which storage policy to use. Automation must choose explicitly. Unsupported
+locators such as `ssh://` fail as unavailable transports and are never passed
+to `scp` or a shell.
 
-Use the local catalog to find the next legal state:
+Prepare the acquired model through the high-level owner:
 
 ```sh
-./yvex model list
-./yvex source list --json
-./yvex profile list
-./yvex profile show PROFILE --audit
+./yvex model prepare MODEL
+./yvex model prepare MODEL --quant CANONICAL_PRESET
+./yvex model pull hf://OWNER/REPOSITORY --format safetensors --prepare
 ```
 
-`model list` shows deployable logical models, while `source list` reports exact
-source records and explicitly marks those without a model binding. `artifact
-list` groups immutable packages by model and counts the runnable profiles using
-each package. `profile list` reports the distinct deployment configurations
-without opening payloads or engines. A moving
-provider reference is shown as
-`moving-reference`; it is not silently promoted to immutable source evidence.
-Package identities and startup facts remain available through `artifact show`
-and `profile show`. Logical `model list` is host-independent and never turns
-profile multiplicity into duplicate models. Package readiness never implies
-residency or serving activity. The lifecycle handoff is explicit:
+Preparation delegates verification, family recognition, mapping, quantization,
+materialization, package validation, and deployment creation to their canonical
+owners. It succeeds only when that complete family/representation binding is
+implemented. A canonical quantization preset is validated exactly; missing
+full-package emission fails rather than silently using another qtype. An
+already admitted GGUF is verified and bound without forced requantization.
+`model pull --prepare` combines distribution and preparation but never loads
+the host. Authenticated streamed preparation is not currently admitted, so
+`--stream` refuses and does not claim that bytes avoided the machine.
+Machine callers run `model pull --json` and `model prepare --json` as separate
+operations; combining `--prepare` and `--json` is rejected so stdout remains
+one valid JSON document with one operation schema.
+
+Long acquisitions expose the existing status, stop, and resume lifecycle:
+
+```sh
+./yvex model status MODEL
+./yvex model stop MODEL
+./yvex model pull hf://OWNER/REPOSITORY --resume
+```
+
+Once READY, start the host and load the logical model:
 
 ```sh
 ./yvex serve
-./yvex engine load
-./yvex engine list
+./yvex model load
+./yvex model list --wide
+./yvex host status
 ```
 
-The TTY chooser resolves its temporary numeric selections to an exact profile
-identity. Noninteractive callers use `engine load PROFILE`. `engine list`
-consumes the public engine inventory but does not open or manage an engine;
-`engine load` and `engine unload` remain the lifecycle authority.
-
-Hugging Face credentials remain owned by `yvex source accounts` and the
-official provider CLI. Discovery arguments, tables, JSON, receipts, and logs do
-not contain token bytes. Public discovery can proceed without authentication;
-gated or authentication-required refusals remain explicit. Provider metadata is
-discovery evidence only. Acquisition binds the selected exact revision through
-the source provenance contract rather than allowing a later moving `main` to
-change a prepared package.
+The TTY chooser shows model names and physical facts, never profile aliases.
+Automation uses `model load MODEL` and supplies `--variant` only if several
+launchable representations remain. The protocol request still carries one
+exact profile and creates one exact generation. Detailed source, artifact,
+profile, and engine commands remain available through `help --advanced` for
+compiler work and qualification.
 
 Before admitting a GB10 performance result, inspect the compiled CUDA image and
 run the bounded bandwidth fixture:
@@ -226,13 +236,12 @@ First check whether this user already owns a ready server:
 ```
 
 If it reports `ready`, do not start another server; proceed to chat or runtime
-inspection. If it refuses because no server is present, inspect one
-startup-ready registry entry. The alias below is illustrative; use one printed
-by `model list`:
+inspection. If it refuses because no server is present, inspect one READY
+logical model:
 
 ```sh
-./yvex profile list
-./yvex profile show PROFILE
+./yvex model list --wide
+./yvex model show MODEL
 ```
 
 Then start the host in the first terminal:
@@ -244,27 +253,27 @@ Then start the host in the first terminal:
 Foreground operation is intentional: keep this terminal open. The host owns the
 local socket, OpenAI listener, telemetry, and bounded engine manager. Its
 terminal renders operational events but never reads chat or lifecycle commands.
-Select and load the intended DeepSeek deployment from another terminal:
+Select and load the intended model from another terminal:
 
 ```sh
-./yvex engine load
-./yvex engine list
+./yvex model load
+./yvex model list --wide
 ./yvex host status
 ```
 
-The chooser first presents one logical model and then its physically distinct
-runnable profiles. It shows their artifact and binding differences and
-submits the selected exact alias; no profile name needs to be copied. Scripts
-must still provide that alias explicitly. The same terminal can then enter chat
-with `yvex chat`, while other protocol clients and OpenAI consumers remain
-independent.
+The chooser first presents launchable logical models and, only when needed,
+their physically distinct variants. It shows format, precision, size, backend,
+and mode but never asks for a profile alias. Scripts use `model load MODEL` and
+add `--variant VARIANT` when the catalog reports several choices. The same
+terminal can then enter chat with `yvex chat`, while other protocol clients and
+OpenAI consumers remain independent.
 
-The host publishes its socket before any engine exists. `engine load` resolves
+The host publishes its socket before any engine exists. `model load` resolves
 the selected registry profile, authenticates its package and binding, seals the
 deployment specialization, builds admitted engine resources, then publishes
-one loaded engine generation. `engine list` exposes `loading`, `loaded`,
-`draining`, `unloading`, and failure facts as applicable; `host status`
-continues to report the independent host lifecycle.
+one loaded engine generation. Product state becomes LOADED; advanced `engine
+list` exposes exact loading, loaded, draining, unloading, and failure facts as
+applicable. `host status` continues to report the independent host lifecycle.
 
 Large engines can spend substantial time in load. Typed events and bounded
 status expose real completed stages without inventing a percentage. A failed
@@ -280,15 +289,15 @@ batching, not global ready-sequence continuous batching.
 
 The relevant commands have different responsibilities:
 
-- `yvex profile list` reads the deployment registry and marks complete readable
-  startup profiles;
+- `yvex model list` derives one logical catalog from exact source, artifact,
+  deployment, and resident-engine facts;
 - `yvex serve` starts the model-neutral persistent host;
-- `yvex engine load PROFILE` opens and authenticates the named profile's artifact
-  and binding, constructs compiler-selected residency, and publishes one engine
-  generation;
-- `yvex engine list` reports the generations actually known to the host;
-- `yvex engine unload ENGINE` drains and closes the selected generation without
-  stopping the host;
+- `yvex model load MODEL` resolves one launchable representation and exact
+  profile, then publishes one engine generation;
+- `yvex model unload MODEL` drains and closes that model's resident generation
+  without stopping the host;
+- advanced `yvex engine list|show|load|unload` retains exact profile and
+  generation control for engineering and qualification;
 - `yvex host memory` reports current process, mapped, host-resident, and
   device-resident memory facts;
 - `yvex chat` uses the already resident model through the local protocol and
@@ -311,9 +320,9 @@ component location, CUDA backend, and media mode. Normal operation is therefore
 the same registry-first command used by other hosted models:
 
 ```sh
-./yvex profile list
+./yvex model show minimax-h3-fl2va
 ./yvex serve
-./yvex engine load minimax-h3-fl2va-runtime-media
+./yvex model load minimax-h3-fl2va
 ```
 
 The default publication directory is `$YVEX_DATA_DIR/media`, or
@@ -340,7 +349,7 @@ residency.
 From another terminal, start the ordinary client:
 
 ```sh
-./yvex chat --model minimax-h3-fl2va-runtime-media --session video
+./yvex chat --model minimax-h3-fl2va --session video
 ```
 
 Submit one creative prompt. The prompt immediately starts native generation;
@@ -355,7 +364,7 @@ deterministic seed when entering the native client, then type the creative
 prompt at its prompt:
 
 ```sh
-./yvex chat --model minimax-h3-fl2va-runtime-media \
+./yvex chat --model minimax-h3-fl2va \
   --trajectory released --width 768 --height 768 \
   --duration 5 --seed 42
 ```
@@ -407,12 +416,12 @@ Terminal 1 owns the foreground host lifecycle:
 The foreground terminal opens with the YVEX hero, executable version and local
 protocol, then remains a compact operational event stream. The banner is a
 human projection; host readiness remains the typed status authority. It does
-not expose a chat or lifecycle prompt. Load and inspect the selected profile
-from Terminal 2:
+not expose a chat or lifecycle prompt. Load and inspect a model from Terminal
+2:
 
 ```sh
-./yvex engine load
-./yvex engine list
+./yvex model load
+./yvex model list --wide
 ./yvex host status
 ```
 
@@ -421,8 +430,8 @@ healthy refuses the duplicate and exits. It neither reserves another Unix or
 OpenAI listener nor opens an stdin-driven prompt. Use `./yvex host stop` only
 when the shared host itself should shut down.
 
-After the sole engine reports `loaded`, Terminal 2 may run
-`./yvex chat --session main` or `./yvex host logs`. Add
+After the selected model reports LOADED, Terminal 2 may run `./yvex chat
+--session main` or `./yvex host logs`. Add
 `--verbose` for individual DSpark cycles or `--json` for canonical JSONL. All
 views derive from the same typed event sequence. Default telemetry excludes
 prompt and answer content.
@@ -593,11 +602,12 @@ Use compact status for normal operation:
 ```sh
 ./yvex host status
 ./yvex host status --json
-./yvex engine list
+./yvex model list --wide
 ./yvex host memory
 ```
 
-`engine list` reports the known engine generations and their model,
+`model list` marks resident logical models LOADED without turning generations
+into peer models. Advanced `engine list` reports exact generation,
 specialization, backend, residency, and readiness facts. `host memory`
 separates mapped package, prepared/derived, resident, sequence-state,
 workspace/temporary, process RSS, and backend allocation facts.
@@ -606,6 +616,7 @@ Follow typed server activity independently of the foreground host stream:
 
 ```sh
 ./yvex host logs
+./yvex host logs --follow
 ./yvex host logs --verbose
 ./yvex host logs --json
 ```
@@ -616,7 +627,9 @@ fields. They group prefill and DSpark cycles, show queue pressure only when
 contended, use human byte units and named stop reasons, and replace any active
 progress line with one stable completion or failure summary. They suppress
 ordinary connection churn, token fragments and profiler detail.
-`host logs --verbose` exposes each DSpark cycle. `host logs --json` emits the
+Without `--follow`, the command returns after the retained event snapshot.
+`host logs --follow` remains attached for live events. `host logs --verbose`
+exposes each DSpark cycle. `host logs --json` emits the
 canonical complete JSONL event record, including typed detail omitted by the compact
 human view. Prompts and answers remain absent from every projection by default.
 
@@ -630,7 +643,7 @@ started with the explicit `--trace-content` opt-in.
 Release one engine while retaining the host and its other engines:
 
 ```sh
-./yvex engine unload ENGINE
+./yvex model unload MODEL
 ./yvex host status
 ```
 
@@ -670,7 +683,7 @@ once with the advanced registry operation and absolute paths:
 
 This operation reads the GGUF, records its identity and metadata, checks that
 the startup profile is structurally complete, and stores it in the user-local
-registry. It does not establish runtime admission; `yvex engine load`
+registry. It does not establish runtime admission; `yvex model load`
 authenticates the artifact and binding again when it opens the engine. Normal
 subsequent use contains no paths or environment variables:
 
@@ -680,17 +693,16 @@ profile readiness; the registry profile and the model live in the server remain
 separate facts.
 
 ```sh
-./yvex profile list
+./yvex model show v4-flash-dspark
 ./yvex serve
+./yvex model load v4-flash-dspark
 ```
 
-Then run interactive `./yvex engine load` from another terminal. Automation may
-run `./yvex engine load PROFILE`. The foreground host continues to own only
-server lifetime and its event stream.
-
-`profile list` reads and groups registry entries; `engine load` resolves one
-exact entry and creates a generation; `engine list` reads the identities
-actually known to the resident host. Loading and unloading an engine does not
+Run `model load` from another terminal. If several launchable representations
+exist, the TTY selector shows their physical facts; automation supplies
+`--variant`. The foreground host continues to own only server lifetime and its
+event stream. Advanced `profile list` reads exact deployment entries and
+`engine list` reads exact resident generations. Loading and unloading does not
 require restarting the host.
 
 Generation mode is part of the startup profile. `dspark` requires a binding
@@ -718,7 +730,7 @@ fallback.
 ## Recovery
 
 - Missing socket: run `yvex serve` and wait for `host status` to report the
-  host ready, then use interactive `yvex engine load`.
+  host ready, then use `yvex model load`.
 - Stale or unsafe socket: verify UID, mode, runtime-directory ownership, and
   singleton-lock ownership; never delete another user's socket.
 - Binding or artifact mismatch: select the binding for that exact artifact
@@ -730,8 +742,8 @@ fallback.
 - Queue refusal: wait for current work or reduce client concurrency; do not
   launch another server against the same socket.
 - OpenAI `503 runtime_unavailable`: start the host with `yvex serve`, load the
-  selected package with `yvex engine load`, and confirm host and engine
-  readiness through `yvex host status --json` and `yvex engine list --json`.
+  selected model with `yvex model load MODEL`, and confirm product and host
+  readiness through `yvex model list --json` and `yvex host status --json`.
 - OpenAI `422 unsupported_parameter`: remove the named unsupported field;
   fields are never ignored silently.
 

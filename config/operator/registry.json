@@ -55,6 +55,8 @@
         "host_memory",
         "host_status",
         "host_stop",
+        "model_load",
+        "model_unload",
         "reasoning_disabled",
         "reasoning_enabled",
         "reasoning_maximum",
@@ -326,27 +328,104 @@
         "--partial-token"
       ]
     },
-    "cli_offline_evidence_accounts": {
-      "booleans": [
-        "--audit",
-        "--device"
-      ],
-      "repeatable_values": [],
-      "values": [
-        "--add-to-git-credential",
-        "--cli",
-        "--git-protocol",
-        "--hostname",
-        "--interactive",
-        "--output",
-        "--required",
-        "--scopes",
-        "--skip-ssh-key",
-        "--token-env",
-        "--token-stdin",
-        "--web"
-      ]
-    },
+    "cli_accounts_output": [
+      {
+        "conflicts": [
+          "--output"
+        ],
+        "name": "--json",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "conflicts": [
+          "--json"
+        ],
+        "enum_values": [
+          "normal",
+          "table",
+          "audit"
+        ],
+        "name": "--output",
+        "takes_value": true,
+        "value_type": "enum"
+      }
+    ],
+    "cli_accounts_provider": [
+      {
+        "name": "--cli",
+        "takes_value": true,
+        "value_type": "path"
+      },
+      {
+        "name": "--token-env",
+        "takes_value": true,
+        "value_type": "name"
+      }
+    ],
+    "cli_accounts_login": [
+      {
+        "name": "--add-to-git-credential",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "name": "--device",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "name": "--force",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "enum_values": [
+          "https",
+          "ssh"
+        ],
+        "name": "--git-protocol",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {
+        "name": "--hostname",
+        "takes_value": true,
+        "value_type": "text"
+      },
+      {
+        "name": "--scopes",
+        "takes_value": true,
+        "value_type": "text"
+      },
+      {
+        "name": "--skip-ssh-key",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "name": "--web",
+        "takes_value": false,
+        "value_type": "boolean"
+      }
+    ],
+    "cli_accounts_ensure": [
+      {
+        "enum_values": [
+          "auto",
+          "always",
+          "never"
+        ],
+        "name": "--interactive",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {
+        "name": "--required",
+        "takes_value": false,
+        "value_type": "boolean"
+      }
+    ],
     "cli_offline_evidence_model": {
       "booleans": [
         "--audit",
@@ -737,29 +816,32 @@
         "--timeout-seconds"
       ]
     },
-    "cli_offline_model_discovery": {
+    "cli_offline_model_discovery": [
+      {
+        "enum_values": ["local", "hf", "huggingface"],
+        "name": "--provider",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {"name": "--author", "takes_value": true, "value_type": "text"},
+      {"name": "--filter", "takes_value": true, "value_type": "text"},
+      {"name": "--page", "range": "1..20", "takes_value": true, "value_type": "u64"},
+      {"name": "--limit", "range": "1..50", "takes_value": true, "value_type": "u64"},
+      {
+        "conflicts": ["--page", "--limit"],
+        "name": "--all",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {"name": "--models-root", "takes_value": true, "value_type": "path"},
+      {"name": "--json", "takes_value": false, "value_type": "boolean"}
+    ],
+    "cli_offline_model_local_catalog": {
       "booleans": [
         "--all",
         "--audit",
-        "--interactive",
-        "--json"
-      ],
-      "repeatable_values": [],
-      "values": [
-        "--author",
-        "--cli",
-        "--filter",
-        "--limit",
-        "--models-root",
-        "--output",
-        "--page",
-        "--provider"
-      ]
-    },
-    "cli_offline_model_local_catalog": {
-      "booleans": [
-        "--audit",
-        "--json"
+        "--json",
+        "--wide"
       ],
       "repeatable_values": [],
       "values": [
@@ -768,6 +850,136 @@
         "--registry"
       ]
     },
+    "cli_model_catalog_list": [
+      {"name": "--models-root", "takes_value": true, "value_type": "path"},
+      {"name": "--registry", "takes_value": true, "value_type": "path"},
+      {"name": "--all", "takes_value": false, "value_type": "boolean"},
+      {
+        "conflicts": ["--json"],
+        "name": "--wide",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "conflicts": ["--wide"],
+        "name": "--json",
+        "takes_value": false,
+        "value_type": "boolean"
+      }
+    ],
+    "cli_model_catalog_show": [
+      {"name": "--models-root", "takes_value": true, "value_type": "path"},
+      {"name": "--registry", "takes_value": true, "value_type": "path"},
+      {"name": "--json", "takes_value": false, "value_type": "boolean"}
+    ],
+    "cli_model_prepare": [
+      {"name": "--quant", "takes_value": true, "value_type": "name"},
+      {"name": "--imatrix", "takes_value": true, "value_type": "path"},
+      {"name": "--models-root", "takes_value": true, "value_type": "path"},
+      {"name": "--registry", "takes_value": true, "value_type": "path"},
+      {"name": "--dry-run", "takes_value": false, "value_type": "boolean"},
+      {"name": "--json", "takes_value": false, "value_type": "boolean"}
+    ],
+    "cli_model_acquisition": [
+      {"name": "--models-root", "takes_value": true, "value_type": "path"},
+      {"name": "--json", "takes_value": false, "value_type": "boolean"}
+    ],
+    "cli_model_runtime": [
+      {"name": "--variant", "takes_value": true, "value_type": "text"},
+      {"name": "--json", "takes_value": false, "value_type": "boolean"}
+    ],
+    "cli_model_pull": [
+      {
+        "enum_values": ["safetensors", "gguf"],
+        "name": "--format",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {"name": "--variant", "takes_value": true, "value_type": "text"},
+      {"name": "--revision", "takes_value": true, "value_type": "text"},
+      {"name": "--family", "takes_value": true, "value_type": "name"},
+      {"name": "--name", "takes_value": true, "value_type": "name"},
+      {"name": "--models-root", "takes_value": true, "value_type": "path"},
+      {
+        "enum_values": ["auto", "required", "never"],
+        "name": "--auth",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {
+        "enum_values": ["auto", "live", "plain", "log", "off"],
+        "name": "--progress",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {
+        "dependencies": ["--prepare"],
+        "name": "--quant",
+        "takes_value": true,
+        "value_type": "name"
+      },
+      {
+        "multiplicity": "repeatable",
+        "name": "--include",
+        "takes_value": true,
+        "value_type": "text"
+      },
+      {
+        "multiplicity": "repeatable",
+        "name": "--exclude",
+        "takes_value": true,
+        "value_type": "text"
+      },
+      {
+        "conflicts": ["--reference"],
+        "name": "--managed",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "conflicts": ["--managed", "--resume"],
+        "name": "--reference",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "conflicts": ["--json"],
+        "name": "--prepare",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "dependencies": ["--prepare"],
+        "name": "--stream",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "conflicts": ["--reference"],
+        "name": "--resume",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {"name": "--dry-run", "takes_value": false, "value_type": "boolean"},
+      {
+        "conflicts": ["--prepare"],
+        "name": "--json",
+        "takes_value": false,
+        "value_type": "boolean"
+      }
+    ],
+    "cli_model_push": [
+      {
+        "enum_values": ["artifact", "source"],
+        "name": "--representation",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {"name": "--variant", "takes_value": true, "value_type": "text"},
+      {"name": "--models-root", "takes_value": true, "value_type": "path"},
+      {"name": "--registry", "takes_value": true, "value_type": "path"},
+      {"name": "--json", "takes_value": false, "value_type": "boolean"}
+    ],
     "cli_offline_model_registry_add": {
       "booleans": [],
       "repeatable_values": [],
@@ -1785,7 +1997,7 @@
       "operation_id": "artifact.materialize",
       "side_effects": "allocates and validates finite materialization",
       "summary": "Materialize an admitted artifact for a backend.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
@@ -1811,7 +2023,7 @@
       "lane": "offline-engine",
       "operation_id": "artifact.inspect",
       "summary": "Inspect an admitted artifact.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
@@ -1842,7 +2054,7 @@
       "lane": "offline-engine",
       "operation_id": "artifact.verify",
       "summary": "Verify one artifact with one explicit grammar.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_id": "chat",
@@ -1876,9 +2088,9 @@
       "arguments": [
         {
           "completion_provider": "none",
-          "multiplicity": "many",
+          "multiplicity": "one",
           "name": "QUERY",
-          "required": false,
+          "required": true,
           "validator": "syntax.delegated",
           "value_type": "text"
         }
@@ -1895,9 +2107,9 @@
       "renderer_id": "human-or-json",
       "result_schema": "model-catalog-projection.v1",
       "side_effects": "provider metadata read",
-      "summary": "Search remote provider model metadata without acquiring payloads.",
+      "summary": "Search known local or remote model catalogs without acquiring payloads.",
       "test_owner": "tests/cli/models.sh",
-      "visibility": "product-advanced"
+      "visibility": "product-default"
     },
     {
       "adapter_argv": [
@@ -2020,7 +2232,7 @@
       "operation_id": "tensor.map",
       "side_effects": "reads source metadata",
       "summary": "Map native tensors into artifact roles.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
@@ -2083,7 +2295,7 @@
       "operation_id": "quant.emit",
       "side_effects": "may write compilation output",
       "summary": "Emit one planned physical variant.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
@@ -2177,7 +2389,7 @@
       "operation_id": "quant.plan",
       "side_effects": "may write compilation output",
       "summary": "Plan an identity-bound physical variant.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
@@ -2272,7 +2484,7 @@
       "operation_id": "quant.preset",
       "side_effects": "may write compilation output",
       "summary": "Inspect or export a quantization preset.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
@@ -2302,7 +2514,7 @@
       "operation_id": "source.manifest",
       "side_effects": "may write source manifest",
       "summary": "Create or report source provenance.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
@@ -2323,7 +2535,7 @@
       "side_effects": "reads every source shard and transactionally publishes payload identity",
       "summary": "Verify one acquired source against its admitted manifest.",
       "test_owner": "tests/cli/source_manifest.sh",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_id": "completion",
@@ -3760,12 +3972,12 @@
         "list"
       ],
       "flag_sets": [
-        "cli_offline_model_local_catalog"
+        "cli_model_catalog_list"
       ],
       "lane": "offline-engine",
       "operation_id": "model.list",
-      "result_schema": "yvex.model.list.v1",
-      "summary": "List deployable logical models; unbound records remain under source.",
+      "result_schema": "yvex.model.list.v2",
+      "summary": "List the logical model catalog with origin, representation, state, and location.",
       "visibility": "product-default"
     },
     {
@@ -3790,12 +4002,227 @@
         "show"
       ],
       "flag_sets": [
-        "cli_offline_model_local_catalog"
+        "cli_model_catalog_show"
       ],
       "lane": "offline-engine",
       "operation_id": "model.show",
-      "result_schema": "yvex.model.v1",
-      "summary": "Show one logical model and its source, artifact, and profile relationships.",
+      "result_schema": "yvex.model.v2",
+      "summary": "Explain one model's exact origin, representations, and runtime lineage.",
+      "visibility": "product-default"
+    },
+    {
+      "adapter_argv": [
+        "models",
+        "pull"
+      ],
+      "adapter_id": "models",
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "SOURCE",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "command_path": [
+        "model",
+        "pull"
+      ],
+      "flag_sets": [
+        "cli_model_pull"
+      ],
+      "lane": "offline-engine",
+      "operation_id": "model.pull",
+      "side_effects": "provider reads and bounded source storage writes",
+      "summary": "Acquire or reference one exact model representation.",
+      "visibility": "product-default"
+    },
+    {
+      "adapter_argv": [
+        "models",
+        "prepare-product"
+      ],
+      "adapter_id": "models",
+      "architectural_plane": "Execute",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "MODEL",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "command_path": [
+        "model",
+        "prepare"
+      ],
+      "flag_sets": [
+        "cli_model_prepare"
+      ],
+      "lane": "offline-engine",
+      "operation_id": "model.prepare",
+      "side_effects": "verified source compilation and package registration",
+      "summary": "Prepare an acquired model for the local runtime.",
+      "visibility": "product-default"
+    },
+    {
+      "adapter_argv": [
+        "models",
+        "pull-status"
+      ],
+      "adapter_id": "models",
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "MODEL",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "command_path": [
+        "model",
+        "status"
+      ],
+      "flag_sets": [
+        "cli_model_acquisition"
+      ],
+      "lane": "offline-engine",
+      "operation_id": "model.acquisition.status",
+      "summary": "Inspect an active or interrupted model pull.",
+      "visibility": "product-default"
+    },
+    {
+      "adapter_argv": [
+        "models",
+        "pull-stop"
+      ],
+      "adapter_id": "models",
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "MODEL",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "command_path": [
+        "model",
+        "stop"
+      ],
+      "flag_sets": [
+        "cli_model_acquisition"
+      ],
+      "lane": "offline-engine",
+      "operation_id": "model.acquisition.stop",
+      "side_effects": "request clean provider acquisition termination",
+      "summary": "Stop an active model pull cleanly.",
+      "visibility": "product-default"
+    },
+    {
+      "adapter_argv": [
+        "models",
+        "push"
+      ],
+      "adapter_id": "models",
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "MODEL",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        },
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "DESTINATION",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "command_path": [
+        "model",
+        "push"
+      ],
+      "flag_sets": [
+        "cli_model_push"
+      ],
+      "lane": "offline-engine",
+      "operation_id": "model.push",
+      "side_effects": "verified representation publication",
+      "summary": "Publish one exact known representation to a destination.",
+      "visibility": "product-default"
+    },
+    {
+      "adapter_id": "model_load",
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "optional",
+          "name": "MODEL",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "command_path": [
+        "model",
+        "load"
+      ],
+      "daemon_requirement": "required",
+      "flag_sets": [
+        "cli_model_runtime"
+      ],
+      "lane": "runtime-client",
+      "model_requirement": "registry-model",
+      "operation_id": "model.load",
+      "protocol_operation": "engine.load",
+      "side_effects": "load exact selected profile as an engine generation",
+      "summary": "Load a prepared model into the local runtime.",
+      "visibility": "product-default"
+    },
+    {
+      "adapter_id": "model_unload",
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "optional",
+          "name": "MODEL",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "command_path": [
+        "model",
+        "unload"
+      ],
+      "daemon_requirement": "required",
+      "flag_sets": [
+        "cli_model_runtime"
+      ],
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "model.unload",
+      "protocol_operation": "engine.unload",
+      "side_effects": "drain and unload exact selected engine generation",
+      "summary": "Unload a resident model from the local runtime.",
       "visibility": "product-default"
     },
     {
@@ -4115,7 +4542,7 @@
       "side_effects": "attachment",
       "slash_projection": "/attach",
       "summary": "Attach the client to one session.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_id": "session_cancel",
@@ -4145,7 +4572,7 @@
       "side_effects": "requests cancellation",
       "slash_projection": "/cancel",
       "summary": "Request cancellation of an active turn.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_id": "session_close",
@@ -4175,7 +4602,7 @@
       "side_effects": "closes session",
       "slash_projection": "/close",
       "summary": "Close one session and its sequence state.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_id": "session_detach",
@@ -4205,7 +4632,7 @@
       "side_effects": "attachment",
       "slash_projection": "/detach",
       "summary": "Detach the client from one session.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_id": "session_fork",
@@ -4262,15 +4689,18 @@
       ],
       "daemon_requirement": "required",
       "flag_sets": [
-        "cli_yvex_session"
+        "cli_yvex_session",
+        "cli_json"
       ],
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
       "operation_id": "session.list",
       "protocol_operation": "session.list",
+      "renderer_id": "human-or-json",
+      "result_schema": "yvex.session.list.v1",
       "slash_projection": "/sessions",
       "summary": "List server-owned sessions.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_id": "session_new",
@@ -4300,7 +4730,7 @@
       "side_effects": "creates session",
       "slash_projection": "/new",
       "summary": "Create a server-owned session.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_id": "session_reset",
@@ -4330,7 +4760,7 @@
       "side_effects": "resets state",
       "slash_projection": "/reset",
       "summary": "Reset one session and its sequence state.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_id": "session_state_restore",
@@ -4435,12 +4865,15 @@
       ],
       "daemon_requirement": "required",
       "flag_sets": [
-        "cli_yvex_session"
+        "cli_yvex_session",
+        "cli_json"
       ],
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
       "operation_id": "session.show",
       "protocol_operation": "session.show",
+      "renderer_id": "human-or-json",
+      "result_schema": "yvex.session.v1",
       "slash_arguments": [
         {
           "completion_provider": "session",
@@ -4453,36 +4886,211 @@
       ],
       "slash_projection": "/session",
       "summary": "Show one server-owned session.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
-        "accounts"
+        "accounts",
+        "ensure"
       ],
       "adapter_id": "accounts",
       "architectural_plane": "System",
       "arguments": [
         {
-          "completion_provider": "none",
-          "multiplicity": "many",
-          "name": "arguments",
-          "required": false,
+          "completion_provider": "enum",
+          "enum_values": [
+            "huggingface",
+            "github"
+          ],
+          "multiplicity": "one",
+          "name": "PROVIDER",
+          "required": true,
           "validator": "syntax.delegated",
-          "value_type": "text"
+          "value_type": "enum"
         }
       ],
-      "backend_requirement": "optional",
       "command_path": [
         "source",
-        "accounts"
+        "accounts",
+        "ensure"
       ],
       "flag_sets": [
-        "cli_offline_evidence_accounts"
+        "cli_accounts_output",
+        "cli_accounts_provider",
+        "cli_accounts_ensure"
       ],
       "lane": "offline-engine",
-      "operation_id": "system.accounts",
-      "side_effects": "may invoke provider login/logout",
-      "summary": "Inspect or update provider account state.",
+      "operation_id": "provider.account.ensure",
+      "renderer_id": "human-or-json",
+      "result_schema": "yvex.provider.account.v1",
+      "side_effects": "may invoke the canonical provider credential owner when interactive login is admitted",
+      "summary": "Require usable credentials for one provider.",
+      "test_owner": "tests/cli/accounts.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "adapter_argv": [
+        "accounts",
+        "login"
+      ],
+      "adapter_id": "accounts",
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "enum",
+          "enum_values": [
+            "huggingface",
+            "github"
+          ],
+          "multiplicity": "one",
+          "name": "PROVIDER",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "enum"
+        }
+      ],
+      "command_path": [
+        "source",
+        "accounts",
+        "login"
+      ],
+      "flag_sets": [
+        "cli_accounts_output",
+        "cli_accounts_provider",
+        "cli_accounts_login"
+      ],
+      "lane": "offline-engine",
+      "operation_id": "provider.account.login",
+      "renderer_id": "human-or-json",
+      "result_schema": "yvex.provider.account.v1",
+      "side_effects": "invokes the canonical provider credential owner",
+      "summary": "Authenticate through one installed provider CLI.",
+      "test_owner": "tests/cli/accounts.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "adapter_argv": [
+        "accounts",
+        "logout"
+      ],
+      "adapter_id": "accounts",
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "enum",
+          "enum_values": [
+            "huggingface",
+            "github"
+          ],
+          "multiplicity": "one",
+          "name": "PROVIDER",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "enum"
+        }
+      ],
+      "command_path": [
+        "source",
+        "accounts",
+        "logout"
+      ],
+      "flag_sets": [
+        "cli_accounts_output",
+        "cli_accounts_provider"
+      ],
+      "lane": "offline-engine",
+      "operation_id": "provider.account.logout",
+      "renderer_id": "human-or-json",
+      "result_schema": "yvex.provider.account.v1",
+      "side_effects": "invokes the canonical provider credential owner",
+      "summary": "Remove credentials through one installed provider CLI.",
+      "test_owner": "tests/cli/accounts.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "adapter_argv": [
+        "accounts",
+        "providers"
+      ],
+      "adapter_id": "accounts",
+      "architectural_plane": "System",
+      "command_path": [
+        "source",
+        "accounts",
+        "providers"
+      ],
+      "flag_sets": [
+        "cli_accounts_output"
+      ],
+      "lane": "offline-engine",
+      "operation_id": "provider.list",
+      "renderer_id": "human-or-json",
+      "result_schema": "yvex.provider.list.v1",
+      "summary": "List implemented provider integrations and local CLI availability.",
+      "test_owner": "tests/cli/accounts.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "adapter_argv": [
+        "accounts",
+        "status"
+      ],
+      "adapter_id": "accounts",
+      "architectural_plane": "System",
+      "command_path": [
+        "source",
+        "accounts",
+        "status"
+      ],
+      "flag_sets": [
+        "cli_accounts_output"
+      ],
+      "lane": "offline-engine",
+      "operation_id": "provider.account.status",
+      "renderer_id": "human-or-json",
+      "result_schema": "yvex.provider.status.v1",
+      "side_effects": "refreshes the local redacted provider observation cache",
+      "summary": "Show redacted authentication state for implemented providers.",
+      "test_owner": "tests/cli/accounts.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "adapter_argv": [
+        "accounts",
+        "whoami"
+      ],
+      "adapter_id": "accounts",
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "enum",
+          "enum_values": [
+            "huggingface",
+            "github"
+          ],
+          "multiplicity": "one",
+          "name": "PROVIDER",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "enum"
+        }
+      ],
+      "command_path": [
+        "source",
+        "accounts",
+        "whoami"
+      ],
+      "flag_sets": [
+        "cli_accounts_output",
+        "cli_accounts_provider"
+      ],
+      "lane": "offline-engine",
+      "operation_id": "provider.account.whoami",
+      "renderer_id": "human-or-json",
+      "result_schema": "yvex.provider.account.v1",
+      "side_effects": "may refresh the local redacted provider observation cache",
+      "summary": "Show the authenticated identity for one provider.",
+      "test_owner": "tests/cli/accounts.sh",
       "visibility": "product-advanced"
     },
     {
@@ -4510,7 +5118,7 @@
       "operation_id": "system.cuda",
       "side_effects": "may initialize CUDA capability probe; bandwidth runs a bounded measured fixture",
       "summary": "Inspect CUDA capability or measure identity-bound memory bandwidth.",
-      "visibility": "product-advanced"
+      "visibility": "product-default"
     },
     {
       "adapter_argv": [
@@ -4608,7 +5216,7 @@
       "operation_id": "artifact.list",
       "result_schema": "yvex.artifact.list.v1",
       "summary": "Group immutable artifacts by model and runnable deployment use.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
@@ -4641,7 +5249,7 @@
       "side_effects": "provider metadata read",
       "summary": "Inspect one remote source revision and provenance.",
       "test_owner": "tests/cli/models.sh",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
@@ -4829,7 +5437,7 @@
       "operation_id": "source.list",
       "result_schema": "yvex.source.list.v1",
       "summary": "List exact source revisions and their authenticated model binding.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
@@ -4859,7 +5467,7 @@
       "operation_id": "source.show",
       "result_schema": "yvex.source.v1",
       "summary": "Show one acquired source revision and provenance.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
@@ -4879,7 +5487,7 @@
       "operation_id": "profile.list",
       "result_schema": "yvex.profile.list.v1",
       "summary": "Group distinct physical deployment profiles by logical model.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
@@ -4909,7 +5517,7 @@
       "operation_id": "profile.show",
       "result_schema": "human.v1",
       "summary": "Show one deployment profile and its exact artifact binding.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_argv": [
@@ -5069,12 +5677,16 @@
         "memory"
       ],
       "daemon_requirement": "required",
+      "flag_sets": [
+        "cli_json"
+      ],
       "lane": "runtime-client",
       "operation_id": "host.memory",
       "protocol_operation": "runtime.status",
       "renderer_id": "human-or-json",
+      "result_schema": "yvex.host.memory.v1",
       "summary": "Show authoritative host memory accounting.",
-      "visibility": "product-advanced"
+      "visibility": "product-default"
     },
     {
       "adapter_id": "host_logs",
@@ -5091,8 +5703,8 @@
       "operation_id": "host.logs",
       "protocol_operation": "runtime.trace",
       "renderer_id": "stream",
-      "side_effects": "continuous subscription",
-      "summary": "Follow the host-authored typed log stream.",
+      "side_effects": "retained snapshot or explicit follow subscription",
+      "summary": "Read retained host logs; add --follow to watch new events.",
       "visibility": "product-default"
     },
     {
@@ -5133,8 +5745,8 @@
       "operation_id": "engine.load",
       "protocol_operation": "engine.load",
       "side_effects": "load model engine",
-      "summary": "Load a deployment profile, selecting interactively on a terminal when omitted.",
-      "visibility": "product-default"
+      "summary": "Load one exact deployment profile (advanced plumbing).",
+      "visibility": "product-advanced"
     },
     {
       "adapter_id": "engine_unload",
@@ -5160,7 +5772,7 @@
       "protocol_operation": "engine.unload",
       "side_effects": "drain and unload model engine",
       "summary": "Unload one engine generation.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_id": "engine_catalog",
@@ -5179,7 +5791,7 @@
       "renderer_id": "human-or-json",
       "result_schema": "yvex.engine.list.v1",
       "summary": "List engine generations owned by the host.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     },
     {
       "adapter_id": "engine_catalog",
@@ -5208,7 +5820,7 @@
       "renderer_id": "human-or-json",
       "result_schema": "yvex.engine.v1",
       "summary": "Show one exact engine generation.",
-      "visibility": "product-default"
+      "visibility": "product-advanced"
     }
   ],
   "removed_paths": [

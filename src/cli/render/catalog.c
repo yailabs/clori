@@ -3,8 +3,10 @@
  * presentation. The joined record is a projection and never becomes a model-domain authority.
  */
 #include "src/cli/model_artifacts/private.h"
+#include "src/cli/render/private.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <yvex/internal/io.h>
 
@@ -107,6 +109,99 @@ static const char *remote_product_status(const yvex_remote_model *model)
         return "recognized";
     return "unknown";
 }
+
+typedef struct {
+    char model[YVEX_REMOTE_NAME_CAP];
+    char provider[32];
+    char repository[YVEX_REMOTE_REPOSITORY_CAP];
+    char architecture[YVEX_REMOTE_NAME_CAP];
+    char formats[64];
+    char size[32];
+    char state[24];
+    char support[24];
+    char location[YVEX_PATH_CAP];
+    yvex_cli_table_cell cells[9];
+    yvex_cli_table_row row;
+} remote_search_table_row;
+
+static void remote_search_formats(const yvex_remote_catalog *catalog,
+                                  unsigned long long row,
+                                  const yvex_remote_model *model,
+                                  char out[64])
+{
+    unsigned int index;
+    out[0] = '\0';
+    for (index = 0u; index < model->representation_count; ++index) {
+        const yvex_model_representation *representation =
+            yvex_remote_catalog_representation_at(catalog, row, index);
+        size_t used = strlen(out);
+        if (!representation || strstr(out, representation->format)) continue;
+        snprintf(out + used, 64u - used, "%s%s", used ? "," : "",
+                 representation->format);
+    }
+    if (!out[0]) snprintf(out, 64u, "%s", "unknown");
+}
+
+static void remote_search_size(const yvex_remote_catalog *catalog,
+                               unsigned long long row,
+                               const yvex_remote_model *model,
+                               char out[32])
+{
+    const yvex_model_representation *representation;
+    if (model->representation_count != 1u) {
+        snprintf(out, 32u, "%s",
+                 model->representation_count ? "varies" : "unknown");
+        return;
+    }
+    representation = yvex_remote_catalog_representation_at(catalog, row, 0u);
+    if (representation && representation->size_known)
+        model_download_format_bytes(out, 32u, representation->size_bytes);
+    else snprintf(out, 32u, "%s", "unknown");
+}
+
+static void remote_search_row_build(remote_search_table_row *row,
+                                    const yvex_remote_catalog *catalog,
+                                    const yvex_local_catalog *local_catalog,
+                                    unsigned long long index)
+{
+    const yvex_remote_model *model = yvex_remote_catalog_at(catalog, index);
+    const char *name = strrchr(model->repository, '/');
+    remote_local_projection local;
+    remote_local_project(&local, model, local_catalog);
+    memset(row, 0, sizeof(*row));
+    snprintf(row->model, sizeof(row->model), "%.127s",
+             name ? name + 1 : model->repository);
+    snprintf(row->provider, sizeof(row->provider), "%s",
+             !strcmp(model->provider, "huggingface") ? "Hugging Face"
+                                                     : model->provider);
+    snprintf(row->repository, sizeof(row->repository), "%s", model->repository);
+    snprintf(row->architecture, sizeof(row->architecture), "%s",
+             model->architecture[0] ? model->architecture
+                                    : model->family[0] ? model->family : "unknown");
+    remote_search_formats(catalog, index, model, row->formats);
+    remote_search_size(catalog, index, model, row->size);
+    snprintf(row->state, sizeof(row->state), "%s",
+             local.package ? "package" : local.source ? "source"
+             : local.related_revision ? "other revision" : "remote");
+    snprintf(row->support, sizeof(row->support), "%s", remote_product_status(model));
+    snprintf(row->location, sizeof(row->location), "hf://%s%s%s",
+             model->repository, model->resolved_revision[0] ? "@" : "",
+             model->resolved_revision);
+    row->cells[0] = (yvex_cli_table_cell){row->model, YVEX_CLI_TABLE_ACCENT};
+    row->cells[1] = (yvex_cli_table_cell){row->provider, YVEX_CLI_TABLE_PLAIN};
+    row->cells[2] = (yvex_cli_table_cell){row->repository, YVEX_CLI_TABLE_PLAIN};
+    row->cells[3] = (yvex_cli_table_cell){row->architecture, YVEX_CLI_TABLE_PLAIN};
+    row->cells[4] = (yvex_cli_table_cell){row->formats, YVEX_CLI_TABLE_PLAIN};
+    row->cells[5] = (yvex_cli_table_cell){row->size, YVEX_CLI_TABLE_PLAIN};
+    row->cells[6] = (yvex_cli_table_cell){row->state,
+        local.package ? YVEX_CLI_TABLE_SUCCESS : YVEX_CLI_TABLE_WARNING};
+    row->cells[7] = (yvex_cli_table_cell){row->support,
+        model->support_stage >= YVEX_MODEL_SUPPORT_PACKAGE_PREPARATION
+            ? YVEX_CLI_TABLE_SUCCESS : YVEX_CLI_TABLE_WARNING};
+    row->cells[8] = (yvex_cli_table_cell){row->location, YVEX_CLI_TABLE_DIM};
+    row->row.cells = row->cells;
+}
+
 static int remote_catalog_render_table(FILE *fp, const yvex_remote_catalog *catalog,
                                        const yvex_local_catalog *local_catalog,
                                        int representations)
@@ -177,42 +272,38 @@ static int remote_catalog_render_table(FILE *fp, const yvex_remote_catalog *cata
                             model->available_file_count);
         return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
     }
-    yvex_cli_out_writef(fp, "REMOTE MODELS%s%s%s\n\n",
-                        yvex_remote_catalog_query(catalog)[0] ? " · \"" : "",
-                        yvex_remote_catalog_query(catalog),
-                        yvex_remote_catalog_query(catalog)[0] ? "\"" : "");
-    yvex_cli_out_writef(fp, "%-42s %-17s %-13s %8s %-15s %-8s %s\n", "MODEL / REPOSITORY",
-                        "KIND", "FAMILY", "PARAMS", "FORMAT", "LOCAL", "YVEX");
-    for (row = 0u; row < count; ++row) {
-        const yvex_remote_model *model = yvex_remote_catalog_at(catalog, row);
-        remote_local_projection local;
-        char parameters[32];
-        char classes[64];
-        char kind[32];
-        unsigned int index;
-        remote_local_project(&local, model, local_catalog);
-        remote_parameter_text(parameters, sizeof(parameters), model);
-        classes[0] = '\0';
-        for (index = 0u; index < model->representation_count; ++index) {
-            const yvex_model_representation *representation =
-                yvex_remote_catalog_representation_at(catalog, row, index);
-            size_t used = strlen(classes);
-            if (!representation || strstr(classes, representation->format)) continue;
-            snprintf(classes + used, sizeof(classes) - used, "%s%s", used ? "," : "",
-                     representation->format);
+    {
+        static const yvex_cli_table_column columns[] = {
+            {"MODEL", 12u, 28u, YVEX_CLI_TABLE_LEFT, 0},
+            {"PROVIDER", 8u, 14u, YVEX_CLI_TABLE_LEFT, 0},
+            {"REPOSITORY", 14u, 34u, YVEX_CLI_TABLE_LEFT, 1},
+            {"ARCH", 8u, 22u, YVEX_CLI_TABLE_LEFT, 0},
+            {"FORMATS", 7u, 16u, YVEX_CLI_TABLE_LEFT, 0},
+            {"SIZE", 7u, 12u, YVEX_CLI_TABLE_RIGHT, 0},
+            {"STATE", 6u, 14u, YVEX_CLI_TABLE_LEFT, 0},
+            {"YVEX", 7u, 12u, YVEX_CLI_TABLE_LEFT, 0},
+            {"LOCATION", 16u, 60u, YVEX_CLI_TABLE_LEFT, 1}
+        };
+        remote_search_table_row *storage =
+            calloc((size_t)(count ? count : 1u), sizeof(*storage));
+        yvex_cli_table_row *rows =
+            calloc((size_t)(count ? count : 1u), sizeof(*rows));
+        int rc;
+        if (!storage || !rows) {
+            free(storage); free(rows);
+            return YVEX_ERR_NOMEM;
         }
-        if (!classes[0]) snprintf(classes, sizeof(classes), "unknown");
-        snprintf(kind, sizeof(kind), "%s%s", yvex_remote_model_kind_name(model->kind),
-                 model->kind_provisional ? " ?" : "");
-        yvex_cli_out_writef(fp, "%-42.42s %-17.17s %-13.13s %8s %-15.15s %-8s %s\n",
-                            model->repository, kind,
-                            model->family[0] ? model->family : "unknown", parameters, classes,
-                            local.package
-                                ? "package"
-                                : (local.source
-                                       ? "source"
-                                       : (local.related_revision ? "other-rev" : "no")),
-                            remote_product_status(model));
+        yvex_cli_out_writef(fp, "REMOTE MODELS%s%s%s\n\n",
+                            yvex_remote_catalog_query(catalog)[0] ? " · \"" : "",
+                            yvex_remote_catalog_query(catalog),
+                            yvex_remote_catalog_query(catalog)[0] ? "\"" : "");
+        for (row = 0u; row < count; ++row) {
+            remote_search_row_build(&storage[row], catalog, local_catalog, row);
+            rows[row] = storage[row].row;
+        }
+        rc = yvex_cli_table_render(fp, columns, 9u, rows, (size_t)count);
+        free(rows); free(storage);
+        if (rc != YVEX_OK) return rc;
     }
     if (yvex_remote_catalog_provider_count(catalog) > count)
         yvex_cli_out_writef(fp, "\nshowing %llu ranked results from %llu provider matches · use --all\n",

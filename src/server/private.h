@@ -264,6 +264,9 @@ int yvex_server_telemetry_emit_provider(
 int yvex_server_telemetry_next(server_telemetry *telemetry,
                           unsigned long long after_sequence, int wait,
                           yvex_server_event *event, yvex_error *err);
+int yvex_server_telemetry_latest_sequence(server_telemetry *telemetry,
+                                      unsigned long long *sequence,
+                                      yvex_error *err);
 int yvex_server_telemetry_metrics_copy(server_telemetry *telemetry,
                                   yvex_server_metrics *metrics,
                                   yvex_error *err);

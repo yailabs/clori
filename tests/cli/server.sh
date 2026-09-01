@@ -12,6 +12,7 @@ SOCKET_PATH=$SOCKET_ROOT/yvex/yvexd.sock
 PROFILE=deepseek4-v4-flash-dspark-runtime-iq2xxs-q2k-mxfp4-b9825a07-sm121-tc
 LEGACY_PROFILE=deepseek4-v4-flash-dspark-runtime-iq2xxs-legacy
 server_pid=
+logs_pid=
 
 finish()
 {
@@ -21,6 +22,10 @@ finish()
         HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" \
             "$YVEX_BIN" host stop >/dev/null 2>&1 || true
         wait "$server_pid" 2>/dev/null || true
+    fi
+    if test -n "$logs_pid" && kill -0 "$logs_pid" 2>/dev/null; then
+        kill "$logs_pid" 2>/dev/null || true
+        wait "$logs_pid" 2>/dev/null || true
     fi
     yvex_test_cleanup_preserving_status "$status" "$OUT_DIR"
 }
@@ -103,26 +108,46 @@ contains "$OUT_DIR/help.out" '--openai'
 "$YVEX_BIN" engine load --help >"$OUT_DIR/load-help.out"
 "$YVEX_BIN" engine unload --help >"$OUT_DIR/unload-help.out"
 "$YVEX_BIN" engine list --help >"$OUT_DIR/models-help.out"
+"$YVEX_BIN" model load --help >"$OUT_DIR/model-load-help.out"
 contains "$OUT_DIR/load-help.out" 'usage: yvex engine load [PROFILE]'
 contains "$OUT_DIR/unload-help.out" 'usage: yvex engine unload ENGINE'
 contains "$OUT_DIR/models-help.out" 'usage: yvex engine list [options]'
+contains "$OUT_DIR/model-load-help.out" 'usage: yvex model load [MODEL]'
 
 set +e
 run_client engine load >"$OUT_DIR/load-nontty.out" 2>"$OUT_DIR/load-nontty.err"
 load_nontty_status=$?
-printf '2\n' | HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 \
+HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 \
     TERM=xterm-256color script -q -e -c "$YVEX_BIN engine load" \
+    "$OUT_DIR/engine-load.typescript" </dev/null >"$OUT_DIR/engine-load.out" \
+    2>"$OUT_DIR/engine-load.err"
+engine_load_tty_status=$?
+run_client model load >"$OUT_DIR/model-load-nontty.out" \
+    2>"$OUT_DIR/model-load-nontty.err"
+model_load_nontty_status=$?
+printf '1\n1\n' | HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 \
+    TERM=xterm-256color script -q -e -c "$YVEX_BIN model load" \
     "$OUT_DIR/load-selector.typescript" >"$OUT_DIR/load-selector.out" \
     2>"$OUT_DIR/load-selector.err"
 load_selector_status=$?
 set -e
 test "$load_nontty_status" -eq 2
+test "$engine_load_tty_status" -eq 2
+test "$model_load_nontty_status" -eq 2
 test "$load_selector_status" -eq 1
-contains "$OUT_DIR/load-nontty.err" 'engine load requires PROFILE when input is not a terminal'
-contains "$OUT_DIR/load-selector.typescript" 'Select a model'
-contains "$OUT_DIR/load-selector.typescript" 'Select a deployment'
-contains "$OUT_DIR/load-selector.typescript" "profile $PROFILE"
-contains "$OUT_DIR/load-selector.typescript" "Loading profile: $PROFILE"
+contains "$OUT_DIR/load-nontty.err" 'engine load requires PROFILE'
+contains "$OUT_DIR/load-nontty.err" 'yvex model load [MODEL]'
+contains "$OUT_DIR/engine-load.typescript" 'engine load requires PROFILE'
+not_contains "$OUT_DIR/engine-load.typescript" 'Select model'
+contains "$OUT_DIR/model-load-nontty.err" 'model load requires MODEL when input is not a terminal'
+contains "$OUT_DIR/load-selector.typescript" 'Select model'
+contains "$OUT_DIR/load-selector.typescript" 'QUANT/PRECISION'
+contains "$OUT_DIR/load-selector.typescript" 'CHOICES'
+not_contains "$OUT_DIR/load-selector.typescript" 'Select representation and deployment'
+contains "$OUT_DIR/load-selector.typescript" 'start one with:'
+contains "$OUT_DIR/load-selector.typescript" 'yvex serve'
+not_contains "$OUT_DIR/load-selector.typescript" "$PROFILE"
+not_contains "$OUT_DIR/load-selector.typescript" "$LEGACY_PROFILE"
 
 set +e
 "$YVEX_BIN" serve --backend cpu >"$OUT_DIR/backend.out" 2>"$OUT_DIR/backend.err"
@@ -185,6 +210,13 @@ contains "$OUT_DIR/status.json" '"workers":2'
 contains "$OUT_DIR/status.json" '"model_open_count":0'
 contains "$OUT_DIR/status.json" '"openai_enabled":false'
 
+run_client host memory >"$OUT_DIR/memory.out"
+run_client host memory --json >"$OUT_DIR/memory.json"
+contains "$OUT_DIR/memory.out" 'MEMORY'
+contains "$OUT_DIR/memory.out" 'Device resident'
+contains "$OUT_DIR/memory.json" '"schema":"yvex.host.memory.v1"'
+contains "$OUT_DIR/memory.json" '"resident_device_bytes":0'
+
 run_client engine list --json >"$OUT_DIR/models-empty.json"
 contains "$OUT_DIR/models-empty.json" '"schema":"yvex.engine.list.v1"'
 contains "$OUT_DIR/models-empty.json" '"engines":[]'
@@ -239,9 +271,33 @@ kill -0 "$server_pid"
 run_client host status --json >"$OUT_DIR/status-after-probe.json"
 contains "$OUT_DIR/status-after-probe.json" '"host_ready":true'
 
+# A plain logs command is a finite retained-history snapshot.  Continuous
+# intent is explicit, format-independent, and exits cleanly on host shutdown.
+run_client host logs >"$OUT_DIR/logs-snapshot.out"
+run_client host logs --json >"$OUT_DIR/logs-snapshot.jsonl"
+contains "$OUT_DIR/logs-snapshot.out" 'host logs · retained operational history'
+contains "$OUT_DIR/logs-snapshot.jsonl" '"kind":"runtime.ready"'
+run_client host logs --json --follow >"$OUT_DIR/logs-follow.jsonl" &
+logs_pid=$!
+ready=0
+attempt=0
+while test "$attempt" -lt 100; do
+    if grep -F '"kind":"runtime.ready"' "$OUT_DIR/logs-follow.jsonl" >/dev/null 2>&1; then
+        ready=1
+        break
+    fi
+    kill -0 "$logs_pid" 2>/dev/null || break
+    attempt=$((attempt + 1))
+    sleep 0.02
+done
+test "$ready" -eq 1 || fail 'continuous host log subscriber did not become ready'
+
 run_client host stop >"$OUT_DIR/stop.out" 2>"$OUT_DIR/stop.err"
 wait "$server_pid"
 server_pid=
+wait "$logs_pid"
+logs_pid=
+contains "$OUT_DIR/logs-follow.jsonl" '"kind":"runtime.shutdown.complete"'
 test ! -e "$SOCKET_PATH"
 
 # A foreground TTY owns only server logs.  Lifecycle control remains the same

@@ -406,7 +406,7 @@ static int quant_cli_explain(const quant_cli_options *options, const yvex_quant_
 }
 
 static int quant_cli_emit(const quant_cli_options *options, quant_cli_context *context,
-                          yvex_error *err)
+                          int render_result, yvex_error *err)
 {
     yvex_gguf_file_sink *file_sink = NULL;
     yvex_quant_output_sink sink;
@@ -457,7 +457,7 @@ static int quant_cli_emit(const quant_cli_options *options, quant_cli_context *c
     }
     if (rc == YVEX_OK)
         rc = yvex_gguf_file_sink_publish(file_sink, &roundtrip, &emission, &file_failure, err);
-    if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && render_result) {
         yvex_cli_out_writef(
             stdout, "status: %s\n",
             context->summary->kind == YVEX_PHYSICAL_VARIANT_COMPONENT
@@ -645,7 +645,7 @@ static int quant_cli_preset(int argc, char **argv)
     return 2;
 }
 
-int yvex_quant_command(int arg_count, char **args)
+int yvex_quant_command_execute(int arg_count, char **args, int render_result)
 {
     quant_cli_options options;
     quant_cli_context context;
@@ -676,16 +676,22 @@ int yvex_quant_command(int arg_count, char **args)
                           options.action == QUANT_CLI_EXPLAIN))
         rc = yvex_quant_plan_file_validate(options.plan_path, context.plan, &err);
     if (rc == YVEX_OK && options.action == QUANT_CLI_EMIT)
-        rc = quant_cli_emit(&options, &context, &err);
+        rc = quant_cli_emit(&options, &context, render_result, &err);
     if (rc == YVEX_OK && options.action == QUANT_CLI_PROBE)
         rc = quant_cli_probe(&options, &context, &err);
-    if (rc == YVEX_OK && (options.action == QUANT_CLI_PLAN ||
-                          options.action == QUANT_CLI_SUMMARIZE))
+    if (rc == YVEX_OK && render_result &&
+        (options.action == QUANT_CLI_PLAN ||
+         options.action == QUANT_CLI_SUMMARIZE))
         quant_cli_summary_print(&context);
     if (rc == YVEX_OK && options.action == QUANT_CLI_EXPLAIN)
         rc = quant_cli_explain(&options, context.plan) == 0 ? YVEX_OK : YVEX_ERR_FORMAT;
     quant_cli_context_close(&context);
     return rc == YVEX_OK ? 0 : quant_cli_fail("execution", &err);
+}
+
+int yvex_quant_command(int arg_count, char **args)
+{
+    return yvex_quant_command_execute(arg_count, args, 1);
 }
 
 void yvex_quant_help(FILE *fp)

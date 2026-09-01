@@ -812,7 +812,7 @@ static int provider_process_run_streaming(const char *const *args,
     state.pgid = getpgid(state.pid);
     if (state.pgid <= 0) state.pgid = state.pid;
     report->provider_process_group = state.pgid;
-    if (report->active_receipt_path[0]) {
+    if ((!options || !options->dry_run) && report->active_receipt_path[0]) {
         yvex_error receipt_err;
         yvex_error_clear(&receipt_err);
         (void)model_download_write_control_receipt(report->active_receipt_path,
@@ -864,8 +864,10 @@ int model_download_run_hf(const yvex_cli_models_download_options *options,
     args[n++] = report->repo_id;
     args[n++] = "--revision";
     args[n++] = report->revision;
-    args[n++] = "--local-dir";
-    args[n++] = report->local_source_dir;
+    if (!options->dry_run) {
+        args[n++] = "--local-dir";
+        args[n++] = report->local_source_dir;
+    }
     for (i = 0; i < model_download_effective_include_count(options); ++i) {
         args[n++] = "--include";
         args[n++] = model_download_effective_include_at(options, i);
@@ -887,15 +889,12 @@ int model_download_run_hf(const yvex_cli_models_download_options *options,
 
     effective_mode = model_download_effective_progress_mode(options->progress_mode);
     model_download_print_start_progress(report, effective_mode);
-    return provider_process_run_streaming(args,
-                                               report->stdout_log_path,
-                                               report->stderr_log_path,
-                                               options,
-                                               effective_mode,
-                                               options->tick_seconds,
-                                               report->local_source_dir,
-                                               report,
-                                               err);
+    return provider_process_run_streaming(
+        args,
+        options->dry_run ? "/dev/null" : report->stdout_log_path,
+        options->dry_run ? "/dev/null" : report->stderr_log_path,
+        options, effective_mode, options->dry_run ? 0ull : options->tick_seconds,
+        options->dry_run ? "" : report->local_source_dir, report, err);
 }
 
 int model_download_run_github(const yvex_cli_models_download_options *options,
@@ -1308,6 +1307,36 @@ void model_download_print_status_report(
     char largest_text[32];
     char largest_name[64];
 
+    if (options && options->output_mode == YVEX_MODELS_OUTPUT_JSON) {
+        yvex_cli_out_fputs(
+            "{\"schema\":\"yvex.model.acquisition.status.v1\",\"model\":",
+            stdout);
+        yvex_cli_out_json_string(stdout, report->target_id);
+        yvex_cli_out_fputs(",\"provider\":", stdout);
+        yvex_cli_out_json_string(stdout, report->provider);
+        yvex_cli_out_fputs(",\"repository\":", stdout);
+        yvex_cli_out_json_string(stdout, report->repo_id);
+        yvex_cli_out_fputs(",\"revision\":", stdout);
+        yvex_cli_out_json_string(stdout, report->revision);
+        yvex_cli_out_fputs(",\"location\":", stdout);
+        yvex_cli_out_json_string(stdout, report->local_source_dir);
+        yvex_cli_out_writef(
+            stdout,
+            ",\"active\":%s,\"resume_available\":%s,\"stop_available\":%s,"
+            "\"files\":%llu,\"partial_files\":%llu,\"bytes\":%llu,"
+            "\"provider_pid\":%lld,\"provider_pgid\":%lld,\"receipt\":",
+            process_alive ? "true" : "false",
+            resume_available ? "true" : "false",
+            stop_available ? "true" : "false", report->source_scan.file_count,
+            report->source_scan.partial_file_count,
+            report->source_scan.total_regular_file_bytes,
+            (long long)provider_pid, (long long)provider_pgid);
+        yvex_cli_out_json_string(
+            stdout, active_receipt_present ? report->active_receipt_path
+                                           : report->last_receipt_path);
+        yvex_cli_out_fputs("}\n", stdout);
+        return;
+    }
     if (options && options->output_mode == YVEX_MODELS_OUTPUT_AUDIT) {
         yvex_cli_out_writef(stdout, "models: download status\n");
         yvex_cli_out_writef(stdout, "target_id: %s\n", report->target_id);

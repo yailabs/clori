@@ -378,12 +378,14 @@ extern const yvex_graph_execution_api yvex_attention_execution_api;
 #define YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1 1u
 struct yvex_family_compiler_adapter;
 struct yvex_model_family_api;
+struct yvex_model_deployment_defaults;
 typedef struct {
     unsigned int schema_version;
     unsigned long long adapter_id, adapter_version;
     const char *target_id, *family_name, *logical_transform_identity;
     const char *operator_family_key, *operator_artifact_filename;
     const char *source_manifest_filename;
+    const struct yvex_model_deployment_defaults *deployment_defaults;
     const struct yvex_model_family_api *(*model)(void);
     const struct yvex_family_compiler_adapter *compiler;
     const yvex_graph_execution_api *api;

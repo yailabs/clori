@@ -18,6 +18,7 @@ extern "C" {
 #define YVEX_REMOTE_PRECISION_CAP 96u
 #define YVEX_REMOTE_REASON_CAP 192u
 #define YVEX_REMOTE_MAX_REPRESENTATIONS 96u
+#define YVEX_MODEL_ARTIFACT_ID_CAP 65u
 
 typedef enum {
     YVEX_MODEL_REPRESENTATION_UNKNOWN = 0,
@@ -156,6 +157,11 @@ typedef struct {
     char verification_state[32];
     char blocker[YVEX_REMOTE_REASON_CAP];
     char path[YVEX_PATH_CAP];
+    char origin_uri[YVEX_PATH_CAP];
+    char storage_kind[24];
+    char format[YVEX_REMOTE_FORMAT_CAP];
+    char precision[YVEX_REMOTE_PRECISION_CAP];
+    char digest[YVEX_MODEL_ARTIFACT_ID_CAP];
     unsigned long long size_bytes;
     int size_known;
 } yvex_local_source_record;
@@ -196,7 +202,6 @@ const yvex_local_package_record *yvex_local_catalog_package_at(
 #define YVEX_MODEL_LIBRARY_ID_CAP 448u
 #define YVEX_MODEL_LIBRARY_NAME_CAP 128u
 #define YVEX_MODEL_LIBRARY_REASON_CAP 192u
-#define YVEX_MODEL_ARTIFACT_ID_CAP 65u
 #define YVEX_MODEL_RUNTIME_PROFILE_SCHEMA_V1 1u
 #define YVEX_MODEL_RUNTIME_PROFILE_SCHEMA_CURRENT \
     YVEX_MODEL_RUNTIME_PROFILE_SCHEMA_V1
@@ -210,7 +215,8 @@ typedef enum {
     YVEX_MODEL_IDENTITY_ALIAS = 0,
     YVEX_MODEL_IDENTITY_TARGET,
     YVEX_MODEL_IDENTITY_FAMILY_MODEL_TARGET,
-    YVEX_MODEL_IDENTITY_PROVIDER_REPOSITORY_REVISION
+    YVEX_MODEL_IDENTITY_PROVIDER_REPOSITORY_REVISION,
+    YVEX_MODEL_IDENTITY_FAMILY_MODEL
 } yvex_model_identity_kind;
 
 typedef struct {

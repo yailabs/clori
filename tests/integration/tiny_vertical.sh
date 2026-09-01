@@ -173,8 +173,8 @@ assert {row["identity"] for row in profiles} == {sys.argv[6], sys.argv[7]}
 assert len({row["model_identity"] for row in profiles}) == 1
 profile_model, = [row for row in models
                   if row["identity"] == profiles[0]["model_identity"]]
-assert profile_model["profile_count"] == 2
-assert profile_model["launchable_profile_count"] == 2
+assert len(profile_model["profiles"]) == 2
+assert all(row["launchable"] for row in profile_model["profiles"])
 PY
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" serve \
@@ -202,8 +202,8 @@ grep -F '"model_open_count":0' "$root/status.json" >/dev/null
 grep -F 'YVEX host · persistent verified inference' "$root/server.out" >/dev/null
 grep -F 'host ready · Ctrl-C to stop' "$root/server.out" >/dev/null
 
-HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" engine load "$profile" \
-    >"$root/load.first"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" model load tiny-executable \
+    --json >"$root/load.first"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host status --json \
     >"$root/status.loaded.json"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" engine list --json \
@@ -211,9 +211,18 @@ HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" engine list --json \
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" model list \
     --models-root "$models" --registry "$registry" --json \
     >"$root/catalog.loaded.json"
-cmp "$root/models.offline.json" "$root/catalog.loaded.json"
+python3 - "$root/load.first" "$root/catalog.loaded.json" "$second_profile" <<'PY'
+import json, pathlib, sys
+loaded = json.loads(pathlib.Path(sys.argv[1]).read_text())
+catalog = json.loads(pathlib.Path(sys.argv[2]).read_text())["models"]
+assert loaded["schema"] == "yvex.model.runtime.v1"
+assert loaded["operation"] == "load" and loaded["model"] == "tiny-executable"
+assert loaded["profile_identity"] == sys.argv[3]
+model, = [row for row in catalog if row["selector"] == "tiny-executable"]
+assert model["state"] == "LOADED" and len(model["loaded_engines"]) == 1
+PY
 first_generation=$(python3 - "$root/status.loaded.json" "$root/models.first.json" \
-    "$profile" <<'PY'
+    "$second_profile" <<'PY'
 import json, pathlib, sys
 status = json.loads(pathlib.Path(sys.argv[1]).read_text())
 catalog = json.loads(pathlib.Path(sys.argv[2]).read_text())
@@ -234,7 +243,7 @@ PY
 )
 test "$first_generation" -gt 0
 
-HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host logs --json \
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host logs --json --follow \
     >"$root/server.log.jsonl" 2>"$root/server.log.err" &
 log_pid=$!
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new persisted \
@@ -267,6 +276,22 @@ wait "$second_run_pid"
 grep -Fx 'ok' "$root/run.out" >/dev/null
 grep -Fx 'ok' "$root/run.independent.out" >/dev/null
 grep -F 'generation 1 token' "$root/run.err" >/dev/null
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session list --json \
+    >"$root/session.list.json"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show persisted --json \
+    >"$root/session.show.json"
+python3 - "$root/session.list.json" "$root/session.show.json" <<'PY'
+import json, pathlib, sys
+catalog = json.loads(pathlib.Path(sys.argv[1]).read_text())
+shown = json.loads(pathlib.Path(sys.argv[2]).read_text())
+assert catalog["schema"] == "yvex.session.list.v1"
+assert {row["name"] for row in catalog["sessions"]} >= {
+    "persisted", "independent", "adaptive"
+}
+assert shown["schema"] == "yvex.session.v1"
+assert shown["session"]["name"] == "persisted"
+assert shown["session"]["position"] > 0
+PY
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show persisted \
     >"$root/prefix.source.before"
 if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session fork \
@@ -320,14 +345,20 @@ grep -E '^state checkpoint saved position=[1-9][0-9]* bytes=[1-9][0-9]* digest=[
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show persisted \
     >"$root/session.before"
 
-HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" engine unload "$profile" \
-    >"$root/unload.first"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" model unload tiny-executable \
+    --json >"$root/unload.first"
+python3 - "$root/unload.first" "$second_profile" <<'PY'
+import json, pathlib, sys
+item = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert item["operation"] == "unload" and item["model"] == "tiny-executable"
+assert item["profile_identity"] == sys.argv[2]
+PY
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host status --json \
     >"$root/status.unloaded.json"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" engine list --json \
     >"$root/models.unloaded.json"
 python3 - "$root/status.unloaded.json" "$root/models.unloaded.json" \
-    "$profile" "$first_generation" <<'PY'
+    "$second_profile" "$first_generation" <<'PY'
 import json, pathlib, sys
 status = json.loads(pathlib.Path(sys.argv[1]).read_text())
 catalog = json.loads(pathlib.Path(sys.argv[2]).read_text())

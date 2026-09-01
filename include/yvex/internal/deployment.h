@@ -15,8 +15,16 @@ extern "C" {
 #define YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1 1u
+#define YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_V1 1u
 #define YVEX_EXECUTION_TEXT_CAP 64u
 #define YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE (8ull * 1024ull * 1024ull * 1024ull)
+
+/* Product preparation defaults bridge one exact target to a reproducible profile. */
+typedef struct yvex_model_deployment_defaults {
+    unsigned int schema_version;
+    const char *logical_family, *logical_model;
+    const char *quant_preset, *backend, *engine_kind, *execution_strategy;
+} yvex_model_deployment_defaults;
 
 typedef enum {
     YVEX_EXECUTION_EVIDENCE_PRODUCTION = 0,

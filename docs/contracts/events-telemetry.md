@@ -66,8 +66,9 @@ engine or the host.
 ## Projections
 
 `yvex serve` renders the compact human projection in the owning foreground
-terminal by default. `yvex host logs` attaches the same projection from
-another terminal, while `host logs --verbose` additionally renders individual
+terminal by default. `yvex host logs` renders a finite retained-history
+snapshot from another terminal, while `host logs --follow` keeps the typed
+subscription open. `host logs --verbose` additionally renders individual
 speculative cycles. `yvex serve --logs json` and `yvex host logs --json`
 emit canonical JSONL for the admitted trace schema. `host status` is a
 bounded host snapshot and `engine list` is the engine-inventory snapshot;
@@ -79,7 +80,7 @@ connection churn, uncontended queue admission, fragments, intermediate
 draft/verification steps, and profile rows. They render bytes in human units,
 speculative acceptance as
 accepted/proposed, and stop codes as their named contract values. The `--json`
-projection retains the full subscribed event sequence with sequence, severity,
+projection retains the full selected event sequence with sequence, severity,
 turn, phase, timing, and rate. Neither projection
 exposes generic positional counter names. Native prefill
 progress sent to the REPL is another projection of the sealed event, not a

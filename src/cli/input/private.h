@@ -52,7 +52,6 @@ void print_token_input_summary(const yvex_token_input *input, const char *status
                                const char *bounds_status, unsigned long long selected_index,
                                unsigned int selected_token, int has_selected);
 int yvex_accounts_command(int arg_count, char **args);
-void yvex_accounts_help(FILE *fp);
 int yvex_backend_command(int arg_count, char **args);
 void yvex_backend_help(FILE *fp);
 int yvex_convert_command(int arg_count, char **args);

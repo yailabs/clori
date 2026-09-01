@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <yvex/source.h>
+#include <yvex/internal/cli_table.h>
 #include "src/cli/input/private.h"
 #include "src/cli/io/private.h"
 #include <stdio.h>
@@ -7,26 +8,14 @@
 #include <string.h>
 #include <unistd.h>
 
-static const char *const literal_pair_0[] = { "       yvex source accounts login PROVIDER [options]",
-    "       yvex source accounts logout PROVIDER [options]"};
-
 static const char *const literal_pair_1[] = { "raw_token_stored_by_yvex: false",
     "boundary: local provider account state only, no tokens stored by YVEX"};
-
-static const char *const literal_lines_0[] = {
-    "       yvex source accounts ensure PROVIDER [--interactive auto|always|never] [--required]",
-    "\nProviders: huggingface|hf, github|gh.",
-    "Hugging Face CLI discovery uses YVEX_HF_CLI, then hf, then legacy huggingface-cli.",
-    "GitHub CLI discovery uses YVEX_GH_CLI, then gh.",
-    "Boundary: local provider account state only; YVEX stores no raw tokens, does not install tools, does "
-        "not implement OAuth, does not use MCP/YAI, and does not download, materialize, run, generate, "
-        "evaluate, or benchmark models from this command."
-};
 
 typedef enum {
     YVEX_ACCOUNTS_OUTPUT_NORMAL = 0,
     YVEX_ACCOUNTS_OUTPUT_TABLE,
-    YVEX_ACCOUNTS_OUTPUT_AUDIT
+    YVEX_ACCOUNTS_OUTPUT_AUDIT,
+    YVEX_ACCOUNTS_OUTPUT_JSON
 } yvex_accounts_output_mode;
 
 typedef struct {
@@ -40,7 +29,6 @@ typedef struct {
     int web;
     int device;
     int add_to_git_credential;
-    int token_stdin;
     int skip_ssh_key;
 } yvex_accounts_cli_options;
 
@@ -106,9 +94,7 @@ static int accounts_parse_common(const char *command,
     options->output_mode = YVEX_ACCOUNTS_OUTPUT_NORMAL;
     for (i = start; i < arg_count; ++i) {
         const char *value = NULL;
-        if (strcmp(args[i], "--audit") == 0) {
-            options->output_mode = YVEX_ACCOUNTS_OUTPUT_AUDIT;
-        } else if (strcmp(args[i], "--output") == 0) {
+        if (strcmp(args[i], "--output") == 0) {
             int rc = accounts_parse_value(command, "--output", arg_count, args, &i, &value);
             if (rc != 0) return rc;
             if (!accounts_parse_output_mode(value, &options->output_mode)) {
@@ -124,9 +110,7 @@ static int accounts_parse_common(const char *command,
             if (rc != 0) return rc;
             options->cli_override = value;
         } else if (strcmp(args[i], "--json") == 0) {
-            yvex_cli_out_writef(stderr,
-                "accounts %s: JSON output is unsupported; use --output normal|table|audit\n", command);
-            return 2;
+            options->output_mode = YVEX_ACCOUNTS_OUTPUT_JSON;
         } else {
             yvex_cli_out_writef(stderr, "accounts %s: unknown option: %s\n", command, args[i]);
             return 2;
@@ -152,14 +136,101 @@ static void accounts_print_observation_audit(const char *prefix,
     if (obs->next[0]) yvex_cli_out_writef(stdout, "%snext: %s\n", prefix, obs->next);
 }
 
+static void accounts_json_string_field(FILE *fp, const char *name,
+                                       const char *value, int comma)
+{
+    if (comma) yvex_cli_out_fputs(",", fp);
+    yvex_cli_out_writef(fp, "\"%s\":", name);
+    yvex_cli_out_json_string(fp, value ? value : "");
+}
+
+static void accounts_observation_json(FILE *fp,
+                                      const yvex_account_observation *obs)
+{
+    yvex_cli_out_fputs("{", fp);
+    accounts_json_string_field(fp, "provider", obs->provider_name, 0);
+    accounts_json_string_field(fp, "cli_path", obs->cli_path, 1);
+    accounts_json_string_field(fp, "cli_source", obs->cli_source, 1);
+    accounts_json_string_field(fp, "cli_status", obs->cli_status, 1);
+    accounts_json_string_field(fp, "auth_state", obs->auth_state, 1);
+    accounts_json_string_field(fp, "account", obs->account_hint, 1);
+    accounts_json_string_field(fp, "credential_source", obs->credential_source, 1);
+    accounts_json_string_field(fp, "token_env_name", obs->token_env_name, 1);
+    accounts_json_string_field(fp, "login_method", obs->login_method, 1);
+    accounts_json_string_field(fp, "status", obs->status, 1);
+    accounts_json_string_field(fp, "blocker", obs->top_blocker, 1);
+    accounts_json_string_field(fp, "next", obs->next, 1);
+    accounts_json_string_field(fp, "state_path", obs->state_path, 1);
+    accounts_json_string_field(fp, "last_checked_at", obs->last_checked_at, 1);
+    yvex_cli_out_writef(
+        fp,
+        ",\"cli_present\":%s,\"token_env_present\":%s,"
+        "\"token_value_redacted\":%s,\"raw_token_stored_by_yvex\":false,"
+        "\"command_exit_code\":%d}",
+        obs->cli_present ? "true" : "false",
+        obs->token_env_present ? "true" : "false",
+        obs->token_value_redacted ? "true" : "false", obs->command_exit_code);
+}
+
+static void accounts_collection_json(const char *schema,
+                                     const yvex_account_observation *observations,
+                                     size_t count)
+{
+    size_t index;
+    yvex_cli_out_writef(stdout, "{\"schema\":\"%s\",\"providers\":[", schema);
+    for (index = 0u; index < count; ++index) {
+        if (index) yvex_cli_out_fputs(",", stdout);
+        accounts_observation_json(stdout, &observations[index]);
+    }
+    yvex_cli_out_fputs("]}\n", stdout);
+}
+
+static void accounts_table(const yvex_account_observation *observations,
+                           size_t count)
+{
+    static const yvex_cli_table_column columns[] = {
+        {"PROVIDER", 11u, 16u, YVEX_CLI_TABLE_LEFT, 0},
+        {"CLI", 7u, 12u, YVEX_CLI_TABLE_LEFT, 0},
+        {"AUTH", 12u, 22u, YVEX_CLI_TABLE_LEFT, 0},
+        {"ACCOUNT", 12u, 48u, YVEX_CLI_TABLE_LEFT, 1}
+    };
+    yvex_cli_table_cell cells[2][4];
+    yvex_cli_table_row rows[2];
+    size_t index;
+    if (!observations || !count || count > 2u) return;
+    for (index = 0u; index < count; ++index) {
+        yvex_cli_table_tone auth_tone =
+            !strcmp(observations[index].auth_state, "logged-in") ||
+                    !strcmp(observations[index].auth_state, "env-token-present")
+                ? YVEX_CLI_TABLE_SUCCESS : YVEX_CLI_TABLE_WARNING;
+        cells[index][0] = (yvex_cli_table_cell){observations[index].provider_name,
+                                                YVEX_CLI_TABLE_ACCENT};
+        cells[index][1] = (yvex_cli_table_cell){observations[index].cli_status,
+                                                YVEX_CLI_TABLE_PLAIN};
+        cells[index][2] = (yvex_cli_table_cell){observations[index].auth_state,
+                                                auth_tone};
+        cells[index][3] = (yvex_cli_table_cell){observations[index].account_hint,
+                                                YVEX_CLI_TABLE_DIM};
+        rows[index] = (yvex_cli_table_row){cells[index], NULL,
+                                           YVEX_CLI_TABLE_PLAIN};
+    }
+    (void)yvex_cli_table_render(stdout, columns, 4u, rows, count);
+}
+
 static void accounts_print_single(const char *surface,
                                   const yvex_account_observation *obs,
                                   yvex_accounts_output_mode mode)
 {
+    if (mode == YVEX_ACCOUNTS_OUTPUT_JSON) {
+        yvex_cli_out_fputs("{\"schema\":\"yvex.provider.account.v1\",\"operation\":", stdout);
+        yvex_cli_out_json_string(stdout, surface);
+        yvex_cli_out_fputs(",\"provider\":", stdout);
+        accounts_observation_json(stdout, obs);
+        yvex_cli_out_fputs("}\n", stdout);
+        return;
+    }
     if (mode == YVEX_ACCOUNTS_OUTPUT_TABLE) {
-        yvex_cli_out_writef(stdout, "PROVIDER      CLI      AUTH               ACCOUNT\n");
-        yvex_cli_out_writef(stdout, "%-13s %-8s %-18s %s\n",
-               obs->provider_name, obs->cli_status, obs->auth_state, obs->account_hint);
+        accounts_table(obs, 1u);
         yvex_cli_out_writef(stdout, "status: %s\n", obs->status);
         return;
     }
@@ -200,22 +271,25 @@ static int command_accounts_providers(int arg_count, char **args)
     rc = yvex_account_observe(&observe, &observations[1], &err);
     if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
 
-    if (options.output_mode == YVEX_ACCOUNTS_OUTPUT_TABLE) {
-        yvex_cli_out_writef(stdout, "PROVIDER      ALIAS  CLI      AUTH\n");
-        yvex_cli_out_writef(stdout, "%-13s %-6s %-8s %s\n", "huggingface", "hf", observations[0].cli_status,
-            observations[0].auth_state);
-        yvex_cli_out_writef(stdout, "%-13s %-6s %-8s %s\n", "github", "gh", observations[1].cli_status,
-            observations[1].auth_state);
+    if (options.output_mode == YVEX_ACCOUNTS_OUTPUT_JSON) {
+        accounts_collection_json("yvex.provider.list.v1", observations, 2u);
+        return 0;
+    } else if (options.output_mode == YVEX_ACCOUNTS_OUTPUT_TABLE) {
+        accounts_table(observations, 2u);
     } else if (options.output_mode == YVEX_ACCOUNTS_OUTPUT_AUDIT) {
         yvex_cli_out_writef(stdout, "accounts: providers\n");
         accounts_print_observation_audit("provider_0_", &observations[0]);
         accounts_print_observation_audit("provider_1_", &observations[1]);
-        yvex_cli_out_writef(stdout, "boundary: provider discovery only; no login, no token storage, no download\n");
+        yvex_cli_out_writef(stdout,
+                           "boundary: provider inventory only; authentication is delegated to installed CLIs; "
+                           "no tokens stored by YVEX\n");
     } else {
         yvex_cli_out_writef(stdout, "accounts: providers\n");
         yvex_cli_out_writef(stdout, "provider: huggingface alias=hf cli=%s\n", observations[0].cli_status);
         yvex_cli_out_writef(stdout, "provider: github alias=gh cli=%s\n", observations[1].cli_status);
-        yvex_cli_out_writef(stdout, "boundary: provider discovery only; no login, no token storage, no download\n");
+        yvex_cli_out_writef(stdout,
+                           "boundary: provider inventory only; authentication is delegated to installed CLIs; "
+                           "no tokens stored by YVEX\n");
     }
     yvex_cli_out_writef(stdout, "status: account-providers\n");
     return 0;
@@ -241,12 +315,11 @@ static int command_accounts_status(int arg_count, char **args)
     if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
     (void)yvex_account_write_state(observations, 2u, &err);
 
-    if (options.output_mode == YVEX_ACCOUNTS_OUTPUT_TABLE) {
-        yvex_cli_out_writef(stdout, "PROVIDER      CLI      AUTH               ACCOUNT\n");
-        yvex_cli_out_writef(stdout, "%-13s %-8s %-18s %s\n", observations[0].provider_name,
-               observations[0].cli_status, observations[0].auth_state, observations[0].account_hint);
-        yvex_cli_out_writef(stdout, "%-13s %-8s %-18s %s\n", observations[1].provider_name,
-               observations[1].cli_status, observations[1].auth_state, observations[1].account_hint);
+    if (options.output_mode == YVEX_ACCOUNTS_OUTPUT_JSON) {
+        accounts_collection_json("yvex.provider.status.v1", observations, 2u);
+        return 0;
+    } else if (options.output_mode == YVEX_ACCOUNTS_OUTPUT_TABLE) {
+        accounts_table(observations, 2u);
     } else if (options.output_mode == YVEX_ACCOUNTS_OUTPUT_AUDIT) {
         yvex_cli_out_writef(stdout, "accounts: status\n");
         accounts_print_observation_audit("provider_0_", &observations[0]);
@@ -315,9 +388,7 @@ static int accounts_parse_login_options(const char *command,
     options->output_mode = YVEX_ACCOUNTS_OUTPUT_NORMAL;
     for (i = start; i < arg_count; ++i) {
         const char *value = NULL;
-        if (strcmp(args[i], "--audit") == 0) {
-            options->output_mode = YVEX_ACCOUNTS_OUTPUT_AUDIT;
-        } else if (strcmp(args[i], "--output") == 0 ||
+        if (strcmp(args[i], "--output") == 0 ||
                    strcmp(args[i], "--token-env") == 0 ||
                    strcmp(args[i], "--cli") == 0 ||
                    strcmp(args[i], "--hostname") == 0 ||
@@ -354,14 +425,10 @@ static int accounts_parse_login_options(const char *command,
             options->device = 1;
         } else if (strcmp(args[i], "--add-to-git-credential") == 0) {
             options->add_to_git_credential = 1;
-        } else if (strcmp(args[i], "--token-stdin") == 0) {
-            options->token_stdin = 1;
         } else if (strcmp(args[i], "--skip-ssh-key") == 0) {
             options->skip_ssh_key = 1;
         } else if (strcmp(args[i], "--json") == 0) {
-            yvex_cli_out_writef(stderr,
-                "accounts %s: JSON output is unsupported; use --output normal|table|audit\n", command);
-            return 2;
+            options->output_mode = YVEX_ACCOUNTS_OUTPUT_JSON;
         } else {
             yvex_cli_out_writef(stderr, "accounts %s: unknown option: %s\n", command, args[i]);
             return 2;
@@ -502,9 +569,7 @@ static int command_accounts_ensure(int arg_count, char **args)
     ensure.interactive = YVEX_ACCOUNT_INTERACTIVE_AUTO;
     for (i = 4; i < arg_count; ++i) {
         const char *value = NULL;
-        if (strcmp(args[i], "--audit") == 0) {
-            options.output_mode = YVEX_ACCOUNTS_OUTPUT_AUDIT;
-        } else if (strcmp(args[i], "--required") == 0) {
+        if (strcmp(args[i], "--required") == 0) {
             ensure.required = 1;
         } else if (strcmp(args[i], "--output") == 0 ||
                    strcmp(args[i], "--token-env") == 0 ||
@@ -532,6 +597,8 @@ static int command_accounts_ensure(int arg_count, char **args)
                 yvex_cli_out_writef(stderr, "accounts ensure: --interactive requires auto|always|never\n");
                 return 2;
             }
+        } else if (strcmp(args[i], "--json") == 0) {
+            options.output_mode = YVEX_ACCOUNTS_OUTPUT_JSON;
         } else {
             yvex_cli_out_writef(stderr, "accounts ensure: unknown option: %s\n", args[i]);
             return 2;
@@ -597,23 +664,10 @@ static int command_accounts_logout(int arg_count, char **args)
     return exit_code == 0 ? 0 : 1;
 }
 
-static void accounts_help_command(FILE *fp)
-{
-    yvex_cli_out_writef(fp, "usage: yvex source accounts providers [--output normal|table|audit]\n");
-    yvex_cli_out_writef(fp, "       yvex source accounts status [--audit | --output normal|table|audit]\n");
-    yvex_cli_out_lines(fp, literal_pair_0, sizeof(literal_pair_0) / sizeof(literal_pair_0[0]));
-    yvex_cli_out_writef(fp, "       yvex source accounts whoami PROVIDER [--audit]\n");
-    yvex_cli_out_lines(fp, literal_lines_0, sizeof(literal_lines_0) / sizeof(literal_lines_0[0]));
-}
-
 int yvex_accounts_command(int arg_count, char **args)
 {
     const char *sub;
 
-    if (arg_count >= 3 && (strcmp(args[2], "--help") == 0 || strcmp(args[2], "-h") == 0)) {
-        accounts_help_command(stdout);
-        return 0;
-    }
     if (arg_count < 3) {
         yvex_cli_out_writef(stderr, "yvex: accounts requires providers, status, login, logout, whoami, or ensure\n");
         return 2;
@@ -627,9 +681,4 @@ int yvex_accounts_command(int arg_count, char **args)
     if (strcmp(sub, "ensure") == 0) return command_accounts_ensure(arg_count, args);
     yvex_cli_out_writef(stderr, "yvex: unknown accounts subcommand: %s\n", sub);
     return 2;
-}
-
-void yvex_accounts_help(FILE *fp)
-{
-    accounts_help_command(fp);
 }

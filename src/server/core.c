@@ -663,15 +663,20 @@ static int event_subscription(yvex_server *server, int fd,
                               yvex_error *err)
 {
     unsigned long long cursor = request->event_after_sequence;
+    unsigned long long snapshot_limit = 0u;
+    int following = request->operation == YVEX_CLIENT_OP_RUNTIME_WATCH;
     int rc = YVEX_OK;
-    while (rc == YVEX_OK) {
+    if (!following)
+        rc = yvex_server_telemetry_latest_sequence(
+            server->telemetry, &snapshot_limit, err);
+    while (rc == YVEX_OK && (following || cursor < snapshot_limit)) {
         yvex_client_message message;
         memset(&message, 0, sizeof(message));
         message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
         message.kind = YVEX_CLIENT_MESSAGE_EVENT;
         message.status = YVEX_OK;
         message.request_number = request->request_number;
-        rc = yvex_server_telemetry_next(server->telemetry, cursor, 1,
+        rc = yvex_server_telemetry_next(server->telemetry, cursor, following,
                                    &message.event, err);
         if (rc == YVEX_OK) {
             cursor = message.event.sequence;
@@ -692,6 +697,17 @@ static int event_subscription(yvex_server *server, int fd,
                 message.event.kind == YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE)
                 break;
         }
+    }
+    if (rc == YVEX_OK && !following) {
+        yvex_client_message complete;
+        memset(&complete, 0, sizeof(complete));
+        complete.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+        complete.kind = YVEX_CLIENT_MESSAGE_ACK;
+        complete.status = YVEX_OK;
+        complete.request_number = request->request_number;
+        yvex_core_text_copy(complete.reason, sizeof(complete.reason),
+                            "retained event snapshot complete");
+        rc = yvex_server_protocol_send(fd, &complete, err);
     }
     return rc;
 }

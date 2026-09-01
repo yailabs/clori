@@ -45,6 +45,7 @@ run_section tensor-map tests/cli/tensor_map.sh
 run_section convert tests/cli/convert.sh
 run_section model-gate tests/cli/model_gate.sh
 run_section models tests/cli/models.sh
+run_section model-workflow tests/cli/model_workflow.sh
 run_section quant-job tests/cli/quant_job.sh
 run_section quant-policy tests/cli/quant_policy.sh
 run_section physical-variant tests/cli/physical_variant.sh
