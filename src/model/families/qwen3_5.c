@@ -4,6 +4,7 @@
 #include <yvex/internal/core.h>
 
 #include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -553,6 +554,435 @@ static int qwen_validate(yvex_qwen3_5_architecture *architecture,
     return YVEX_OK;
 }
 
+typedef struct {
+    const char *suffix;
+    yvex_qwen3_5_tensor_role role;
+} qwen_tensor_suffix;
+
+static const qwen_tensor_suffix qwen_full_attention_tensors[] = {
+    {"self_attn.q_proj.weight", YVEX_QWEN3_5_ROLE_ATTENTION_Q},
+    {"self_attn.k_proj.weight", YVEX_QWEN3_5_ROLE_ATTENTION_K},
+    {"self_attn.v_proj.weight", YVEX_QWEN3_5_ROLE_ATTENTION_V},
+    {"self_attn.o_proj.weight", YVEX_QWEN3_5_ROLE_ATTENTION_OUT},
+    {"self_attn.q_norm.weight", YVEX_QWEN3_5_ROLE_ATTENTION_Q_NORM},
+    {"self_attn.k_norm.weight", YVEX_QWEN3_5_ROLE_ATTENTION_K_NORM}};
+
+static const qwen_tensor_suffix qwen_delta_tensors[] = {
+    {"linear_attn.A_log", YVEX_QWEN3_5_ROLE_DELTA_DECAY_LOG},
+    {"linear_attn.conv1d.weight", YVEX_QWEN3_5_ROLE_DELTA_CONVOLUTION},
+    {"linear_attn.dt_bias", YVEX_QWEN3_5_ROLE_DELTA_TIME_BIAS},
+    {"linear_attn.in_proj_a.weight", YVEX_QWEN3_5_ROLE_DELTA_DECAY_PROJECTION},
+    {"linear_attn.in_proj_b.weight", YVEX_QWEN3_5_ROLE_DELTA_BETA_PROJECTION},
+    {"linear_attn.in_proj_qkv.weight", YVEX_QWEN3_5_ROLE_DELTA_QKV_PROJECTION},
+    {"linear_attn.in_proj_z.weight", YVEX_QWEN3_5_ROLE_DELTA_OUTPUT_GATE},
+    {"linear_attn.norm.weight", YVEX_QWEN3_5_ROLE_DELTA_OUTPUT_NORM},
+    {"linear_attn.out_proj.weight", YVEX_QWEN3_5_ROLE_DELTA_OUTPUT}};
+
+static const qwen_tensor_suffix qwen_common_layer_tensors[] = {
+    {"input_layernorm.weight", YVEX_QWEN3_5_ROLE_INPUT_NORM},
+    {"mlp.gate_proj.weight", YVEX_QWEN3_5_ROLE_FFN_GATE},
+    {"mlp.up_proj.weight", YVEX_QWEN3_5_ROLE_FFN_UP},
+    {"mlp.down_proj.weight", YVEX_QWEN3_5_ROLE_FFN_DOWN},
+    {"post_attention_layernorm.weight", YVEX_QWEN3_5_ROLE_POST_ATTENTION_NORM}};
+
+static int qwen_indexed_name(const char *name, const char *prefix,
+                             unsigned long long *index, const char **suffix)
+{
+    const char *cursor;
+    char *end = NULL;
+    unsigned long long value;
+
+    if (!name || !prefix || strncmp(name, prefix, strlen(prefix)) != 0) return 0;
+    cursor = name + strlen(prefix);
+    if (*cursor < '0' || *cursor > '9') return 0;
+    errno = 0;
+    value = strtoull(cursor, &end, 10);
+    if (errno || !end || end == cursor || *end != '.' || !end[1]) return 0;
+    *index = value;
+    *suffix = end + 1;
+    return 1;
+}
+
+static yvex_qwen3_5_tensor_role qwen_suffix_role(
+    const char *suffix, const qwen_tensor_suffix *rows, size_t count)
+{
+    size_t index;
+
+    for (index = 0u; index < count; ++index)
+        if (strcmp(suffix, rows[index].suffix) == 0) return rows[index].role;
+    return YVEX_QWEN3_5_ROLE_UNKNOWN;
+}
+
+static int qwen_bf16_shape(const yvex_native_weight_info *tensor,
+                           unsigned int rank, const unsigned long long *dims)
+{
+    unsigned long long elements = 1ull;
+    unsigned int index;
+
+    if (!tensor || tensor->dtype != YVEX_NATIVE_DTYPE_BF16 ||
+        tensor->rank != rank || !rank)
+        return 0;
+    for (index = 0u; index < rank; ++index) {
+        if (!dims[index] || tensor->dims[index] != dims[index] ||
+            elements > ULLONG_MAX / dims[index])
+            return 0;
+        elements *= dims[index];
+    }
+    return elements <= ULLONG_MAX / 2ull && tensor->data_bytes == elements * 2ull;
+}
+
+static int qwen_text_tensor_shape(
+    const yvex_qwen3_5_text_architecture *text,
+    const yvex_native_weight_info *tensor, yvex_qwen3_5_tensor_role role)
+{
+    unsigned long long dims[3] = {0ull, 0ull, 0ull};
+    unsigned long long q_width = text->linear_key_heads * text->linear_key_head_dimension;
+    unsigned long long v_width = text->linear_value_heads * text->linear_value_head_dimension;
+    unsigned long long attention_width = text->attention_heads * text->attention_head_dimension;
+    unsigned long long kv_width = text->kv_heads * text->attention_head_dimension;
+    unsigned int rank = 1u;
+
+    switch (role) {
+    case YVEX_QWEN3_5_ROLE_TOKEN_EMBEDDING:
+    case YVEX_QWEN3_5_ROLE_OUTPUT_HEAD:
+        rank = 2u; dims[0] = text->vocabulary_size; dims[1] = text->hidden_size; break;
+    case YVEX_QWEN3_5_ROLE_OUTPUT_NORM:
+    case YVEX_QWEN3_5_ROLE_INPUT_NORM:
+    case YVEX_QWEN3_5_ROLE_POST_ATTENTION_NORM:
+        dims[0] = text->hidden_size; break;
+    case YVEX_QWEN3_5_ROLE_FFN_GATE:
+    case YVEX_QWEN3_5_ROLE_FFN_UP:
+        rank = 2u; dims[0] = text->intermediate_size; dims[1] = text->hidden_size; break;
+    case YVEX_QWEN3_5_ROLE_FFN_DOWN:
+        rank = 2u; dims[0] = text->hidden_size; dims[1] = text->intermediate_size; break;
+    case YVEX_QWEN3_5_ROLE_ATTENTION_Q:
+        rank = 2u; dims[0] = attention_width * 2ull; dims[1] = text->hidden_size; break;
+    case YVEX_QWEN3_5_ROLE_ATTENTION_K:
+    case YVEX_QWEN3_5_ROLE_ATTENTION_V:
+        rank = 2u; dims[0] = kv_width; dims[1] = text->hidden_size; break;
+    case YVEX_QWEN3_5_ROLE_ATTENTION_OUT:
+        rank = 2u; dims[0] = text->hidden_size; dims[1] = attention_width; break;
+    case YVEX_QWEN3_5_ROLE_ATTENTION_Q_NORM:
+    case YVEX_QWEN3_5_ROLE_ATTENTION_K_NORM:
+        dims[0] = text->attention_head_dimension; break;
+    case YVEX_QWEN3_5_ROLE_DELTA_DECAY_LOG:
+    case YVEX_QWEN3_5_ROLE_DELTA_TIME_BIAS:
+        dims[0] = text->linear_value_heads; break;
+    case YVEX_QWEN3_5_ROLE_DELTA_CONVOLUTION:
+        rank = 3u; dims[0] = q_width * 2ull + v_width; dims[1] = 1ull;
+        dims[2] = text->linear_convolution_kernel; break;
+    case YVEX_QWEN3_5_ROLE_DELTA_DECAY_PROJECTION:
+    case YVEX_QWEN3_5_ROLE_DELTA_BETA_PROJECTION:
+        rank = 2u; dims[0] = text->linear_value_heads; dims[1] = text->hidden_size; break;
+    case YVEX_QWEN3_5_ROLE_DELTA_QKV_PROJECTION:
+        rank = 2u; dims[0] = q_width * 2ull + v_width; dims[1] = text->hidden_size; break;
+    case YVEX_QWEN3_5_ROLE_DELTA_OUTPUT_GATE:
+        rank = 2u; dims[0] = v_width; dims[1] = text->hidden_size; break;
+    case YVEX_QWEN3_5_ROLE_DELTA_OUTPUT_NORM:
+        dims[0] = text->linear_value_head_dimension; break;
+    case YVEX_QWEN3_5_ROLE_DELTA_OUTPUT:
+        rank = 2u; dims[0] = text->hidden_size; dims[1] = v_width; break;
+    default:
+        return 0;
+    }
+    return qwen_bf16_shape(tensor, rank, dims);
+}
+
+static int qwen_deferred_tensor_valid(const yvex_native_weight_info *tensor)
+{
+    unsigned long long elements = 1ull;
+    unsigned int index;
+
+    if (!tensor || tensor->dtype != YVEX_NATIVE_DTYPE_BF16 || !tensor->rank) return 0;
+    for (index = 0u; index < tensor->rank; ++index) {
+        if (!tensor->dims[index] || elements > ULLONG_MAX / tensor->dims[index]) return 0;
+        elements *= tensor->dims[index];
+    }
+    return elements <= ULLONG_MAX / 2ull && tensor->data_bytes == elements * 2ull;
+}
+
+static int qwen_vision_tensor_name(const yvex_qwen3_5_architecture *architecture,
+                                   const char *name)
+{
+    static const char *const block_suffixes[] = {
+        "attn.proj.bias", "attn.proj.weight", "attn.qkv.bias", "attn.qkv.weight",
+        "mlp.linear_fc1.bias", "mlp.linear_fc1.weight", "mlp.linear_fc2.bias",
+        "mlp.linear_fc2.weight", "norm1.bias", "norm1.weight", "norm2.bias",
+        "norm2.weight"};
+    static const char *const global_names[] = {
+        "model.visual.merger.linear_fc1.bias", "model.visual.merger.linear_fc1.weight",
+        "model.visual.merger.linear_fc2.bias", "model.visual.merger.linear_fc2.weight",
+        "model.visual.merger.norm.bias", "model.visual.merger.norm.weight",
+        "model.visual.patch_embed.proj.bias", "model.visual.patch_embed.proj.weight",
+        "model.visual.pos_embed.weight"};
+    unsigned long long layer;
+    const char *suffix;
+    size_t index;
+
+    if (qwen_indexed_name(name, "model.visual.blocks.", &layer, &suffix)) {
+        if (layer >= architecture->vision.depth) return 0;
+        for (index = 0u; index < sizeof(block_suffixes) / sizeof(block_suffixes[0]); ++index)
+            if (strcmp(suffix, block_suffixes[index]) == 0) return 1;
+        return 0;
+    }
+    for (index = 0u; index < sizeof(global_names) / sizeof(global_names[0]); ++index)
+        if (strcmp(name, global_names[index]) == 0) return 1;
+    return 0;
+}
+
+static int qwen_mtp_tensor_name(const yvex_qwen3_5_architecture *architecture,
+                                const char *name)
+{
+    static const char *const layer_suffixes[] = {
+        "input_layernorm.weight", "mlp.down_proj.weight", "mlp.gate_proj.weight",
+        "mlp.up_proj.weight", "post_attention_layernorm.weight",
+        "self_attn.k_norm.weight", "self_attn.k_proj.weight", "self_attn.o_proj.weight",
+        "self_attn.q_norm.weight", "self_attn.q_proj.weight", "self_attn.v_proj.weight"};
+    static const char *const global_names[] = {
+        "mtp.fc.weight", "mtp.norm.weight", "mtp.pre_fc_norm_embedding.weight",
+        "mtp.pre_fc_norm_hidden.weight"};
+    unsigned long long layer;
+    const char *suffix;
+    size_t index;
+
+    if (qwen_indexed_name(name, "mtp.layers.", &layer, &suffix)) {
+        if (layer >= architecture->text.mtp_hidden_layers) return 0;
+        for (index = 0u; index < sizeof(layer_suffixes) / sizeof(layer_suffixes[0]); ++index)
+            if (strcmp(suffix, layer_suffixes[index]) == 0) return 1;
+        return 0;
+    }
+    for (index = 0u; index < sizeof(global_names) / sizeof(global_names[0]); ++index)
+        if (strcmp(name, global_names[index]) == 0) return 1;
+    return 0;
+}
+
+static int qwen_tensor_classify(
+    const yvex_qwen3_5_architecture *architecture,
+    const yvex_native_weight_info *tensor, yvex_qwen3_5_tensor_binding *binding,
+    yvex_qwen3_5_failure *failure, yvex_error *err)
+{
+    const char *suffix = NULL;
+    unsigned long long layer = YVEX_QWEN3_5_GLOBAL_TENSOR_LAYER;
+    yvex_qwen3_5_tensor_role role = YVEX_QWEN3_5_ROLE_UNKNOWN;
+
+    if (binding) memset(binding, 0, sizeof(*binding));
+    if (!architecture || !tensor || !tensor->name || !binding)
+        return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_INVALID_ARGUMENT,
+                           "tensor", "tensor classification inputs are required",
+                           YVEX_ERR_INVALID_ARG, err);
+    if (strcmp(tensor->name, "model.language_model.embed_tokens.weight") == 0)
+        role = YVEX_QWEN3_5_ROLE_TOKEN_EMBEDDING;
+    else if (strcmp(tensor->name, "model.language_model.norm.weight") == 0)
+        role = YVEX_QWEN3_5_ROLE_OUTPUT_NORM;
+    else if (strcmp(tensor->name, "lm_head.weight") == 0)
+        role = YVEX_QWEN3_5_ROLE_OUTPUT_HEAD;
+    else if (qwen_indexed_name(tensor->name, "model.language_model.layers.",
+                               &layer, &suffix) && layer < architecture->text.layer_count) {
+        role = qwen_suffix_role(suffix, qwen_common_layer_tensors,
+                                sizeof(qwen_common_layer_tensors) /
+                                    sizeof(qwen_common_layer_tensors[0]));
+        if (role == YVEX_QWEN3_5_ROLE_UNKNOWN &&
+            architecture->text.layers[layer] == YVEX_QWEN3_5_LAYER_FULL_ATTENTION)
+            role = qwen_suffix_role(suffix, qwen_full_attention_tensors,
+                                    sizeof(qwen_full_attention_tensors) /
+                                        sizeof(qwen_full_attention_tensors[0]));
+        if (role == YVEX_QWEN3_5_ROLE_UNKNOWN &&
+            architecture->text.layers[layer] == YVEX_QWEN3_5_LAYER_LINEAR_ATTENTION)
+            role = qwen_suffix_role(suffix, qwen_delta_tensors,
+                                    sizeof(qwen_delta_tensors) /
+                                        sizeof(qwen_delta_tensors[0]));
+    }
+    if (role != YVEX_QWEN3_5_ROLE_UNKNOWN) {
+        if (!qwen_text_tensor_shape(&architecture->text, tensor, role))
+            return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_TENSOR_ROLE,
+                               tensor->name, "text tensor dtype or geometry disagrees with the pinned architecture",
+                               YVEX_ERR_FORMAT, err);
+        binding->classification = YVEX_QWEN3_5_TENSOR_TEXT_EXECUTION_REQUIRED;
+        binding->role = role;
+        binding->layer_index = layer;
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (qwen_vision_tensor_name(architecture, tensor->name)) {
+        binding->classification = YVEX_QWEN3_5_TENSOR_VISION_DEFERRED;
+        binding->role = YVEX_QWEN3_5_ROLE_VISION_COMPONENT;
+    } else if (qwen_mtp_tensor_name(architecture, tensor->name)) {
+        binding->classification = YVEX_QWEN3_5_TENSOR_MTP_DEFERRED;
+        binding->role = YVEX_QWEN3_5_ROLE_MTP_COMPONENT;
+    } else {
+        return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_TENSOR_ROLE,
+                           tensor->name, "pinned source tensor has no admitted semantic classification",
+                           YVEX_ERR_FORMAT, err);
+    }
+    if (!qwen_deferred_tensor_valid(tensor))
+        return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_TENSOR_ROLE,
+                           tensor->name, "deferred tensor storage geometry is invalid",
+                           YVEX_ERR_FORMAT, err);
+    binding->layer_index = layer;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static unsigned long long qwen_expected_role_count(
+    const yvex_qwen3_5_architecture *architecture, yvex_qwen3_5_tensor_role role)
+{
+    switch (role) {
+    case YVEX_QWEN3_5_ROLE_TOKEN_EMBEDDING:
+    case YVEX_QWEN3_5_ROLE_OUTPUT_NORM:
+    case YVEX_QWEN3_5_ROLE_OUTPUT_HEAD:
+        return 1ull;
+    case YVEX_QWEN3_5_ROLE_INPUT_NORM:
+    case YVEX_QWEN3_5_ROLE_FFN_GATE:
+    case YVEX_QWEN3_5_ROLE_FFN_UP:
+    case YVEX_QWEN3_5_ROLE_FFN_DOWN:
+    case YVEX_QWEN3_5_ROLE_POST_ATTENTION_NORM:
+        return architecture->text.layer_count;
+    case YVEX_QWEN3_5_ROLE_ATTENTION_Q:
+    case YVEX_QWEN3_5_ROLE_ATTENTION_K:
+    case YVEX_QWEN3_5_ROLE_ATTENTION_V:
+    case YVEX_QWEN3_5_ROLE_ATTENTION_OUT:
+    case YVEX_QWEN3_5_ROLE_ATTENTION_Q_NORM:
+    case YVEX_QWEN3_5_ROLE_ATTENTION_K_NORM:
+        return architecture->text.full_attention_layers;
+    case YVEX_QWEN3_5_ROLE_DELTA_DECAY_LOG:
+    case YVEX_QWEN3_5_ROLE_DELTA_CONVOLUTION:
+    case YVEX_QWEN3_5_ROLE_DELTA_TIME_BIAS:
+    case YVEX_QWEN3_5_ROLE_DELTA_DECAY_PROJECTION:
+    case YVEX_QWEN3_5_ROLE_DELTA_BETA_PROJECTION:
+    case YVEX_QWEN3_5_ROLE_DELTA_QKV_PROJECTION:
+    case YVEX_QWEN3_5_ROLE_DELTA_OUTPUT_GATE:
+    case YVEX_QWEN3_5_ROLE_DELTA_OUTPUT_NORM:
+    case YVEX_QWEN3_5_ROLE_DELTA_OUTPUT:
+        return architecture->text.linear_attention_layers;
+    case YVEX_QWEN3_5_ROLE_VISION_COMPONENT:
+        return architecture->vision.depth * 12ull + 9ull;
+    case YVEX_QWEN3_5_ROLE_MTP_COMPONENT:
+        return architecture->text.mtp_hidden_layers
+                   ? architecture->text.mtp_hidden_layers * 11ull + 4ull : 0ull;
+    default:
+        return 0ull;
+    }
+}
+
+static int qwen_tensor_identity_update(yvex_sha256 *hash,
+                                       const yvex_native_weight_info *tensor,
+                                       const yvex_qwen3_5_tensor_binding *binding)
+{
+    unsigned int dimension;
+
+    if (!yvex_sha256_update_text(hash, tensor->name) ||
+        !yvex_sha256_update_text(hash, tensor->shard_path) ||
+        !yvex_sha256_update_u64(hash, (unsigned long long)tensor->dtype) ||
+        !yvex_sha256_update_u64(hash, tensor->rank))
+        return 0;
+    for (dimension = 0u; dimension < tensor->rank; ++dimension)
+        if (!yvex_sha256_update_u64(hash, tensor->dims[dimension])) return 0;
+    return yvex_sha256_update_u64(hash, tensor->data_start) &&
+           yvex_sha256_update_u64(hash, tensor->data_end) &&
+           yvex_sha256_update_u64(hash, binding->classification) &&
+           yvex_sha256_update_u64(hash, binding->role) &&
+           yvex_sha256_update_u64(hash, binding->layer_index);
+}
+
+static int qwen_tensor_inventory_audit(
+    const yvex_qwen3_5_architecture *architecture,
+    const yvex_native_weight_table *weights,
+    yvex_qwen3_5_tensor_inventory *inventory,
+    yvex_qwen3_5_failure *failure, yvex_error *err)
+{
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    yvex_sha256 hash;
+    unsigned long long index, count, expected_text, expected_vision, expected_mtp;
+    unsigned int role;
+
+    if (inventory) memset(inventory, 0, sizeof(*inventory));
+    if (!architecture || !weights || !inventory)
+        return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_INVALID_ARGUMENT,
+                           "inventory", "tensor inventory audit inputs are required",
+                           YVEX_ERR_INVALID_ARG, err);
+    count = yvex_native_weight_table_count(weights);
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.qwen3-5.tensor-role-map.v1") ||
+        !yvex_sha256_update_text(&hash, architecture->architecture_identity) ||
+        !yvex_sha256_update_u64(&hash, count))
+        return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_TENSOR_INVENTORY,
+                           "identity", "tensor role map identity initialization failed",
+                           YVEX_ERR_STATE, err);
+    for (index = 0ull; index < count; ++index) {
+        const yvex_native_weight_info *tensor = yvex_native_weight_table_at(weights, index);
+        yvex_qwen3_5_tensor_binding binding;
+
+        if (qwen_tensor_classify(architecture, tensor, &binding, failure, err) != YVEX_OK)
+            return yvex_error_code(err);
+        if (inventory->tensor_bytes > ULLONG_MAX - tensor->data_bytes)
+            return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_TENSOR_INVENTORY,
+                               tensor->name, "tensor inventory byte count overflow",
+                               YVEX_ERR_BOUNDS, err);
+        inventory->tensor_count++;
+        inventory->tensor_bytes += tensor->data_bytes;
+        inventory->class_counts[binding.classification]++;
+        inventory->class_bytes[binding.classification] += tensor->data_bytes;
+        inventory->role_counts[binding.role]++;
+        if (!qwen_tensor_identity_update(&hash, tensor, &binding))
+            return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_TENSOR_INVENTORY,
+                               tensor->name, "tensor role map identity update failed",
+                               YVEX_ERR_STATE, err);
+    }
+    for (role = 1u; role < YVEX_QWEN3_5_ROLE_COUNT; ++role)
+        if (inventory->role_counts[role] !=
+            qwen_expected_role_count(architecture, (yvex_qwen3_5_tensor_role)role))
+            return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_TENSOR_INVENTORY,
+                               "role-population", "tensor role population is incomplete or duplicated",
+                               YVEX_ERR_FORMAT, err);
+    expected_text = 3ull + architecture->text.layer_count * 5ull +
+                    architecture->text.full_attention_layers * 6ull +
+                    architecture->text.linear_attention_layers * 9ull;
+    expected_vision = architecture->vision.depth * 12ull + 9ull;
+    expected_mtp = architecture->text.mtp_hidden_layers
+                       ? architecture->text.mtp_hidden_layers * 11ull + 4ull : 0ull;
+    if (inventory->class_counts[YVEX_QWEN3_5_TENSOR_TEXT_EXECUTION_REQUIRED] !=
+            expected_text ||
+        inventory->class_counts[YVEX_QWEN3_5_TENSOR_VISION_DEFERRED] !=
+            expected_vision ||
+        inventory->class_counts[YVEX_QWEN3_5_TENSOR_MTP_DEFERRED] != expected_mtp ||
+        inventory->class_counts[YVEX_QWEN3_5_TENSOR_SOURCE_METADATA] != 0ull ||
+        inventory->class_counts[YVEX_QWEN3_5_TENSOR_UNKNOWN] != 0ull ||
+        inventory->tensor_count != expected_text + expected_vision + expected_mtp ||
+        !yvex_sha256_final(&hash, digest))
+        return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_TENSOR_INVENTORY,
+                           "population", "pinned tensor inventory population disagrees with the architecture",
+                           YVEX_ERR_FORMAT, err);
+    yvex_sha256_hex(digest, inventory->role_map_identity);
+    inventory->complete = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static const char *qwen_tensor_class_name(yvex_qwen3_5_tensor_class classification)
+{
+    static const char *const names[] = {
+        "unknown", "text-execution-required", "vision-deferred",
+        "mtp-deferred", "source-metadata"};
+
+    return (unsigned int)classification < sizeof(names) / sizeof(names[0])
+               ? names[(unsigned int)classification] : "unknown";
+}
+
+static const char *qwen_tensor_role_name(yvex_qwen3_5_tensor_role role)
+{
+    static const char *const names[] = {
+        "unknown", "token-embedding", "output-norm", "output-head", "input-norm",
+        "ffn-gate", "ffn-up", "ffn-down", "post-attention-norm", "attention-q",
+        "attention-k", "attention-v", "attention-out", "attention-q-norm",
+        "attention-k-norm", "delta-decay-log", "delta-convolution", "delta-time-bias",
+        "delta-decay-projection", "delta-beta-projection", "delta-qkv-projection",
+        "delta-output-gate", "delta-output-norm", "delta-output", "vision-component",
+        "mtp-component", "source-metadata"};
+
+    return (unsigned int)role < sizeof(names) / sizeof(names[0])
+               ? names[(unsigned int)role] : "unknown";
+}
+
 static int qwen_hash_double(yvex_sha256 *hash, double value)
 {
     int exponent = 0;
@@ -735,7 +1165,7 @@ static const char *qwen_failure_name(yvex_qwen3_5_failure_code code)
     static const char *const names[] = {
         "none", "invalid-argument", "source-not-verified", "source-identity",
         "missing-config", "malformed-config", "configuration",
-        "generation-policy", "allocation"};
+        "generation-policy", "tensor-role", "tensor-inventory", "allocation"};
 
     return (unsigned int)code < sizeof(names) / sizeof(names[0])
                ? names[(unsigned int)code]
@@ -745,12 +1175,16 @@ static const char *qwen_failure_name(yvex_qwen3_5_failure_code code)
 const yvex_qwen3_5_api *yvex_model_register_qwen3_5(void)
 {
     static const yvex_qwen3_5_api api = {
-        .schema_version = 1u,
+        .schema_version = 2u,
         .open = qwen_model_open,
         .close = qwen_model_close,
         .architecture = qwen_architecture,
         .layer_kind = qwen_layer_kind,
-        .failure_name = qwen_failure_name};
+        .tensor_classify = qwen_tensor_classify,
+        .tensor_inventory_audit = qwen_tensor_inventory_audit,
+        .failure_name = qwen_failure_name,
+        .tensor_class_name = qwen_tensor_class_name,
+        .tensor_role_name = qwen_tensor_role_name};
 
     return &api;
 }

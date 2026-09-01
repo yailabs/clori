@@ -15,7 +15,7 @@ extern "C" {
 #define YVEX_QWEN3_5_LAYER_CAP 64u
 #define YVEX_QWEN3_5_GENERATION_STOP_CAP 4u
 #define YVEX_QWEN3_5_ADAPTER_ID 0x5157454e335f35ull
-#define YVEX_QWEN3_5_ADAPTER_VERSION 1ull
+#define YVEX_QWEN3_5_ADAPTER_VERSION 2ull
 
 typedef enum {
     YVEX_QWEN3_5_LAYER_LINEAR_ATTENTION = 1,
@@ -31,6 +31,8 @@ typedef enum {
     YVEX_QWEN3_5_FAILURE_MALFORMED_CONFIG,
     YVEX_QWEN3_5_FAILURE_CONFIGURATION,
     YVEX_QWEN3_5_FAILURE_GENERATION_POLICY,
+    YVEX_QWEN3_5_FAILURE_TENSOR_ROLE,
+    YVEX_QWEN3_5_FAILURE_TENSOR_INVENTORY,
     YVEX_QWEN3_5_FAILURE_ALLOCATION
 } yvex_qwen3_5_failure_code;
 
@@ -91,6 +93,62 @@ typedef struct {
     int vision_execution_deferred, mtp_acceleration_deferred;
 } yvex_qwen3_5_architecture;
 
+typedef enum {
+    YVEX_QWEN3_5_TENSOR_UNKNOWN = 0,
+    YVEX_QWEN3_5_TENSOR_TEXT_EXECUTION_REQUIRED,
+    YVEX_QWEN3_5_TENSOR_VISION_DEFERRED,
+    YVEX_QWEN3_5_TENSOR_MTP_DEFERRED,
+    YVEX_QWEN3_5_TENSOR_SOURCE_METADATA,
+    YVEX_QWEN3_5_TENSOR_CLASS_COUNT
+} yvex_qwen3_5_tensor_class;
+
+typedef enum {
+    YVEX_QWEN3_5_ROLE_UNKNOWN = 0,
+    YVEX_QWEN3_5_ROLE_TOKEN_EMBEDDING,
+    YVEX_QWEN3_5_ROLE_OUTPUT_NORM,
+    YVEX_QWEN3_5_ROLE_OUTPUT_HEAD,
+    YVEX_QWEN3_5_ROLE_INPUT_NORM,
+    YVEX_QWEN3_5_ROLE_FFN_GATE,
+    YVEX_QWEN3_5_ROLE_FFN_UP,
+    YVEX_QWEN3_5_ROLE_FFN_DOWN,
+    YVEX_QWEN3_5_ROLE_POST_ATTENTION_NORM,
+    YVEX_QWEN3_5_ROLE_ATTENTION_Q,
+    YVEX_QWEN3_5_ROLE_ATTENTION_K,
+    YVEX_QWEN3_5_ROLE_ATTENTION_V,
+    YVEX_QWEN3_5_ROLE_ATTENTION_OUT,
+    YVEX_QWEN3_5_ROLE_ATTENTION_Q_NORM,
+    YVEX_QWEN3_5_ROLE_ATTENTION_K_NORM,
+    YVEX_QWEN3_5_ROLE_DELTA_DECAY_LOG,
+    YVEX_QWEN3_5_ROLE_DELTA_CONVOLUTION,
+    YVEX_QWEN3_5_ROLE_DELTA_TIME_BIAS,
+    YVEX_QWEN3_5_ROLE_DELTA_DECAY_PROJECTION,
+    YVEX_QWEN3_5_ROLE_DELTA_BETA_PROJECTION,
+    YVEX_QWEN3_5_ROLE_DELTA_QKV_PROJECTION,
+    YVEX_QWEN3_5_ROLE_DELTA_OUTPUT_GATE,
+    YVEX_QWEN3_5_ROLE_DELTA_OUTPUT_NORM,
+    YVEX_QWEN3_5_ROLE_DELTA_OUTPUT,
+    YVEX_QWEN3_5_ROLE_VISION_COMPONENT,
+    YVEX_QWEN3_5_ROLE_MTP_COMPONENT,
+    YVEX_QWEN3_5_ROLE_SOURCE_METADATA,
+    YVEX_QWEN3_5_ROLE_COUNT
+} yvex_qwen3_5_tensor_role;
+
+#define YVEX_QWEN3_5_GLOBAL_TENSOR_LAYER (~0ull)
+typedef struct {
+    yvex_qwen3_5_tensor_class classification;
+    yvex_qwen3_5_tensor_role role;
+    unsigned long long layer_index;
+} yvex_qwen3_5_tensor_binding;
+
+typedef struct {
+    unsigned long long tensor_count, tensor_bytes;
+    unsigned long long class_counts[YVEX_QWEN3_5_TENSOR_CLASS_COUNT];
+    unsigned long long class_bytes[YVEX_QWEN3_5_TENSOR_CLASS_COUNT];
+    unsigned long long role_counts[YVEX_QWEN3_5_ROLE_COUNT];
+    char role_map_identity[65];
+    int complete;
+} yvex_qwen3_5_tensor_inventory;
+
 typedef struct yvex_qwen3_5_model yvex_qwen3_5_model;
 
 typedef struct {
@@ -103,7 +161,19 @@ typedef struct {
         const yvex_qwen3_5_model *model);
     yvex_qwen3_5_layer_kind (*layer_kind)(
         const yvex_qwen3_5_model *model, unsigned long long layer);
+    int (*tensor_classify)(
+        const yvex_qwen3_5_architecture *architecture,
+        const yvex_native_weight_info *tensor,
+        yvex_qwen3_5_tensor_binding *binding,
+        yvex_qwen3_5_failure *failure, yvex_error *err);
+    int (*tensor_inventory_audit)(
+        const yvex_qwen3_5_architecture *architecture,
+        const yvex_native_weight_table *weights,
+        yvex_qwen3_5_tensor_inventory *inventory,
+        yvex_qwen3_5_failure *failure, yvex_error *err);
     const char *(*failure_name)(yvex_qwen3_5_failure_code code);
+    const char *(*tensor_class_name)(yvex_qwen3_5_tensor_class classification);
+    const char *(*tensor_role_name)(yvex_qwen3_5_tensor_role role);
 } yvex_qwen3_5_api;
 
 const yvex_qwen3_5_api *yvex_model_register_qwen3_5(void);

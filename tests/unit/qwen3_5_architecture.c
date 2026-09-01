@@ -140,7 +140,7 @@ int yvex_test_qwen3_5_architecture(void)
         fprintf(stderr, "Qwen architecture refusal: %s field=%s reason=%s\n",
                 yvex_error_message(&err), failure.field,
                 failure.reason ? failure.reason : "none");
-    YVEX_TEST_ASSERT(api && api->schema_version == 1u &&
+    YVEX_TEST_ASSERT(api && api->schema_version == 2u &&
                          rc == YVEX_OK,
                      "open authenticated Qwen3.5 semantic architecture");
     architecture = api->architecture(model);
