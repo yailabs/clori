@@ -59,6 +59,13 @@
       "reason": "semantic and operator IR changes require deterministic lowering and production composition"
     },
     {
+      "id": "stateful-sequence-mixer",
+      "patterns": ["src/graph/sequence_mixer*.c", "include/yvex/internal/sequence_mixer.h", "tests/unit/sequence_mixer.c"],
+      "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],
+      "tests": ["unit.sequence_mixer", "integration.tiny-vertical"],
+      "reason": "stateful sequence mixing requires numerical, cached-decode, rollback, and composed runtime evidence"
+    },
+    {
       "id": "physical-execution-ir",
       "patterns": ["src/graph/execution.c", "src/graph/compiled_plan.c", "src/graph/binding_compile.c", "include/yvex/internal/execution.h", "include/yvex/internal/execution_batch.h"],
       "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],

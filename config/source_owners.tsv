@@ -51,6 +51,7 @@ include/yvex/internal/engine_scheduler.h	runtime	runtime.engine_scheduler	generi
 include/yvex/internal/engine_resource.h	runtime	runtime.engine_resource	generic	private	internal-abi	runtime,server,tests	interface	none
 include/yvex/internal/runtime_prefix.h	runtime	runtime.session_prefix	generic	private	internal-abi	runtime,server,tests	interface	none
 include/yvex/internal/runtime_state_store.h	runtime	runtime.state_store	generic	private	file-serialization	runtime,server,tests	interface	none
+include/yvex/internal/sequence_mixer.h	graph	graph.sequence_mixer	generic	private	internal-abi	model.family,graph,runtime,backend,tests	interface	none
 include/yvex/internal/tokenizer.h	tokenizer	tokenizer.family_policy	generic	private	internal-abi	compilation,runtime,server,tokenizer	interface	none
 src/runtime/private.h	runtime	runtime.private	generic	private	internal-abi	runtime	interface	none
 include/yvex/internal/source.h	source	source.internal	generic	private	internal-abi	model,compilation	interface	none
@@ -197,6 +198,8 @@ src/graph/moe.c	graph	graph.moe	generic	private	reusable-algorithm	runtime,backe
 src/graph/compiled_plan.c	graph	graph.compiled_plan	generic	private	file-serialization	artifact,runtime,tests	implementation	none
 src/graph/operator_ir.c	graph	graph.operator_ir	generic	private	immutable-planning	model.family,graph,runtime,tests	implementation	none
 src/graph/output_head.c	graph	graph.output_head	generic	private	reusable-algorithm	artifact,runtime,tests	implementation	none
+src/graph/sequence_mixer.c	graph	graph.sequence_mixer	generic	private	immutable-planning	model.family,runtime,backend,tests	implementation	none
+src/graph/sequence_mixer_execute.c	graph	graph.sequence_mixer_execution	generic	private	reusable-algorithm	model.family,runtime,backend,tests	implementation	none
 src/graph/transformer.c	graph	graph.transformer	generic	private	reusable-algorithm	runtime,backend,cli,tests	implementation	none
 src/backend/cuda/moe.c	backend.cuda	backend.cuda.moe	backend	private	backend-implementation	runtime,graph,tests	implementation	none
 src/graph/core.c	graph	graph.core	generic	private	resource-lifecycle	runtime,cli	implementation	none
