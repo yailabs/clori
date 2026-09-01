@@ -33,6 +33,23 @@ static const yvex_source_target_identity source_target_identities[] = {
         .upstream_inventory_authority = "component-source-manifest",
         .config_validation = YVEX_SOURCE_CONFIG_VALIDATION_FAMILY_SEMANTIC,
     },
+    {
+        .target_id = YVEX_SOURCE_QWEN3_8_27B_TARGET_ID,
+        .family_key = YVEX_SOURCE_QWEN3_8_27B_FAMILY_KEY,
+        .family_display = YVEX_SOURCE_QWEN3_8_27B_FAMILY_DISPLAY,
+        .model_name = YVEX_SOURCE_QWEN3_8_27B_NAME,
+        .upstream_repo_id = YVEX_SOURCE_QWEN3_8_27B_REPOSITORY,
+        .source_dir_leaf = YVEX_SOURCE_QWEN3_8_27B_SOURCE_LEAF,
+        .upstream_revision = YVEX_SOURCE_QWEN3_8_27B_REVISION,
+        .upstream_index_path = YVEX_SOURCE_QWEN3_8_27B_INDEX_PATH,
+        .upstream_index_oid = YVEX_SOURCE_QWEN3_8_27B_INDEX_OID,
+        .upstream_index_size = YVEX_SOURCE_QWEN3_8_27B_INDEX_SIZE,
+        .upstream_inventory_authority = "upstream-index",
+        .config_model_type = YVEX_SOURCE_QWEN3_8_27B_CONFIG_TYPE,
+        .config_architecture = YVEX_SOURCE_QWEN3_8_27B_CONFIG_ARCHITECTURE,
+        .config_validation = YVEX_SOURCE_CONFIG_VALIDATION_FAMILY_SEMANTIC,
+        .required_sidecars = YVEX_SOURCE_SIDECARS_TEXT,
+    },
 };
 
 static const yvex_source_acquisition_target source_acquisition_targets[] = {

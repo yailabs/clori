@@ -850,6 +850,18 @@ int yvex_test_source_verify(void)
                        YVEX_SOURCE_MINIMAX_H3_REPOSITORY)
                        ->upstream_revision,
                    YVEX_SOURCE_MINIMAX_H3_REVISION) == 0 &&
+            strcmp(yvex_source_target_identity_find(
+                       YVEX_SOURCE_QWEN3_8_27B_TARGET_ID)
+                       ->upstream_repo_id,
+                   YVEX_SOURCE_QWEN3_8_27B_REPOSITORY) == 0 &&
+            strcmp(yvex_source_target_identity_find_repository(
+                       YVEX_SOURCE_QWEN3_8_27B_REPOSITORY)
+                       ->upstream_revision,
+                   YVEX_SOURCE_QWEN3_8_27B_REVISION) == 0 &&
+            yvex_source_target_identity_find_repository(
+                       YVEX_SOURCE_QWEN3_8_27B_REPOSITORY)
+                       ->upstream_index_size ==
+                   YVEX_SOURCE_QWEN3_8_27B_INDEX_SIZE &&
             !yvex_source_target_identity_find_repository("unknown/model"),
         "one source catalog owns qualified target repository and revision truth");
     {

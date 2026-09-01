@@ -86,6 +86,22 @@ typedef struct {
 #define YVEX_SOURCE_MINIMAX_H3_REVISION \
     "b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08"
 
+#define YVEX_SOURCE_QWEN3_8_27B_TARGET_ID "qwen3.8-27b"
+#define YVEX_SOURCE_QWEN3_8_27B_FAMILY_KEY "qwen"
+#define YVEX_SOURCE_QWEN3_8_27B_FAMILY_DISPLAY "Qwen3.5"
+#define YVEX_SOURCE_QWEN3_8_27B_NAME "Qwen3.8-27B"
+#define YVEX_SOURCE_QWEN3_8_27B_REPOSITORY "Qwen/Qwen3.8-27B"
+#define YVEX_SOURCE_QWEN3_8_27B_SOURCE_LEAF "qwen3.8-27b"
+#define YVEX_SOURCE_QWEN3_8_27B_REVISION \
+    "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+#define YVEX_SOURCE_QWEN3_8_27B_INDEX_PATH "model.safetensors.index.json"
+#define YVEX_SOURCE_QWEN3_8_27B_INDEX_OID \
+    "da35e3c564457dface7d138f0b6cac284ff8958c"
+#define YVEX_SOURCE_QWEN3_8_27B_INDEX_SIZE 112216ull
+#define YVEX_SOURCE_QWEN3_8_27B_CONFIG_TYPE "qwen3_5"
+#define YVEX_SOURCE_QWEN3_8_27B_CONFIG_ARCHITECTURE \
+    "Qwen3_5ForConditionalGeneration"
+
 const yvex_source_target_identity *yvex_source_release_identity(void);
 const yvex_source_target_identity *yvex_source_target_identity_find(
     const char *target_id);

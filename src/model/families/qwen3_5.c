@@ -2,6 +2,7 @@
 #include <yvex/internal/families/qwen3_5.h>
 
 #include <yvex/internal/core.h>
+#include <yvex/internal/source_catalog.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -1063,12 +1064,14 @@ static int qwen_model_open(yvex_qwen3_5_model **out,
         return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_SOURCE_NOT_VERIFIED,
                            "verification", "exact source verification is required",
                            YVEX_ERR_STATE, err);
-    if (strcmp(verification->repository_id, "Qwen/Qwen3.8-27B") != 0 ||
+    if (strcmp(verification->repository_id,
+               YVEX_SOURCE_QWEN3_8_27B_REPOSITORY) != 0 ||
         strcmp(verification->revision,
-               "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0") != 0 ||
-        strcmp(verification->model_type, "qwen3_5") != 0 ||
+               YVEX_SOURCE_QWEN3_8_27B_REVISION) != 0 ||
+        strcmp(verification->model_type,
+               YVEX_SOURCE_QWEN3_8_27B_CONFIG_TYPE) != 0 ||
         strcmp(verification->architecture,
-               "Qwen3_5ForConditionalGeneration") != 0)
+               YVEX_SOURCE_QWEN3_8_27B_CONFIG_ARCHITECTURE) != 0)
         return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_SOURCE_IDENTITY,
                            "source", "source identity is not the pinned Qwen3.8-27B release",
                            YVEX_ERR_FORMAT, err);
