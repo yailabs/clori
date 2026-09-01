@@ -69,17 +69,18 @@ typedef struct {
 } map_transform_projection;
 
 static const yvex_tensor_collection map_collections[YVEX_TRANSFORM_SUBSYSTEM_COUNT] = {
-    YVEX_TENSOR_COLLECTION_GLOBAL,
-    YVEX_TENSOR_COLLECTION_ATTENTION,
-    YVEX_TENSOR_COLLECTION_COMPRESSOR,
-    YVEX_TENSOR_COLLECTION_INDEXER,
-    YVEX_TENSOR_COLLECTION_NORM,
-    YVEX_TENSOR_COLLECTION_MHC,
-    YVEX_TENSOR_COLLECTION_ROUTER,
-    YVEX_TENSOR_COLLECTION_ROUTED_EXPERT,
-    YVEX_TENSOR_COLLECTION_SHARED_EXPERT,
-    YVEX_TENSOR_COLLECTION_GLOBAL,
-    YVEX_TENSOR_COLLECTION_AUXILIARY
+    [YVEX_TRANSFORM_SUBSYSTEM_GLOBAL] = YVEX_TENSOR_COLLECTION_GLOBAL,
+    [YVEX_TRANSFORM_SUBSYSTEM_ATTENTION] = YVEX_TENSOR_COLLECTION_ATTENTION,
+    [YVEX_TRANSFORM_SUBSYSTEM_COMPRESSOR] = YVEX_TENSOR_COLLECTION_COMPRESSOR,
+    [YVEX_TRANSFORM_SUBSYSTEM_INDEXER] = YVEX_TENSOR_COLLECTION_INDEXER,
+    [YVEX_TRANSFORM_SUBSYSTEM_NORMALIZATION] = YVEX_TENSOR_COLLECTION_NORM,
+    [YVEX_TRANSFORM_SUBSYSTEM_RESIDUAL] = YVEX_TENSOR_COLLECTION_MHC,
+    [YVEX_TRANSFORM_SUBSYSTEM_ROUTER] = YVEX_TENSOR_COLLECTION_ROUTER,
+    [YVEX_TRANSFORM_SUBSYSTEM_ROUTED_EXPERT] = YVEX_TENSOR_COLLECTION_ROUTED_EXPERT,
+    [YVEX_TRANSFORM_SUBSYSTEM_SHARED_EXPERT] = YVEX_TENSOR_COLLECTION_SHARED_EXPERT,
+    [YVEX_TRANSFORM_SUBSYSTEM_OUTPUT] = YVEX_TENSOR_COLLECTION_GLOBAL,
+    [YVEX_TRANSFORM_SUBSYSTEM_AUXILIARY] = YVEX_TENSOR_COLLECTION_AUXILIARY,
+    [YVEX_TRANSFORM_SUBSYSTEM_SEQUENCE_MIXER] = YVEX_TENSOR_COLLECTION_SEQUENCE_MIXER
 };
 
 static const yvex_tensor_scope map_scopes[] = {
@@ -469,7 +470,8 @@ static int map_descriptor_add_source(
         builder->transform_ir, value->source_index);
     if (!source || index >= builder->policy->source_contribution_count ||
         source->requirement_index >= builder->policy->source_contribution_count ||
-        source->shape.rank > 2u || source->role_hint != descriptor->role ||
+        source->shape.rank > YVEX_TENSOR_MAX_DIMS ||
+        source->role_hint != descriptor->role ||
         map_scope(source->scope) != descriptor->scope ||
         map_collection(source->subsystem) != descriptor->collection) {
         return map_reject_descriptor(

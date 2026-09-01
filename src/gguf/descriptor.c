@@ -10,13 +10,14 @@
 #include <yvex/internal/gguf.h>
 
 /*
- * Map one admitted role to its pinned GGUF name or layer-local suffix.
+ * Map one admitted role to its GGUF name or layer-local suffix.
  *
  * This is format naming, not logical tensor identity.
  */
 typedef struct {
     const char *name;
     int layer_scoped;
+    yvex_gguf_name_provenance provenance;
 } gguf_role_name;
 
 static const gguf_role_name gguf_role_names[YVEX_TENSOR_ROLE_COUNT] = {
@@ -27,7 +28,21 @@ static const gguf_role_name gguf_role_names[YVEX_TENSOR_ROLE_COUNT] = {
     [YVEX_TENSOR_ROLE_HC_HEAD_BASE] = {"output_hc_base.weight", 0},
     [YVEX_TENSOR_ROLE_HC_HEAD_SCALE] = {"output_hc_scale.weight", 0},
     [YVEX_TENSOR_ROLE_ATTENTION_NORM] = {"attn_norm.weight", 1},
+    [YVEX_TENSOR_ROLE_ATTENTION_Q] = {
+        "attn_q.weight", 1, YVEX_GGUF_NAME_SEMANTIC_STANDARD},
+    [YVEX_TENSOR_ROLE_ATTENTION_K] = {
+        "attn_k.weight", 1, YVEX_GGUF_NAME_SEMANTIC_STANDARD},
+    [YVEX_TENSOR_ROLE_ATTENTION_V] = {
+        "attn_v.weight", 1, YVEX_GGUF_NAME_SEMANTIC_STANDARD},
+    [YVEX_TENSOR_ROLE_ATTENTION_OUT] = {
+        "attn_output.weight", 1, YVEX_GGUF_NAME_SEMANTIC_STANDARD},
     [YVEX_TENSOR_ROLE_FFN_NORM] = {"ffn_norm.weight", 1},
+    [YVEX_TENSOR_ROLE_FFN_GATE] = {
+        "ffn_gate.weight", 1, YVEX_GGUF_NAME_SEMANTIC_STANDARD},
+    [YVEX_TENSOR_ROLE_FFN_UP] = {
+        "ffn_up.weight", 1, YVEX_GGUF_NAME_SEMANTIC_STANDARD},
+    [YVEX_TENSOR_ROLE_FFN_DOWN] = {
+        "ffn_down.weight", 1, YVEX_GGUF_NAME_SEMANTIC_STANDARD},
     [YVEX_TENSOR_ROLE_ATTENTION_SINKS] = {"attn_sinks.weight", 1},
     [YVEX_TENSOR_ROLE_ATTENTION_Q_A] = {"attn_q_a.weight", 1},
     [YVEX_TENSOR_ROLE_ATTENTION_Q_B] = {"attn_q_b.weight", 1},
@@ -61,12 +76,38 @@ static const gguf_role_name gguf_role_names[YVEX_TENSOR_ROLE_COUNT] = {
     [YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_GATE] = {"ffn_gate_shexp.weight", 1},
     [YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_DOWN] = {"ffn_down_shexp.weight", 1},
     [YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_UP] = {"ffn_up_shexp.weight", 1},
+    [YVEX_TENSOR_ROLE_ATTENTION_Q_NORM] = {
+        "attn_q_norm.weight", 1, YVEX_GGUF_NAME_SEMANTIC_STANDARD},
+    [YVEX_TENSOR_ROLE_ATTENTION_K_NORM] = {
+        "attn_k_norm.weight", 1, YVEX_GGUF_NAME_SEMANTIC_STANDARD},
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_DECAY_LOG] = {
+        "yvex.seq_mix.decay_log", 1, YVEX_GGUF_NAME_YVEX_EXTENSION},
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_CONVOLUTION] = {
+        "yvex.seq_mix.conv.weight", 1, YVEX_GGUF_NAME_YVEX_EXTENSION},
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_TIME_BIAS] = {
+        "yvex.seq_mix.time_bias", 1, YVEX_GGUF_NAME_YVEX_EXTENSION},
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_DECAY_PROJECTION] = {
+        "yvex.seq_mix.decay.weight", 1, YVEX_GGUF_NAME_YVEX_EXTENSION},
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_BETA_PROJECTION] = {
+        "yvex.seq_mix.beta.weight", 1, YVEX_GGUF_NAME_YVEX_EXTENSION},
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_QKV_PROJECTION] = {
+        "yvex.seq_mix.qkv.weight", 1, YVEX_GGUF_NAME_YVEX_EXTENSION},
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_OUTPUT_GATE] = {
+        "yvex.seq_mix.output_gate.weight", 1, YVEX_GGUF_NAME_YVEX_EXTENSION},
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_OUTPUT_NORM] = {
+        "yvex.seq_mix.output_norm.weight", 1, YVEX_GGUF_NAME_YVEX_EXTENSION},
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_OUTPUT] = {
+        "yvex.seq_mix.output.weight", 1, YVEX_GGUF_NAME_YVEX_EXTENSION},
 };
 
-static const char *gguf_standard_role_name(yvex_tensor_role role, int *layer_scoped) {
+static const char *gguf_role_name_lookup(
+    yvex_tensor_role role, int *layer_scoped,
+    yvex_gguf_name_provenance *provenance)
+{
     if (role <= YVEX_TENSOR_ROLE_UNKNOWN || role >= YVEX_TENSOR_ROLE_COUNT)
         return NULL;
     *layer_scoped = gguf_role_names[role].layer_scoped;
+    *provenance = gguf_role_names[role].provenance;
     return gguf_role_names[role].name;
 }
 
@@ -95,10 +136,10 @@ int yvex_gguf_name_map_resolve(yvex_tensor_role role, int draft_extension,
                            yvex_tensor_role_name(role));
         *provenance = YVEX_GGUF_NAME_YVEX_EXTENSION;
     } else {
-        name = gguf_standard_role_name(role, &layer_scoped);
+        name = gguf_role_name_lookup(role, &layer_scoped, provenance);
         if (!name) {
             if (reason)
-                *reason = "role has no pinned DeepSeek-V4 GGUF name";
+                *reason = "role has no admitted GGUF name";
             return 0;
         }
         if (layer_scoped) {
@@ -106,7 +147,6 @@ int yvex_gguf_name_map_resolve(yvex_tensor_role role, int draft_extension,
         } else {
             written = snprintf(out, out_cap, "%s", name);
         }
-        *provenance = YVEX_GGUF_NAME_PINNED_STANDARD;
     }
     if (written < 0 || (size_t)written >= out_cap) {
         if (reason)

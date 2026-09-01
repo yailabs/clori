@@ -79,6 +79,9 @@ static int test_role_patterns(void)
 
     YVEX_TEST_ASSERT_STREQ(yvex_tensor_role_name(YVEX_TENSOR_ROLE_TOKEN_EMBEDDING),
                            "token_embedding", "role name");
+    YVEX_TEST_ASSERT_STREQ(
+        yvex_tensor_role_name(YVEX_TENSOR_ROLE_SEQUENCE_MIXER_QKV_PROJECTION),
+        "sequence_mixer_qkv_projection", "sequence mixer role name");
     YVEX_TEST_ASSERT(yvex_tensor_role_classify("llama", "model.layers.0.self_attn.q_proj.weight",
                                                2, dims, YVEX_DTYPE_F32) == YVEX_TENSOR_ROLE_ATTENTION_Q,
                      "q projection role");

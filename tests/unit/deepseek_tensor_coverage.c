@@ -1148,8 +1148,10 @@ static int test_mapping_refusal_boundary(void)
 static int test_mapping_typed_owner_refusals(void)
 {
     char name[16];
+    char admitted_name[192];
     unsigned long long valid_mxfp4[3] = {4096u, 2048u, 256u};
     unsigned long long invalid_mxfp4[3] = {4095u, 2048u, 256u};
+    unsigned long long valid_convolution[3] = {4u, 1u, 10240u};
     yvex_gguf_name_provenance provenance;
     const char *reason = NULL;
 
@@ -1177,6 +1179,25 @@ static int test_mapping_typed_owner_refusals(void)
             YVEX_TENSOR_ROLE_MOE_EXPERT_GATE, 39u, 0u, valid_mxfp4,
             &reason),
         "zero-rank logical layout refuses");
+    YVEX_TEST_ASSERT(
+        yvex_gguf_name_map_resolve(
+            YVEX_TENSOR_ROLE_ATTENTION_Q_NORM, 0, 3u, 0u,
+            admitted_name, sizeof(admitted_name), &provenance, &reason) &&
+            strcmp(admitted_name, "blk.3.attn_q_norm.weight") == 0 &&
+            provenance == YVEX_GGUF_NAME_SEMANTIC_STANDARD,
+        "generic Q normalization has one semantic-standard GGUF name");
+    YVEX_TEST_ASSERT(
+        yvex_gguf_name_map_resolve(
+            YVEX_TENSOR_ROLE_SEQUENCE_MIXER_CONVOLUTION, 0, 2u, 0u,
+            admitted_name, sizeof(admitted_name), &provenance, &reason) &&
+            strcmp(admitted_name, "blk.2.yvex.seq_mix.conv.weight") == 0 &&
+            provenance == YVEX_GGUF_NAME_YVEX_EXTENSION,
+        "generic sequence-mixer convolution has an explicit YVEX extension name");
+    YVEX_TEST_ASSERT(
+        yvex_gguf_layout_map_shape_supported(
+            YVEX_TENSOR_ROLE_SEQUENCE_MIXER_CONVOLUTION,
+            YVEX_GGUF_NO_FORCED_QTYPE, 3u, valid_convolution, &reason),
+        "rank-three depthwise convolution layout is admitted");
     return 0;
 }
 

@@ -1194,7 +1194,21 @@ static const char *const tensor_role_names[YVEX_TENSOR_ROLE_COUNT] = {
     [YVEX_TENSOR_ROLE_DRAFT_OUTPUT_NORM] = "draft_output_norm",
     [YVEX_TENSOR_ROLE_DRAFT_MARKOV_EMBEDDING] = "draft_markov_embedding",
     [YVEX_TENSOR_ROLE_DRAFT_MARKOV_OUTPUT] = "draft_markov_output",
-    [YVEX_TENSOR_ROLE_DRAFT_CONFIDENCE] = "draft_confidence"
+    [YVEX_TENSOR_ROLE_DRAFT_CONFIDENCE] = "draft_confidence",
+    [YVEX_TENSOR_ROLE_ATTENTION_Q_NORM] = "attention_q_norm",
+    [YVEX_TENSOR_ROLE_ATTENTION_K_NORM] = "attention_k_norm",
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_DECAY_LOG] = "sequence_mixer_decay_log",
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_CONVOLUTION] = "sequence_mixer_convolution",
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_TIME_BIAS] = "sequence_mixer_time_bias",
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_DECAY_PROJECTION] =
+        "sequence_mixer_decay_projection",
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_BETA_PROJECTION] =
+        "sequence_mixer_beta_projection",
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_QKV_PROJECTION] =
+        "sequence_mixer_qkv_projection",
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_OUTPUT_GATE] = "sequence_mixer_output_gate",
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_OUTPUT_NORM] = "sequence_mixer_output_norm",
+    [YVEX_TENSOR_ROLE_SEQUENCE_MIXER_OUTPUT] = "sequence_mixer_output"
 };
 
 const char *yvex_tensor_role_name(yvex_tensor_role role)

@@ -1076,7 +1076,8 @@ static const char *transform_coverage_subsystem_name(
 {
     static const char *const names[] = {
         "global", "attention", "compressor", "indexer", "norm", "mhc",
-        "router", "routed-expert", "shared-expert", "output", "auxiliary"};
+        "router", "routed-expert", "shared-expert", "output", "auxiliary",
+        "sequence-mixer"};
 
     return subsystem < YVEX_TRANSFORM_SUBSYSTEM_COUNT ? names[subsystem] : NULL;
 }
@@ -1286,7 +1287,8 @@ static yvex_transform_subsystem transform_recipe_subsystem(
         YVEX_TRANSFORM_SUBSYSTEM_ROUTER,
         YVEX_TRANSFORM_SUBSYSTEM_ROUTED_EXPERT,
         YVEX_TRANSFORM_SUBSYSTEM_SHARED_EXPERT,
-        YVEX_TRANSFORM_SUBSYSTEM_AUXILIARY};
+        YVEX_TRANSFORM_SUBSYSTEM_AUXILIARY,
+        YVEX_TRANSFORM_SUBSYSTEM_SEQUENCE_MIXER};
 
     return collection < YVEX_TENSOR_COLLECTION_COUNT
                ? subsystems[collection] : YVEX_TRANSFORM_SUBSYSTEM_COUNT;
