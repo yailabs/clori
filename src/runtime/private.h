@@ -351,6 +351,7 @@ struct yvex_runtime_execution_session {
     yvex_attention_workspace *attention_workspace;
     yvex_runtime_state_residency *state_residency;
     yvex_runtime_state_residency *draft_state_residency;
+    yvex_sequence_state *sequence_state;
     yvex_device_tensor *workspace;
     yvex_runtime_session_summary summary;
     yvex_runtime_session_view view;
@@ -516,6 +517,11 @@ int yvex_runtime_private_model_specialization_prepare(
 int yvex_runtime_private_session_prepare_persistent_scope_state_locked(
     yvex_runtime_execution_session *session, yvex_tensor_scope scope,
     const yvex_graph_attention_capacity_plan *capacity,
+    yvex_model_engine_failure *failure, yvex_error *err);
+int yvex_runtime_private_session_sequence_state_open(
+    yvex_runtime_execution_session *session,
+    const yvex_sequence_state_plan *plan, int bounded,
+    unsigned long long *state_budget, unsigned long long *admitted_host_bytes,
     yvex_model_engine_failure *failure, yvex_error *err);
 int yvex_runtime_private_state_residency_resolve(
     const void *context, const void *host, unsigned long long bytes,

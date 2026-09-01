@@ -824,6 +824,12 @@ int yvex_runtime_session_state_save(
                               "state save requires an idle valid session", err);
         goto done;
     }
+    if (session->sequence_state) {
+        rc = state_store_fail(
+            YVEX_ERR_UNSUPPORTED,
+            "state checkpoints do not yet encode recurrent sequence state", err);
+        goto done;
+    }
     model = session->engine->summary;
     rc = state_save_scope_prepare(&scopes[scope_count],
                                   &session->attention_state_provider, 0ull,
@@ -1699,6 +1705,12 @@ int yvex_runtime_session_state_inspect(
                               "state inspect requires an idle valid session", err);
         goto done;
     }
+    if (session->sequence_state) {
+        rc = state_store_fail(
+            YVEX_ERR_UNSUPPORTED,
+            "state checkpoints do not yet encode recurrent sequence state", err);
+        goto done;
+    }
     rc = state_restore_file_parse(session, path, maximum_file_bytes, &file, err);
     if (rc != YVEX_OK) goto done;
     if (file.payload_bytes) {
@@ -1753,6 +1765,12 @@ int yvex_runtime_session_state_restore(
         !session->attention_state_provider_ready) {
         rc = state_store_fail(YVEX_ERR_STATE,
                               "state restore requires an idle valid session", err);
+        goto done;
+    }
+    if (session->sequence_state) {
+        rc = state_store_fail(
+            YVEX_ERR_UNSUPPORTED,
+            "state checkpoints do not yet encode recurrent sequence state", err);
         goto done;
     }
     rc = state_restore_file_parse(session, path, maximum_file_bytes, &file, err);

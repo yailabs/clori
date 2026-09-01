@@ -46,9 +46,9 @@
     },
     {
       "id": "family-qwen3-5",
-      "patterns": ["src/model/families/qwen3_5.c", "src/graph/families/qwen3_5.c", "src/backend/cuda/families/qwen3_5.cu", "include/yvex/internal/families/qwen3_5.h", "tests/unit/qwen3_5*.c"],
+      "patterns": ["src/model/families/qwen3_5.c", "src/graph/families/qwen3_5.c", "src/backend/cuda/families/qwen3_5.cu", "include/yvex/internal/families/qwen3_5.h", "include/yvex/internal/sequence_state.h", "src/runtime/sequence_state.c", "tests/unit/qwen3_5*.c", "tests/unit/sequence_state*.c"],
       "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],
-      "tests": ["unit.qwen3_5_architecture", "unit.sequence_mixer", "integration.tiny-vertical"],
+      "tests": ["unit.qwen3_5_architecture", "unit.sequence_mixer", "unit.sequence_state", "unit.sequence_state_session", "integration.tiny-vertical"],
       "reason": "Qwen3.5 hybrid source semantics require exact config, stateful mixing, numeric, and composed-runtime evidence"
     },
     {

@@ -16,6 +16,10 @@ typedef struct {
     unsigned long long required, logical_required, host_total, device_total, generation;
 } runtime_workspace_requirements;
 
+static int runtime_sequence_state_summary_record(
+    yvex_runtime_execution_session *session,
+    yvex_sequence_state_summary *out, yvex_error *err);
+
 static int runtime_session_owned_by_current_thread(
     const yvex_runtime_execution_session *session)
 {
@@ -187,6 +191,49 @@ int yvex_runtime_private_attention_workspace_required(
         return yvex_attention_deferred_workspace_required(
             layer_count, staging_bytes, required_bytes, err);
     yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_private_session_sequence_state_open(
+    yvex_runtime_execution_session *session,
+    const yvex_sequence_state_plan *plan, int bounded,
+    unsigned long long *state_budget, unsigned long long *admitted_host_bytes,
+    yvex_model_engine_failure *failure, yvex_error *err)
+{
+    yvex_sequence_state_summary summary;
+    unsigned long long bytes;
+    int rc;
+
+    if (!plan) return YVEX_OK;
+    rc = yvex_sequence_state_open(&session->sequence_state, plan, err);
+    if (rc == YVEX_OK)
+        rc = yvex_sequence_state_summary_copy(
+            session->sequence_state, &summary, err);
+    if (rc == YVEX_OK &&
+        (!yvex_core_u64_add(summary.committed_state_bytes,
+                            summary.candidate_state_bytes, &bytes) ||
+         (bounded && bytes > *state_budget) ||
+         !yvex_core_u64_add(*admitted_host_bytes, bytes,
+                            admitted_host_bytes)))
+        rc = YVEX_ERR_BOUNDS;
+    if (rc != YVEX_OK) {
+        yvex_sequence_state_close(&session->sequence_state);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_GRAPH, "sequence-state",
+            bounded ? *state_budget : 0ull, 0ull,
+            rc == YVEX_ERR_BOUNDS
+                ? "recurrent sequence state exceeds the admitted session host budget"
+                : "recurrent sequence state could not open",
+            err, (yvex_status)rc);
+    }
+    if (bounded) *state_budget -= bytes;
+    session->view.sequence_state = session->sequence_state;
+    session->summary.sequence_state_binding_count = summary.binding_count;
+    session->summary.sequence_state_generation = summary.generation;
+    session->summary.sequence_committed_state_bytes =
+        summary.committed_state_bytes;
+    session->summary.sequence_candidate_state_bytes =
+        summary.candidate_state_bytes;
     return YVEX_OK;
 }
 
@@ -754,12 +801,17 @@ int yvex_runtime_session_reset_persistent_state(yvex_runtime_execution_session *
             rc = session->draft_attention_state_provider.reset(
                 session->draft_attention_state_provider.context,
                 &state_failure, err);
+        if (rc == YVEX_OK && session->sequence_state)
+            rc = yvex_sequence_state_reset(session->sequence_state, err);
+        if (rc == YVEX_OK)
+            rc = runtime_sequence_state_summary_record(session, NULL, err);
         if (rc != YVEX_OK) {
             yvex_error cleanup;
             session->summary.invalidated = 1;
             (void)yvex_runtime_private_session_invalidate(session, 1, &cleanup);
             yvex_runtime_private_failure_record(failure, YVEX_MODEL_ENGINE_FAILURE_GRAPH,
-                "persistent-state-reset", 1ull, 0ull, "persistent attention state reset failed");
+                "persistent-state-reset", 1ull, 0ull,
+                "persistent session state reset failed");
         }
     }
     (void)pthread_mutex_unlock(&session->lifecycle_mutex);
@@ -919,6 +971,30 @@ typedef struct {
     int provider_prepared;
 } runtime_state_transaction_participant;
 
+static int runtime_sequence_state_summary_record(
+    yvex_runtime_execution_session *session,
+    yvex_sequence_state_summary *out, yvex_error *err)
+{
+    yvex_sequence_state_summary summary;
+    int rc;
+
+    if (!session || !session->sequence_state) {
+        if (out) memset(out, 0, sizeof(*out));
+        return YVEX_OK;
+    }
+    rc = yvex_sequence_state_summary_copy(
+        session->sequence_state, &summary, err);
+    if (rc != YVEX_OK) return rc;
+    session->summary.sequence_state_binding_count = summary.binding_count;
+    session->summary.sequence_state_generation = summary.generation;
+    session->summary.sequence_committed_state_bytes =
+        summary.committed_state_bytes;
+    session->summary.sequence_candidate_state_bytes =
+        summary.candidate_state_bytes;
+    if (out) *out = summary;
+    return YVEX_OK;
+}
+
 static int runtime_state_transaction_prepare(void *opaque, yvex_error *err)
 {
     runtime_state_transaction_participant *participant = opaque;
@@ -1044,6 +1120,7 @@ int yvex_runtime_session_finish_scope(
     yvex_attention_transaction_disposition disposition, int status,
     yvex_error *err) {
     yvex_graph_attention_state_summary state;
+    yvex_sequence_state_summary sequence = {0};
     const yvex_attention_workspace_summary *workspace;
     yvex_attention_state_provider *provider;
     yvex_runtime_state_residency *residency;
@@ -1085,6 +1162,16 @@ int yvex_runtime_session_finish_scope(
              : YVEX_ERR_STATE;
     if (rc == YVEX_OK) state_ready = 1;
     else cleanup_rc = rc, cleanup = state_error;
+    rc = runtime_sequence_state_summary_record(session, &sequence, &state_error);
+    if (rc != YVEX_OK && cleanup_rc == YVEX_OK)
+        cleanup_rc = rc, cleanup = state_error;
+    if (primary_status == YVEX_OK && sequence.transaction_active &&
+        cleanup_rc == YVEX_OK) {
+        cleanup_rc = YVEX_ERR_STATE;
+        yvex_error_set(
+            &cleanup, cleanup_rc, "runtime.session.sequence-state",
+            "recurrent state requires coordinated transaction finalization");
+    }
     workspace = yvex_attention_workspace_summary_get(session->attention_workspace);
     if (workspace) {
         session->summary.workspace_peak_bytes = workspace->peak_bytes;
@@ -1133,6 +1220,24 @@ int yvex_runtime_session_finish_scope(
             cleanup_rc = rc;
             cleanup = state_error;
         }
+    }
+    if (sequence.transaction_active) {
+        yvex_runtime_transaction_participant participant;
+        int sequence_status = primary_status != YVEX_OK
+                                  ? primary_status
+                                  : cleanup_rc != YVEX_OK
+                                        ? cleanup_rc
+                                        : YVEX_ERR_STATE;
+        yvex_error_clear(&state_error);
+        rc = yvex_sequence_state_participant(
+            session->sequence_state, &participant, &state_error);
+        if (rc == YVEX_OK)
+            rc = runtime_transaction_resolve(
+                &participant, 1u, sequence_status, NULL, &state_error);
+        if (rc != sequence_status && rc != YVEX_OK && cleanup_rc == YVEX_OK)
+            cleanup_rc = rc, cleanup = state_error;
+        (void)runtime_sequence_state_summary_record(
+            session, NULL, &state_error);
     }
     if (session->invalidation_pending) {
         rc = yvex_runtime_private_session_invalidate(session, 1, &state_error);
@@ -1185,16 +1290,19 @@ int yvex_runtime_session_finish_coordinated(
     yvex_runtime_state_residency *residencies[2];
     int provider_ready[2];
     runtime_state_transaction_participant state_participants[2] = {{0}};
+    yvex_runtime_transaction_participant sequence_participant = {0};
+    yvex_sequence_state_summary sequence_summary = {0};
     yvex_runtime_transaction_participant transaction[
         YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP] = {{0}};
     yvex_error primary = err ? *err : (yvex_error){0};
-    yvex_error cleanup = {0}, transaction_error = {0};
+    yvex_error cleanup = {0}, transaction_error = {0}, summary_error = {0};
     unsigned long long counter_next = 0ull;
-    unsigned int index, state_count = 0u, transaction_count = 0u;
+    unsigned int index, state_count = 0u, state_owner_count = 0u;
+    unsigned int transaction_count = 0u;
     int abort_failed = 0, boundary_failure, cleanup_rc = YVEX_OK;
     int rc = status, transaction_rc, transaction_status;
-    if (!session || participant_count >
-                        YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP - 2u ||
+    if (!session ||
+        participant_count > YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP - 3u ||
         (participant_count && !participants) ||
         !session->lifecycle_mutex_ready ||
         pthread_mutex_lock(&session->lifecycle_mutex) != 0) {
@@ -1232,6 +1340,7 @@ int yvex_runtime_session_finish_coordinated(
                 .publish = runtime_state_transaction_publish,
                 .abort = runtime_state_transaction_abort};
             state_count++;
+            state_owner_count++;
         }
         if (rc == YVEX_OK && summary_rc == YVEX_OK &&
             (!summary.transaction_active || summary.candidate_active ||
@@ -1243,6 +1352,37 @@ int yvex_runtime_session_finish_coordinated(
         }
     }
     transaction_count = state_count;
+    if (session->sequence_state) {
+        int summary_rc;
+        yvex_error_clear(&summary_error);
+        summary_rc = runtime_sequence_state_summary_record(
+            session, &sequence_summary, &summary_error);
+        if (summary_rc != YVEX_OK && cleanup_rc == YVEX_OK) {
+            cleanup_rc = summary_rc;
+            cleanup = summary_error;
+        }
+        if (summary_rc == YVEX_OK && sequence_summary.transaction_active) {
+            summary_rc = yvex_sequence_state_participant(
+                session->sequence_state, &sequence_participant, &summary_error);
+            if (summary_rc == YVEX_OK) {
+                transaction[transaction_count++] = sequence_participant;
+                state_owner_count++;
+            } else if (cleanup_rc == YVEX_OK) {
+                cleanup_rc = summary_rc;
+                cleanup = summary_error;
+            }
+        }
+        if (rc == YVEX_OK && summary_rc == YVEX_OK &&
+            (!sequence_summary.transaction_active ||
+             sequence_summary.staged_layers != sequence_summary.binding_count ||
+             sequence_summary.invalidated) &&
+            cleanup_rc == YVEX_OK) {
+            cleanup_rc = YVEX_ERR_STATE;
+            yvex_error_set(
+                &cleanup, cleanup_rc, "runtime.session.coordinated",
+                "coordinated recurrent state participant is incomplete");
+        }
+    }
     if (transaction_count + participant_count >
         YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP && cleanup_rc == YVEX_OK) {
         cleanup_rc = YVEX_ERR_BOUNDS;
@@ -1262,7 +1402,7 @@ int yvex_runtime_session_finish_coordinated(
         }
         transaction[transaction_count++] = participants[index];
     }
-    if (rc == YVEX_OK && !state_count && cleanup_rc == YVEX_OK) {
+    if (rc == YVEX_OK && !state_owner_count && cleanup_rc == YVEX_OK) {
         cleanup_rc = YVEX_ERR_STATE;
         yvex_error_set(&cleanup, cleanup_rc, "runtime.session.coordinated",
                        "coordinated execution has no active state participant");
@@ -1281,6 +1421,8 @@ int yvex_runtime_session_finish_coordinated(
         &transaction_error);
     boundary_failure = cleanup_rc != YVEX_OK || abort_failed ||
                        (rc == YVEX_OK && transaction_rc != YVEX_OK);
+    (void)runtime_sequence_state_summary_record(
+        session, NULL, &summary_error);
     if (transaction_rc == YVEX_OK)
         session->summary.execution_count = counter_next;
     else {

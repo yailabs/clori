@@ -273,6 +273,15 @@ int yvex_runtime_private_session_invalidate(yvex_runtime_execution_session *sess
             if (err) *err = cleanup;
         }
     }
+    if (include_state && session->sequence_state) {
+        yvex_error_clear(&cleanup);
+        graph_rc = yvex_sequence_state_invalidate(
+            session->sequence_state, &cleanup);
+        if (rc == YVEX_OK && graph_rc != YVEX_OK) {
+            rc = graph_rc;
+            if (err) *err = cleanup;
+        }
+    }
     if (session->backend &&
         yvex_backend_kind_of(session->backend) == YVEX_BACKEND_KIND_CUDA) {
         yvex_error_clear(&cleanup);
@@ -1403,6 +1412,8 @@ static int runtime_session_resources_release(yvex_runtime_execution_session *ses
         }
     }
     session->invalidation_pending = 0;
+    yvex_sequence_state_close(&session->sequence_state);
+    session->view.sequence_state = NULL;
     if (session->state_resolver_attached) {
         yvex_backend_state_residency_detach(session->backend);
         session->state_resolver_attached = 0;
@@ -1718,6 +1729,12 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
     session->summary.workspace_generation = 1ull;
     state_budget = request->maximum_host_bytes ? request->maximum_host_bytes - admitted_host_bytes
                                                : 0ull;
+    rc = yvex_runtime_private_session_sequence_state_open(
+        session, request->sequence_state_plan,
+        request->maximum_host_bytes != 0ull, &state_budget,
+        &admitted_host_bytes, failure, err);
+    if (rc != YVEX_OK)
+        return runtime_session_open_fail(out, session, rc, failure, err);
     rc = runtime_session_state_open(session, model, state_factory,
                                     state_budget, failure, err);
     if (rc != YVEX_OK)

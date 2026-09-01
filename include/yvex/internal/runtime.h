@@ -16,6 +16,7 @@
 #include <yvex/internal/execution_batch.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
+#include <yvex/internal/sequence_state.h>
 #include <yvex/internal/tokenizer.h>
 #include <yvex/model.h>
 #include <yvex/registry.h>
@@ -420,6 +421,7 @@ typedef struct {
     yvex_backend_kind backend;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
     const yvex_attention_state_provider_factory *attention_state_factory;
+    const yvex_sequence_state_plan *sequence_state_plan;
 } yvex_runtime_session_open_request;
 typedef struct {
     int open, busy, cancelled, invalidated;
@@ -437,6 +439,9 @@ typedef struct {
     unsigned long long workspace_bytes, device_workspace_bytes, workspace_peak_bytes;
     unsigned long long workspace_allocation_count, host_workspace_bytes, host_workspace_peak_bytes;
     unsigned long long workspace_capacity_failure_count;
+    unsigned long long sequence_state_binding_count, sequence_state_generation;
+    unsigned long long sequence_committed_state_bytes;
+    unsigned long long sequence_candidate_state_bytes;
     int host_workspace_owned, host_workspace_pinned;
     int device_index, compute_capability_major, compute_capability_minor;
     unsigned long long total_device_bytes, sustainable_read_bytes_per_second, sustainable_copy_bytes_per_second;
@@ -453,6 +458,7 @@ typedef struct {
     yvex_attention_workspace *attention_workspace;
     yvex_runtime_state_residency *state_residency;
     yvex_runtime_state_residency *draft_state_residency;
+    yvex_sequence_state *sequence_state;
 } yvex_runtime_session_view;
 /* A cleanup failure may retain an unpublished closing session in out; retry close discharges it. */
 int yvex_runtime_session_open(yvex_runtime_execution_session **out, yvex_model_engine *model,

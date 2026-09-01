@@ -239,6 +239,8 @@ src/model/families/qwen3_5.c	model.family	model.family.qwen3_5	family	private	re
 src/runtime/descriptor.c	runtime	runtime.descriptor	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
 src/runtime/evidence.c	runtime	runtime.evidence	generic	private	reusable-algorithm	runtime,cli,tests	implementation	none
 src/runtime/transaction.c	runtime	runtime.execution_transaction	generic	private	resource-lifecycle	runtime,graph,tests	implementation	none
+src/runtime/sequence_state.c	runtime	runtime.sequence_state	generic	private	resource-lifecycle	graph,runtime,tests	implementation	none
+include/yvex/internal/sequence_state.h	runtime	runtime.sequence_state	generic	private	lifecycle-interface	graph,runtime,tests	interface	none
 src/runtime/binding.c	runtime	runtime.binding	generic	private	file-serialization	artifact,graph,runtime,cli	implementation	none
 src/runtime/component.c	runtime	runtime.component	generic	private	reusable-algorithm	graph.family,runtime	implementation	none
 src/runtime/binding_import.c	runtime	runtime.binding_import	generic	private	resource-lifecycle	runtime.transformer,runtime.logits,runtime.speculation	implementation	none
