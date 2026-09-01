@@ -41,7 +41,18 @@ static void message_base(yvex_client_message *message,
         message->stream_channel = YVEX_CLIENT_STREAM_ERROR;
     message->request_number = request ? request->request_number : 0u;
     if (request) {
+        unsigned long long requested = request->provider_request
+                                           ? request->provider_request->maximum_output_tokens
+                                           : request->maximum_new_tokens;
         strcpy(message->session_name, request->session_name);
+        if (kind == YVEX_CLIENT_MESSAGE_TURN_STARTED ||
+            kind == YVEX_CLIENT_MESSAGE_TURN_COMPLETE ||
+            kind == YVEX_CLIENT_MESSAGE_ERROR) {
+            message->initial_position = 5u;
+            message->requested_maximum_new_tokens = requested;
+            message->resolved_maximum_new_tokens = requested ? requested : 256u;
+            message->output_limit_explicit = requested != 0u;
+        }
         if (request->provider_request) {
             strcpy(message->provider_request_identity,
                    request->provider_request->request_identity);
@@ -307,7 +318,11 @@ static int send_native_markdown(int fd, const yvex_client_request *request,
     static const unsigned char part_b[] = "`cuda\n__global__ void add() {\n  // ";
     static const unsigned char part_c[] = {0xf0u, 0x9fu};
     static const unsigned char part_d[] = {0x8cu, 0x8du, '\n', '}', '\n', '`', '`'};
-    static const unsigned char part_e[] = "`\nUse `int` safely.\nESC: \033[31mnot-control\n";
+    static const unsigned char part_e[] =
+        "`\nUse `int` safely.\nESC: \033[31mnot-control\n"
+        "A readable paragraph stays within the terminal prose measure while the "
+        "canonical response bytes remain unchanged for protocol consumers and "
+        "deterministic transcript identity.\n";
     const struct {
         const unsigned char *bytes;
         size_t count;
@@ -331,14 +346,14 @@ static int send_native_reasoning(int fd, const yvex_client_request *request,
     int rc = send_fragment_bytes(
         fd, request, YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING,
         YVEX_CLIENT_STREAM_EXPLICIT_REASONING,
-        (const unsigned char *)"I need to compare the constraints...\n",
-        strlen("I need to compare the constraints...\n"), NULL, NULL, err);
+        (const unsigned char *)"## Plan\n\n- **Compare** `constraints` carefully.\n",
+        strlen("## Plan\n\n- **Compare** `constraints` carefully.\n"), NULL, NULL, err);
     if (rc == YVEX_OK)
         rc = send_fragment_bytes(
             fd, request, YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
             YVEX_CLIENT_STREAM_FINAL_TEXT,
-            (const unsigned char *)"The valid result is 42.",
-            strlen("The valid result is 42."), NULL, NULL, err);
+            (const unsigned char *)"## Result\n\nThe **valid** result is `42`.",
+            strlen("## Result\n\nThe **valid** result is `42`."), NULL, NULL, err);
     return rc;
 }
 
@@ -495,6 +510,10 @@ static int send_generation(int fd, const yvex_client_request *request,
         (native_prompt_contains(request, "WAIT_PREFILL_CANCEL") ||
          native_prompt_contains(request, "WAIT_DECODE_CANCEL")))
         return send_native_cancellation(fd, request, err);
+    if (rc == YVEX_OK && native_prompt_contains(request, "WAIT_ASYNC_KEYS")) {
+        const struct timespec delay = {0, 500000000L};
+        (void)nanosleep(&delay, NULL);
+    }
     if (rc == YVEX_OK &&
         native_prompt_contains(request, "WAIT_REASONING_CANCEL")) {
         if (request->reasoning_policy == YVEX_REASONING_DISABLED) {
@@ -601,6 +620,8 @@ static int send_generation(int fd, const yvex_client_request *request,
                                              : "hello from yvex";
         if (!provider && native_prompt_contains(request, "HEAD_TAIL_END"))
             text = "line editing accepted";
+        if (!provider && native_prompt_contains(request, "async-keys-"))
+            text = "INPUT_CONTAMINATED";
         if (request_contains(provider, "exactly these keys"))
             text = "{\"status\":\"ok\",\"operation_mode\":\"observe\","
                    "\"real_data\":false}";
@@ -663,7 +684,9 @@ static int send_generation(int fd, const yvex_client_request *request,
     message.decode_seconds = 3.0;
     message.prefill_rate = 2.0;
     message.decode_rate = 1.0;
-    message.stop_reason = 3u;
+    message.stop_reason = !provider && request->maximum_new_tokens == 3u
+                              ? YVEX_CLIENT_STOP_MAXIMUM_TOKENS
+                              : YVEX_CLIENT_STOP_EOS;
     message.generation_phase = YVEX_CLIENT_PHASE_COMPLETE;
     message.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
     memset(message.turn_identity, 'e', 64u);

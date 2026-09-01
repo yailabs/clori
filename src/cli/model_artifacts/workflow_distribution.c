@@ -19,7 +19,7 @@ typedef struct {
     const char *include[YVEX_MODEL_DOWNLOAD_PATTERN_CAP];
     const char *exclude[YVEX_MODEL_DOWNLOAD_PATTERN_CAP];
     unsigned int include_count, exclude_count;
-    int reference, managed, prepare, stream, resume, dry_run, json;
+    int reference, managed, prepare, stream, resume, dry_run, verbose, json;
 } model_pull_options;
 
 typedef struct {
@@ -83,6 +83,7 @@ static int pull_options_parse(int argc, char **argv, model_pull_options *out)
         else if (!strcmp(flag, "--stream")) out->stream = 1;
         else if (!strcmp(flag, "--resume")) out->resume = 1;
         else if (!strcmp(flag, "--dry-run")) out->dry_run = 1;
+        else if (!strcmp(flag, "--verbose")) out->verbose = 1;
         else if (!strcmp(flag, "--json")) out->json = 1;
         else if (flag[0] == '-') {
             yvex_cli_out_writef(stderr, "yvex: unknown model pull option: %s\n", flag);
@@ -331,6 +332,8 @@ static int pull_remote_download(int argc, char **argv,
         PULL_ARG("--exclude", options->exclude[index]);
     if (options->auth) PULL_ARG("--auth", options->auth);
     if (options->progress && !options->json) PULL_ARG("--progress", options->progress);
+    else if (options->dry_run && !options->verbose && !options->json)
+        PULL_ARG("--progress", "log");
     if (options->json) {
         PULL_ARG("--output", "json");
         PULL_ARG("--progress", "off");

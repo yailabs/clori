@@ -30,20 +30,47 @@ typedef struct {
     unsigned long long first_fragment_ns;
     unsigned long long first_reasoning_ns, reasoning_completed_ns;
     unsigned long long first_final_ns, reasoning_tokens, final_tokens;
+    unsigned long long committed_tokens, last_progress_ns;
+    unsigned long long speculative_cycle, proposed_tokens;
+    unsigned long long selected_verification_tokens, accepted_tokens;
+    unsigned long long rejected_tokens, discarded_tokens, verification_count;
     unsigned long long reasoning_bytes, final_bytes;
     unsigned long long reasoning_control_bytes;
     unsigned int reasoning_start_token_id, reasoning_end_token_id;
     const unsigned char *reasoning_end;
     unsigned long long reasoning_end_count;
     int reasoning_active, reasoning_boundary_seen;
+    char speculation_policy_identity[YVEX_SHA256_HEX_CAP];
     double queue_seconds;
     yvex_tokenizer_reasoning_stream *reasoning_stream;
 } turn_sink;
+#define TURN_PROGRESS_INTERVAL_NS 1000000000ull
+#define TURN_PROGRESS_TOKEN_INTERVAL 64ull
 static int provider_text_stream_direct(const yvex_provider_request *request)
 {
     return request && request->response_format == YVEX_PROVIDER_RESPONSE_TEXT &&
            request->stop_count == 0u && request->tool_count == 0u &&
            request->tool_choice.kind == YVEX_PROVIDER_TOOL_CHOICE_NONE;
+}
+static unsigned long long turn_requested_maximum(
+    const yvex_client_request *request)
+{
+    return request->provider_request
+               ? request->provider_request->maximum_output_tokens
+               : request->maximum_new_tokens;
+}
+static unsigned long long turn_resolved_maximum(
+    const server_session_registry *registry, const yvex_client_request *request,
+    unsigned long long completion_start_position)
+{
+    unsigned long long maximum = turn_requested_maximum(request);
+    unsigned long long remaining;
+    if (!maximum) maximum = registry->options.maximum_new_tokens;
+    remaining = registry->options.context_capacity > completion_start_position
+                    ? registry->options.context_capacity -
+                          completion_start_position
+                    : 0u;
+    return remaining < maximum ? remaining : maximum;
 }
 static int provider_output_emit(turn_sink *sink,
                                 yvex_provider_output_kind kind,
@@ -57,6 +84,73 @@ static unsigned long long monotonic_ns(void)
     if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) return 0u;
     return (unsigned long long)value.tv_sec * 1000000000ull +
            (unsigned long long)value.tv_nsec;
+}
+static double elapsed_seconds(unsigned long long start,
+                              unsigned long long end);
+
+static const yvex_runtime_speculation_progress *turn_speculation_summary(
+    const turn_sink *sink, yvex_runtime_speculation_progress *summary)
+{
+    if (!sink->speculative_cycle) return NULL;
+    memset(summary, 0, sizeof(*summary));
+    summary->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3;
+    summary->kind = YVEX_SPECULATION_PROGRESS_CYCLE_COMMITTED;
+    summary->cycle = sink->speculative_cycle;
+    summary->proposed_tokens = sink->proposed_tokens;
+    summary->selected_verification_tokens =
+        sink->selected_verification_tokens;
+    summary->accepted_tokens = sink->accepted_tokens;
+    summary->rejected_tokens = sink->rejected_tokens;
+    summary->discarded_tokens = sink->discarded_tokens;
+    summary->verification_count = sink->verification_count;
+    yvex_runtime_identity_copy(summary->policy_identity,
+                               sink->speculation_policy_identity);
+    return summary;
+}
+
+static int turn_decode_progress(
+    turn_sink *sink, const yvex_runtime_generation_token_result *token,
+    unsigned long long now, yvex_error *err)
+{
+    yvex_runtime_speculation_progress speculation;
+    const yvex_runtime_speculation_progress *speculation_fact;
+    unsigned long long since_time, since_tokens;
+    double seconds;
+    if (!token->model_committed) return YVEX_OK;
+    sink->committed_tokens++;
+    if (!sink->last_progress_ns) sink->last_progress_ns = sink->first_fragment_ns;
+    since_time = now - sink->last_progress_ns;
+    since_tokens = sink->committed_tokens % TURN_PROGRESS_TOKEN_INTERVAL;
+    if (since_time < TURN_PROGRESS_INTERVAL_NS && since_tokens != 0u)
+        return YVEX_OK;
+    seconds = elapsed_seconds(sink->first_fragment_ns, now);
+    speculation_fact = turn_speculation_summary(sink, &speculation);
+    sink->last_progress_ns = now;
+    return yvex_server_telemetry_emit_provider(
+        sink->registry->telemetry, &sink->registry->event_scope,
+        YVEX_SERVER_EVENT_GENERATION_PROGRESS,
+        YVEX_SERVER_SEVERITY_INFO, sink->session->name,
+        sink->request_id, sink->turn_id,
+        sink->reasoning_active ? "reasoning" : "answer",
+        sink->committed_tokens, token->position_after,
+        sink->reasoning_tokens, seconds,
+        seconds > 0.0 ? (double)sink->committed_tokens / seconds : 0.0,
+        speculation_fact, sink->request->provider_request, NULL, err);
+}
+
+static void turn_envelope_project(
+    yvex_client_message *message, const server_session_registry *registry,
+    const yvex_client_request *request,
+    const yvex_runtime_generation_result *result)
+{
+    message->initial_position = result->initial_position;
+    message->final_position = result->final_position;
+    message->context_used = result->final_position;
+    message->requested_maximum_new_tokens = turn_requested_maximum(request);
+    message->resolved_maximum_new_tokens = turn_resolved_maximum(
+        registry, request, result->prompt_token_count);
+    message->output_limit_explicit =
+        message->requested_maximum_new_tokens != 0u;
 }
 static int turn_output_geometry(const turn_sink *sink,
                                 unsigned long long generated_bytes,
@@ -481,6 +575,9 @@ static int turn_fragment(void *opaque,
         rc = yvex_tokenizer_reasoning_stream_push(
             sink->reasoning_stream, classified_bytes, classified_count, err);
     if (rc == YVEX_OK)
+        rc = turn_decode_progress(sink, token, now, err);
+    if (rc == YVEX_OK &&
+        sink->registry->options.trace_level >= YVEX_SERVER_TRACE_TOKENS)
         rc = yvex_server_telemetry_emit_provider(
             sink->registry->telemetry, &sink->registry->event_scope,
             YVEX_SERVER_EVENT_GENERATION_FRAGMENT,
@@ -562,6 +659,20 @@ static int turn_speculation_progress(
                        "typed speculation progress is required");
         return YVEX_ERR_INVALID_ARG;
     }
+    if (progress->kind == YVEX_SPECULATION_PROGRESS_CYCLE_COMMITTED) {
+        sink->speculative_cycle = progress->cycle;
+        sink->proposed_tokens += progress->proposed_tokens;
+        sink->selected_verification_tokens +=
+            progress->selected_verification_tokens;
+        sink->accepted_tokens += progress->accepted_tokens;
+        sink->rejected_tokens += progress->rejected_tokens;
+        sink->discarded_tokens += progress->discarded_tokens;
+        sink->verification_count += progress->verification_count;
+        yvex_runtime_identity_copy(sink->speculation_policy_identity,
+                                   progress->policy_identity);
+    }
+    if (sink->registry->options.trace_level < YVEX_SERVER_TRACE_FULL)
+        return YVEX_OK;
     rc = yvex_server_telemetry_emit_provider(
         sink->registry->telemetry, &sink->registry->event_scope,
         kinds[progress->kind],
@@ -970,6 +1081,8 @@ static int session_turn_publish(server_session_registry *registry, server_sessio
     yvex_tokenizer_provider_result provider_result;
     yvex_runtime_session_summary runtime_summary;
     unsigned long long now = monotonic_ns();
+    yvex_runtime_speculation_progress speculation;
+    const yvex_runtime_speculation_progress *speculation_fact;
     yvex_error secondary;
     int stop_matched = 0, send_rc;
     memset(&provider_result, 0, sizeof(provider_result));
@@ -994,8 +1107,7 @@ static int session_turn_publish(server_session_registry *registry, server_sessio
         status = YVEX_ERR_BOUNDS;
     if (status != YVEX_OK)
         completed.failure_class = yvex_server_failure_class_from_status(status);
-    completed.final_position = result->final_position;
-    completed.context_used = result->final_position;
+    turn_envelope_project(&completed, registry, request, result);
     completed.turn_count = session->turn_count;
     completed.stop_reason = result->stop_reason;
     session_speculation_result_project(&completed, result);
@@ -1142,6 +1254,7 @@ static int session_turn_publish(server_session_registry *registry, server_sessio
         session->state = YVEX_SERVER_SESSION_PARTIAL;
         session_partial_turn_set(session, result, status);
     }
+    speculation_fact = turn_speculation_summary(sink, &speculation);
     (void)yvex_server_telemetry_emit_provider(
         registry->telemetry, &registry->event_scope,
         status == YVEX_OK
@@ -1154,7 +1267,7 @@ static int session_turn_publish(server_session_registry *registry, server_sessio
         session->name, sink->request_id, sink->turn_id, "turn",
         result->model_committed_token_count, result->final_position,
         result->stop_reason, elapsed_seconds(sink->started_ns, now),
-        completed.decode_rate, NULL, request->provider_request, NULL,
+        completed.decode_rate, speculation_fact, request->provider_request, NULL,
         &secondary);
     yvex_tokenizer_provider_result_clear(&provider_result);
     return status;
@@ -1357,8 +1470,7 @@ static int session_turn(server_session_registry *registry,
     turn_sink sink;
     unsigned long long prior_messages = session->message_count;
     unsigned long long prior_transcript = session->transcript_count;
-    unsigned long long turn_maximum = request->provider_request
-        ? request->provider_request->maximum_output_tokens : request->maximum_new_tokens;
+    unsigned long long turn_maximum = turn_requested_maximum(request);
     yvex_error primary_error;
     int generation_rc, extends = 1, rc, turn_complete = 0, turn_active = 0;
     if (!turn_maximum) turn_maximum = registry->options.maximum_new_tokens;
@@ -1474,6 +1586,12 @@ static int session_turn(server_session_registry *registry,
     started.generation_phase = YVEX_CLIENT_PHASE_TOKENIZING;
     started.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
     started.request_number = request->request_number;
+    started.initial_position = session->committed_count;
+    started.requested_maximum_new_tokens = turn_requested_maximum(request);
+    started.resolved_maximum_new_tokens = turn_resolved_maximum(
+        registry, request, session->committed_count);
+    started.output_limit_explicit =
+        started.requested_maximum_new_tokens != 0u;
     yvex_core_text_copy(started.session_name, sizeof(started.session_name),
                         session->name);
     rc = emit(emit_context, &started, err);

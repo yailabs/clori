@@ -52,7 +52,6 @@ static const char *const component_names[] = {
     "pipeline", "processor", "tokenizer", "text_encoder",
     "transformer", "video_vae", "audio_vae", "latent_controller"
 };
-
 static const yvex_minimax_h3_phase_edge phase_edges[] = {
     {YVEX_MINIMAX_H3_PHASE_PREPARE, YVEX_MINIMAX_H3_PHASE_CONDITION,
      YVEX_MINIMAX_H3_DATA_TOKEN_IDS | YVEX_MINIMAX_H3_DATA_MEDIA_GRID,
@@ -71,7 +70,6 @@ static const yvex_minimax_h3_phase_edge phase_edges[] = {
     {YVEX_MINIMAX_H3_PHASE_AUDIO_DECODE, YVEX_MINIMAX_H3_PHASE_MEDIA_PUBLISH,
      YVEX_MINIMAX_H3_DATA_STEREO_SAMPLES, YVEX_MINIMAX_H3_LIFETIME_OUTPUT_TRANSACTION}
 };
-
 static const char *const role_names[] = {
     "invalid", "text-embedding", "text-output-head", "text-attention-q",
     "text-attention-k", "text-attention-v", "text-attention-out", "text-qk-norm",
@@ -89,7 +87,6 @@ static const char *const role_names[] = {
     "audio-pre-attention", "audio-pre-norm", "audio-pre-mlp", "audio-decoder-conv",
     "audio-filter", "audio-activation", "audio-output"
 };
-
 static const char *const failure_names[] = {
     "none", "invalid-argument", "source-acquisition", "source-inventory",
     "source-identity", "component-coverage", "component-cycle", "phase-order",
@@ -99,23 +96,19 @@ static const char *const failure_names[] = {
 static const yvex_minimax_h3_tokenizer_spec tokenizer_spec = {
     "FL2VA/tokenizer/tokenizer.json", "FL2VA/tokenizer/tokenizer_config.json",
     "qwen2", "verbatim-no-special-v1", 151669ull};
-
 static const char *family_component_name(yvex_minimax_h3_component_id component)
 {
     return (unsigned int)component < YVEX_MINIMAX_H3_COMPONENT_COUNT
                ? component_names[component] : "unknown";
 }
-
 static const char *family_role_name(yvex_minimax_h3_role role)
 {
     return (unsigned int)role < YVEX_MINIMAX_H3_ROLE_COUNT
                ? role_names[role] : "unknown";
 }
-
 static const char *family_failure_name(yvex_minimax_h3_failure_code code)
 {
     size_t count = sizeof(failure_names) / sizeof(failure_names[0]);
-
     return (unsigned int)code < count ? failure_names[code] : "unknown";
 }
 
@@ -1989,7 +1982,6 @@ static yvex_source_payload_session *minimax_handoff_session(
 {
     return handoff ? handoff->session : NULL;
 }
-
 static const yvex_source_payload_plan *minimax_handoff_plan(
     const yvex_minimax_h3_handoff *handoff)
 {

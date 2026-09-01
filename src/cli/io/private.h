@@ -137,17 +137,16 @@ typedef enum {
     YVEX_CLI_STREAM_STYLE_ACCENT,
     YVEX_CLI_STREAM_STYLE_STRONG
 } yvex_cli_stream_style;
+#define YVEX_CLI_STREAM_LINE_CAP 16384u
 typedef struct {
     FILE *output;
     yvex_cli_terminal_style style;
     yvex_client_stream_channel channel;
-    yvex_cli_stream_style active_style, line_style;
-    unsigned char utf8[4];
-    unsigned int utf8_count, utf8_expected, backtick_count;
-    char fence_language[32];
-    unsigned int fence_language_count;
-    int enhanced, line_start, in_fence, in_inline_code;
-    int collecting_language, closing_fence, pending_cr;
+    yvex_cli_stream_style active_style;
+    unsigned char line[YVEX_CLI_STREAM_LINE_CAP];
+    size_t line_count;
+    unsigned int column, prose_width;
+    int enhanced, in_fence, pending_cr, channel_announced;
     int wrote_bytes, last_newline;
 } yvex_cli_stream_renderer;
 typedef struct {
@@ -578,6 +577,8 @@ int yvex_cli_stream_renderer_finish(yvex_cli_stream_renderer *renderer,
 const char *yvex_cli_out_stop_reason(unsigned long long reason);
 void yvex_cli_out_turn_metrics(
     FILE *, const yvex_client_message *, unsigned long long,
+    const yvex_cli_terminal_style *);
+void yvex_cli_out_turn_complete(FILE *, const yvex_client_message *, unsigned long long,
     const yvex_cli_terminal_style *);
 int yvex_cli_out_server_event(const yvex_server_event *event, int detailed);
 void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer, int detailed);

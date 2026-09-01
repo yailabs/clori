@@ -158,7 +158,7 @@ host.
 
 ## Protocol planes
 
-Native commands and chat use private local protocol v16 over a UID-owned Unix
+Native commands and chat use private local protocol v17 over a UID-owned Unix
 socket. That protocol carries YVEX engine generations, sessions, KV identity,
 lifecycle, typed progress, cancellation, resource facts, and telemetry.
 
@@ -180,6 +180,11 @@ Default help projects only the product map. `help --advanced` exposes admitted
 advanced and engineering leaves. `help --json` is a stable structured
 projection with exact operation and command identities. Human and machine
 renderers consume the same typed result and machine output contains no ANSI.
+Registry-generated shell completion applies the same projection at an empty
+top-level position: only `chat`, `help`, `host`, `inspect`, `model`, `serve`,
+and `version` are suggested. Advanced roots remain executable and regain their
+full registry-driven subcommand completion after the user explicitly types the
+root.
 
 ## Output and errors
 

@@ -129,6 +129,7 @@ src/cli/input/operator.c	cli.input	cli.input.operator	generic	private	reusable-a
 src/cli/input/private.h	cli.input	cli.input.private	generic	private	private-interface	cli.commands	interface	none
 src/cli/input/source.c	cli.input	cli.input.source	generic	private	reusable-algorithm	cli.commands	implementation	none
 src/cli/io/out.c	cli.io	cli.io.out	generic	private	reusable-algorithm	cli,render	implementation	none
+src/cli/io/stream.c	cli.io	cli.io.stream	generic	private	reusable-algorithm	cli.io.out,client	implementation	none
 src/cli/io/private.h	cli.io	cli.io.private	generic	private	private-interface	cli,render	interface	none
 src/cli/main.c	client	client.yvex	entrypoint	private	entrypoint	operator	entrypoint	none
 src/cli/io/client.c	client	client.runtime_lane	generic	private	protocol-client	client.yvex	implementation	none
@@ -296,6 +297,7 @@ src/server/openai/render.c	server.openai	server.openai.render	generic	private	re
 src/server/openai/state.c	server.openai	server.openai.state	generic	private	resource-lifecycle	server.openai.lifecycle	implementation	none
 src/server/private.h	server	server.shared	generic	private	private-interface	server.core,server.protocol,server.local_transport,server.session,server.session_lifecycle,server.request_queue,server.media,server.telemetry,server.openai.lifecycle	interface	none
 src/server/protocol.c	server	server.protocol	generic	private	public-protocol	client,daemon	implementation	none
+src/server/protocol_validate.c	server	server.protocol_validation	generic	private	public-protocol	server.protocol	implementation	none
 src/server/request_queue.c	server	server.request_queue	generic	private	resource-lifecycle	server.core,server.session	implementation	none
 src/server/transport.c	server	server.local_transport	generic	private	resource-lifecycle	client,daemon	implementation	none
 src/server/media.c	server	server.media	generic	private	resource-lifecycle	server.core,runtime.media	implementation	none

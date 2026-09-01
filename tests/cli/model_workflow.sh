@@ -57,6 +57,8 @@ grep -F -- '--quant NAME' "$ROOT/help-pull.out" | grep -F -- \
     'requires --prepare' >/dev/null
 grep -F -- '--reference' "$ROOT/help-pull.out" | grep -F -- \
     'conflicts --managed, --resume' >/dev/null
+grep -F -- '--verbose' "$ROOT/help-pull.out" | grep -F -- \
+    'conflicts --json' >/dev/null
 
 expect_rc()
 {
@@ -278,6 +280,8 @@ YVEX_FAKE_HF_DISCOVERY_MODE=tiny \
 contains "$ROOT/remote-show.out" 'repository  community/unknown-model'
 contains "$ROOT/remote-show.out" 'family      unknown'
 contains "$ROOT/remote-show.out" 'REPRESENTATIONS'
+contains "$ROOT/remote-show.out" 'use --json for exact paths'
+! grep -F -- 'use --audit' "$ROOT/remote-show.out" >/dev/null
 YVEX_FAKE_HF_DISCOVERY_MODE=tiny \
     "$YVEX_BIN" model pull hf://community/unknown-model --reference \
     --format gguf --models-root "$MODELS_ROOT" --json \
@@ -387,6 +391,7 @@ YVEX_FAKE_HF_RESOLVED_SHA=62af8fffb2f7030cac4de2f0169f5b8d1101b646 \
 contains "$ROOT/deepseek-pull-dry-run.out" 'status: model-download-dry-run'
 contains "$ROOT/deepseek-pull-dry-run.out" 'model-download: plan target=dry-run-dspark'
 contains "$ROOT/deepseek-pull-dry-run.out" 'stage: download planned (dry-run)'
+! grep 'fake-hf: dry-run' "$ROOT/deepseek-pull-dry-run.out" >/dev/null
 ! grep 'model-download: start' "$ROOT/deepseek-pull-dry-run.out" >/dev/null
 ! grep 'stage: download running' "$ROOT/deepseek-pull-dry-run.out" >/dev/null
 ! grep 'tick: elapsed=' "$ROOT/deepseek-pull-dry-run.out" >/dev/null
@@ -395,6 +400,13 @@ test ! -e "$MODELS_ROOT/reports/deepseek/dry-run-dspark.download.receipt"
 test ! -e "$MODELS_ROOT/reports/deepseek/dry-run-dspark.download.active.json"
 test ! -e "$MODELS_ROOT/logs/dry-run-dspark.download.stdout.log"
 test ! -e "$MODELS_ROOT/logs/dry-run-dspark.download.stderr.log"
+YVEX_FAKE_HF_AUTH=1 \
+YVEX_FAKE_HF_RESOLVED_SHA=62af8fffb2f7030cac4de2f0169f5b8d1101b646 \
+    "$YVEX_BIN" model pull hf://deepseek-ai/DeepSeek-V4-Flash-DSpark \
+    --format safetensors --name dry-run-dspark --family deepseek \
+    --models-root "$MODELS_ROOT" --dry-run --verbose \
+    >"$ROOT/deepseek-pull-dry-run-verbose.out"
+contains "$ROOT/deepseek-pull-dry-run-verbose.out" 'fake-hf: dry-run'
 YVEX_FAKE_HF_AUTH=1 \
 YVEX_FAKE_HF_RESOLVED_SHA=62af8fffb2f7030cac4de2f0169f5b8d1101b646 \
     "$YVEX_BIN" model pull hf://deepseek-ai/DeepSeek-V4-Flash-DSpark \

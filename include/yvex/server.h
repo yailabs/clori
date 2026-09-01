@@ -10,7 +10,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 16u
+#define YVEX_LOCAL_PROTOCOL_VERSION 17u
 #define YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1 1u
 #define YVEX_CLIENT_MEDIA_CONDITION_CAP 2u
 #define YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1 1u
@@ -32,7 +32,8 @@ extern "C" {
 #define YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 1u
 #define YVEX_RUNTIME_EVENT_SCHEMA_V3 3u
 #define YVEX_RUNTIME_EVENT_SCHEMA_V4 4u
-#define YVEX_RUNTIME_EVENT_SCHEMA_VERSION YVEX_RUNTIME_EVENT_SCHEMA_V4
+#define YVEX_RUNTIME_EVENT_SCHEMA_V5 5u
+#define YVEX_RUNTIME_EVENT_SCHEMA_VERSION YVEX_RUNTIME_EVENT_SCHEMA_V5
 #define YVEX_RUNTIME_METRICS_SCHEMA_VERSION 3u
 #define YVEX_SERVER_SESSION_NAME_CAP 64u
 #define YVEX_SERVER_ID_CAP 65u
@@ -136,7 +137,13 @@ typedef enum {
     YVEX_SERVER_EVENT_CLIENT_DISCONNECTED,
     YVEX_SERVER_EVENT_TELEMETRY_DROPPED,
     YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_START,
-    YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE
+    YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE,
+    YVEX_SERVER_EVENT_ENGINE_LOAD_REQUESTED,
+    YVEX_SERVER_EVENT_ENGINE_READY,
+    YVEX_SERVER_EVENT_ENGINE_LOAD_FAILED,
+    YVEX_SERVER_EVENT_ENGINE_UNLOAD_STARTED,
+    YVEX_SERVER_EVENT_ENGINE_UNLOADED,
+    YVEX_SERVER_EVENT_ENGINE_UNLOAD_FAILED
 } yvex_server_event_kind;
 typedef enum {
     YVEX_SERVER_SEVERITY_DEBUG = 0,
@@ -479,7 +486,8 @@ typedef struct {
     unsigned long long prompt_tokens, reused_tokens, prefill_tokens;
     unsigned long long generated_tokens, final_position, turn_count;
     unsigned long long reasoning_tokens, final_tokens;
-    unsigned long long context_used, kv_used_bytes;
+    unsigned long long context_used, kv_used_bytes, initial_position;
+    unsigned long long requested_maximum_new_tokens, resolved_maximum_new_tokens;
     yvex_server_engine_kind engine_kind;
     yvex_server_execution_strategy execution_strategy;
     unsigned long long draft_cycle_count, draft_forward_count;
@@ -503,7 +511,7 @@ typedef struct {
     yvex_client_generation_phase generation_phase;
     yvex_client_cancellation_class cancellation_class;
     yvex_client_stream_channel stream_channel;
-    int kv_used_available, publication_timing_available;
+    int kv_used_available, publication_timing_available, output_limit_explicit;
     yvex_server_session_state session_state;
     char session_identity[YVEX_SHA256_HEX_CAP];
     char turn_identity[YVEX_SHA256_HEX_CAP];

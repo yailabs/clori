@@ -40,7 +40,7 @@ RECORDS = {
         "include/yvex/quant.h", "YVEX_QUANT_POLICY_SCHEMA_VERSION", 2, 144,
         "8008bea6ecfd46feccef371a6425a8681ce3e9659d47a7806a2486bea192f455"),
     "yvex_server_event": (
-        "include/yvex/server.h", "YVEX_RUNTIME_EVENT_SCHEMA_VERSION", 4, 904,
+        "include/yvex/server.h", "YVEX_RUNTIME_EVENT_SCHEMA_VERSION", 5, 904,
         "a9cec914e39a2d7ab4ccbee797b6592b25f1432e46c8f7a27fdff6bc3907aaf3"),
     "yvex_server_metrics": (
         "include/yvex/server.h", "YVEX_RUNTIME_METRICS_SCHEMA_VERSION", 3, 216,
@@ -76,11 +76,11 @@ RECORDS = {
         "include/yvex/server.h", "YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1", 1, 524,
         "15b251a93051e0f0cf0c70e1a14c2cdcb019b54d7e27851b6c36b02bcac9802b"),
     "yvex_client_request": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 16, 2024,
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 17, 2024,
         "eda70b9000088f58c57b639c0eb14a15d4893bf1c128d2b7f5f477b20a0a8c84"),
     "yvex_client_message": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 16, 10256,
-        "7427bba88c63a0443c240058c0117c2e6f2169fce79854305a3b4b372408759c"),
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 17, 10280,
+        "4a7747aa931f4404e186cb903bd7f49691f02b595d4653273a6501e68ac18872"),
     "yvex_tokenizer_plan_summary": (
         "include/yvex/tokenizer.h", "YVEX_TOKENIZER_PLAN_SCHEMA_CURRENT", 4, 864,
         "cca1ce6ec52182dcee89615b486db711590c2bcdb05a94117deecda5f695beb4"),
@@ -162,6 +162,7 @@ def compiler_source() -> str:
         'ABI_ASSERT(YVEX_SERVER_ENGINE_SCHEMA_V2 == 2u, "engine v2 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V3 == 3u, "legacy event v3 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V4 == 4u, "event v4 identity changed");',
+        'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V5 == 5u, "event v5 identity changed");',
         'ABI_ASSERT(YVEX_TOKENIZER_PLAN_SCHEMA_V3 == 3u, '
         '"legacy tokenizer plan v3 identity changed");',
         'ABI_ASSERT(YVEX_TOKENIZER_PLAN_SCHEMA_V4 == 4u, '
@@ -171,7 +172,7 @@ def compiler_source() -> str:
         '"prompt conversation value changed");',
         'ABI_ASSERT(YVEX_TOKENIZER_PROMPT_VERBATIM == 2, '
         '"prompt verbatim value changed");',
-        'ABI_ASSERT(YVEX_LOCAL_PROTOCOL_VERSION == 16u, "local protocol identity changed");',
+        'ABI_ASSERT(YVEX_LOCAL_PROTOCOL_VERSION == 17u, "local protocol identity changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_NONE == 0, "engine-kind none value changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_TEXT == 1, "engine-kind text value changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_MEDIA == 2, "engine-kind media value changed");',

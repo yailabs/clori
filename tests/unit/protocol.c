@@ -521,6 +521,26 @@ static int test_message_roundtrip(void)
         "typed state checkpoint evidence roundtrip");
     memset(&source, 0, sizeof(source));
     source.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    source.kind = YVEX_CLIENT_MESSAGE_TURN_STARTED;
+    source.status = YVEX_OK;
+    source.generation_phase = YVEX_CLIENT_PHASE_TOKENIZING;
+    source.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
+    source.initial_position = 41u;
+    source.requested_maximum_new_tokens = 17u;
+    source.resolved_maximum_new_tokens = 9u;
+    source.output_limit_explicit = 1;
+    rc = yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                      &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "turn envelope message encode");
+    rc = yvex_protocol_message_decode(frame, count, &decoded, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && decoded.initial_position == 41u &&
+            decoded.requested_maximum_new_tokens == 17u &&
+            decoded.resolved_maximum_new_tokens == 9u &&
+            decoded.output_limit_explicit,
+        "turn envelope ownership roundtrip");
+    memset(&source, 0, sizeof(source));
+    source.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     source.kind = YVEX_CLIENT_MESSAGE_ERROR;
     source.status = YVEX_ERR_BOUNDS;
     source.failure_class = YVEX_CLIENT_FAILURE_QUEUE_FULL;
@@ -754,7 +774,7 @@ typedef struct {
 static void *stale_peer_main(void *opaque)
 {
     static const unsigned char response[12] = {
-        'Y', 'V', 'X', 'P', 0u, 14u, 0u, 2u, 0u, 0u, 0u, 0u};
+        'Y', 'V', 'X', 'P', 0u, 16u, 0u, 2u, 0u, 0u, 0u, 0u};
     stale_peer *peer = opaque;
     unsigned char header[12], discard[4096];
     unsigned int length;
@@ -803,8 +823,8 @@ static int test_stale_frame_refusal(void)
                      "stale peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 16") != NULL,
-                     "immediately prior v15 frame explicitly refuses");
+                         strstr(yvex_error_message(&err), "version 17") != NULL,
+                     "immediately prior v16 frame explicitly refuses");
     YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "stale peer join");
     (void)close(peer.listener);
     (void)unlink(path);

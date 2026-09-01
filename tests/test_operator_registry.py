@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -407,6 +408,14 @@ def test_completion() -> None:
                 "server status" not in first.stdout and "yvex run" not in first.stdout,
                 f"{shell} completion is not context aware")
         outputs[shell] = first.stdout
+    root_case = next(line for line in outputs["bash"].splitlines()
+                     if line.lstrip().startswith("'') candidates='"))
+    match = re.search(r"candidates='([^']*)'", root_case)
+    require(match is not None, "missing Bash root completion candidates")
+    root_candidates = set(match.group(1).split())
+    require(root_candidates == {"chat", "help", "host", "inspect", "model",
+                                "serve", "version"},
+            f"top-level completion leaks plumbing: {sorted(root_candidates)}")
     with tempfile.TemporaryDirectory(prefix="yvex-completion-") as temporary:
         root = pathlib.Path(temporary)
         bash = root / "yvex.bash"

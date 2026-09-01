@@ -426,6 +426,21 @@ static void summary_base(server_engine *engine)
     assert(yvex_server_engine_summary_valid(&engine->summary));
 }
 
+static void engine_lifecycle_event(
+    server_engine_manager *manager, const yvex_server_engine_summary *summary,
+    yvex_server_event_kind kind, yvex_server_event_severity severity,
+    unsigned long long status)
+{
+    server_event_scope scope;
+    yvex_error ignored;
+    server_event_scope_from_engine(&scope, summary);
+    yvex_error_clear(&ignored);
+    (void)yvex_server_telemetry_emit(
+        manager->telemetry, &scope, kind, severity, NULL, NULL, NULL,
+        summary->target_id, summary->generation, status, summary->backend,
+        0.0, 0.0, &ignored);
+}
+
 static int summary_resources(server_engine *engine, yvex_error *err)
 {
     unsigned long long session_host = 0ull, session_device = 0ull;
@@ -603,6 +618,9 @@ int yvex_server_engine_manager_load(
     *slot = candidate;
     options_rebind(slot);
     (void)pthread_mutex_unlock(&manager->mutex);
+    engine_lifecycle_event(manager, &candidate.summary,
+                           YVEX_SERVER_EVENT_ENGINE_LOAD_REQUESTED,
+                           YVEX_SERVER_SEVERITY_INFO, candidate.state);
     candidate.active_work = 0ull;
     rc = engine_request_queue_open(manager, &candidate, err);
     if (rc == YVEX_OK)
@@ -624,16 +642,14 @@ int yvex_server_engine_manager_load(
     *summary = published;
     (void)pthread_cond_broadcast(&manager->condition);
     (void)pthread_mutex_unlock(&manager->mutex);
-    if (rc == YVEX_OK) {
-        server_event_scope event_scope;
-        server_event_scope_from_engine(&event_scope, &published);
-        (void)yvex_server_telemetry_emit(
-            manager->telemetry, &event_scope, YVEX_SERVER_EVENT_RUNTIME_READY,
-            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, published.alias,
-            published.generation, published.execution_strategy,
-            published.backend, 0.0, 0.0, err);
-        yvex_error_clear(err);
-    }
+    engine_lifecycle_event(
+        manager, &published,
+        rc == YVEX_OK ? YVEX_SERVER_EVENT_ENGINE_READY
+                      : YVEX_SERVER_EVENT_ENGINE_LOAD_FAILED,
+        rc == YVEX_OK ? YVEX_SERVER_SEVERITY_INFO
+                      : YVEX_SERVER_SEVERITY_ERROR,
+        rc == YVEX_OK ? published.state : (unsigned long long)rc);
+    if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
 
@@ -735,6 +751,9 @@ int yvex_server_engine_manager_unload(
     }
     engine->state = YVEX_SERVER_ENGINE_DRAINING;
     summary_base(engine);
+    engine_lifecycle_event(manager, &engine->summary,
+                           YVEX_SERVER_EVENT_ENGINE_UNLOAD_STARTED,
+                           YVEX_SERVER_SEVERITY_INFO, engine->state);
     engine_cancel(engine);
     while (engine->active_work)
         (void)pthread_cond_wait(&manager->condition, &manager->mutex);
@@ -749,6 +768,13 @@ int yvex_server_engine_manager_unload(
     *summary = engine->summary;
     (void)pthread_cond_broadcast(&manager->condition);
     (void)pthread_mutex_unlock(&manager->mutex);
+    engine_lifecycle_event(
+        manager, summary,
+        rc == YVEX_OK ? YVEX_SERVER_EVENT_ENGINE_UNLOADED
+                      : YVEX_SERVER_EVENT_ENGINE_UNLOAD_FAILED,
+        rc == YVEX_OK ? YVEX_SERVER_SEVERITY_INFO
+                      : YVEX_SERVER_SEVERITY_ERROR,
+        rc == YVEX_OK ? summary->state : (unsigned long long)rc);
     return rc;
 }
 

@@ -200,7 +200,7 @@ contains "$OUT_DIR/host.out" 'native verified inference · YVEX'
 contains "$OUT_DIR/host.out" 'engines 0/2'
 contains "$OUT_DIR/host.out" 'host ready · Ctrl-C to stop'
 contains "$OUT_DIR/status.json" '"schema":"yvex.host.status.v1"'
-contains "$OUT_DIR/status.json" '"protocol":16'
+contains "$OUT_DIR/status.json" '"protocol":17'
 contains "$OUT_DIR/status.json" '"status":2'
 contains "$OUT_DIR/status.json" '"host_ready":true'
 contains "$OUT_DIR/status.json" '"engine_count":0'
@@ -275,8 +275,11 @@ contains "$OUT_DIR/status-after-probe.json" '"host_ready":true'
 # intent is explicit, format-independent, and exits cleanly on host shutdown.
 run_client host logs >"$OUT_DIR/logs-snapshot.out"
 run_client host logs --json >"$OUT_DIR/logs-snapshot.jsonl"
-contains "$OUT_DIR/logs-snapshot.out" 'host logs · retained operational history'
+contains "$OUT_DIR/logs-snapshot.out" 'host logs · recent retained history'
+not_contains "$OUT_DIR/logs-snapshot.out" 'HOST'
+not_contains "$OUT_DIR/logs-snapshot.out" 'ENDPOINTS'
 contains "$OUT_DIR/logs-snapshot.jsonl" '"kind":"runtime.ready"'
+contains "$OUT_DIR/logs-snapshot.jsonl" '"kind":"engine.load.failed"'
 run_client host logs --json --follow >"$OUT_DIR/logs-follow.jsonl" &
 logs_pid=$!
 ready=0
@@ -331,8 +334,12 @@ run_client host stop >/dev/null
 wait "$server_pid"
 server_pid=
 contains "$OUT_DIR/server-terminal.typescript" 'YVEX HOST · VERIFIED INFERENCE'
+contains "$OUT_DIR/server-terminal.typescript" '✦'
+contains "$OUT_DIR/server-terminal.typescript" '⠘⠃'
 contains "$OUT_DIR/server-terminal.typescript" 'STATE      ● STARTING'
 contains "$OUT_DIR/server-terminal.typescript" 'LOCAL IPC'
+contains "$OUT_DIR/server-terminal.typescript" 'LOAD      deepseek4-v4-flash-dspark · generation 1'
+contains "$OUT_DIR/server-terminal.typescript" 'FAILED    deepseek4-v4-flash-dspark · generation 1'
 contains "$OUT_DIR/server-terminal.typescript" 'LOGS       human events · foreground'
 contains "$OUT_DIR/server-terminal.typescript" 'host ready · Ctrl-C to stop'
 not_contains "$OUT_DIR/server-terminal.typescript" 'CONTROL'
@@ -341,6 +348,35 @@ not_contains "$OUT_DIR/server-terminal.typescript" 'type help'
 not_contains "$OUT_DIR/server-terminal.typescript" 'Interactive host console'
 not_contains "$OUT_DIR/server-terminal.typescript" 'yvex[host] >'
 not_contains "$OUT_DIR/server-terminal.typescript" 'yvex[multi-engine] >'
+test ! -e "$SOCKET_PATH"
+
+# Narrow terminals use a separate static reduction of the same canonical mark:
+# long angular wings, central core, lower facets, and body all remain visible.
+HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 TERM=xterm-256color \
+    script -q -f -e -c \
+        "stty cols 80 rows 30; $YVEX_BIN serve --openai off" \
+        "$OUT_DIR/server-compact.typescript" </dev/null \
+        >"$OUT_DIR/server-compact.out" 2>"$OUT_DIR/server-compact.err" &
+server_pid=$!
+ready=0
+attempt=0
+while test "$attempt" -lt 100; do
+    if run_client host status --json >"$OUT_DIR/compact-status.json" 2>/dev/null; then
+        ready=1
+        break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || break
+    attempt=$((attempt + 1))
+    sleep 0.02
+done
+test "$ready" -eq 1 || fail 'compact terminal host did not become ready'
+run_client host stop >/dev/null
+wait "$server_pid"
+server_pid=
+contains "$OUT_DIR/server-compact.typescript" '╲──────◣'
+contains "$OUT_DIR/server-compact.typescript" '◢█│█◣'
+contains "$OUT_DIR/server-compact.typescript" 'Y V E X'
+not_contains "$OUT_DIR/server-compact.typescript" 'Interactive host console'
 test ! -e "$SOCKET_PATH"
 
 printf 'cli persistent server lifecycle: ok\n'

@@ -118,7 +118,13 @@ prompt in the linear REPL. If exactly one text model is loaded it is selected
 automatically. With several loaded text models, a terminal shows a model
 selector; automation uses `./yvex chat --model MODEL`. Programmatic inference
 uses an admitted provider/protocol surface rather than a second one-shot CLI
-generation command.
+generation command. The prompt shows the product model name, while the startup
+summary retains the exact variant/backend facts. Typed reasoning is rendered as
+muted secondary text and the final channel begins at an explicit `answer`
+boundary; a bounded Markdown projection and 112-column prose measure change
+presentation only. Omitting `--max-new-tokens` leaves completion-envelope
+selection to the host, while an explicit value remains a hard user bound and
+the terminal summary names the resulting stop reason.
 
 Unload the model without stopping the host, or stop the host separately:
 
@@ -145,7 +151,7 @@ session, observation, memory, and recovery procedures.
 | `yvex` | Persistent host, native/OpenAI clients, REPL, model lifecycle controls, and bounded offline compilation/inspection/execution operations |
 | `libyvex` | Reusable source, compilation, package, engine, runtime, graph, backend, tokenizer, generation, and media implementation |
 
-Runtime-facing native clients cross private local protocol v16. The `serve`
+Runtime-facing native clients cross private local protocol v17. The `serve`
 entrypoint owns host lifetime in the same executable; engine commands own
 loaded-generation lifecycle through that protocol, and client handlers do not
 open weights or initialize CUDA. Finite offline operations close their engine

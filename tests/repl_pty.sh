@@ -4,6 +4,7 @@ set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
 YVEX_TEST_HOST=${YVEX_TEST_HOST:-build/tests/openai_host}
+YVEX_TEST_PTY_WAIT_ATTEMPTS=${YVEX_TEST_PTY_WAIT_ATTEMPTS:-2000}
 . tests/support/cleanup.sh
 
 case "$YVEX_BIN" in
@@ -53,7 +54,7 @@ wait_for()
     file=$1
     needle=$2
     attempt=0
-    while test "$attempt" -lt 400; do
+    while test "$attempt" -lt "$YVEX_TEST_PTY_WAIT_ATTEMPTS"; do
         test -f "$file" && grep -F "$needle" "$file" >/dev/null 2>&1 && return 0
         attempt=$((attempt + 1))
         sleep 0.01
@@ -68,7 +69,7 @@ wait_count()
     needle=$2
     minimum=$3
     attempt=0
-    while test "$attempt" -lt 400; do
+    while test "$attempt" -lt "$YVEX_TEST_PTY_WAIT_ATTEMPTS"; do
         count=$(grep -F -c "$needle" "$file" 2>/dev/null || true)
         test "$count" -ge "$minimum" && return 0
         attempt=$((attempt + 1))
@@ -83,7 +84,8 @@ start_host()
     "$YVEX_TEST_HOST" "$socket" 2>>"$root/host.err" &
     host_pid=$!
     attempt=0
-    while test "$attempt" -lt 400 && test ! -S "$socket"; do
+    while test "$attempt" -lt "$YVEX_TEST_PTY_WAIT_ATTEMPTS" &&
+        test ! -S "$socket"; do
         kill -0 "$host_pid"
         attempt=$((attempt + 1))
         sleep 0.01
@@ -98,7 +100,8 @@ stop_host()
     wait "$host_pid"
     host_pid=
     attempt=0
-    while test "$attempt" -lt 400 && test -e "$socket"; do
+    while test "$attempt" -lt "$YVEX_TEST_PTY_WAIT_ATTEMPTS" &&
+        test -e "$socket"; do
         attempt=$((attempt + 1))
         sleep 0.01
     done
@@ -142,7 +145,7 @@ start_console()
     exec 3>"$fifo"
     wait_for "$transcript" 'deepseek4-v4-flash-dspark>'
     attempt=0
-    while test "$attempt" -lt 400; do
+    while test "$attempt" -lt "$YVEX_TEST_PTY_WAIT_ATTEMPTS"; do
         client_pid=$(find_console_client || true)
         test -n "$client_pid" && return 0
         attempt=$((attempt + 1))
@@ -216,14 +219,78 @@ start_host
 start_console explicit 24 100 'chat --session linear' nocolor
 printf 'hello\r' >&3
 wait_for "$root/explicit.typescript" 'hello from yvex'
+wait_for "$root/explicit.typescript" 'output adaptive · envelope 256'
+wait_for "$root/explicit.typescript" 'stop EOS'
 printf '/quit\r' >&3
 finish_console
 assert_linear_terminal "$root/explicit.typescript"
+
+# Omitted completion length stays adaptive/server-owned; an explicit limit is
+# carried separately and its terminal stop is distinguishable from EOS.
+start_console envelope 24 100 'chat --session envelope --max-new-tokens 3' nocolor
+printf 'explicit envelope\r' >&3
+wait_for "$root/envelope.typescript" 'output explicit 3 · envelope 3'
+wait_for "$root/envelope.typescript" 'stop maximum tokens'
+printf '/quit\r' >&3
+finish_console
+assert_linear_terminal "$root/envelope.typescript"
+
+# Typed channels, fragmented UTF-8 and the bounded Markdown projection remain
+# line-oriented. Reasoning stays secondary and the final transition is explicit.
+start_console rendering 24 100 'chat --session rendering' nocolor
+printf 'MARKDOWN_STREAM\r' >&3
+wait_for "$root/rendering.typescript" 'deterministic transcript identity.'
+grep -F 'answer' "$root/rendering.typescript" >/dev/null
+grep -F 'CUDA' "$root/rendering.typescript" >/dev/null
+grep -F 'code · cuda' "$root/rendering.typescript" >/dev/null
+grep -F '  // 🌍' "$root/rendering.typescript" >/dev/null
+grep -F 'Use int safely.' "$root/rendering.typescript" >/dev/null
+grep -F 'ESC: \x1b[31mnot-control' "$root/rendering.typescript" >/dev/null
+grep -F 'A readable paragraph stays within the terminal prose measure' \
+    "$root/rendering.typescript" >/dev/null
+grep -F 'protocol consumers and deterministic transcript identity.' \
+    "$root/rendering.typescript" >/dev/null
+! grep -F '# CUDA' "$root/rendering.typescript" >/dev/null
+! grep -F '```cuda' "$root/rendering.typescript" >/dev/null
+printf 'REASONING_STREAM\r' >&3
+wait_for "$root/rendering.typescript" 'The valid result is 42.'
+grep -F 'reasoning' "$root/rendering.typescript" >/dev/null
+grep -F '│ Plan' "$root/rendering.typescript" >/dev/null
+grep -F '│ • Compare constraints carefully.' "$root/rendering.typescript" >/dev/null
+grep -F 'answer' "$root/rendering.typescript" >/dev/null
+grep -F 'Result' "$root/rendering.typescript" >/dev/null
+printf '/quit\r' >&3
+finish_console
+assert_linear_terminal "$root/rendering.typescript"
+
+# During an active response the terminal has one output owner. Editing bytes are
+# neither echoed into model output nor carried into the following prompt.
+start_console async 24 100 'chat --session async' nocolor
+printf 'WAIT_ASYNC_KEYS\r' >&3
+wait_for "$root/async.typescript" 'processing 4 input tokens · 4/4'
+cycle=0
+while test "$cycle" -lt 3; do
+    printf '\033[A\033[B\033[C\033[D\033[H\033[F\033[3~async-keys-🌍\177\014' >&3
+    kill -WINCH "$client_pid"
+    cycle=$((cycle + 1))
+done
+wait_for "$root/async.typescript" 'hello from yvex'
+! grep -F 'async-keys-🌍' "$root/async.typescript" >/dev/null
+for suffix in '[A' '[B' '[C' '[D' '[H' '[F' '[3~'; do
+    ! grep -F "$(printf '\033%s' "$suffix")" "$root/async.typescript" >/dev/null
+done
+printf 'after async\r' >&3
+wait_count "$root/async.typescript" 'hello from yvex' 2
+! grep -F 'INPUT_CONTAMINATED' "$root/async.typescript" >/dev/null
+printf '/quit\r' >&3
+finish_console
+assert_linear_terminal "$root/async.typescript"
 
 # Exercise completion, UTF-8 editing, paste, history, and resize in the one public REPL.
 start_console bare 32 150 'chat' color
 printf '/sta\t\r' >&3
 wait_for "$root/bare.typescript" '/status'
+wait_count "$root/bare.typescript" "$(printf '\033[?2004h')" 2
 printf '\033[200~hello\nworld 🌍\033[201~\r' >&3
 wait_count "$root/bare.typescript" 'hello from yvex' 1
 printf '\033[A\r' >&3

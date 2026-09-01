@@ -1,8 +1,8 @@
-# Local Protocol v16
+# Local Protocol v17
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 16`.
+Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 17`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -17,18 +17,18 @@ Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 16 and exchanges bounded typed frames.
+Every connection negotiates version 17 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
 malformed fields refuse without entering the server scheduler.
 
-Every earlier version, including v15, is refused explicitly. There is no private
+Every earlier version, including v16, is refused explicitly. There is no private
 pre-v0.1 compatibility decoder. Unknown operations and response kinds fail
 closed.
 
 ## Operations
 
-Protocol v16 carries host status/stop, engine load/list/unload, model and memory
+Protocol v17 carries host status/stop, engine load/list/unload, model and memory
 facts for each engine generation, text or media engine kind, target-only or
 speculative text execution strategy,
 session lifecycle, bounded copy-on-write session fork, generation turns and
@@ -73,6 +73,13 @@ per-chunk progress, and completion facts let the console update one truthful
 line without timing the asynchronous request locally. Provider/OpenAI requests
 retain their provider stream contract and do not receive these native console
 messages.
+
+The shared event stream also carries low-frequency rolling decode progress with
+committed count, sequence position, elapsed/rate, reasoning count and optional
+cumulative speculative economics. Normal cadence is bounded to one second or
+64 newly committed tokens, whichever first makes progress observable. Token
+fragments remain available only at token/full trace levels and are never the
+operational progress authority.
 
 Native media turns carry server-authored request, conditioning, latent,
 decoder, publication, completion, cancellation, and failure progress. These
@@ -147,7 +154,12 @@ token counts; prefill time/rate; TTFT; generated-token count; generation/decode
 time/rate; reasoning and final token counts and rates; time to first reasoning
 and final token; total completion time/rate; inter-token facts where available;
 final position; stop or cancellation class; usage; state/turn identity; and
-publication timing where owned. A speculative result additionally carries draft cycles and forwards,
+publication timing where owned. Version 17 additionally carries the initial
+position, whether the client explicitly requested an output bound, that exact
+request when present, and the runtime-resolved maximum completion envelope.
+An omitted native or provider limit remains zero on input and is resolved by
+the server from the engine bound and remaining context; it is not replaced by a
+CLI default. A speculative result additionally carries draft cycles and forwards,
 proposed and selected-verification tokens, target verifications, accepted,
 rejected and discarded drafts, correction/bonus tokens, maximum and mean
 accepted prefix, confidence facts, separate draft/verification/commit timing,
@@ -205,7 +217,7 @@ format.
 
 ## Non-claims
 
-Protocol v16 is not a public remote API, authentication protocol, TLS transport,
+Protocol v17 is not a public remote API, authentication protocol, TLS transport,
 stable cross-version SDK promise, distributed serving protocol, or model
 quality contract. Versioned checkpoints preserve the admitted model and
 semantic-session state across restart; the in-memory fork does not create a

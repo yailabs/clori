@@ -2,8 +2,11 @@
  * Exercises persistent-host truth, independent engine lifecycle, typed event/JSON projection,
  * privacy defaults, and idempotent graceful close.
  */
+#include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <arpa/inet.h>
 #include <pthread.h>
@@ -496,7 +499,7 @@ static int test_bounded_telemetry_overflow(void)
     yvex_server_metrics metrics;
     yvex_error err;
     unsigned long long cursor = 0u, index;
-    int rc, saw_drop = 0;
+    int rc, saw_drop = 0, saw_terminal = 0;
     rc = yvex_server_telemetry_open(&telemetry, 2u, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "bounded telemetry open");
     for (index = 0u; index < 4u; ++index) {
@@ -507,8 +510,23 @@ static int test_bounded_telemetry_overflow(void)
         YVEX_TEST_ASSERT(rc == YVEX_OK, "bounded telemetry publish");
     }
     rc = yvex_server_telemetry_metrics_copy(telemetry, &metrics, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && metrics.telemetry_dropped > 0u,
-                     "overflow count is explicit");
+    YVEX_TEST_ASSERT(rc == YVEX_OK && metrics.telemetry_dropped == 2u,
+                     "overflow count names exactly the overwritten events");
+    rc = yvex_server_telemetry_emit(
+        telemetry, NULL, YVEX_SERVER_EVENT_GENERATION_COMPLETED,
+        YVEX_SERVER_SEVERITY_INFO, "s", "r", "t", "turn",
+        4u, 9u, YVEX_GENERATION_STOP_EOS, 1.0, 4.0, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "terminal telemetry retained under pressure");
+    for (index = 0u; index < 1024u; ++index) {
+        rc = yvex_server_telemetry_emit(
+            telemetry, NULL, YVEX_SERVER_EVENT_GENERATION_PROGRESS,
+            YVEX_SERVER_SEVERITY_DEBUG, "s", "r", "t", "decode",
+            index + 4u, index + 9u, 0u, 1.0, 4.0, &err);
+        YVEX_TEST_ASSERT(rc == YVEX_OK, "pressure progress coalescing");
+    }
+    rc = yvex_server_telemetry_metrics_copy(telemetry, &metrics, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && metrics.telemetry_dropped == 1027u,
+                     "pressure accounting is exact and non-amplifying");
     yvex_server_telemetry_model_opened(telemetry, 4096u, 0u, 0u, 0u);
     yvex_server_telemetry_resources(telemetry, 1024u, 2048u, 1u);
     yvex_server_telemetry_resources(telemetry, 512u, 1024u, 0u);
@@ -538,10 +556,85 @@ static int test_bounded_telemetry_overflow(void)
         rc = yvex_server_telemetry_next(telemetry, cursor, 0, &event, &err);
         YVEX_TEST_ASSERT(rc == YVEX_OK, "retained overflow event");
         cursor = event.sequence;
-        saw_drop |= event.kind == YVEX_SERVER_EVENT_TELEMETRY_DROPPED;
+        if (event.kind == YVEX_SERVER_EVENT_TELEMETRY_DROPPED) {
+            saw_drop = event.value_a == 1027u && event.value_c == 1026u;
+        }
+        saw_terminal |= event.kind == YVEX_SERVER_EVENT_GENERATION_COMPLETED;
     }
-    YVEX_TEST_ASSERT(saw_drop, "overflow event is not silent");
+    YVEX_TEST_ASSERT(saw_drop, "overflow pressure has one exact aggregate warning");
+    YVEX_TEST_ASSERT(saw_terminal,
+                     "replaceable progress cannot evict a terminal event");
     yvex_server_telemetry_close(&telemetry);
+    return 0;
+}
+
+static unsigned long long telemetry_measurement_clock(void)
+{
+    struct timespec value = {0};
+    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) return 0u;
+    return (unsigned long long)value.tv_sec * 1000000000ull +
+           (unsigned long long)value.tv_nsec;
+}
+
+static int telemetry_measure_progress(unsigned long long tokens,
+                                      unsigned long long stride,
+                                      unsigned long long *elapsed_ns,
+                                      unsigned long long *event_count)
+{
+    server_telemetry *telemetry = NULL;
+    yvex_error err;
+    volatile unsigned long long checksum = 0u;
+    unsigned long long begin, end, index, events = 0u;
+    int rc;
+    if (!elapsed_ns || !event_count) return 0;
+    rc = yvex_server_telemetry_open(&telemetry, 64u, &err);
+    if (rc != YVEX_OK) return 0;
+    begin = telemetry_measurement_clock();
+    for (index = 0u; index < tokens; ++index) {
+        checksum ^= index + 1u;
+        if (stride && (index + 1u) % stride == 0u) {
+            rc = yvex_server_telemetry_emit(
+                telemetry, NULL, YVEX_SERVER_EVENT_GENERATION_PROGRESS,
+                YVEX_SERVER_SEVERITY_DEBUG, "s", "r", "t", "decode",
+                index + 1u, index + 9u, 0u, 1.0, 4.0, &err);
+            if (rc != YVEX_OK) {
+                yvex_server_telemetry_close(&telemetry);
+                return 0;
+            }
+            events++;
+        }
+    }
+    end = telemetry_measurement_clock();
+    yvex_server_telemetry_close(&telemetry);
+    if (!begin || end <= begin || checksum == ULLONG_MAX) return 0;
+    *elapsed_ns = end - begin;
+    *event_count = events;
+    return 1;
+}
+
+static int test_telemetry_observability_economics(void)
+{
+    const unsigned long long tokens = 65536u;
+    unsigned long long off_ns, normal_ns, detailed_ns;
+    unsigned long long off_events, normal_events, detailed_events;
+    YVEX_TEST_ASSERT(
+        telemetry_measure_progress(tokens, 0u, &off_ns, &off_events),
+        "observability disabled measurement");
+    YVEX_TEST_ASSERT(
+        telemetry_measure_progress(tokens, 64u, &normal_ns, &normal_events),
+        "observability normal measurement");
+    YVEX_TEST_ASSERT(
+        telemetry_measure_progress(tokens, 1u, &detailed_ns, &detailed_events),
+        "observability detailed measurement");
+    YVEX_TEST_ASSERT(!off_events && normal_events == tokens / 64u &&
+                         detailed_events == tokens,
+                     "observability cadence economics");
+    (void)fprintf(stderr,
+                  "telemetry economics: tokens=%llu off_ns=%llu "
+                  "normal_events=%llu normal_ns=%llu detailed_events=%llu "
+                  "detailed_ns=%llu\n",
+                  tokens, off_ns, normal_events, normal_ns, detailed_events,
+                  detailed_ns);
     return 0;
 }
 
@@ -921,12 +1014,15 @@ static int test_media_engine_lifecycle(void)
     yvex_server_engine_summary first, second, reloaded, unloaded;
     yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
     yvex_server_summary summary;
+    yvex_server_event lifecycle_event;
     yvex_client_message wire = {0}, decoded;
     unsigned char frame[16384];
     unsigned long long frame_count = 0ull, engine_count = 0ull;
+    unsigned long long event_cursor = 0ull;
     yvex_server *server = NULL;
     yvex_error err;
-    int rc;
+    int rc, saw_load_requested = 0, saw_ready = 0;
+    int saw_unload_started = 0, saw_unloaded = 0;
     YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "media host output root");
     YVEX_TEST_ASSERT(snprintf(socket_path, sizeof(socket_path), "%s/yvexd.sock", root) > 0,
                      "media host socket path");
@@ -1053,6 +1149,19 @@ static int test_media_engine_lifecycle(void)
                          !summary.metrics.resident_host_bytes &&
                          !summary.metrics.resident_device_bytes,
                      "all engine resources close while the host remains ready");
+    while (yvex_server_event_next(server, event_cursor, 0,
+                                  &lifecycle_event, &err) == YVEX_OK) {
+        event_cursor = lifecycle_event.sequence;
+        saw_load_requested |= lifecycle_event.kind ==
+                              YVEX_SERVER_EVENT_ENGINE_LOAD_REQUESTED;
+        saw_ready |= lifecycle_event.kind == YVEX_SERVER_EVENT_ENGINE_READY;
+        saw_unload_started |= lifecycle_event.kind ==
+                              YVEX_SERVER_EVENT_ENGINE_UNLOAD_STARTED;
+        saw_unloaded |= lifecycle_event.kind == YVEX_SERVER_EVENT_ENGINE_UNLOADED;
+    }
+    YVEX_TEST_ASSERT(saw_load_requested && saw_ready && saw_unload_started &&
+                         saw_unloaded,
+                     "engine load and unload chronology is retained");
     YVEX_TEST_ASSERT(yvex_server_finish(server, &err) == YVEX_OK,
                      "empty persistent host finishes separately");
     yvex_server_close(&server);
@@ -1324,6 +1433,7 @@ int yvex_test_server(void)
     if (test_adaptive_prefill_policy() != 0) return 1;
     if (test_model_open_refusal() != 0) return 1;
     if (test_bounded_telemetry_overflow() != 0) return 1;
+    if (test_telemetry_observability_economics() != 0) return 1;
     if (test_provider_telemetry() != 0) return 1;
     if (test_openai_listener_admission() != 0) return 1;
     if (test_media_direct_prompt_routing() != 0) return 1;

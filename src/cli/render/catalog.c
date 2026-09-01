@@ -268,7 +268,7 @@ static int remote_catalog_render_table(FILE *fp, const yvex_remote_catalog *cata
                                 representation->compatibility);
         }
         yvex_cli_out_writef(fp, "\nYVEX  %s\n", remote_product_status(model));
-        yvex_cli_out_writef(fp, "provider_files: %u (use --audit or --json for exact paths)\n",
+        yvex_cli_out_writef(fp, "provider_files: %u (use --json for exact paths)\n",
                             model->available_file_count);
         return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
     }

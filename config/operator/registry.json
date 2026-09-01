@@ -962,6 +962,12 @@
       },
       {"name": "--dry-run", "takes_value": false, "value_type": "boolean"},
       {
+        "conflicts": ["--json"],
+        "name": "--verbose",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
         "conflicts": ["--prepare"],
         "name": "--json",
         "takes_value": false,

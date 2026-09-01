@@ -549,6 +549,36 @@ static const char *startup_logo_line(size_t index)
     return index < sizeof(logo) / sizeof(logo[0]) ? logo[index] : "";
 }
 
+static const char *startup_logo_wide_line(size_t index)
+{
+    /* Fit the complete canonical mark into the 13-row side-by-side hero.  The
+     * former projection stopped before the lower wing tips and body. */
+    static const unsigned char rows[] = {
+        0u, 1u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 13u, 15u,
+    };
+
+    return index < sizeof(rows) ? startup_logo_line(rows[index]) : "";
+}
+
+static const char *startup_logo_compact_line(size_t index)
+{
+    /* Hand-reduced from the same traced mark; these are standard Unicode
+     * geometric and box-drawing characters, not font-private glyphs. */
+    static const char *const logo[] = {
+        "              ✦",
+        " ╲──────◣  ╱│╲  ◢──────╱",
+        "   ╲░▒▓██◣╱ │ ╲◢██▓▒░╱",
+        "     ╲───◥█◆█◤───╱",
+        "          ◢█│█◣",
+        "         ╱▓ ╲│╱ ▓╲",
+        "        ╱◤   │   ◥╲",
+        "             ▼",
+        "          Y V E X",
+    };
+
+    return index < sizeof(logo) / sizeof(logo[0]) ? logo[index] : "";
+}
+
 static void startup_hero_row(const yvex_cli_terminal_style *style,
                              const char *art, const char *label,
                              const char *value, const char *tone)
@@ -572,8 +602,9 @@ static void startup_logo_render(const yvex_cli_terminal_style *style)
     size_t index;
 
     fputc('\n', stdout);
-    for (index = 0u; index < 18u; ++index)
-        printf("  %s%s%s\n", style->strong, startup_logo_line(index),
+    for (index = 0u; index < 9u; ++index)
+        printf("  %s%s%s\n", style->strong,
+               startup_logo_compact_line(index),
                style->reset);
     fputc('\n', stdout);
 }
@@ -605,31 +636,31 @@ static void startup_announce_wide(const yvex_server_options *options,
         (void)snprintf(openai, sizeof(openai), "disabled");
 
     fputc('\n', stdout);
-    startup_hero_row(style, startup_logo_line(0u), NULL,
+    startup_hero_row(style, startup_logo_wide_line(0u), NULL,
                      "YVEX HOST · VERIFIED INFERENCE",
                      style->accent);
-    startup_hero_row(style, startup_logo_line(1u), NULL,
+    startup_hero_row(style, startup_logo_wide_line(1u), NULL,
                      "persistent native runtime",
                      style->dim);
-    startup_hero_row(style, startup_logo_line(2u), NULL, NULL, NULL);
-    startup_hero_row(style, startup_logo_line(3u), "STATE", "● STARTING",
+    startup_hero_row(style, startup_logo_wide_line(2u), NULL, NULL, NULL);
+    startup_hero_row(style, startup_logo_wide_line(3u), "STATE", "● STARTING",
                      style->warning);
-    startup_hero_row(style, startup_logo_line(4u), "ENGINES", engines,
+    startup_hero_row(style, startup_logo_wide_line(4u), "ENGINES", engines,
                      style->strong);
-    startup_hero_row(style, startup_logo_line(5u), "WORKERS", workers,
+    startup_hero_row(style, startup_logo_wide_line(5u), "WORKERS", workers,
                      style->strong);
-    startup_hero_row(style, startup_logo_line(6u), "PROTOCOL", protocol,
+    startup_hero_row(style, startup_logo_wide_line(6u), "PROTOCOL", protocol,
                      style->strong);
-    startup_hero_row(style, startup_logo_line(7u), "LOGS", logs,
+    startup_hero_row(style, startup_logo_wide_line(7u), "LOGS", logs,
                      style->strong);
-    startup_hero_row(style, startup_logo_line(8u), NULL, NULL, NULL);
-    startup_hero_row(style, startup_logo_line(9u), "LOCAL IPC", local,
+    startup_hero_row(style, startup_logo_wide_line(8u), NULL, NULL, NULL);
+    startup_hero_row(style, startup_logo_wide_line(9u), "LOCAL IPC", local,
                      style->strong);
-    startup_hero_row(style, startup_logo_line(10u), "OPENAI", openai,
+    startup_hero_row(style, startup_logo_wide_line(10u), "OPENAI", openai,
                      options->openai_enabled ? style->success : style->dim);
-    startup_hero_row(style, startup_logo_line(11u), "ACCESS",
+    startup_hero_row(style, startup_logo_wide_line(11u), "ACCESS",
                      "external clients enabled", style->success);
-    startup_hero_row(style, startup_logo_line(12u), NULL, NULL, NULL);
+    startup_hero_row(style, startup_logo_wide_line(12u), NULL, NULL, NULL);
 }
 
 static void startup_announce_compact(const yvex_server_options *options,

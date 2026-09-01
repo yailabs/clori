@@ -246,13 +246,14 @@ engine kind from text execution strategy while retaining alias, package,
 backend, capacity, memory, and generation facts. Engine schema v1 is refused
 before the added fields are read.
 The source-authored conversation boundary admits provider request/wire schema
-v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v16.
-Runtime event schema v4 and generation plan/result schema v5 remain current.
+v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v17.
+Runtime event schema v5 and generation plan/result schema v5 remain current.
 Generation plan ABI v5 adds the workload-profile identity
 required to bind phase evidence to the compiled workload. Generation result
 schema v5 adds the identity-bearing committed-token extent of a
 source-output-channel boundary; the target-only continuation extent is derived
-from the final committed extent. Runtime event schema v4 projects those facts
+from the final committed extent. Runtime event schema v5 projects those facts,
+engine lifecycle, rolling committed progress and aggregate telemetry pressure
 without serializing the C result layout.
 
 Phase-roofline v1 accepts both its original complete record and an additive
@@ -596,7 +597,7 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v16
+## Application Provider And Local Protocol v17
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
 result ABI. Provider schema v3 additionally represents an omitted completion
@@ -608,13 +609,13 @@ reasoning, at most one assistant tool call, and its original field semantics.
 Clone and wire-decode publish only a complete owned request graph. The provider
 owner neither parses HTTP nor renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v16 carries the sealed provider request through the
+`<yvex/server.h>` protocol v17 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 explicit reasoning, function calls, usage, terminal completion, and failure.
 Typed events bind the provider adapter, provider-request identity, and external
 correlation ID while excluding prompt and output content.
 
-Protocol v16 carries host status/stop, engine load/list/unload, exact
+Protocol v17 carries host status/stop, engine load/list/unload, exact
 alias/generation routing, separate engine kind and semantic execution strategy,
 speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn
@@ -633,7 +634,7 @@ typed digest/identity evidence. Version 9 adds the startup capacity-plan
 identity, required and unreserved bytes, admitted concurrent sequences, and
 separate independent-session-scheduling and continuous-batching readiness.
 Provider v3's adaptive limit and generation-bound routing are not executable by
-an older peer, so every non-v15 frame refuses during the handshake;
+an older peer, so every non-v17 frame refuses during the handshake;
 there is no private pre-v0.1 compatibility decoder.
 
 Version 12 added the typed terminal media result. Version 13 separates host
@@ -652,6 +653,10 @@ target-only versus speculative text execution. DSpark remains a DeepSeek
 implementation of the semantic speculative strategy below the server boundary.
 The incompatible engine and event layouts advance to schemas v2 and v4; v14
 frames and legacy record schemas fail closed rather than being reinterpreted.
+Version 16 added typed image-conditioning and media execution selection without
+changing text routing. Version 17 adds engine load/unload lifecycle kinds,
+runtime-event schema v5, and explicit versus server-resolved completion-envelope
+facts. The event identity binds those new kinds and v16 frames fail closed.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map
 queue capacity, timeout, incompatible state and unsupported input without

@@ -57,7 +57,14 @@ Typed events cover at least:
 One bounded fan-out distributes the event to raw JSONL, protocol subscribers,
 metrics, and human renderers. Low-priority progress may be coalesced or dropped
 under pressure, and overflow remains an explicit fact. Lifecycle and terminal
-events may not disappear silently.
+events receive retention priority over replaceable progress. Once the ring is
+full, a new progress record replaces the oldest replaceable record; it cannot
+evict a retained lifecycle or terminal record while any replaceable slot
+exists. If every retained record is non-replaceable, incoming progress is
+coalesced instead of displacing it. One retained `telemetry.dropped` record is
+updated with exact aggregate pressure/coalescing counts rather than appending a
+warning for every loss. Ring storage remains fixed and drop accounting cannot
+amplify event pressure.
 
 Subscription failure or a slow client cannot block scheduler workers
 indefinitely. Disconnect releases subscriber resources without closing an
@@ -85,6 +92,14 @@ turn, phase, timing, and rate. Neither projection
 exposes generic positional counter names. Native prefill
 progress sent to the REPL is another projection of the sealed event, not a
 synthetic client event.
+
+Text generation publishes a generic rolling `generation.progress` event after
+the first committed token at most once per second or each 64 committed tokens.
+It carries cumulative committed tokens, current position, reasoning tokens,
+elapsed decode time/rate and, when present, cumulative speculative proposal and
+acceptance facts. One terminal event carries the same final cumulative
+speculative view. Default human logs render the rolling event; per-token
+fragments and individual speculative phases require explicit detailed trace.
 
 Media progress is likewise server-authored. The interactive client may project
 bounded completed/total iteration facts but does not fabricate percentages or

@@ -663,12 +663,12 @@ static int event_subscription(yvex_server *server, int fd,
                               yvex_error *err)
 {
     unsigned long long cursor = request->event_after_sequence;
-    unsigned long long snapshot_limit = 0u;
+    unsigned long long snapshot_limit = 0u, latest = 0u;
     int following = request->operation == YVEX_CLIENT_OP_RUNTIME_WATCH;
-    int rc = YVEX_OK;
-    if (!following)
-        rc = yvex_server_telemetry_latest_sequence(
-            server->telemetry, &snapshot_limit, err);
+    int rc = yvex_server_telemetry_latest_sequence(
+        server->telemetry, &latest, err);
+    if (rc == YVEX_OK && !cursor && latest > 128u) cursor = latest - 128u;
+    if (!following) snapshot_limit = latest;
     while (rc == YVEX_OK && (following || cursor < snapshot_limit)) {
         yvex_client_message message;
         memset(&message, 0, sizeof(message));
@@ -681,9 +681,7 @@ static int event_subscription(yvex_server *server, int fd,
         if (rc == YVEX_OK) {
             cursor = message.event.sequence;
             if (request->trace_level < YVEX_SERVER_TRACE_TOKENS &&
-                (message.event.kind == YVEX_SERVER_EVENT_GENERATION_FRAGMENT ||
-                 message.event.kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS ||
-                 message.event.kind == YVEX_SERVER_EVENT_PREFILL_PROGRESS))
+                message.event.kind == YVEX_SERVER_EVENT_GENERATION_FRAGMENT)
                 continue;
             if (request->trace_level == YVEX_SERVER_TRACE_SUMMARY &&
                 message.event.severity < YVEX_SERVER_SEVERITY_WARNING &&

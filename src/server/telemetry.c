@@ -24,21 +24,108 @@ struct server_telemetry {
     unsigned long long capacity, next_sequence, retained_count;
     struct timespec started;
     yvex_server_metrics metrics;
-    unsigned long long active_subscribers;
+    unsigned long long active_subscribers, coalesced_count;
+    unsigned long long drop_notice_sequence;
     int mutex_ready, condition_ready, closing;
 };
 static int event_identity(yvex_server_event *event);
 
+static int event_replaceable_under_pressure(yvex_server_event_kind kind)
+{
+    return kind == YVEX_SERVER_EVENT_PREFILL_PROGRESS ||
+           kind == YVEX_SERVER_EVENT_GENERATION_FRAGMENT ||
+           kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS ||
+           kind == YVEX_SERVER_EVENT_GENERATION_PROFILE ||
+           (kind >= YVEX_SERVER_EVENT_DRAFT_STARTED &&
+            kind <= YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED);
+}
+
+static void event_drop_notice(server_telemetry *telemetry,
+                              yvex_server_event *event)
+{
+    unsigned long long total = telemetry->metrics.telemetry_dropped;
+    event->kind = YVEX_SERVER_EVENT_TELEMETRY_DROPPED;
+    event->severity = YVEX_SERVER_SEVERITY_WARNING;
+    event->value_a = total;
+    event->value_b = telemetry->capacity;
+    event->value_c = telemetry->coalesced_count;
+    event->speculative_cycle = 0u;
+    event->proposed_tokens = 0u;
+    event->selected_verification_tokens = 0u;
+    event->accepted_tokens = 0u;
+    event->rejected_tokens = 0u;
+    event->discarded_tokens = 0u;
+    event->verification_count = 0u;
+    event->confidence_logit_count = 0u;
+    event->confidence_logit_minimum = 0.0;
+    event->confidence_logit_maximum = 0.0;
+    event->confidence_logit_mean = 0.0;
+    event->seconds = 0.0;
+    event->rate = 0.0;
+    event->speculation_policy_identity[0] = '\0';
+    yvex_core_text_copy(event->phase, sizeof(event->phase), "telemetry");
+}
+
+static size_t event_oldest_slot_locked(const server_telemetry *telemetry,
+                                       int replaceable_only, int *found)
+{
+    unsigned long long oldest = ULLONG_MAX;
+    size_t index, slot = 0u;
+    *found = 0;
+    for (index = 0u; index < (size_t)telemetry->capacity; ++index) {
+        const yvex_server_event *candidate = &telemetry->events[index];
+        if (!candidate->sequence ||
+            (replaceable_only &&
+             !event_replaceable_under_pressure(candidate->kind)) ||
+            candidate->sequence >= oldest)
+            continue;
+        oldest = candidate->sequence;
+        slot = index;
+        *found = 1;
+    }
+    return slot;
+}
+
 static int event_append_locked(server_telemetry *telemetry,
                                yvex_server_event *event)
 {
-    unsigned long long slot;
+    size_t index, slot = 0u;
+    int found = 0;
+    if (telemetry->retained_count < telemetry->capacity) {
+        for (index = 0u; index < (size_t)telemetry->capacity; ++index)
+            if (!telemetry->events[index].sequence) {
+                slot = index;
+                found = 1;
+                break;
+            }
+    } else {
+        slot = event_oldest_slot_locked(telemetry, 1, &found);
+        if (!found && event_replaceable_under_pressure(event->kind))
+            return 2;
+        if (!found) slot = event_oldest_slot_locked(telemetry, 0, &found);
+    }
+    if (!found) return 0;
+    if (telemetry->events[slot].sequence == telemetry->drop_notice_sequence)
+        telemetry->drop_notice_sequence = 0u;
     event->sequence = telemetry->next_sequence++;
     if (!event_identity(event)) return 0;
-    slot = (event->sequence - 1u) % telemetry->capacity;
     if (telemetry->retained_count < telemetry->capacity)
         telemetry->retained_count++;
     telemetry->events[slot] = *event;
+    return 1;
+}
+
+static int event_drop_notice_update_locked(server_telemetry *telemetry)
+{
+    size_t index;
+    if (!telemetry->drop_notice_sequence) return 1;
+    for (index = 0u; index < (size_t)telemetry->capacity; ++index) {
+        yvex_server_event *event = &telemetry->events[index];
+        if (event->sequence != telemetry->drop_notice_sequence) continue;
+        event_drop_notice(telemetry, event);
+        return event_identity(event);
+    }
+    telemetry->drop_notice_sequence = 0u;
     return 1;
 }
 
@@ -69,7 +156,7 @@ static int event_identity(yvex_server_event *event)
     if (!event)
         return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.server.event.v4") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.server.event.v5") ||
         !yvex_sha256_update_u64(&hash, event->schema_version) ||
         !yvex_sha256_update_u64(&hash, event->sequence) ||
         !yvex_sha256_update_u64(&hash, event->kind) ||
@@ -173,8 +260,8 @@ int yvex_server_telemetry_emit_provider(
     yvex_error *err)
 {
     yvex_server_event event;
-    int ring_full;
-    if (!telemetry || kind > YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE ||
+    int append_rc, creating_drop_notice = 0, ring_full;
+    if (!telemetry || kind > YVEX_SERVER_EVENT_ENGINE_UNLOAD_FAILED ||
         severity > YVEX_SERVER_SEVERITY_FATAL ||
         (scope &&
          (scope->engine_kind == YVEX_SERVER_ENGINE_NONE ||
@@ -298,47 +385,39 @@ int yvex_server_telemetry_emit_provider(
         return YVEX_ERR_STATE;
     }
     ring_full = telemetry->retained_count == telemetry->capacity;
-    if (ring_full &&
-        kind != YVEX_SERVER_EVENT_TELEMETRY_DROPPED) {
-        yvex_server_event dropped = event;
-        dropped.kind = YVEX_SERVER_EVENT_TELEMETRY_DROPPED;
-        dropped.severity = YVEX_SERVER_SEVERITY_WARNING;
-        dropped.value_a = telemetry->metrics.telemetry_dropped + 2u;
-        dropped.value_b = telemetry->capacity;
-        dropped.value_c = 0u;
-        dropped.speculative_cycle = 0u;
-        dropped.proposed_tokens = 0u;
-        dropped.selected_verification_tokens = 0u;
-        dropped.accepted_tokens = 0u;
-        dropped.rejected_tokens = 0u;
-        dropped.discarded_tokens = 0u;
-        dropped.verification_count = 0u;
-        dropped.confidence_logit_count = 0u;
-        dropped.confidence_logit_minimum = 0.0;
-        dropped.confidence_logit_maximum = 0.0;
-        dropped.confidence_logit_mean = 0.0;
-        dropped.seconds = 0.0;
-        dropped.rate = 0.0;
-        dropped.speculation_policy_identity[0] = '\0';
-        yvex_core_text_copy(dropped.phase, sizeof(dropped.phase), "telemetry");
-        telemetry->metrics.telemetry_dropped += 2u;
-        if (!event_append_locked(telemetry, &dropped) ||
-            !event_append_locked(telemetry, &event)) {
+    if (ring_full) {
+        int replaceable_slot = 0;
+        telemetry->metrics.telemetry_dropped++;
+        if (event_replaceable_under_pressure(kind)) {
+            telemetry->coalesced_count++;
+            (void)event_oldest_slot_locked(telemetry, 1, &replaceable_slot);
+            if (!telemetry->drop_notice_sequence && replaceable_slot) {
+                event_drop_notice(telemetry, &event);
+                creating_drop_notice = 1;
+            }
+        }
+        if (!event_drop_notice_update_locked(telemetry)) {
             (void)pthread_mutex_unlock(&telemetry->mutex);
             yvex_error_set(err, YVEX_ERR_STATE, "server.telemetry.emit",
-                           "event identity derivation failed");
+                           "drop summary identity derivation failed");
             return YVEX_ERR_STATE;
         }
-    } else if (!event_append_locked(telemetry, &event)) {
+    }
+    append_rc = event_append_locked(telemetry, &event);
+    if (!append_rc) {
         (void)pthread_mutex_unlock(&telemetry->mutex);
         yvex_error_set(err, YVEX_ERR_STATE, "server.telemetry.emit",
                        "event identity derivation failed");
         return YVEX_ERR_STATE;
-    } else if (ring_full && kind == YVEX_SERVER_EVENT_TELEMETRY_DROPPED) {
-        telemetry->metrics.telemetry_dropped++;
     }
-    if (emitted) *emitted = event;
-    (void)pthread_cond_broadcast(&telemetry->condition);
+    if (append_rc == 1) {
+        if (creating_drop_notice)
+            telemetry->drop_notice_sequence = event.sequence;
+        if (emitted) *emitted = event;
+        (void)pthread_cond_broadcast(&telemetry->condition);
+    } else if (emitted) {
+        memset(emitted, 0, sizeof(*emitted));
+    }
     (void)pthread_mutex_unlock(&telemetry->mutex);
     yvex_error_clear(err);
     return YVEX_OK;
@@ -368,7 +447,8 @@ int yvex_server_telemetry_next(server_telemetry *telemetry,
                           unsigned long long after_sequence, int wait,
                           yvex_server_event *event, yvex_error *err)
 {
-    unsigned long long first, wanted;
+    unsigned long long wanted = ULLONG_MAX;
+    size_t index, slot = 0u;
     if (!telemetry || !event || pthread_mutex_lock(&telemetry->mutex) != 0) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.telemetry.next",
                        "telemetry and event output are required");
@@ -385,11 +465,14 @@ int yvex_server_telemetry_next(server_telemetry *telemetry,
            after_sequence >= telemetry->next_sequence - 1u)
         if (pthread_cond_wait(&telemetry->condition, &telemetry->mutex) != 0)
             break;
-    first = telemetry->next_sequence - telemetry->retained_count;
-    wanted = after_sequence + 1u;
-    if (wanted < first)
-        wanted = first;
-    if (wanted >= telemetry->next_sequence) {
+    for (index = 0u; index < (size_t)telemetry->capacity; ++index) {
+        unsigned long long sequence = telemetry->events[index].sequence;
+        if (sequence > after_sequence && sequence < wanted) {
+            wanted = sequence;
+            slot = index;
+        }
+    }
+    if (wanted == ULLONG_MAX) {
         if (telemetry->active_subscribers) telemetry->active_subscribers--;
         if (telemetry->closing)
             (void)pthread_cond_broadcast(&telemetry->condition);
@@ -399,7 +482,7 @@ int yvex_server_telemetry_next(server_telemetry *telemetry,
                        telemetry->closing ? "telemetry is closed" : "no later event is available");
         return YVEX_ERR_STATE;
     }
-    *event = telemetry->events[(wanted - 1u) % telemetry->capacity];
+    *event = telemetry->events[slot];
     if (telemetry->active_subscribers) telemetry->active_subscribers--;
     if (telemetry->closing)
         (void)pthread_cond_broadcast(&telemetry->condition);
@@ -628,7 +711,9 @@ const char *yvex_server_event_kind_name(yvex_server_event_kind kind)
         "generation.first_token", "generation.fragment",
         "generation.progress", "generation.profile", "generation.completed",
         "generation.cancelled", "generation.failed", "client.disconnected", "telemetry.dropped",
-        "runtime.shutdown.start", "runtime.shutdown.complete"};
+        "runtime.shutdown.start", "runtime.shutdown.complete",
+        "engine.load.requested", "engine.ready", "engine.load.failed",
+        "engine.unload.started", "engine.unloaded", "engine.unload.failed"};
     return (unsigned int)kind < sizeof(names) / sizeof(names[0])
                ? names[kind] : "unknown";
 }
@@ -651,11 +736,16 @@ int yvex_server_event_validate(const yvex_server_event *event, yvex_error *err)
     yvex_server_event candidate;
     char supplied[YVEX_SHA256_HEX_CAP];
     int speculative;
-    speculative = event && event->kind >= YVEX_SERVER_EVENT_DRAFT_STARTED &&
-                  event->kind <=
-                      YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED;
+    speculative = event &&
+                  ((event->kind >= YVEX_SERVER_EVENT_DRAFT_STARTED &&
+                    event->kind <=
+                        YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED) ||
+                   ((event->kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS ||
+                     (event->kind >= YVEX_SERVER_EVENT_GENERATION_COMPLETED &&
+                      event->kind <= YVEX_SERVER_EVENT_GENERATION_FAILED)) &&
+                    event->speculative_cycle));
     if (!event || event->schema_version != YVEX_RUNTIME_EVENT_SCHEMA_VERSION ||
-        event->kind > YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE ||
+        event->kind > YVEX_SERVER_EVENT_ENGINE_UNLOAD_FAILED ||
         event->severity > YVEX_SERVER_SEVERITY_FATAL ||
         (event->provider_adapter[0] &&
          (!yvex_sha256_hex_valid(event->provider_request_identity) ||
@@ -731,7 +821,7 @@ int yvex_server_event_json(const yvex_server_event *event, char *output,
         return YVEX_ERR_INVALID_ARG;
     }
     length = snprintf(output, (size_t)capacity,
-                      "{\"schema\":4,\"sequence\":%llu,\"process\":%llu,"
+                      "{\"schema\":5,\"sequence\":%llu,\"process\":%llu,"
                       "\"wall_time_ns\":%llu,\"monotonic_time_ns\":%llu,\"kind\":\"%s\","
                       "\"severity\":%u,\"session\":\"%s\",\"request\":\"%s\","
                       "\"turn\":\"%s\",\"phase\":\"%s\","

@@ -238,6 +238,7 @@ int yvex_server_protocol_receive(int fd, yvex_client_request *request,
                                  yvex_error *err);
 int yvex_server_protocol_send(int fd, const yvex_client_message *message,
                               yvex_error *err);
+int yvex_server_protocol_message_valid(const yvex_client_message *message);
 
 int yvex_server_telemetry_open(server_telemetry **out,
                                unsigned long long capacity, yvex_error *err);

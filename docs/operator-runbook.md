@@ -97,6 +97,8 @@ account owner and tokens are never printed.
 `--dry-run` is the safe metadata-only acquisition check: it resolves the
 immutable provider revision and representation inventory, but downloads no
 payload and creates no YVEX source, catalog, receipt, or transfer-log state.
+The human default is a bounded repository/revision/representation summary;
+add `--verbose` to inspect the provider's complete planned file inventory.
 
 Local files and directories use the same distribution verb:
 
@@ -432,21 +434,23 @@ when the shared host itself should shut down.
 
 After the selected model reports LOADED, Terminal 2 may run `./yvex chat
 --session main` or `./yvex host logs`. Add
-`--verbose` for individual DSpark cycles or `--json` for canonical JSONL. All
+`--verbose` for individual typed speculative cycles or `--json` for canonical
+JSONL. All
 views derive from the same typed event sequence. Default telemetry excludes
 prompt and answer content.
 
 ## Interactive console
 
 `./yvex chat` is the one interactive entrypoint. It opens a concise attachment
-view and a prompt labelled with the attached engine's model alias:
+view and a prompt labelled with the product model name, not the deployment
+profile alias:
 
 ```text
-YVEX 0.1.0 · protocol 16
+YVEX 0.1.0 · protocol 17
 
-  model      deepseek4-v4-flash-dspark
-  variant    abcdef012345
-  runtime    ● ready · attached to resident runtime · CUDA · DSpark
+  model      DeepSeek V4 Flash
+  variant    IQ2_XXS/Q2_K/MXFP4
+  runtime    ● ready · attached to resident runtime · CUDA · speculative
   session    main · position 0 · turns 0
   context    0/4096
   memory     100.84 GiB process · 91.31 GiB artifact mapped · 0.02 GiB device
@@ -463,17 +467,21 @@ commands
   Ctrl-D       exit and discard an unfinished line
   Ctrl-L       clear and redraw input
 
-deepseek4-v4-flash-dspark>
+DeepSeek V4 Flash>
 ```
 
 The exact identities come from the running server; the example values are not
-admission evidence. The prompt label is a human alias projection, while the
+admission evidence. The prompt label is a product-catalog projection, while the
 session remains bound to the exact engine generation. On transport loss the
 same prompt adds `[disconnected]`; it never silently switches models. Model
-output is streamed directly without repeated role labels. During a turn, the
+output uses typed `reasoning` and `answer` sections when the source emits both;
+disabled reasoning shows only `answer`. The terminal renderer supports bounded
+headings, lists, emphasis, inline/fenced code and quotes, wraps prose to at most
+112 columns, and never changes canonical response bytes. During a turn, the
 console updates one server-authored prefill line in place. The terminal result
-then reports prefill, generation, TTFT, speculation, context, stop reason, and
-session on one compact line. Candidate token text is never displayed.
+then reports prefill, generation, TTFT, speculation, initial/final context,
+adaptive or explicit output envelope, truthful stop reason, and session on one
+compact line. Candidate token text is never displayed.
 
 On a TTY, cyan marks the prompt and active work, green marks readiness and
 completion, orange marks cancellation or warning, red marks refusal, and dim
@@ -517,12 +525,24 @@ Ctrl-L clears the visible terminal while the REPL prompt is active, then redraws
 the prompt and any input already typed. It does not detach, reset, cancel, or
 otherwise mutate the server-owned session.
 
+While a generation owns the stream, chat suppresses terminal echo and does not
+accept a draft for the next turn. Arrow/editing/UTF-8 bytes entered during that
+interval are discarded before the line editor returns; they cannot enter the
+assistant transcript or the following prompt. Ctrl-C remains an admitted
+server-side cancellation signal. Terminal attributes are restored on every
+success, refusal, disconnect and cancellation path.
+
 ## Interactive and programmatic requests
 
 Human generation remains inside `yvex chat`. `/nothink`, `/think`, and
 `/think-max` select the source-authored reasoning policy for the attached
 session and that policy remains active until changed. Reuse an existing named
-session by starting chat with `--session NAME`.
+session by starting chat with `--session NAME`. Omitting
+`--max-new-tokens` sends no client cap: the host resolves an adaptive envelope
+from the loaded engine and remaining context. Supplying
+`--max-new-tokens N` is an explicit upper bound. Neither mode is infinite;
+EOS, source-authored stops, cancellation, context exhaustion and the resolved
+output envelope remain distinct terminal reasons.
 
 Programmatic inference uses the admitted private protocol or the loopback
 OpenAI compatibility API described below; it is not projected as a second
@@ -584,7 +604,7 @@ state, and persistent KV while sharing immutable model resources:
 
 Client disconnect and detach do not close the engine. A partial or cancelled
 turn can retain model-committed state and is never silently marked complete.
-Protocol v16 reports the exact engine generation, committed position,
+Protocol v17 reports the exact engine generation, committed position,
 token/text counts, state generations, failure class, and reset requirement.
 Reset clears the session KV, tokens, transcript, decoder, and RNG policy without
 closing the engine or host.
@@ -623,13 +643,15 @@ Follow typed server activity independently of the foreground host stream:
 
 The foreground server stream and `host logs` project each request as one
 coherent unit with stable time, request, session, phase, duration and result
-fields. They group prefill and DSpark cycles, show queue pressure only when
-contended, use human byte units and named stop reasons, and replace any active
-progress line with one stable completion or failure summary. They suppress
-ordinary connection churn, token fragments and profiler detail.
-Without `--follow`, the command returns after the retained event snapshot.
+fields. They group prefill and speculative cycles, show queue pressure only
+when contended, emit low-frequency committed-token decode progress, use human
+byte units and named stop reasons, and finish with one stable completion or
+failure summary. They suppress ordinary connection churn, token fragments and
+profiler detail. `host status` remains a current snapshot; `host logs` contains
+chronology only and never prepends status sections. Without `--follow`, the
+command returns after a bounded recent retained event tail.
 `host logs --follow` remains attached for live events. `host logs --verbose`
-exposes each DSpark cycle. `host logs --json` emits the
+exposes each typed speculative cycle. `host logs --json` emits the
 canonical complete JSONL event record, including typed detail omitted by the compact
 human view. Prompts and answers remain absent from every projection by default.
 
