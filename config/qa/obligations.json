@@ -45,6 +45,13 @@
       "reason": "MiniMax semantic lowering requires its distinct bounded live vertical"
     },
     {
+      "id": "family-qwen3-5",
+      "patterns": ["src/model/families/qwen3_5.c", "src/graph/families/qwen3_5.c", "src/backend/cuda/families/qwen3_5.cu", "include/yvex/internal/families/qwen3_5.h", "tests/unit/qwen3_5*.c"],
+      "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],
+      "tests": ["unit.qwen3_5_architecture", "unit.sequence_mixer", "integration.tiny-vertical"],
+      "reason": "Qwen3.5 hybrid source semantics require exact config, stateful mixing, numeric, and composed-runtime evidence"
+    },
+    {
       "id": "family-compiler-adapter",
       "patterns": ["src/model/families/**", "include/yvex/internal/model_family.h"],
       "lanes": ["fast", "structural", "numeric", "runtime"],

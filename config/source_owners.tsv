@@ -232,8 +232,10 @@ src/model/materialization.c	model	model.materialization	generic	private	resource
 src/model/remote.c	model.catalog	model.catalog.remote	generic	private	provider-adapter	cli,gui	implementation	none
 include/yvex/internal/families/deepseek_v4.h	model	model.families.deepseek_v4	family	private	family-interface	artifact,graph,runtime	interface	none
 include/yvex/internal/families/minimax_h3.h	model	model.families.minimax_h3	family	private	family-interface	model.compilation,cli,tests	interface	none
+include/yvex/internal/families/qwen3_5.h	model	model.families.qwen3_5	family	private	family-interface	model.compilation,graph,runtime,tests	interface	none
 src/model/families/deepseek_v4.c	model.family	model.family.deepseek_v4	family	private	reusable-algorithm	model,graph,gguf	implementation	none
 src/model/families/minimax_h3.c	model.family	model.family.minimax_h3	family	private	reusable-algorithm	model.compilation,cli,tests	implementation	none
+src/model/families/qwen3_5.c	model.family	model.family.qwen3_5	family	private	reusable-algorithm	model.compilation,graph,runtime,tests	implementation	none
 src/runtime/descriptor.c	runtime	runtime.descriptor	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
 src/runtime/evidence.c	runtime	runtime.evidence	generic	private	reusable-algorithm	runtime,cli,tests	implementation	none
 src/runtime/transaction.c	runtime	runtime.execution_transaction	generic	private	resource-lifecycle	runtime,graph,tests	implementation	none
