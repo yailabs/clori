@@ -531,6 +531,94 @@ static int source_verify_json_iteration(void)
     return 0;
 }
 
+static int source_verify_family_semantic_policy(void)
+{
+    const char *root = "build/tests/source-verify-family-semantic";
+    const char *repository = "Qwen/Fixture";
+    yvex_source_target_identity identity = *yvex_source_release_identity();
+    yvex_source_verification result;
+    yvex_error err;
+    struct stat status;
+    char path[768];
+    char index_oid[41];
+
+    YVEX_TEST_ASSERT(
+        system("rm -rf build/tests/source-verify-family-semantic") == 0 &&
+            source_verify_make_valid(root),
+        "create family-semantic source fixture");
+    identity.target_id = "qwen3.8-fixture";
+    identity.family_key = "qwen3_5";
+    identity.family_display = "Qwen3.5";
+    identity.model_name = "Qwen3.8 Fixture";
+    identity.upstream_repo_id = repository;
+    identity.config_model_type = "qwen3_5";
+    identity.config_architecture = "Qwen3_5ForConditionalGeneration";
+    identity.config_validation = YVEX_SOURCE_CONFIG_VALIDATION_FAMILY_SEMANTIC;
+    identity.required_sidecars = YVEX_SOURCE_SIDECARS_TEXT;
+    snprintf(path, sizeof(path), "%s/model.safetensors.index.json", root);
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        stat(path, &status) == 0 &&
+            yvex_source_git_blob_oid_file(path, index_oid, &err) == YVEX_OK,
+        "bind family-semantic fixture index identity");
+    identity.upstream_index_oid = index_oid;
+    identity.upstream_index_size = (unsigned long long)status.st_size;
+    YVEX_TEST_ASSERT(
+        source_verify_write_manifest(root, "huggingface", repository,
+                                     "in-progress", source_verify_revision),
+        "write family-semantic fixture provenance");
+    snprintf(path, sizeof(path), "%s/config.json", root);
+    YVEX_TEST_ASSERT(
+        source_verify_write_text(
+            path,
+            "{\"architectures\":[\"Qwen3_5ForConditionalGeneration\"],"
+            "\"model_type\":\"qwen3_5\",\"text_config\":{"
+            "\"model_type\":\"qwen3_5_text\",\"hidden_size\":5120}}") &&
+            source_verify_write_metadata(root, "config.json"),
+        "write nested family-owned configuration");
+    snprintf(path, sizeof(path), "%s/generation_config.json", root);
+    YVEX_TEST_ASSERT(
+        source_verify_write_text(
+            path,
+            "{\"bos_token_id\":248044,\"eos_token_id\":[248046,248044]}") &&
+            source_verify_write_metadata(root, "generation_config.json"),
+        "write family-owned generation policy");
+    snprintf(path, sizeof(path), "%s/inference/config.json", root);
+    YVEX_TEST_ASSERT(unlink(path) == 0,
+                     "remove unrequired family-specific inference sidecar");
+    snprintf(path, sizeof(path),
+             "%s/.cache/huggingface/download/inference/config.json.metadata",
+             root);
+    YVEX_TEST_ASSERT(unlink(path) == 0,
+                     "remove unrequired inference acquisition metadata");
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        source_verify_run_identity(root, &identity, NULL, NULL, 1, &result,
+                                   &err) == YVEX_OK &&
+            result.verified && result.config_valid &&
+            result.tokenizer_json_valid && result.tokenizer_config_valid &&
+            result.generation_config_valid && !result.inference_config_valid &&
+            strcmp(result.model_type, "qwen3_5") == 0 &&
+            strcmp(result.architecture,
+                   "Qwen3_5ForConditionalGeneration") == 0 &&
+            !source_verify_has_blocker(
+                &result, "missing-dspark-inference-config"),
+        "generic source verification defers nested semantics without weakening identity");
+    snprintf(path, sizeof(path), "%s/config.json", root);
+    YVEX_TEST_ASSERT(
+        source_verify_write_text(
+            path,
+            "{\"architectures\":[\"OtherArchitecture\"],"
+            "\"model_type\":\"qwen3_5\",\"text_config\":{}}") &&
+            source_verify_write_metadata(root, "config.json") &&
+            source_verify_run_identity(root, &identity, NULL, NULL, 0,
+                                       &result, &err) == YVEX_OK &&
+            !result.config_valid &&
+            source_verify_has_blocker(&result, "wrong-source-architecture"),
+        "family-owned nested semantics cannot weaken outer source identity");
+    return 0;
+}
+
 static int source_acquisition_digest(const char *text, char output[65])
 {
     yvex_sha256 hash;
@@ -731,6 +819,8 @@ int yvex_test_source_verify(void)
     int rc;
 
     if (source_verify_json_iteration() != 0)
+        return 1;
+    if (source_verify_family_semantic_policy() != 0)
         return 1;
     if (source_verify_payload_publication() != 0)
         return 1;

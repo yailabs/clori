@@ -8,6 +8,25 @@
 extern "C" {
 #endif
 
+typedef enum {
+    YVEX_SOURCE_CONFIG_VALIDATION_DEEPSEEK_V4 = 0,
+    YVEX_SOURCE_CONFIG_VALIDATION_FAMILY_SEMANTIC = 1
+} yvex_source_config_validation;
+
+enum {
+    YVEX_SOURCE_SIDECAR_CONFIG = 1u << 0,
+    YVEX_SOURCE_SIDECAR_TOKENIZER = 1u << 1,
+    YVEX_SOURCE_SIDECAR_TOKENIZER_CONFIG = 1u << 2,
+    YVEX_SOURCE_SIDECAR_GENERATION_CONFIG = 1u << 3,
+    YVEX_SOURCE_SIDECAR_INFERENCE_CONFIG = 1u << 4,
+    YVEX_SOURCE_SIDECARS_TEXT = YVEX_SOURCE_SIDECAR_CONFIG |
+                                 YVEX_SOURCE_SIDECAR_TOKENIZER |
+                                 YVEX_SOURCE_SIDECAR_TOKENIZER_CONFIG |
+                                 YVEX_SOURCE_SIDECAR_GENERATION_CONFIG,
+    YVEX_SOURCE_SIDECARS_DEEPSEEK_V4 = YVEX_SOURCE_SIDECARS_TEXT |
+                                        YVEX_SOURCE_SIDECAR_INFERENCE_CONFIG
+};
+
 typedef struct {
     const char *target_id;
     const char *family_key;
@@ -22,6 +41,8 @@ typedef struct {
     const char *upstream_inventory_authority;
     const char *config_model_type;
     const char *config_architecture;
+    yvex_source_config_validation config_validation;
+    unsigned int required_sidecars;
 } yvex_source_target_identity;
 
 /*

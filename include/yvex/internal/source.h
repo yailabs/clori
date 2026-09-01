@@ -223,6 +223,9 @@ typedef struct yvex_source_verification {
 int yvex_source_verify(const yvex_source_verify_options *options,
                        yvex_source_verification *out,
                        yvex_error *err);
+int yvex_source_verification_required_sidecars_valid(
+    const yvex_source_target_identity *identity,
+    const yvex_source_verification *verification);
 int yvex_source_verify_with_snapshot(
     const yvex_source_verify_options *options,
     yvex_source_verification *out,
