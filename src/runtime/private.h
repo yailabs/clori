@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <yvex/internal/backend.h>
+#include <yvex/internal/decoder_plan.h>
 #include <yvex/internal/decode.h>
 #include <yvex/internal/generation.h>
 #include <yvex/internal/graph.h>
@@ -92,13 +93,28 @@ int yvex_runtime_private_binding_physical_v14_import(
     const yvex_runtime_binding_physical_summary_v14 *summary,
     const yvex_runtime_binding_physical_decision_v14 *decisions,
     unsigned long long count, yvex_error *err);
-int yvex_runtime_private_binding_policies_valid(
-    const yvex_runtime_binding *binding);
 int yvex_runtime_private_binding_policies_match_model(
     const yvex_model_execution_descriptor *model,
     const yvex_transformer_family_policy *transformer,
     const yvex_logits_family_policy *logits,
     const yvex_speculation_family_policy *speculation);
+int yvex_runtime_private_binding_admission_ready(
+    const yvex_complete_artifact_admission *admission);
+int yvex_runtime_private_binding_attention_ready(
+    const yvex_attention_summary *attention);
+int yvex_runtime_private_binding_identity_chain_valid(
+    const yvex_complete_artifact_admission *admission,
+    const yvex_materialization_summary *materialization,
+    const yvex_runtime_descriptor_summary *descriptor,
+    const yvex_attention_summary *attention);
+int yvex_runtime_private_binding_decoder_matches(
+    const yvex_decoder_plan_summary *decoder,
+    const yvex_runtime_descriptor_summary *descriptor,
+    const char *operator_graph_identity,
+    const yvex_attention_summary *attention);
+int yvex_runtime_private_binding_validate(
+    const yvex_runtime_binding *binding, const char **field,
+    yvex_runtime_binding_failure_code *code);
 
 typedef struct runtime_engine_scheduler runtime_engine_scheduler;
 typedef struct runtime_engine_work runtime_engine_work;
@@ -237,8 +253,6 @@ int yvex_runtime_private_binding_refuse(
     const char *field, const char *path, unsigned long long record,
     unsigned long long expected, unsigned long long actual, yvex_status status,
     const char *reason, yvex_error *err);
-int yvex_runtime_private_compiled_plan_valid(
-    const yvex_runtime_binding *binding);
 int yvex_runtime_private_residency_execution_view(
     const yvex_runtime_residency *residency,
     const yvex_materialized_tensor_binding *binding,

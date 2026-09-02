@@ -774,6 +774,7 @@ int yvex_compiled_model_plan_admit(
     const yvex_moe_plan_summary *draft_moe;
     const yvex_transformer_plan_summary *transformer;
     const yvex_transformer_plan_summary *draft_transformer;
+    const yvex_decoder_plan_summary *decoder;
     const yvex_runtime_logits_plan_summary *output;
     if (!plans || !admission || !admission->capabilities) return 0;
     moe = yvex_moe_plan_summary_get(plans->moe);
@@ -781,7 +782,26 @@ int yvex_compiled_model_plan_admit(
     transformer = yvex_transformer_plan_summary_get(plans->transformer);
     draft_transformer =
         yvex_transformer_plan_summary_get(plans->draft_transformer);
+    decoder = yvex_decoder_plan_summary_get(plans->decoder);
     output = &plans->output_head;
+    if (decoder) {
+        return !moe && !draft_moe && !transformer && !draft_transformer &&
+               !output->schema_version &&
+               !admission->capabilities->moe_plan_ready &&
+               !admission->capabilities->transformer_ready &&
+               !admission->capabilities->logits_ready &&
+               decoder->family_adapter_id == admission->family_adapter_id &&
+               decoder->family_adapter_version == admission->family_adapter_version &&
+               decoder->layer_count == admission->decoder_layer_count &&
+               decoder->attention_layer_count == admission->layer_count &&
+               decoder->recurrent_layer_count == admission->recurrent_layer_count &&
+               decoder->maximum_context == admission->semantic_maximum_context &&
+               strcmp(decoder->model_execution_identity,
+                      admission->model_execution_identity) == 0 &&
+               admission->decoder_plan_identity &&
+               strcmp(decoder->decoder_plan_identity,
+                      admission->decoder_plan_identity) == 0;
+    }
     if (!moe || !transformer || !output->schema_version)
         return !moe && !transformer && !draft_moe && !draft_transformer &&
                !output->schema_version &&

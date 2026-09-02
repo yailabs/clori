@@ -183,6 +183,46 @@ static int binding_boolean(int value)
     return value == 0 || value == 1;
 }
 
+static int binding_logits_policy_valid(const yvex_logits_family_policy *logits)
+{
+    return logits && logits->schema_version == YVEX_RUNTIME_LOGITS_SCHEMA_V1 &&
+           binding_boolean(logits->separate_output_head) &&
+           binding_boolean(logits->tied_output_head) &&
+           binding_boolean(logits->output_head_bias) &&
+           logits->separate_output_head != logits->tied_output_head;
+}
+
+static int binding_policy_not_applicable(
+    const yvex_transformer_family_policy *transformer,
+    const yvex_speculation_family_policy *speculation)
+{
+    unsigned long long index;
+
+    if (!transformer || !speculation || transformer->schema_version ||
+        transformer->initial_policy || transformer->final_policy ||
+        transformer->residual_streams || transformer->hidden_width ||
+        transformer->expanded_width || transformer->maximum_context ||
+        transformer->sinkhorn_iterations || transformer->mhc_epsilon != 0.0 ||
+        transformer->output_norm_epsilon != 0.0 ||
+        transformer->attention_then_moe || transformer->deferred_ffn_post ||
+        transformer->final_norm_after_head || speculation->schema_version ||
+        speculation->block_size || speculation->noise_token_id ||
+        speculation->target_feature_layer_count || speculation->target_feature_width ||
+        speculation->concatenated_feature_width || speculation->draft_layer_count ||
+        speculation->markov_rank || speculation->accepted_prefix_maximum ||
+        speculation->feature_projection_role || speculation->feature_norm_role ||
+        speculation->output_norm_role || speculation->markov_embedding_role ||
+        speculation->markov_output_role || speculation->confidence_role ||
+        speculation->parallel_block_backbone || speculation->sequential_markov ||
+        speculation->confidence_available || speculation->shares_embedding ||
+        speculation->shares_output_head ||
+        speculation->target_verification_required || speculation->policy_identity[0])
+        return 0;
+    for (index = 0ull; index < YVEX_SPECULATION_MAX_FEATURE_LAYERS; ++index)
+        if (speculation->target_feature_layers[index]) return 0;
+    return 1;
+}
+
 int yvex_runtime_private_binding_policies_match_model(
     const yvex_model_execution_descriptor *model,
     const yvex_transformer_family_policy *transformer,
@@ -190,7 +230,12 @@ int yvex_runtime_private_binding_policies_match_model(
     const yvex_speculation_family_policy *speculation)
 {
     unsigned long long expanded, features;
-    return model && transformer && logits && speculation &&
+    if (!model || !transformer || !logits || !speculation ||
+        !binding_logits_policy_valid(logits)) return 0;
+    if (model->schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2)
+        return binding_policy_not_applicable(
+                   transformer, speculation);
+    return model->schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 &&
            transformer->schema_version == YVEX_TRANSFORMER_PLAN_SCHEMA_V2 &&
            (unsigned int)transformer->initial_policy < YVEX_TRANSFORMER_INITIAL_POLICY_COUNT &&
            (unsigned int)transformer->final_policy < YVEX_TRANSFORMER_FINAL_POLICY_COUNT &&
@@ -205,11 +250,6 @@ int yvex_runtime_private_binding_policies_match_model(
            binding_boolean(transformer->attention_then_moe) &&
            binding_boolean(transformer->deferred_ffn_post) &&
            binding_boolean(transformer->final_norm_after_head) &&
-           logits->schema_version == YVEX_RUNTIME_LOGITS_SCHEMA_V1 &&
-           binding_boolean(logits->separate_output_head) &&
-           binding_boolean(logits->tied_output_head) &&
-           binding_boolean(logits->output_head_bias) &&
-           logits->separate_output_head != logits->tied_output_head &&
            speculation->schema_version == YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 &&
            speculation->block_size == model->proposal_width &&
            speculation->noise_token_id == model->draft_noise_token_id &&
@@ -238,7 +278,7 @@ int yvex_runtime_private_binding_policies_match_model(
            yvex_sha256_hex_is_valid(speculation->policy_identity);
 }
 
-int yvex_runtime_private_binding_policies_valid(const yvex_runtime_binding *binding)
+static int binding_policies_valid(const yvex_runtime_binding *binding)
 {
     return binding && yvex_runtime_private_binding_policies_match_model(
         &binding->descriptor.model_execution, &binding->transformer_policy,
@@ -307,7 +347,7 @@ void yvex_runtime_binding_close(yvex_runtime_binding *binding)
     free(binding);
 }
 
-int yvex_runtime_private_compiled_plan_valid(
+static int compiled_plan_valid(
     const yvex_runtime_binding *binding)
 {
     yvex_compiled_model_plan_admission admission;
@@ -318,6 +358,8 @@ int yvex_runtime_private_compiled_plan_valid(
     admission.tensor_count = binding->summary.tensor_count;
     admission.layer_count = binding->summary.layer_count;
     admission.draft_layer_count = binding->summary.draft_layer_count;
+    admission.decoder_layer_count = binding->summary.decoder_layer_count;
+    admission.recurrent_layer_count = binding->summary.recurrent_layer_count;
     admission.model_execution_identity =
         binding->descriptor.model_execution.identity;
     admission.semantic_maximum_context =
@@ -336,9 +378,249 @@ int yvex_runtime_private_compiled_plan_valid(
         binding->summary.transformer_plan_identity;
     admission.draft_transformer_plan_identity =
         binding->summary.draft_transformer_plan_identity;
+    admission.decoder_plan_identity = binding->summary.decoder_plan_identity;
     admission.output_head_plan_identity =
         binding->summary.output_head_plan_identity;
     return yvex_compiled_model_plan_admit(binding->plan, &admission);
+}
+
+int yvex_runtime_private_binding_admission_ready(
+    const yvex_complete_artifact_admission *admission)
+{
+    return admission && admission->complete &&
+           admission->materialization_input_ready && !admission->runtime_supported &&
+           admission->artifact_identity_verified &&
+           admission->file_snapshot.size == admission->file_bytes;
+}
+
+int yvex_runtime_private_binding_attention_ready(
+    const yvex_attention_summary *attention)
+{
+    return attention && attention->history_contract_ready &&
+           attention->state_delta_contract_ready &&
+           attention->cpu_reference_ready && attention->cuda_execution_ready &&
+           attention->full_execution_ready;
+}
+
+int yvex_runtime_private_binding_identity_chain_valid(
+    const yvex_complete_artifact_admission *admission,
+    const yvex_materialization_summary *materialization,
+    const yvex_runtime_descriptor_summary *descriptor,
+    const yvex_attention_summary *attention)
+{
+    return admission && materialization && descriptor && attention &&
+           strcmp(admission->artifact_identity, materialization->artifact_identity) == 0 &&
+           strcmp(materialization->artifact_identity, descriptor->artifact_identity) == 0 &&
+           strcmp(materialization->plan_identity,
+                  descriptor->materialization_plan_identity) == 0 &&
+           strcmp(descriptor->artifact_identity, attention->artifact_identity) == 0 &&
+           strcmp(descriptor->materialization_plan_identity,
+                  attention->materialization_plan_identity) == 0 &&
+           strcmp(descriptor->logical_model_identity,
+                  attention->logical_model_identity) == 0 &&
+           strcmp(descriptor->runtime_descriptor_identity,
+                  attention->runtime_descriptor_identity) == 0 &&
+           strcmp(descriptor->runtime_numeric_identity,
+                  attention->runtime_numeric_identity) == 0;
+}
+
+int yvex_runtime_private_binding_decoder_matches(
+    const yvex_decoder_plan_summary *decoder,
+    const yvex_runtime_descriptor_summary *descriptor,
+    const char *operator_graph_identity,
+    const yvex_attention_summary *attention)
+{
+    const yvex_model_execution_descriptor *execution =
+        descriptor ? &descriptor->model_execution : NULL;
+
+    return decoder && descriptor && operator_graph_identity && attention && execution &&
+           execution->schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2 &&
+           decoder->layer_count == execution->layer_count &&
+           decoder->attention_layer_count == attention->layer_count &&
+           decoder->recurrent_layer_count == execution->sequence_mixer_layers &&
+           decoder->maximum_context == execution->maximum_context &&
+           strcmp(decoder->model_execution_identity, execution->identity) == 0 &&
+           strcmp(decoder->operator_graph_identity, operator_graph_identity) == 0;
+}
+
+static int binding_attention_layers_valid(
+    const yvex_runtime_binding *binding, const yvex_decoder_plan *decoder)
+{
+    unsigned long long attention;
+
+    for (attention = 0ull; attention < binding->summary.layer_count; ++attention) {
+        const yvex_attention_layer_plan *actual = &binding->layers[attention];
+        unsigned long long expected_layer = attention;
+
+        if (decoder) {
+            const yvex_decoder_plan_summary *summary =
+                yvex_decoder_plan_summary_get(decoder);
+            unsigned long long layer;
+            int found = 0;
+
+            if (!summary) return 0;
+            for (layer = 0ull; layer < summary->layer_count; ++layer) {
+                const yvex_decoder_layer_plan *candidate =
+                    yvex_decoder_plan_layer_at(decoder, layer);
+
+                if (!candidate || candidate->mixer !=
+                        YVEX_SEMANTIC_DECODER_MIXER_FULL_CAUSAL_ATTENTION ||
+                    candidate->attention_ordinal != attention)
+                    continue;
+                if (found) return 0;
+                expected_layer = candidate->layer_index;
+                found = 1;
+            }
+            if (!found) return 0;
+        }
+        if (actual->ordinal != attention || actual->layer_index != expected_layer ||
+            actual->tensor_scope != YVEX_TENSOR_SCOPE_MAIN_LAYER ||
+            actual->predictor_index != YVEX_MATERIALIZATION_NO_INDEX)
+            return 0;
+    }
+    return 1;
+}
+
+int yvex_runtime_private_binding_validate(
+    const yvex_runtime_binding *binding, const char **field,
+    yvex_runtime_binding_failure_code *code)
+{
+    char capability_identity[YVEX_SHA256_HEX_CAP];
+    char semantic[YVEX_SHA256_HEX_CAP], executable[YVEX_SHA256_HEX_CAP];
+    const yvex_physical_execution_summary *physical;
+    const yvex_decoder_plan *decoder_plan;
+    const yvex_decoder_plan_summary *decoder;
+    const char *compatibility;
+    unsigned long long index;
+
+    if (!field || !code) return 0;
+    *field = "canonical-body";
+    *code = YVEX_RUNTIME_BINDING_FAILURE_FORMAT;
+    if (!binding) return 0;
+    decoder_plan = yvex_compiled_model_plan_decoder(binding->plan);
+    decoder = yvex_decoder_plan_summary_get(decoder_plan);
+    physical = yvex_physical_execution_ir_summary(binding->physical_execution);
+    if (!physical || physical->decision_count != binding->summary.tensor_count ||
+        strcmp(physical->physical_variant_identity,
+               binding->admission.profile_identity) != 0) {
+        *field = "physical-execution";
+        *code = YVEX_RUNTIME_BINDING_FAILURE_IDENTITY;
+        return 0;
+    }
+    for (index = 0ull; index < physical->decision_count; ++index) {
+        const yvex_physical_execution_decision *decision =
+            yvex_physical_execution_ir_decision_at(
+                binding->physical_execution, index);
+
+        if (!decision || decision->terminal_tensor_id >= binding->summary.tensor_count ||
+            decision->canonical_qtype !=
+                binding->runtime[decision->terminal_tensor_id].qtype) {
+            *field = "physical-execution-package";
+            *code = YVEX_RUNTIME_BINDING_FAILURE_IDENTITY;
+            return 0;
+        }
+    }
+    if (!yvex_runtime_capabilities_identity(&binding->summary.capabilities,
+                                            capability_identity) ||
+        strcmp(capability_identity,
+               binding->summary.execution_capability_identity) != 0 ||
+        !yvex_runtime_capabilities_contract_valid(&binding->summary.capabilities)) {
+        *field = "execution-capabilities";
+        return 0;
+    }
+    compatibility = yvex_artifact_physical_compatibility_mismatch(
+        &binding->summary.physical_compatibility, &binding->admission,
+        binding->summary.logical_transform_identity);
+    if (compatibility) {
+        *field = compatibility;
+        *code = YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY;
+        return 0;
+    }
+    if (binding->summary.tensor_count != binding->admission.tensor_count ||
+        binding->summary.tensor_count != binding->materialization.tensor_count ||
+        binding->summary.tensor_count != binding->descriptor.tensor_count ||
+        binding->summary.layer_count != binding->attention.layer_count ||
+        binding->summary.draft_layer_count != binding->descriptor.draft_layer_count ||
+        binding->summary.draft_layer_count != binding->draft_attention.layer_count ||
+        (decoder &&
+         (binding->summary.decoder_layer_count != decoder->layer_count ||
+          binding->summary.recurrent_layer_count != decoder->recurrent_layer_count ||
+          strcmp(binding->summary.decoder_plan_identity,
+                 decoder->decoder_plan_identity) != 0 ||
+          !yvex_runtime_private_binding_decoder_matches(
+              decoder, &binding->descriptor,
+              yvex_compiled_model_plan_operator_graph_identity(binding->plan),
+              &binding->attention) || binding->summary.draft_layer_count)) ||
+        (!decoder && (binding->summary.decoder_layer_count ||
+                      binding->summary.recurrent_layer_count ||
+                      binding->summary.decoder_plan_identity[0])) ||
+        !binding->summary.tensor_count || !binding->summary.layer_count ||
+        !yvex_runtime_private_binding_admission_ready(&binding->admission) ||
+        !yvex_sha256_hex_is_valid(binding->admission.transform_identity) ||
+        !yvex_sha256_hex_is_valid(binding->summary.logical_transform_identity) ||
+        binding->materialization.committed || binding->materialization.cleanup_complete ||
+        binding->materialization.status != YVEX_MATERIALIZATION_STATUS_PLANNED ||
+        binding->materialization.access_calls ||
+        binding->materialization.payload_bytes_accessed ||
+        binding->materialization.full_walks ||
+        binding->materialization.snapshot_drift_count ||
+        binding->materialization.committed_bindings ||
+        binding->materialization.aborted_bindings ||
+        binding->descriptor.status != YVEX_RUNTIME_DESCRIPTOR_STATUS_READY ||
+        (!decoder && binding->descriptor.model_execution.schema_version !=
+                         YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1) ||
+        !yvex_sha256_hex_is_valid(binding->descriptor.model_execution.identity) ||
+        strcmp(binding->descriptor.logical_model_identity,
+               binding->descriptor.model_execution.logical_model_identity) != 0 ||
+        binding->descriptor.layer_count != binding->descriptor.model_execution.layer_count ||
+        binding->descriptor.draft_layer_count !=
+            binding->descriptor.model_execution.draft_layer_count ||
+        binding->descriptor.vocabulary_size !=
+            binding->descriptor.model_execution.vocabulary_size ||
+        !binding_policies_valid(binding) ||
+        !compiled_plan_valid(binding) ||
+        !yvex_runtime_private_binding_attention_ready(&binding->attention) ||
+        binding->attention.tensor_scope != YVEX_TENSOR_SCOPE_MAIN_LAYER ||
+        !binding->attention.required_binding_count ||
+        binding->attention.missing_binding_count ||
+        binding->attention.qtype_compute_refusal_count ||
+        !yvex_runtime_private_binding_identity_chain_valid(
+            &binding->admission, &binding->materialization,
+            &binding->descriptor, &binding->attention) ||
+        (binding->summary.draft_layer_count &&
+         (!yvex_runtime_private_binding_attention_ready(&binding->draft_attention) ||
+          binding->draft_attention.tensor_scope != YVEX_TENSOR_SCOPE_DRAFT ||
+          !yvex_runtime_private_binding_identity_chain_valid(
+              &binding->admission, &binding->materialization,
+              &binding->descriptor, &binding->draft_attention))))
+        return 0;
+    if (!yvex_compiled_graph_identities(
+            yvex_compiled_model_plan_operator_graph_identity(binding->plan),
+            &binding->materialization, &binding->descriptor, &binding->attention,
+            binding->summary.draft_layer_count ? &binding->draft_attention : NULL,
+            semantic, executable)) {
+        *field = "graph-identity-inputs";
+        *code = YVEX_RUNTIME_BINDING_FAILURE_IDENTITY;
+        return 0;
+    }
+    if (strcmp(binding->summary.semantic_graph_identity, semantic) != 0 ||
+        strcmp(binding->summary.executable_graph_identity, executable) != 0) {
+        *field = strcmp(binding->summary.semantic_graph_identity, semantic) != 0
+                     ? "semantic-graph-identity" : "executable-graph-identity";
+        *code = YVEX_RUNTIME_BINDING_FAILURE_IDENTITY;
+        return 0;
+    }
+    for (index = 0ull; index < binding->summary.tensor_count; ++index)
+        if (binding->materialized[index].tensor_id != index ||
+            binding->runtime[index].tensor_id >= binding->summary.tensor_count)
+            return 0;
+    if (!binding_attention_layers_valid(binding, decoder_plan)) return 0;
+    for (index = 0ull; index < binding->summary.draft_layer_count; ++index)
+        if (binding->draft_layers[index].ordinal != index ||
+            binding->draft_layers[index].tensor_scope != YVEX_TENSOR_SCOPE_DRAFT ||
+            binding->draft_layers[index].predictor_index != index)
+            return 0;
+    return 1;
 }
 
 int yvex_runtime_binding_import_materialization(

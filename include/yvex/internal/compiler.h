@@ -18,7 +18,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 #define YVEX_FAMILY_COMPILER_SCHEMA_V2 2u
 #define YVEX_RUNTIME_EXECUTION_CAPABILITY_SCHEMA_V2 2u
 #define YVEX_TRANSFORMER_PLAN_SCHEMA_V2 2u
@@ -534,6 +533,7 @@ typedef struct {
 typedef struct {
     unsigned long long family_adapter_id, family_adapter_version;
     unsigned long long tensor_count, layer_count, draft_layer_count;
+    unsigned long long decoder_layer_count, recurrent_layer_count;
     const char *model_execution_identity;
     unsigned long long semantic_maximum_context;
     const yvex_runtime_capabilities *capabilities;
@@ -541,7 +541,7 @@ typedef struct {
     const char *runtime_descriptor_identity;
     const char *attention_plan_identity, *draft_attention_plan_identity;
     const char *moe_plan_identity, *draft_moe_plan_identity;
-    const char *transformer_plan_identity, *draft_transformer_plan_identity;
+    const char *transformer_plan_identity, *draft_transformer_plan_identity, *decoder_plan_identity;
     const char *output_head_plan_identity;
 } yvex_compiled_model_plan_admission;
 typedef struct {

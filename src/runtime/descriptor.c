@@ -304,8 +304,10 @@ int yvex_runtime_descriptor_build(
     runtime_fill_common_summary(descriptor, admission, materialization);
     if (family) {
         if (family->model_execution &&
-            (family->model_execution->schema_version !=
-                 YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
+            ((family->model_execution->schema_version !=
+                  YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 &&
+              family->model_execution->schema_version !=
+                  YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2) ||
              !yvex_sha256_hex_valid(family->model_execution->identity) ||
              strcmp(family->logical_model_identity,
                     family->model_execution->logical_model_identity) != 0)) {

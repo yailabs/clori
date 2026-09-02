@@ -63,7 +63,7 @@ int yvex_runtime_execution_profile_seal(
     const yvex_runtime_execution_profile_request *request,
     yvex_runtime_execution_profile *profile, yvex_error *err);
 #define YVEX_RUNTIME_REASON_CAP 256u
-#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 15u
+#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 16u
 #define YVEX_RUNTIME_BINDING_SUFFIX ".yvex-runtime-binding"
 typedef enum {
     YVEX_RUNTIME_BINDING_FAILURE_NONE = 0, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
@@ -135,6 +135,7 @@ typedef struct yvex_runtime_binding_summary {
     unsigned int schema_version;
     unsigned long long family_adapter_id, family_adapter_version;
     unsigned long long tensor_count, layer_count, draft_layer_count, file_bytes;
+    unsigned long long decoder_layer_count, recurrent_layer_count;
     unsigned long long semantic_maximum_context;
     unsigned long long physical_execution_decision_count, source_snapshot_identity, mapping_identity;
     unsigned int artifact_format_version;
@@ -154,6 +155,7 @@ typedef struct yvex_runtime_binding_summary {
     char draft_moe_plan_identity[YVEX_SHA256_HEX_CAP];
     char transformer_plan_identity[YVEX_SHA256_HEX_CAP];
     char draft_transformer_plan_identity[YVEX_SHA256_HEX_CAP];
+    char decoder_plan_identity[YVEX_SHA256_HEX_CAP];
     char output_head_plan_identity[YVEX_SHA256_HEX_CAP];
     char semantic_graph_identity[YVEX_SHA256_HEX_CAP], executable_graph_identity[YVEX_SHA256_HEX_CAP];
     yvex_artifact_physical_compatibility physical_compatibility;

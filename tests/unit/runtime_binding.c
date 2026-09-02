@@ -966,7 +966,7 @@ static int test_binding_readdress(const char *path, unsigned char *file, size_t 
         !test_binding_u64(file, count, 8u, &schema) ||
         schema != YVEX_RUNTIME_BINDING_SCHEMA_CURRENT)
         return 0;
-    domain = "yvex.runtime.binding.v15";
+    domain = "yvex.runtime.binding.v16";
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, domain) ||
         !yvex_sha256_update_u64(&hash, schema) ||
@@ -1527,6 +1527,41 @@ static int test_runtime_capability_contract(void)
     return 0;
 }
 
+static int test_runtime_v2_policy_contract(void)
+{
+    yvex_model_execution_descriptor model = {0};
+    yvex_transformer_family_policy transformer = {0};
+    yvex_logits_family_policy logits = {
+        .schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1,
+        .separate_output_head = 1};
+    yvex_speculation_family_policy speculation = {0};
+
+    model.schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_binding_policies_match_model(
+            &model, &transformer, &logits, &speculation),
+        "heterogeneous decoder accepts explicit not-applicable legacy policies");
+    transformer.schema_version = YVEX_TRANSFORMER_PLAN_SCHEMA_V2;
+    YVEX_TEST_ASSERT(
+        !yvex_runtime_private_binding_policies_match_model(
+            &model, &transformer, &logits, &speculation),
+        "heterogeneous decoder refuses an inherited transformer policy");
+    memset(&transformer, 0, sizeof(transformer));
+    speculation.block_size = 1ull;
+    YVEX_TEST_ASSERT(
+        !yvex_runtime_private_binding_policies_match_model(
+            &model, &transformer, &logits, &speculation),
+        "heterogeneous decoder refuses an inherited speculation policy");
+    speculation.block_size = 0ull;
+    logits.separate_output_head = 0;
+    logits.tied_output_head = 0;
+    YVEX_TEST_ASSERT(
+        !yvex_runtime_private_binding_policies_match_model(
+            &model, &transformer, &logits, &speculation),
+        "heterogeneous decoder still requires an unambiguous logits policy");
+    return 0;
+}
+
 static int test_package_execution_identity(const binding_fixture *fixture)
 {
     const yvex_physical_execution_decision *base;
@@ -1889,7 +1924,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     return 0;
 }
 
-static int test_compiled_model_binding_v15(const char *root)
+static int test_compiled_model_binding_v16(const char *root)
 {
     binding_fixture fixture;
     yvex_runtime_binding_prepare_request request;
@@ -1913,22 +1948,22 @@ static int test_compiled_model_binding_v15(const char *root)
     yvex_error err;
 
     YVEX_TEST_ASSERT(
-        variant_path(root, "model-v15", "runtime.gguf", directory, artifact_path) &&
+        variant_path(root, "model-v16", "runtime.gguf", directory, artifact_path) &&
             copy_regular_file("tests/fixtures/gguf/valid-tokenizer-simple.gguf",
                               artifact_path) &&
             rewrite_attention_artifact_fixture(artifact_path),
-        "v15 runtime artifact fixture created");
+        "v16 runtime artifact fixture created");
     YVEX_TEST_ASSERT(fixture_build(&fixture, artifact_path, 1),
-                     "v15 runtime binding fixture built");
+                     "v16 runtime binding fixture built");
     descriptor = yvex_runtime_descriptor_summary_get(fixture.descriptor);
     YVEX_TEST_ASSERT(descriptor &&
                          descriptor->model_execution.schema_version ==
                              YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1,
-                     "v15 fixture owns a sealed model execution descriptor");
+                     "v16 fixture owns a sealed model execution descriptor");
     YVEX_TEST_ASSERT(fixture_binding_request(&fixture, directory, &request) &&
                          yvex_runtime_binding_prepare(
                              &request, &prepared, &failure, &err) == YVEX_OK,
-                     "v15 runtime binding prepared");
+                     "v16 runtime binding prepared");
     YVEX_TEST_ASSERT(yvex_runtime_binding_open(
                          &binding, prepared.path, &summary, NULL, &failure, &err) == YVEX_OK &&
                          summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT &&
@@ -1936,14 +1971,14 @@ static int test_compiled_model_binding_v15(const char *root)
                                 descriptor->model_execution.identity) == 0 &&
                          summary.semantic_maximum_context ==
                              descriptor->model_execution.maximum_context,
-                     "v15 reader authenticates canonical operator and package records");
+                     "v16 reader authenticates canonical operator and package records");
     YVEX_TEST_ASSERT(yvex_runtime_capabilities_contract_valid(&summary.capabilities),
-                     "reopened v15 binding retains valid execution capabilities");
+                     "reopened v16 binding retains valid execution capabilities");
     yvex_runtime_binding_close(binding);
     if (runtime_model_open_fixture(
             &fixture, &prepared, &model, &model_failure, &err) != YVEX_OK) {
-        fprintf(stderr, "v15 engine open: %s: %s\n", err.where, err.message);
-        YVEX_TEST_FAIL("v15 runtime model instantiates package execution geometry");
+        fprintf(stderr, "v16 engine open: %s: %s\n", err.where, err.message);
+        YVEX_TEST_FAIL("v16 runtime model instantiates package execution geometry");
     }
     YVEX_TEST_ASSERT(
         yvex_model_engine_summary_copy(model, &model_summary, &err) == YVEX_OK &&
@@ -1954,7 +1989,7 @@ static int test_compiled_model_binding_v15(const char *root)
                 model->specializations[YVEX_BACKEND_KIND_CPU]->summary.identity) &&
             strcmp(model->specializations[YVEX_BACKEND_KIND_CPU]->summary.identity,
                    model_summary.physical_execution_identity) != 0,
-        "v15 package truth opens through one distinct engine specialization");
+        "v16 package truth opens through one distinct engine specialization");
     YVEX_TEST_ASSERT(
         runtime_specialization_tensor(
             model->specializations[YVEX_BACKEND_KIND_CPU],
@@ -1964,7 +1999,7 @@ static int test_compiled_model_binding_v15(const char *root)
     YVEX_TEST_ASSERT(yvex_runtime_session_open(
                          &session, model, &session_request,
                          &model_failure, &err) == YVEX_OK,
-                     "v15 runtime session opens for capacity admission");
+                     "v16 runtime session opens for capacity admission");
     YVEX_TEST_ASSERT(
         yvex_runtime_session_summary_copy(session, &session_summary, &err) ==
                 YVEX_OK &&
@@ -1983,10 +2018,10 @@ static int test_compiled_model_binding_v15(const char *root)
     profile_workload.output_head_rows = 1ull;
     profile_workload.system_reserve_bytes = YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE;
     profile_workload.latency_priority = 1;
-    strcpy(profile_workload.name, "v15-profile-test");
+    strcpy(profile_workload.name, "v16-profile-test");
     YVEX_TEST_ASSERT(
         yvex_execution_workload_profile_seal(&profile_workload, &err) == YVEX_OK,
-        "v15 profile test owns one sealed runtime workload");
+        "v16 profile test owns one sealed runtime workload");
     profile_request.schema_version = YVEX_RUNTIME_EXECUTION_PROFILE_SCHEMA_V1;
     profile_request.engine_generation = session_summary.engine_generation;
     profile_request.engine_specialization_identity =
@@ -2040,7 +2075,7 @@ static int test_compiled_model_binding_v15(const char *root)
                          &err) == YVEX_ERR_BOUNDS && !generation,
                      "semantic context maximum refuses before state mutation");
     YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK && !session,
-                     "v15 capacity session closes");
+                     "v16 capacity session closes");
     yvex_model_engine_close(&model);
     fixture_close(&fixture);
     (void)unlink(prepared.path);
@@ -2102,8 +2137,7 @@ static int test_corruption_refusals(const yvex_runtime_binding_prepare_result *p
                              "runtime binding stale byte written");
         } else {
             unsigned char legacy_header[16] = "YVRBND13";
-            test_binding_put_u64(legacy_header, 8u,
-                                 YVEX_RUNTIME_BINDING_SCHEMA_CURRENT - 2u);
+            test_binding_put_u64(legacy_header, 8u, 13u);
             YVEX_TEST_ASSERT(pwrite(fd, legacy_header, sizeof(legacy_header), 0) ==
                                  (ssize_t)sizeof(legacy_header),
                              "previous v13 header written");
@@ -4586,6 +4620,7 @@ static int runtime_binding_suite(int cuda_only)
     YVEX_TEST_ASSERT(fixture_build(&fixture, artifact_path, 1),
                      "runtime binding fixture built");
     if (!cuda_only && test_runtime_capability_contract() != 0) goto done;
+    if (!cuda_only && test_runtime_v2_policy_contract() != 0) goto done;
     if (test_prepare_reopen_import(&fixture, root, &prepared, &binding) != 0) goto done;
     if (cuda_only) {
         int ready = 0;
@@ -4603,7 +4638,7 @@ static int runtime_binding_suite(int cuda_only)
         if (test_canonical_refusals(&prepared, root) != 0) goto done;
         if (test_graph_identity_refusals(&prepared, root) != 0) goto done;
         if (test_artifact_copy_portability(&fixture, &prepared, root) != 0) goto done;
-        if (test_compiled_model_binding_v15(root) != 0) goto done;
+        if (test_compiled_model_binding_v16(root) != 0) goto done;
         if (test_runtime_family_neutrality() != 0) goto done;
         if (test_runtime_model_compiled_execution(&fixture, &prepared) != 0) goto done;
         if (test_runtime_model_progress(&fixture, &prepared) != 0) goto done;
