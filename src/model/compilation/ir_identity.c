@@ -111,7 +111,9 @@ int yvex_transform_ir_compute_identity(yvex_transform_ir *ir,
 
     if (!ir || (ir->summary.schema_version != YVEX_TRANSFORM_IR_SCHEMA_VERSION &&
                 ir->summary.schema_version !=
-                    YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION)) {
+                    YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION &&
+                ir->summary.schema_version !=
+                    YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION)) {
         return yvex_transform_fail(
             failure, YVEX_TRANSFORM_FAILURE_IDENTITY_ENCODING,
             YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
@@ -121,7 +123,11 @@ int yvex_transform_ir_compute_identity(yvex_transform_ir *ir,
             "transform_ir_identity");
     }
     domain = ir->summary.schema_version == YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION
-                 ? "yvex.transform-ir.v2" : "yvex.transform-ir.v1";
+                 ? "yvex.transform-ir.v2"
+             : ir->summary.schema_version ==
+                       YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION
+                 ? "yvex.transform-ir.v3"
+                 : "yvex.transform-ir.v1";
     yvex_sha256_init(&hash);
     if (!transform_identity_string(&hash, domain) ||
         !transform_identity_u32(&hash, ir->summary.schema_version) ||
@@ -144,6 +150,12 @@ int yvex_transform_ir_compute_identity(yvex_transform_ir *ir,
          !transform_identity_string(&hash, ir->summary.architecture_identity) ||
          !transform_identity_string(&hash, ir->summary.role_map_identity) ||
          !transform_identity_string(&hash, ir->summary.unresolved_requirements_identity)))
+        goto encode_failure;
+    if (ir->summary.schema_version ==
+            YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION &&
+        (!transform_identity_u64(&hash, ir->summary.source_population_count) ||
+         !transform_identity_string(&hash, ir->summary.architecture_identity) ||
+         !transform_identity_string(&hash, ir->summary.role_map_identity)))
         goto encode_failure;
 
     for (index = 0u; index < ir->summary.source_value_count; ++index) {

@@ -15,7 +15,7 @@ extern "C" {
 #define YVEX_QWEN3_5_LAYER_CAP 64u
 #define YVEX_QWEN3_5_GENERATION_STOP_CAP 4u
 #define YVEX_QWEN3_5_ADAPTER_ID 0x5157454e335f35ull
-#define YVEX_QWEN3_5_ADAPTER_VERSION 2ull
+#define YVEX_QWEN3_5_ADAPTER_VERSION 3ull
 
 typedef enum {
     YVEX_QWEN3_5_LAYER_LINEAR_ATTENTION = 1,
@@ -169,6 +169,11 @@ typedef struct {
     int (*tensor_inventory_audit)(
         const yvex_qwen3_5_architecture *architecture,
         const yvex_native_weight_table *weights,
+        yvex_qwen3_5_tensor_inventory *inventory,
+        yvex_qwen3_5_failure *failure, yvex_error *err);
+    int (*tensor_snapshot_audit)(
+        const yvex_qwen3_5_architecture *architecture,
+        const yvex_source_tensor_snapshot *snapshot,
         yvex_qwen3_5_tensor_inventory *inventory,
         yvex_qwen3_5_failure *failure, yvex_error *err);
     const char *(*failure_name)(yvex_qwen3_5_failure_code code);

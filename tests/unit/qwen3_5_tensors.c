@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include <yvex/internal/families/qwen3_5.h>
+#include <yvex/internal/source.h>
 
 static void qwen_tensor_architecture(yvex_qwen3_5_architecture *architecture)
 {
@@ -193,9 +194,11 @@ int yvex_test_qwen3_5_tensors(void)
     const yvex_qwen3_5_api *api = yvex_model_register_qwen3_5();
     yvex_qwen3_5_architecture architecture;
     yvex_qwen3_5_tensor_inventory inventory;
+    yvex_qwen3_5_tensor_inventory snapshot_inventory;
     yvex_qwen3_5_tensor_binding binding;
     yvex_qwen3_5_failure failure;
     yvex_native_weight_table *table;
+    yvex_source_tensor_snapshot *snapshot = NULL;
     yvex_native_weight_info invalid = {0};
     unsigned long long invalid_dims[] = {1ull};
     yvex_error err;
@@ -245,6 +248,19 @@ int yvex_test_qwen3_5_tensors(void)
             strcmp(api->tensor_role_name(YVEX_QWEN3_5_ROLE_DELTA_OUTPUT),
                    "delta-output") == 0,
         "tensor classes and semantic roles have stable names");
-    yvex_native_weight_table_close(table);
+    YVEX_TEST_ASSERT(
+        yvex_source_tensor_snapshot_take_table(
+            &snapshot, &table, 18ull, 1ull, &err) == YVEX_OK && snapshot && !table,
+        "retain the canonical tensor table as an authenticated source snapshot");
+    YVEX_TEST_ASSERT(
+        api->tensor_snapshot_audit(&architecture, snapshot, &snapshot_inventory,
+                                   &failure, &err) == YVEX_OK &&
+            snapshot_inventory.complete &&
+            snapshot_inventory.tensor_count == inventory.tensor_count &&
+            snapshot_inventory.tensor_bytes == inventory.tensor_bytes &&
+            strcmp(snapshot_inventory.role_map_identity,
+                   inventory.role_map_identity) == 0,
+        "snapshot and table audits project one exact role-map identity");
+    yvex_source_tensor_snapshot_release(snapshot);
     return 0;
 }

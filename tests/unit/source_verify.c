@@ -1302,6 +1302,21 @@ int yvex_test_source_verify(void)
                      "duplicate index tensor is refused explicitly");
     YVEX_TEST_ASSERT(source_verify_write_text(
                          path,
+                         "{\"metadata\":{\"total_size\":11.0},\"weight_map\":{"
+                         "\"model.embed_tokens.weight\":"
+                         "\"model-00001-of-00001.safetensors\","
+                         "\"model.scale\":\"model-00001-of-00001.safetensors\","
+                         "\"model.values\":\"model-00001-of-00001.safetensors\"}}"),
+                     "write integral-decimal index size");
+    YVEX_TEST_ASSERT(source_verify_run(root, &result, &err) == YVEX_OK &&
+                         result.shard_index_valid &&
+                         !source_verify_has_blocker(&result,
+                                                    "malformed-shard-index") &&
+                         !source_verify_has_blocker(&result,
+                                                    "shard-index-size-mismatch"),
+                     "exact integral JSON decimal is accepted as a byte count");
+    YVEX_TEST_ASSERT(source_verify_write_text(
+                         path,
                          "{\"metadata\":{\"total_size\":9},\"weight_map\":{"
                          "\"model.embed_tokens.weight\":"
                          "\"model-00001-of-00001.safetensors\"}}"),

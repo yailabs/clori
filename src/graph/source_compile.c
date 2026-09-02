@@ -251,13 +251,24 @@ static int source_resolve(
 
     if (!lowering || !lowering->complete || !binding || !binding->complete || !transform ||
         !transform->complete ||
-        lowering->mapping_identity != session->projection->expected_mapping_identity ||
         lowering->source_identity != session->verification.source_snapshot_identity ||
         binding->source_count != lowering->source_contribution_count)
         return source_refuse(
             failure, YVEX_COMPILATION_SOURCE_FAILURE_MAPPING_IDENTITY,
             ULLONG_MAX, ULLONG_MAX, YVEX_ERR_FORMAT,
             "lowering, transform, binding, and verified source identities differ", err);
+    if (lowering->mapping_identity != session->projection->expected_mapping_identity) {
+        if (failure) {
+            memset(failure, 0, sizeof(*failure));
+            failure->code = YVEX_COMPILATION_SOURCE_FAILURE_MAPPING_IDENTITY;
+        }
+        yvex_error_setf(
+            err, YVEX_ERR_FORMAT, "compilation.source",
+            "lowering mapping identity differs: expected=%llu actual=%llu",
+            session->projection->expected_mapping_identity,
+            lowering->mapping_identity);
+        return YVEX_ERR_FORMAT;
+    }
     session->summary.mapping_identity = lowering->mapping_identity;
     yvex_core_text_copy(session->summary.transform_identity,
                         sizeof(session->summary.transform_identity),

@@ -885,23 +885,37 @@ static int qwen_tensor_identity_update(yvex_sha256 *hash,
            yvex_sha256_update_u64(hash, binding->layer_index);
 }
 
-static int qwen_tensor_inventory_audit(
+typedef const yvex_native_weight_info *(*qwen_tensor_at_fn)(
+    const void *source, unsigned long long index);
+
+static const yvex_native_weight_info *qwen_table_tensor_at(
+    const void *source, unsigned long long index)
+{
+    return yvex_native_weight_table_at(source, index);
+}
+
+static const yvex_native_weight_info *qwen_snapshot_tensor_at(
+    const void *source, unsigned long long index)
+{
+    return yvex_source_tensor_snapshot_at(source, index);
+}
+
+static int qwen_tensor_rows_audit(
     const yvex_qwen3_5_architecture *architecture,
-    const yvex_native_weight_table *weights,
+    const void *source, unsigned long long count, qwen_tensor_at_fn tensor_at,
     yvex_qwen3_5_tensor_inventory *inventory,
     yvex_qwen3_5_failure *failure, yvex_error *err)
 {
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256 hash;
-    unsigned long long index, count, expected_text, expected_vision, expected_mtp;
+    unsigned long long index, expected_text, expected_vision, expected_mtp;
     unsigned int role;
 
     if (inventory) memset(inventory, 0, sizeof(*inventory));
-    if (!architecture || !weights || !inventory)
+    if (!architecture || !source || !tensor_at || !inventory)
         return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_INVALID_ARGUMENT,
                            "inventory", "tensor inventory audit inputs are required",
                            YVEX_ERR_INVALID_ARG, err);
-    count = yvex_native_weight_table_count(weights);
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.qwen3-5.tensor-role-map.v1") ||
         !yvex_sha256_update_text(&hash, architecture->architecture_identity) ||
@@ -910,9 +924,13 @@ static int qwen_tensor_inventory_audit(
                            "identity", "tensor role map identity initialization failed",
                            YVEX_ERR_STATE, err);
     for (index = 0ull; index < count; ++index) {
-        const yvex_native_weight_info *tensor = yvex_native_weight_table_at(weights, index);
+        const yvex_native_weight_info *tensor = tensor_at(source, index);
         yvex_qwen3_5_tensor_binding binding;
 
+        if (!tensor)
+            return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_TENSOR_INVENTORY,
+                               "tensor", "tensor inventory row disappeared during audit",
+                               YVEX_ERR_STATE, err);
         if (qwen_tensor_classify(architecture, tensor, &binding, failure, err) != YVEX_OK)
             return yvex_error_code(err);
         if (inventory->tensor_bytes > ULLONG_MAX - tensor->data_bytes)
@@ -957,6 +975,36 @@ static int qwen_tensor_inventory_audit(
     inventory->complete = 1;
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+static int qwen_tensor_inventory_audit(
+    const yvex_qwen3_5_architecture *architecture,
+    const yvex_native_weight_table *weights,
+    yvex_qwen3_5_tensor_inventory *inventory,
+    yvex_qwen3_5_failure *failure, yvex_error *err)
+{
+    return qwen_tensor_rows_audit(
+        architecture, weights,
+        weights ? yvex_native_weight_table_count(weights) : 0ull,
+        qwen_table_tensor_at, inventory, failure, err);
+}
+
+static int qwen_tensor_snapshot_audit(
+    const yvex_qwen3_5_architecture *architecture,
+    const yvex_source_tensor_snapshot *snapshot,
+    yvex_qwen3_5_tensor_inventory *inventory,
+    yvex_qwen3_5_failure *failure, yvex_error *err)
+{
+    yvex_source_tensor_snapshot_facts facts = {0};
+
+    if (!snapshot ||
+        yvex_source_tensor_snapshot_facts_get(snapshot, &facts, err) != YVEX_OK)
+        return qwen_refuse(failure, YVEX_QWEN3_5_FAILURE_INVALID_ARGUMENT,
+                           "snapshot", "retained tensor snapshot facts are required",
+                           YVEX_ERR_INVALID_ARG, err);
+    return qwen_tensor_rows_audit(
+        architecture, snapshot, facts.tensor_count, qwen_snapshot_tensor_at,
+        inventory, failure, err);
 }
 
 static const char *qwen_tensor_class_name(yvex_qwen3_5_tensor_class classification)
@@ -1178,13 +1226,14 @@ static const char *qwen_failure_name(yvex_qwen3_5_failure_code code)
 const yvex_qwen3_5_api *yvex_model_register_qwen3_5(void)
 {
     static const yvex_qwen3_5_api api = {
-        .schema_version = 2u,
+        .schema_version = 3u,
         .open = qwen_model_open,
         .close = qwen_model_close,
         .architecture = qwen_architecture,
         .layer_kind = qwen_layer_kind,
         .tensor_classify = qwen_tensor_classify,
         .tensor_inventory_audit = qwen_tensor_inventory_audit,
+        .tensor_snapshot_audit = qwen_tensor_snapshot_audit,
         .failure_name = qwen_failure_name,
         .tensor_class_name = qwen_tensor_class_name,
         .tensor_role_name = qwen_tensor_role_name};

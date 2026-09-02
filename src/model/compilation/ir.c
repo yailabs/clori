@@ -321,7 +321,8 @@ static int transform_logical_key_valid(const yvex_transform_logical_key *key,
 {
     if (!key || key->scope > YVEX_TRANSFORM_SCOPE_AUXILIARY ||
         key->subsystem >= YVEX_TRANSFORM_SUBSYSTEM_COUNT) return 0;
-    if (schema_version == YVEX_TRANSFORM_IR_SCHEMA_VERSION) {
+    if (schema_version == YVEX_TRANSFORM_IR_SCHEMA_VERSION ||
+        schema_version == YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION) {
         if (key->role <= YVEX_TENSOR_ROLE_UNKNOWN ||
             key->role >= YVEX_TENSOR_ROLE_COUNT || key->component_identity ||
             key->semantic_role || key->phase_identity || key->lifetime_identity) return 0;
@@ -345,7 +346,8 @@ static int transform_source_scope_valid(
 {
     if (!source || source->scope > YVEX_TRANSFORM_SCOPE_AUXILIARY ||
         source->subsystem >= YVEX_TRANSFORM_SUBSYSTEM_COUNT) return 0;
-    if (schema_version == YVEX_TRANSFORM_IR_SCHEMA_VERSION) {
+    if (schema_version == YVEX_TRANSFORM_IR_SCHEMA_VERSION ||
+        schema_version == YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION) {
         if (source->role_hint <= YVEX_TENSOR_ROLE_UNKNOWN ||
             source->role_hint >= YVEX_TENSOR_ROLE_COUNT || source->component_identity ||
             source->semantic_role || source->phase_identity || source->lifetime_identity ||
@@ -381,13 +383,20 @@ int yvex_transform_builder_create(
     yvex_error_clear(err);
     if (!out || !header ||
         (header->schema_version != YVEX_TRANSFORM_IR_SCHEMA_VERSION &&
-         header->schema_version != YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION) ||
+         header->schema_version != YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION &&
+         header->schema_version != YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION) ||
         !transform_identity_text_valid(header->logical_model_identity) ||
         !transform_identity_text_valid(header->required_payload_identity) ||
         !header->payload_trust_class || !header->payload_trust_class[0] ||
         header->source_snapshot_identity == 0u ||
         header->expected_source_count == 0u ||
         header->expected_terminal_count == 0u ||
+        (header->schema_version == YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION &&
+         (header->source_population_count < header->expected_source_count ||
+          !transform_identity_text_valid(header->architecture_identity) ||
+          !transform_identity_text_valid(header->role_map_identity))) ||
+        (header->schema_version != YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION &&
+         header->source_population_count != 0u) ||
         (header->schema_version == YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION &&
          (!transform_identity_text_valid(header->component_manifest_identity) ||
           !transform_identity_text_valid(header->architecture_identity) ||
@@ -396,7 +405,9 @@ int yvex_transform_builder_create(
         return yvex_transform_fail(
             failure,
             header && header->schema_version != YVEX_TRANSFORM_IR_SCHEMA_VERSION &&
-                    header->schema_version != YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION
+                    header->schema_version != YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION &&
+                    header->schema_version !=
+                        YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION
                 ? YVEX_TRANSFORM_FAILURE_SCHEMA_UNSUPPORTED
                 : YVEX_TRANSFORM_FAILURE_INVALID_ARGUMENT,
             YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
@@ -1077,7 +1088,7 @@ static const char *transform_coverage_subsystem_name(
     static const char *const names[] = {
         "global", "attention", "compressor", "indexer", "norm", "mhc",
         "router", "routed-expert", "shared-expert", "output", "auxiliary",
-        "sequence-mixer"};
+        "sequence-mixer", "dense-ffn"};
 
     return subsystem < YVEX_TRANSFORM_SUBSYSTEM_COUNT ? names[subsystem] : NULL;
 }
@@ -1098,15 +1109,23 @@ static int transform_recipe_source_coverage_finalize(
     if (yvex_source_tensor_snapshot_facts_get(
             sink->source_snapshot, &facts, err) != YVEX_OK ||
         facts.identity != builder->header.source_snapshot_identity ||
-        facts.tensor_count != builder->source_count)
+        facts.tensor_count !=
+            (builder->header.schema_version ==
+                     YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION
+                 ? builder->header.source_population_count
+                 : builder->source_count))
         return yvex_transform_fail(
             failure, facts.identity != builder->header.source_snapshot_identity
                          ? YVEX_TRANSFORM_FAILURE_SOURCE_IDENTITY_MISMATCH
                          : YVEX_TRANSFORM_FAILURE_COVERAGE_INCOMPLETE,
             YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
             YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
-            YVEX_TRANSFORM_IR_NO_ID, facts.tensor_count,
-            builder->source_count, 0u, err,
+            YVEX_TRANSFORM_IR_NO_ID,
+            builder->header.schema_version ==
+                    YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION
+                ? builder->header.source_population_count
+                : builder->source_count,
+            facts.tensor_count, 0u, err,
             "transform_recipe_source_coverage");
     if (builder->source_count > SIZE_MAX / sizeof(*requirements))
         return yvex_transform_fail(
@@ -1288,7 +1307,8 @@ static yvex_transform_subsystem transform_recipe_subsystem(
         YVEX_TRANSFORM_SUBSYSTEM_ROUTED_EXPERT,
         YVEX_TRANSFORM_SUBSYSTEM_SHARED_EXPERT,
         YVEX_TRANSFORM_SUBSYSTEM_AUXILIARY,
-        YVEX_TRANSFORM_SUBSYSTEM_SEQUENCE_MIXER};
+        YVEX_TRANSFORM_SUBSYSTEM_SEQUENCE_MIXER,
+        YVEX_TRANSFORM_SUBSYSTEM_DENSE_FFN};
 
     return collection < YVEX_TENSOR_COLLECTION_COUNT
                ? subsystems[collection] : YVEX_TRANSFORM_SUBSYSTEM_COUNT;

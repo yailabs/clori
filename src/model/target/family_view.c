@@ -477,7 +477,7 @@ static const char *transform_collection_name(unsigned int collection)
     static const char *const names[] = {
         "global", "attention", "compressor", "indexer", "norm", "mhc",
         "router", "routed-expert", "shared-expert", "auxiliary",
-        "sequence-mixer"};
+        "sequence-mixer", "dense-ffn"};
 
     return collection < sizeof(names) / sizeof(names[0])
                ? names[collection]
@@ -502,6 +502,10 @@ static int transform_collection_index(
     }
     if (subsystem == YVEX_TRANSFORM_SUBSYSTEM_SEQUENCE_MIXER) {
         *collection = YVEX_TENSOR_COLLECTION_SEQUENCE_MIXER;
+        return 1;
+    }
+    if (subsystem == YVEX_TRANSFORM_SUBSYSTEM_DENSE_FFN) {
+        *collection = YVEX_TENSOR_COLLECTION_DENSE_FFN;
         return 1;
     }
     return 0;
