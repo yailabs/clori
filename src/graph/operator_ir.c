@@ -347,6 +347,27 @@ static unsigned long long transformer_attention_state_mask(
     return mask;
 }
 
+static unsigned long long semantic_attention_state_mask(
+    const yvex_semantic_attention_layer *layer)
+{
+    unsigned long long mask = 0ull;
+
+    if (!layer) return 0ull;
+    if (layer->attention_class == YVEX_ATTENTION_CLASS_SWA)
+        mask |= YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_SWA_RING);
+    if (layer->compressor_required)
+        mask |= YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_COMPRESSED_HISTORY) |
+                YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_MAIN_ROLLING);
+    if (layer->attention_class == YVEX_ATTENTION_CLASS_HCA)
+        mask |= YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_HCA_HISTORY);
+    if (layer->indexer_required)
+        mask |= YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_INDEXER_HISTORY) |
+                YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_INDEXER_ROLLING);
+    if (layer->mhc_mixing_rows)
+        mask |= YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_RESIDUAL_MIXING);
+    return mask;
+}
+
 static int transformer_scope_build(
     transformer_graph_builder *builder,
     const yvex_attention_plan *attention, unsigned long long hidden_width,
@@ -416,6 +437,77 @@ static int transformer_graph_nodes(
     return 1;
 }
 
+static int decoder_graph_nodes(
+    transformer_graph_builder *builder,
+    const yvex_model_execution_descriptor *model,
+    const yvex_semantic_decoder_layer *layers, unsigned long long layer_count,
+    const yvex_semantic_attention_layer *semantic_attention,
+    unsigned long long semantic_attention_count,
+    const yvex_attention_plan *attention)
+{
+    unsigned long long index, attention_index = 0ull;
+
+    if (!transformer_node_add(
+            builder, YVEX_OPERATOR_EMBEDDING, YVEX_TENSOR_SCOPE_GLOBAL,
+            YVEX_ATTENTION_NO_LAYER, 0ull, 1ull, model->hidden_width, 0ull))
+        return 0;
+    for (index = 0ull; index < layer_count; ++index) {
+        const yvex_semantic_decoder_layer *layer = &layers[index];
+        unsigned long long state_mask = 0ull;
+        yvex_operator_kind kind;
+        char mixer_identity[YVEX_SEMANTIC_DECODER_IDENTITY_CAP];
+
+        if (layer->mixer ==
+            YVEX_SEMANTIC_DECODER_MIXER_FULL_CAUSAL_ATTENTION) {
+            const yvex_attention_layer_plan *physical =
+                attention ? yvex_attention_plan_layer_at(
+                                attention, attention_index) : NULL;
+            if (attention_index >= semantic_attention_count ||
+                semantic_attention[attention_index].layer_index != index ||
+                (attention &&
+                 (!physical || physical->layer_index != index)))
+                return 0;
+            kind = YVEX_OPERATOR_ATTENTION;
+            state_mask = physical
+                             ? transformer_attention_state_mask(physical, 0)
+                             : semantic_attention_state_mask(
+                                   &semantic_attention[attention_index]);
+            builder->attribute_identity = model->identity;
+            attention_index++;
+        } else if (layer->mixer ==
+                   YVEX_SEMANTIC_DECODER_MIXER_GATED_DELTA) {
+            if (!yvex_semantic_gated_delta_requirement_identity(
+                    &layer->gated_delta, mixer_identity))
+                return 0;
+            kind = YVEX_OPERATOR_STATEFUL_SEQUENCE_MIXER;
+            state_mask = YVEX_MODEL_STATE_CLASS_BIT(
+                YVEX_MODEL_STATE_RECURRENT_SEQUENCE);
+            builder->attribute_identity = mixer_identity;
+        } else {
+            return 0;
+        }
+        if (!transformer_node_add(
+                builder, kind, YVEX_TENSOR_SCOPE_MAIN_LAYER, index, 0ull,
+                layer->hidden_width, layer->hidden_width, state_mask))
+            return 0;
+        builder->attribute_identity = model->identity;
+        if (!transformer_node_add(
+                builder, YVEX_OPERATOR_DENSE_FEED_FORWARD,
+                YVEX_TENSOR_SCOPE_MAIN_LAYER, index, 0ull,
+                layer->hidden_width, layer->hidden_width, 0ull))
+            return 0;
+    }
+    return attention_index == semantic_attention_count &&
+           transformer_node_add(
+               builder, YVEX_OPERATOR_NORMALIZATION,
+               YVEX_TENSOR_SCOPE_GLOBAL, YVEX_ATTENTION_NO_LAYER, 0ull,
+               model->hidden_width, model->output_input_width, 0ull) &&
+           transformer_node_add(
+               builder, YVEX_OPERATOR_OUTPUT_PROJECTION,
+               YVEX_TENSOR_SCOPE_GLOBAL, YVEX_ATTENTION_NO_LAYER, 0ull,
+               model->output_input_width, model->output_vocabulary_size, 0ull);
+}
+
 int yvex_operator_graph_ir_build_transformer(
     yvex_operator_graph_ir **out,
     const yvex_semantic_model_ir *semantic_model,
@@ -483,6 +575,90 @@ int yvex_operator_graph_ir_build_transformer(
     else
         rc = operator_refuse(err, YVEX_ERR_STATE,
                              "transformer operator composition failed");
+    free(builder.edges);
+    free(builder.nodes);
+    return rc;
+}
+
+int yvex_operator_graph_ir_build_decoder(
+    yvex_operator_graph_ir **out,
+    const yvex_semantic_model_ir *semantic_model,
+    const yvex_attention_plan *attention,
+    const yvex_attention_plan *draft_attention, yvex_error *err)
+{
+    const yvex_semantic_model_ir_summary *semantic =
+        yvex_semantic_model_ir_summary_get(semantic_model);
+    const yvex_model_execution_descriptor *model =
+        semantic ? &semantic->execution_descriptor : NULL;
+    const yvex_semantic_decoder_layer *layers = NULL;
+    const yvex_semantic_attention_layer *semantic_attention = NULL;
+    unsigned long long layer_count = 0ull, attention_count = 0ull;
+    unsigned long long node_capacity, edge_capacity;
+    transformer_graph_builder builder = {0};
+    yvex_operator_graph_request request = {0};
+    int rc;
+
+    if (out) *out = NULL;
+    if (!out || !semantic || !model || draft_attention ||
+        semantic->schema_version != YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2 ||
+        model->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2 ||
+        strcmp(model->identity, semantic->semantic_payload_identity) != 0 ||
+        !yvex_semantic_model_ir_decoder_view(
+            semantic_model, &layers, &layer_count) ||
+        !yvex_semantic_model_ir_attention_view(
+            semantic_model, YVEX_TENSOR_SCOPE_MAIN_LAYER,
+            &semantic_attention, &attention_count) ||
+        layer_count != model->layer_count ||
+        (attention && yvex_attention_plan_layer_count(attention) != attention_count))
+        return operator_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "decoder graph requires matching semantic and attention topology");
+    if (!yvex_core_u64_mul(layer_count, 2ull, &node_capacity) ||
+        !yvex_core_u64_add(node_capacity, 3ull, &node_capacity) ||
+        !yvex_core_u64_mul(
+            node_capacity, 1ull + 2ull * YVEX_MODEL_STATE_CLASS_COUNT,
+            &edge_capacity) ||
+        node_capacity > SIZE_MAX / sizeof(*builder.nodes) ||
+        edge_capacity > SIZE_MAX / sizeof(*builder.edges))
+        return operator_refuse(
+            err, YVEX_ERR_BOUNDS, "decoder graph extent overflowed");
+    builder.nodes = calloc((size_t)node_capacity, sizeof(*builder.nodes));
+    builder.edges = calloc((size_t)edge_capacity, sizeof(*builder.edges));
+    if (!builder.nodes || !builder.edges) {
+        free(builder.edges);
+        free(builder.nodes);
+        return operator_refuse(
+            err, YVEX_ERR_NOMEM, "decoder graph workspace allocation failed");
+    }
+    builder.node_capacity = node_capacity;
+    builder.edge_capacity = edge_capacity;
+    builder.target_previous = YVEX_OPERATOR_GRAPH_NO_NODE;
+    builder.draft_previous = YVEX_OPERATOR_GRAPH_NO_NODE;
+    builder.attribute_identity = model->identity;
+    rc = decoder_graph_nodes(
+             &builder, model, layers, layer_count, semantic_attention,
+             attention_count, attention)
+             ? YVEX_OK : YVEX_ERR_STATE;
+    request = (yvex_operator_graph_request){
+        .semantic_model = semantic_model,
+        .nodes = builder.nodes,
+        .node_count = builder.node_count,
+        .edges = builder.edges,
+        .edge_count = builder.edge_count,
+        .target_layer_count = layer_count};
+    if (rc == YVEX_OK)
+        rc = yvex_operator_graph_ir_seal(out, &request, err);
+    else
+        rc = operator_refuse(
+            err, YVEX_ERR_STATE, "decoder operator composition failed");
+    if (rc == YVEX_OK &&
+        yvex_operator_graph_ir_summary(*out)->state_class_mask !=
+            model->persistent_state_class_mask) {
+        yvex_operator_graph_ir_close(out);
+        rc = operator_refuse(
+            err, YVEX_ERR_STATE,
+            "decoder graph state classes disagree with model semantics");
+    }
     free(builder.edges);
     free(builder.nodes);
     return rc;

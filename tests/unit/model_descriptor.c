@@ -9,6 +9,7 @@
 #include <yvex/internal/compiler.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/model.h>
+#include <yvex/internal/operator_graph.h>
 
 #include "tests/test.h"
 
@@ -372,6 +373,7 @@ static int test_hybrid_decoder_semantics(void)
     yvex_semantic_decoder_layer decoder[2] = {{0}};
     yvex_semantic_model_ir_request request = {0};
     yvex_semantic_model_ir *model = NULL;
+    yvex_operator_graph_ir *graph = NULL;
     const yvex_semantic_decoder_layer *view = NULL;
     const yvex_semantic_model_ir_summary *summary;
     unsigned char wire[YVEX_MODEL_EXECUTION_WIRE_BYTES];
@@ -452,6 +454,26 @@ static int test_hybrid_decoder_semantics(void)
             view[1].mixer ==
                 YVEX_SEMANTIC_DECODER_MIXER_FULL_CAUSAL_ATTENTION,
         "hybrid semantic decoder seals exact heterogeneous mixer topology");
+    YVEX_TEST_ASSERT(
+        yvex_operator_graph_ir_build_decoder(
+            &graph, model, NULL, NULL, &err) == YVEX_OK &&
+            yvex_operator_graph_ir_summary(graph)->node_count == 7ull &&
+            yvex_operator_graph_ir_summary(graph)->target_layer_count == 2ull &&
+            yvex_operator_graph_ir_summary(graph)->state_class_mask ==
+                execution.persistent_state_class_mask &&
+            yvex_operator_graph_ir_node_at(graph, 1ull)->kind ==
+                YVEX_OPERATOR_STATEFUL_SEQUENCE_MIXER &&
+            yvex_operator_graph_ir_node_at(graph, 1ull)->state_write_mask ==
+                YVEX_MODEL_STATE_CLASS_BIT(
+                    YVEX_MODEL_STATE_RECURRENT_SEQUENCE) &&
+            yvex_operator_graph_ir_node_at(graph, 2ull)->kind ==
+                YVEX_OPERATOR_DENSE_FEED_FORWARD &&
+            yvex_operator_graph_ir_node_at(graph, 3ull)->kind ==
+                YVEX_OPERATOR_ATTENTION &&
+            yvex_operator_graph_ir_node_at(graph, 3ull)->state_write_mask ==
+                YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_SWA_RING),
+        "hybrid operator graph preserves dense, KV, and recurrent ownership");
+    yvex_operator_graph_ir_close(&graph);
     yvex_semantic_model_ir_close(&model);
     decoder[1].layer_index = 0ull;
     YVEX_TEST_ASSERT(

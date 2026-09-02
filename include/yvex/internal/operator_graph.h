@@ -31,6 +31,8 @@ typedef enum {
     YVEX_OPERATOR_AUDIO_CODEC,
     YVEX_OPERATOR_MULTIMODAL_TRANSFORMER,
     YVEX_OPERATOR_RECTIFIED_FLOW,
+    YVEX_OPERATOR_STATEFUL_SEQUENCE_MIXER,
+    YVEX_OPERATOR_DENSE_FEED_FORWARD,
     YVEX_OPERATOR_KIND_COUNT
 } yvex_operator_kind;
 
@@ -91,6 +93,11 @@ int yvex_operator_graph_ir_seal(
     yvex_operator_graph_ir **out,
     const yvex_operator_graph_request *request, yvex_error *err);
 int yvex_operator_graph_ir_build_transformer(
+    yvex_operator_graph_ir **out,
+    const yvex_semantic_model_ir *semantic_model,
+    const struct yvex_attention_plan *attention,
+    const struct yvex_attention_plan *draft_attention, yvex_error *err);
+int yvex_operator_graph_ir_build_decoder(
     yvex_operator_graph_ir **out,
     const yvex_semantic_model_ir *semantic_model,
     const struct yvex_attention_plan *attention,
