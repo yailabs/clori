@@ -7,6 +7,7 @@
 
 #include <yvex/api.h>
 #include <yvex/internal/compiler.h>
+#include <yvex/internal/decoder_plan.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/model.h>
 #include <yvex/internal/operator_graph.h>
@@ -374,6 +375,10 @@ static int test_hybrid_decoder_semantics(void)
     yvex_semantic_model_ir_request request = {0};
     yvex_semantic_model_ir *model = NULL;
     yvex_operator_graph_ir *graph = NULL;
+    yvex_decoder_plan *plan = NULL, *reopened = NULL;
+    yvex_decoder_plan_summary plan_summary;
+    yvex_decoder_layer_plan plan_layers[2];
+    yvex_sequence_state_plan sequence_plan;
     const yvex_semantic_decoder_layer *view = NULL;
     const yvex_semantic_model_ir_summary *summary;
     unsigned char wire[YVEX_MODEL_EXECUTION_WIRE_BYTES];
@@ -473,6 +478,37 @@ static int test_hybrid_decoder_semantics(void)
             yvex_operator_graph_ir_node_at(graph, 3ull)->state_write_mask ==
                 YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_SWA_RING),
         "hybrid operator graph preserves dense, KV, and recurrent ownership");
+    YVEX_TEST_ASSERT(
+        yvex_decoder_plan_compile(&plan, model, graph, &err) == YVEX_OK &&
+            yvex_decoder_plan_summary_get(plan)->layer_count == 2ull &&
+            yvex_decoder_plan_summary_get(plan)->attention_layer_count == 1ull &&
+            yvex_decoder_plan_summary_get(plan)->recurrent_layer_count == 1ull &&
+            yvex_decoder_plan_summary_get(plan)->convolution_state_bytes == 24ull &&
+            yvex_decoder_plan_summary_get(plan)->recurrent_state_bytes == 16ull &&
+            yvex_decoder_plan_layer_at(plan, 0ull)->attention_ordinal ==
+                YVEX_DECODER_NO_ATTENTION &&
+            yvex_decoder_plan_layer_at(plan, 1ull)->attention_ordinal == 0ull &&
+            yvex_decoder_plan_sequence_state(plan, &sequence_plan, &err) ==
+                YVEX_OK && sequence_plan.binding_count == 1ull &&
+            sequence_plan.bindings[0].layer_index == 0ull,
+        "hybrid decoder plan authenticates topology and recurrent state economics");
+    plan_summary = *yvex_decoder_plan_summary_get(plan);
+    plan_layers[0] = *yvex_decoder_plan_layer_at(plan, 0ull);
+    plan_layers[1] = *yvex_decoder_plan_layer_at(plan, 1ull);
+    YVEX_TEST_ASSERT(
+        yvex_decoder_plan_import(
+            &reopened, &plan_summary, plan_layers, &err) == YVEX_OK &&
+            strcmp(yvex_decoder_plan_summary_get(reopened)->decoder_plan_identity,
+                   plan_summary.decoder_plan_identity) == 0,
+        "hybrid decoder plan reopens from pointer-free authenticated records");
+    yvex_decoder_plan_close(&reopened);
+    plan_layers[0].identity[0] = plan_layers[0].identity[0] == '0' ? '1' : '0';
+    YVEX_TEST_ASSERT(
+        yvex_decoder_plan_import(
+            &reopened, &plan_summary, plan_layers, &err) == YVEX_ERR_FORMAT &&
+            reopened == NULL,
+        "hybrid decoder plan rejects a mutated layer identity");
+    yvex_decoder_plan_close(&plan);
     yvex_operator_graph_ir_close(&graph);
     yvex_semantic_model_ir_close(&model);
     decoder[1].layer_index = 0ull;

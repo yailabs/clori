@@ -60,7 +60,7 @@
     },
     {
       "id": "semantic-operator-ir",
-      "patterns": ["src/model/compilation/semantic.c", "src/graph/operator_ir.c", "src/graph/source_compile.c", "include/yvex/internal/model_ir.h", "include/yvex/internal/operator_ir.h"],
+      "patterns": ["src/model/compilation/semantic.c", "src/graph/operator_ir.c", "src/graph/decoder_plan.c", "src/graph/source_compile.c", "include/yvex/internal/model_ir.h", "include/yvex/internal/operator_ir.h", "include/yvex/internal/decoder_plan.h"],
       "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],
       "tests": ["integration.tiny-vertical"],
       "reason": "semantic and operator IR changes require deterministic lowering and production composition"

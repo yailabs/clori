@@ -14,6 +14,7 @@ extern "C" {
 #endif
 
 #define YVEX_SEQUENCE_MIXER_IDENTITY_CAP 65u
+#define YVEX_SEQUENCE_STATE_SCHEMA_V1 1u
 
 typedef struct {
     unsigned int schema_version;
@@ -23,6 +24,17 @@ typedef struct {
     unsigned long long convolution_state_bytes, recurrent_state_bytes;
     char identity[YVEX_SEQUENCE_MIXER_IDENTITY_CAP];
 } yvex_gated_delta_plan;
+
+typedef struct {
+    unsigned long long layer_index;
+    yvex_gated_delta_plan plan;
+} yvex_sequence_state_binding;
+
+typedef struct {
+    unsigned int schema_version;
+    const yvex_sequence_state_binding *bindings;
+    unsigned long long binding_count;
+} yvex_sequence_state_plan;
 
 typedef struct {
     const float *convolution;
