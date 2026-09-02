@@ -325,6 +325,7 @@ typedef struct {
 typedef struct yvex_runtime_residency yvex_runtime_residency;
 typedef struct yvex_runtime_state_residency yvex_runtime_state_residency;
 typedef struct yvex_runtime_component_session yvex_runtime_component_session;
+typedef struct yvex_decoder_plan yvex_decoder_plan;
 typedef struct yvex_moe_plan yvex_moe_plan;
 typedef struct yvex_transformer_plan yvex_transformer_plan;
 typedef struct {
@@ -344,6 +345,7 @@ typedef struct {
     const yvex_graph_execution_api *graph;
     const char *target_id;
     const yvex_attention_plan *attention, *draft_attention;
+    const yvex_decoder_plan *decoder;
     const yvex_moe_plan *moe, *draft_moe;
     const yvex_transformer_plan *transformer, *draft_transformer;
     const yvex_runtime_logits_plan_summary *output_head;

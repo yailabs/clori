@@ -7,6 +7,7 @@
 
 #include <yvex/api.h>
 #include <yvex/internal/compiler.h>
+#include <yvex/internal/core.h>
 #include <yvex/internal/decoder_plan.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/model.h>
@@ -381,8 +382,10 @@ static int test_hybrid_decoder_semantics(void)
     yvex_sequence_state_plan sequence_plan;
     const yvex_semantic_decoder_layer *view = NULL;
     const yvex_semantic_model_ir_summary *summary;
+    yvex_core_bytes encoded = {0};
     unsigned char wire[YVEX_MODEL_EXECUTION_WIRE_BYTES];
     unsigned long long count = 0ull;
+    size_t consumed = 0u;
     yvex_error err;
 
     decoder[0] = (yvex_semantic_decoder_layer){
@@ -502,6 +505,25 @@ static int test_hybrid_decoder_semantics(void)
                    plan_summary.decoder_plan_identity) == 0,
         "hybrid decoder plan reopens from pointer-free authenticated records");
     yvex_decoder_plan_close(&reopened);
+    encoded.maximum = 65536u;
+    encoded.initial_capacity = 4096u;
+    YVEX_TEST_ASSERT(
+        yvex_decoder_plan_encode(plan, &encoded, &err) == YVEX_OK &&
+            yvex_decoder_plan_decode(
+                &reopened, encoded.data, encoded.count, &consumed, &err) ==
+                YVEX_OK &&
+            consumed == encoded.count &&
+            strcmp(yvex_decoder_plan_summary_get(reopened)->decoder_plan_identity,
+                   plan_summary.decoder_plan_identity) == 0,
+        "hybrid decoder plan roundtrips through its canonical wire encoding");
+    yvex_decoder_plan_close(&reopened);
+    encoded.data[encoded.count - 1u] ^= 1u;
+    YVEX_TEST_ASSERT(
+        yvex_decoder_plan_decode(
+            &reopened, encoded.data, encoded.count, &consumed, &err) ==
+                YVEX_ERR_FORMAT &&
+            reopened == NULL && consumed == 0u,
+        "hybrid decoder wire rejects mutated authenticated content");
     plan_layers[0].identity[0] = plan_layers[0].identity[0] == '0' ? '1' : '0';
     YVEX_TEST_ASSERT(
         yvex_decoder_plan_import(
@@ -517,6 +539,7 @@ static int test_hybrid_decoder_semantics(void)
                 YVEX_ERR_FORMAT &&
             !model,
         "hybrid decoder refuses mismatched full-attention lineage");
+    free(encoded.data);
     return 0;
 }
 

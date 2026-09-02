@@ -54,6 +54,10 @@ int yvex_decoder_plan_compile(
 int yvex_decoder_plan_import(
     yvex_decoder_plan **out, const yvex_decoder_plan_summary *summary,
     const yvex_decoder_layer_plan *layers, yvex_error *err);
+int yvex_decoder_plan_encode(const yvex_decoder_plan *plan,
+                             yvex_core_bytes *bytes, yvex_error *err);
+int yvex_decoder_plan_decode(yvex_decoder_plan **out, const unsigned char *data,
+                             size_t count, size_t *consumed, yvex_error *err);
 const yvex_decoder_plan_summary *yvex_decoder_plan_summary_get(
     const yvex_decoder_plan *plan);
 const yvex_decoder_layer_plan *yvex_decoder_plan_layer_at(

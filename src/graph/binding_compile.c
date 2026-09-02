@@ -322,6 +322,7 @@ static int binding_compiler_prepare(
         compiler->descriptor, compiler->admission.profile_identity, err);
     if (rc == YVEX_OK) {
         yvex_compiled_model_plan_request plan = {
+            .semantic_model = compiler->semantic_model,
             .operator_graph = compiler->operator_graph,
             .materialization = compiler->materialization,
             .descriptor = compiler->descriptor,

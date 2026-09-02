@@ -2,6 +2,7 @@
 #include <yvex/internal/compiler.h>
 
 #include <yvex/internal/core.h>
+#include <yvex/internal/decoder_plan.h>
 #include <yvex/internal/moe.h>
 #include <yvex/internal/operator_graph.h>
 #include <yvex/internal/transformer.h>
@@ -12,6 +13,7 @@
 #include <string.h>
 
 #define MODEL_PLAN_SCHEMA_V2 2u
+#define MODEL_PLAN_SCHEMA_V3 3u
 #define MODEL_PLAN_MAX_LAYERS 65536ull
 
 typedef struct {
@@ -21,6 +23,7 @@ typedef struct {
 
 struct yvex_compiled_model_plan {
     char operator_graph_identity[YVEX_SHA256_HEX_BYTES];
+    yvex_decoder_plan *decoder;
     yvex_moe_plan *moe, *draft_moe;
     yvex_transformer_plan *transformer, *draft_transformer;
     yvex_runtime_logits_plan_summary output_head;
@@ -530,6 +533,7 @@ void yvex_compiled_model_plan_close(yvex_compiled_model_plan **owner)
 {
     yvex_compiled_model_plan *plans = owner ? *owner : NULL;
     if (!plans) return;
+    yvex_decoder_plan_close(&plans->decoder);
     yvex_transformer_plan_close(&plans->draft_transformer);
     yvex_transformer_plan_close(&plans->transformer);
     yvex_moe_plan_close(&plans->draft_moe);
@@ -544,13 +548,14 @@ int yvex_compiled_model_plan_build(
     const yvex_compiled_model_plan_request *request, yvex_error *err)
 {
     yvex_compiled_model_plan *plan = NULL;
+    const yvex_semantic_model_ir_summary *semantic = NULL;
+    const yvex_decoder_plan_summary *decoder = NULL;
     int compile_execution;
     int rc;
     if (out) *out = NULL;
     if (!out || !request || !request->materialization ||
         !request->operator_graph || !request->descriptor ||
-        !request->attention || !request->graph ||
-        !request->graph->moe)
+        !request->attention || !request->graph)
         return model_plan_refuse(err, YVEX_ERR_INVALID_ARG,
                                  "compiled model-plan inputs are required");
     plan = (yvex_compiled_model_plan *)calloc(1u, sizeof(*plan));
@@ -566,10 +571,17 @@ int yvex_compiled_model_plan_build(
             yvex_attention_plan_summary(request->attention);
         const yvex_attention_summary *draft =
             yvex_attention_plan_summary(request->draft_attention);
+        semantic = yvex_semantic_model_ir_summary_get(request->semantic_model);
         if (!operators || !descriptor || !attention ||
             operators->family_adapter_id != request->family_adapter_id ||
             operators->family_adapter_version != request->family_adapter_version ||
-            operators->target_layer_count != attention->layer_count ||
+            ((!semantic ||
+              semantic->schema_version != YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2) &&
+             operators->target_layer_count != attention->layer_count) ||
+            (semantic &&
+             semantic->schema_version == YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2 &&
+             (operators->target_layer_count != semantic->decoder_layer_count ||
+              attention->layer_count != semantic->attention_layer_count)) ||
             operators->draft_layer_count != (draft ? draft->layer_count : 0ull) ||
             operators->maximum_context !=
                 descriptor->model_execution.maximum_context) {
@@ -581,6 +593,24 @@ int yvex_compiled_model_plan_build(
         yvex_core_text_copy(plan->operator_graph_identity,
                             sizeof(plan->operator_graph_identity),
                             operators->identity);
+    }
+    if (semantic &&
+        semantic->schema_version == YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2) {
+        rc = yvex_decoder_plan_compile(
+            &plan->decoder, request->semantic_model,
+            request->operator_graph, err);
+        decoder = rc == YVEX_OK
+                      ? yvex_decoder_plan_summary_get(plan->decoder) : NULL;
+        if (rc != YVEX_OK || !decoder ||
+            decoder->attention_layer_count !=
+                yvex_attention_plan_summary(request->attention)->layer_count) {
+            if (rc == YVEX_OK)
+                rc = model_plan_refuse(
+                    err, YVEX_ERR_FORMAT,
+                    "decoder and attention plans have different populations");
+            yvex_compiled_model_plan_close(&plan);
+            return rc;
+        }
     }
     compile_execution = request->capabilities.moe_plan_ready ||
                         request->capabilities.transformer_ready ||
@@ -597,6 +627,12 @@ int yvex_compiled_model_plan_build(
         return model_plan_refuse(
             err, YVEX_ERR_FORMAT,
             "partial compiled execution capabilities are inconsistent");
+    }
+    if (!request->graph->moe) {
+        yvex_compiled_model_plan_close(&plan);
+        return model_plan_refuse(
+            err, YVEX_ERR_FORMAT,
+            "compiled Transformer execution requires an MoE graph compiler");
     }
     rc = yvex_moe_plan_build(
         &plan->moe, request->graph->moe, request->family_adapter_id,
@@ -637,14 +673,15 @@ int yvex_compiled_model_plan_encode(
 {
     int target_present = plans && plans->moe && plans->transformer;
     int draft_present = plans && plans->draft_moe && plans->draft_transformer;
+    int decoder_present = plans && plans->decoder;
     if (!plans || !bytes ||
         (plans->moe != NULL) != (plans->transformer != NULL) ||
         (target_present != (plans->output_head.schema_version != 0u)) ||
         (plans->draft_moe != NULL) != (plans->draft_transformer != NULL) ||
         (!target_present && draft_present) ||
         !yvex_sha256_hex_valid(plans->operator_graph_identity) ||
-        !plan_put_text(bytes, "yvex.compiled-model-plan.v2") ||
-        !plan_put_u64(bytes, MODEL_PLAN_SCHEMA_V2) ||
+        !plan_put_text(bytes, "yvex.compiled-model-plan.v3") ||
+        !plan_put_u64(bytes, MODEL_PLAN_SCHEMA_V3) ||
         !plan_put_text(bytes, plans->operator_graph_identity) ||
         !plan_put_u64(bytes, (unsigned int)target_present) ||
         (target_present &&
@@ -654,7 +691,10 @@ int yvex_compiled_model_plan_encode(
         !plan_put_u64(bytes, (unsigned int)draft_present) ||
         (draft_present &&
          (!moe_plan_write(bytes, plans->draft_moe) ||
-          !transformer_plan_write(bytes, plans->draft_transformer))))
+          !transformer_plan_write(bytes, plans->draft_transformer))) ||
+        !plan_put_u64(bytes, (unsigned int)decoder_present) ||
+        (decoder_present &&
+         yvex_decoder_plan_encode(plans->decoder, bytes, err) != YVEX_OK))
         return model_plan_refuse(err, YVEX_ERR_NOMEM,
                                  "compiled model-plan encoding failed");
     yvex_error_clear(err);
@@ -669,11 +709,15 @@ int yvex_compiled_model_plan_decode(
     yvex_compiled_model_plan *plan = NULL;
     char domain[YVEX_SHA256_HEX_CAP];
     unsigned long long schema, target_present, draft_present;
+    unsigned long long decoder_present = 0ull;
+    size_t decoder_bytes = 0u;
     int rc;
     if (out) *out = NULL;
     if (!out || !data || !count || !plan_get_text(&cursor, domain) ||
-        strcmp(domain, "yvex.compiled-model-plan.v2") != 0 ||
-        !plan_get_u64(&cursor, &schema) || schema != MODEL_PLAN_SCHEMA_V2)
+        ((strcmp(domain, "yvex.compiled-model-plan.v2") != 0 ||
+          !plan_get_u64(&cursor, &schema) || schema != MODEL_PLAN_SCHEMA_V2) &&
+         (strcmp(domain, "yvex.compiled-model-plan.v3") != 0 ||
+          !plan_get_u64(&cursor, &schema) || schema != MODEL_PLAN_SCHEMA_V3)))
         return model_plan_refuse(err, YVEX_ERR_FORMAT,
                                  "compiled model-plan header is malformed");
     plan = (yvex_compiled_model_plan *)calloc(1u, sizeof(*plan));
@@ -702,6 +746,16 @@ int yvex_compiled_model_plan_decode(
         rc = moe_plan_read(&cursor, &plan->draft_moe, err);
     if (rc == YVEX_OK && draft_present)
         rc = transformer_plan_read(&cursor, &plan->draft_transformer, err);
+    if (rc == YVEX_OK && schema >= MODEL_PLAN_SCHEMA_V3 &&
+        (!plan_get_u64(&cursor, &decoder_present) || decoder_present > 1ull))
+        rc = model_plan_refuse(err, YVEX_ERR_FORMAT,
+                               "compiled decoder-plan presence is malformed");
+    if (rc == YVEX_OK && decoder_present)
+        rc = yvex_decoder_plan_decode(
+            &plan->decoder, cursor.data + cursor.offset,
+            cursor.count - cursor.offset, &decoder_bytes, err);
+    if (rc == YVEX_OK && decoder_present)
+        cursor.offset += decoder_bytes;
     if (rc == YVEX_OK && cursor.offset != cursor.count)
         rc = model_plan_refuse(err, YVEX_ERR_FORMAT,
                                "compiled model-plan has trailing bytes");
@@ -863,6 +917,12 @@ const yvex_transformer_plan *yvex_compiled_model_plan_transformer(
     const yvex_compiled_model_plan *plan, int draft)
 {
     return plan ? (draft ? plan->draft_transformer : plan->transformer) : NULL;
+}
+
+const yvex_decoder_plan *yvex_compiled_model_plan_decoder(
+    const yvex_compiled_model_plan *plan)
+{
+    return plan ? plan->decoder : NULL;
 }
 
 const yvex_runtime_logits_plan_summary *yvex_compiled_model_plan_output_head(

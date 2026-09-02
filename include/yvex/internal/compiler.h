@@ -180,8 +180,7 @@ struct yvex_artifact;
 struct yvex_complete_artifact_admission;
 struct yvex_artifact_admission_failure;
 struct yvex_artifact_physical_compatibility;
-struct yvex_materialization_session;
-struct yvex_runtime_descriptor;
+struct yvex_materialization_session; struct yvex_runtime_descriptor;
 struct yvex_attention_plan;
 struct yvex_transform_ir;
 struct yvex_transform_binding;
@@ -518,10 +517,10 @@ int yvex_runtime_capabilities_contract_valid(
 
 struct yvex_materialization_session;
 struct yvex_runtime_descriptor;
-struct yvex_attention_plan;
-struct yvex_moe_plan;
-struct yvex_transformer_plan;
+struct yvex_attention_plan; struct yvex_decoder_plan;
+struct yvex_moe_plan; struct yvex_transformer_plan;
 typedef struct {
+    const yvex_semantic_model_ir *semantic_model;
     const yvex_operator_graph_ir *operator_graph;
     const struct yvex_materialization_session *materialization;
     const struct yvex_runtime_descriptor *descriptor;
@@ -578,6 +577,7 @@ const struct yvex_moe_plan *yvex_compiled_model_plan_moe(
     const yvex_compiled_model_plan *plan, int draft);
 const struct yvex_transformer_plan *yvex_compiled_model_plan_transformer(
     const yvex_compiled_model_plan *plan, int draft);
+const struct yvex_decoder_plan *yvex_compiled_model_plan_decoder(const yvex_compiled_model_plan *plan);
 const struct yvex_runtime_logits_plan_summary *yvex_compiled_model_plan_output_head(
     const yvex_compiled_model_plan *plan);
 const char *yvex_compiled_model_plan_operator_graph_identity(

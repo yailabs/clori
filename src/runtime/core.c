@@ -781,6 +781,8 @@ static void runtime_model_view_bind(yvex_model_engine *model)
     model->view.target_id = model->target_id;
     model->view.attention = model->attention;
     model->view.draft_attention = model->draft_attention;
+    model->view.decoder =
+        yvex_compiled_model_plan_decoder(model->binding->plan);
     model->view.moe = yvex_compiled_model_plan_moe(model->binding->plan, 0);
     model->view.draft_moe = yvex_compiled_model_plan_moe(model->binding->plan, 1);
     model->view.transformer =
