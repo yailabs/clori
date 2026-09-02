@@ -955,8 +955,8 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
             &request->logits_policy, &request->speculation_policy) ||
         request->tokenizer_policy.family_adapter_id != request->family_adapter_id ||
         request->tokenizer_policy.family_adapter_version != request->family_adapter_version ||
-        request->tokenizer_policy.vocabulary_size !=
-            descriptor->model_execution.vocabulary_size ||
+        !yvex_runtime_private_binding_tokenizer_matches_model(
+            &request->tokenizer_policy, &descriptor->model_execution) ||
         yvex_tokenizer_family_policy_validate(&request->tokenizer_policy, NULL) != YVEX_OK)
         return binding_reject(
             failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,

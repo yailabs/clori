@@ -830,10 +830,10 @@ static int qwen_artifact_admit(
 {
     static const yvex_complete_artifact_admission catalog = {
         .artifact_class = YVEX_ARTIFACT_CLASS_COMPLETE_YVEX,
-        .metadata_count = 41ull,
+        .metadata_count = 43ull,
         .tensor_count = 851ull,
         .payload_bytes = 53791996928ull,
-        .file_bytes = 53815809056ull,
+        .file_bytes = 53815809152ull,
         .source_snapshot_identity = 0x68e43e0684055187ull,
         .mapping_identity = 0x8098da2e9ca3cb80ull,
         .payload_identity =
@@ -850,9 +850,9 @@ static int qwen_artifact_admit(
         .payload_byte_identity =
             "4b163fe409fe3064bd870fe6e131c243a46a1a860b4a03602bbb9826d2373edc",
         .writer_plan_identity =
-            "5b628caa68e2d07d0e6719c5b5a3df5c3d722d0a4a7acb9378c3dcf80e09435e",
+            "305b3ecdc61fe952b95bf3f17e12ee6691b2862e9b184294508eefa49d1599d0",
         .artifact_identity =
-            "6188af6efbac9ff4b690fbf4fdefd4a416b92668fba056bed5b9ac1cd7421792",
+            "1fce07008eaa78e04eedd1a031144f48eb6af617f2b5c508811ba91dca7e00f1",
         .official_reader_revision = YVEX_GGUF_OFFICIAL_READER_REVISION,
         .tokenizer_complete = 1,
         .native_reader_accepted = 1,

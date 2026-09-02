@@ -98,6 +98,9 @@ int yvex_runtime_private_binding_policies_match_model(
     const yvex_transformer_family_policy *transformer,
     const yvex_logits_family_policy *logits,
     const yvex_speculation_family_policy *speculation);
+int yvex_runtime_private_binding_tokenizer_matches_model(
+    const yvex_tokenizer_family_policy *tokenizer,
+    const yvex_model_execution_descriptor *model);
 int yvex_runtime_private_binding_admission_ready(
     const yvex_complete_artifact_admission *admission);
 int yvex_runtime_private_binding_attention_ready(

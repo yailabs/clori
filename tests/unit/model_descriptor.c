@@ -13,6 +13,7 @@
 #include <yvex/internal/model.h>
 #include <yvex/internal/operator_graph.h>
 
+#include "src/runtime/private.h"
 #include "tests/test.h"
 
 static int open_gguf(const char *path, yvex_artifact **artifact, yvex_gguf **gguf)
@@ -380,11 +381,15 @@ static int test_hybrid_decoder_semantics(void)
     yvex_decoder_plan_summary plan_summary;
     yvex_decoder_layer_plan plan_layers[2];
     yvex_sequence_state_plan sequence_plan;
+    yvex_model_engine runtime_model = {0};
+    yvex_runtime_execution_session runtime_session = {0};
+    yvex_model_engine_failure state_failure = {0};
     const yvex_semantic_decoder_layer *view = NULL;
     const yvex_semantic_model_ir_summary *summary;
     yvex_core_bytes encoded = {0};
     unsigned char wire[YVEX_MODEL_EXECUTION_WIRE_BYTES];
-    unsigned long long count = 0ull;
+    unsigned long long count = 0ull, state_budget = 1024ull;
+    unsigned long long admitted_state_bytes = 0ull;
     size_t consumed = 0u;
     yvex_error err;
 
@@ -530,6 +535,17 @@ static int test_hybrid_decoder_semantics(void)
             &reopened, &plan_summary, plan_layers, &err) == YVEX_ERR_FORMAT &&
             reopened == NULL,
         "hybrid decoder plan rejects a mutated layer identity");
+    runtime_model.view.decoder = plan;
+    runtime_session.engine = &runtime_model;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_session_sequence_state_open(
+            &runtime_session, NULL, 1, &state_budget, &admitted_state_bytes,
+            &state_failure, &err) == YVEX_OK &&
+            runtime_session.sequence_state != NULL &&
+            runtime_session.summary.sequence_state_binding_count == 1ull &&
+            admitted_state_bytes == 80ull && state_budget == 944ull,
+        "runtime session derives mixed decoder state from the admitted model");
+    yvex_sequence_state_close(&runtime_session.sequence_state);
     yvex_decoder_plan_close(&plan);
     yvex_operator_graph_ir_close(&graph);
     yvex_semantic_model_ir_close(&model);

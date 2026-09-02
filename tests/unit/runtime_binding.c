@@ -1236,9 +1236,12 @@ static int test_physical_execution_v2(binding_fixture *fixture)
     yvex_model_execution_descriptor model;
     yvex_runtime_descriptor_family_facts family = {0};
     yvex_runtime_descriptor_failure descriptor_failure = {0};
-    yvex_runtime_descriptor *descriptor = NULL;
+    yvex_runtime_descriptor *descriptor = NULL, *imported = NULL;
+    yvex_runtime_tensor_binding *bindings = NULL;
     yvex_physical_execution_ir *physical = NULL;
+    const yvex_runtime_descriptor_summary *descriptor_summary;
     const yvex_physical_execution_summary *summary;
+    unsigned long long index;
     yvex_error err;
     int rc;
 
@@ -1266,6 +1269,22 @@ static int test_physical_execution_v2(binding_fixture *fixture)
         rc == YVEX_OK && summary &&
             summary->decision_count == fixture->admission.tensor_count,
         "physical execution compiler should admit model execution schema v2");
+    descriptor_summary = yvex_runtime_descriptor_summary_get(descriptor);
+    bindings = calloc((size_t)fixture->admission.tensor_count, sizeof(*bindings));
+    YVEX_TEST_ASSERT(bindings != NULL, "v2 descriptor import bindings allocated");
+    for (index = 0ull; index < fixture->admission.tensor_count; ++index)
+        bindings[index] = *yvex_runtime_descriptor_tensor_at(descriptor, index);
+    rc = yvex_runtime_descriptor_import(
+        &imported, descriptor_summary, bindings, fixture->admission.tensor_count,
+        fixture->materialization, &descriptor_failure, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && imported &&
+            yvex_runtime_descriptor_summary_get(imported)
+                    ->model_execution.schema_version ==
+                YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2,
+        "runtime binding import should reopen model execution schema v2");
+    free(bindings);
+    yvex_runtime_descriptor_close(imported);
     yvex_physical_execution_ir_close(&physical);
     yvex_runtime_descriptor_close(descriptor);
     return 0;
@@ -1585,8 +1604,10 @@ static int test_runtime_v2_policy_contract(void)
         .schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1,
         .separate_output_head = 1};
     yvex_speculation_family_policy speculation = {0};
+    yvex_tokenizer_family_policy tokenizer = {0};
 
     model.schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2;
+    model.vocabulary_size = 248320ull;
     YVEX_TEST_ASSERT(
         yvex_runtime_private_binding_policies_match_model(
             &model, &transformer, &logits, &speculation),
@@ -1609,6 +1630,21 @@ static int test_runtime_v2_policy_contract(void)
         !yvex_runtime_private_binding_policies_match_model(
             &model, &transformer, &logits, &speculation),
         "heterogeneous decoder still requires an unambiguous logits policy");
+    tokenizer.vocabulary_size = 248077ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_binding_tokenizer_matches_model(
+            &tokenizer, &model),
+        "tokenizer vocabulary may be contained by a padded model output envelope");
+    tokenizer.vocabulary_size = model.vocabulary_size;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_binding_tokenizer_matches_model(
+            &tokenizer, &model),
+        "equal tokenizer and model vocabularies remain compatible");
+    tokenizer.vocabulary_size++;
+    YVEX_TEST_ASSERT(
+        !yvex_runtime_private_binding_tokenizer_matches_model(
+            &tokenizer, &model),
+        "tokenizer vocabulary cannot exceed the model output envelope");
     return 0;
 }
 

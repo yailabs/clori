@@ -456,7 +456,7 @@ static int prepare_profile(const model_prepare_options *options,
     argv[argc++] = (char *)plan->deployment->execution_strategy;
     argv[argc++] = "--ctx"; argv[argc++] = context;
     argv[argc++] = "--registry"; argv[argc++] = (char *)plan->registry_path;
-    return yvex_model_profile_create_adapter(argc, argv, 0);
+    return yvex_model_profile_create_adapter(argc, argv, 0, 1);
 }
 
 static void prepare_render_ready(const model_prepare_options *options,

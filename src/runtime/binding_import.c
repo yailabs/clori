@@ -278,6 +278,15 @@ int yvex_runtime_private_binding_policies_match_model(
            yvex_sha256_hex_is_valid(speculation->policy_identity);
 }
 
+int yvex_runtime_private_binding_tokenizer_matches_model(
+    const yvex_tokenizer_family_policy *tokenizer,
+    const yvex_model_execution_descriptor *model)
+{
+    return tokenizer && model && tokenizer->vocabulary_size &&
+           model->vocabulary_size &&
+           tokenizer->vocabulary_size <= model->vocabulary_size;
+}
+
 static int binding_policies_valid(const yvex_runtime_binding *binding)
 {
     return binding && yvex_runtime_private_binding_policies_match_model(
@@ -286,8 +295,9 @@ static int binding_policies_valid(const yvex_runtime_binding *binding)
            binding->tokenizer_policy.family_adapter_id == binding->summary.family_adapter_id &&
            binding->tokenizer_policy.family_adapter_version ==
                binding->summary.family_adapter_version &&
-           binding->tokenizer_policy.vocabulary_size ==
-               binding->descriptor.model_execution.vocabulary_size &&
+           yvex_runtime_private_binding_tokenizer_matches_model(
+               &binding->tokenizer_policy,
+               &binding->descriptor.model_execution) &&
            yvex_tokenizer_family_policy_validate(&binding->tokenizer_policy, NULL) == YVEX_OK;
 }
 

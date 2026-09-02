@@ -45,7 +45,7 @@ static const runtime_open_failure open_materialization = {
 static const runtime_open_failure open_import = {
     YVEX_MODEL_ENGINE_FAILURE_BINDING,
     YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
-    "runtime-import", "runtime binding import did not reconstruct sealed runtime facts", 0};
+    "runtime-import", "runtime binding import did not reconstruct sealed runtime facts", 1};
 static const runtime_open_failure open_imported_identity = {
     YVEX_MODEL_ENGINE_FAILURE_IDENTITY,
     YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
@@ -62,11 +62,11 @@ static const runtime_open_failure open_residency_complete = {
 static const runtime_open_failure open_capabilities = {
     YVEX_MODEL_ENGINE_FAILURE_ADAPTER,
     YVEX_RUNTIME_FAILURE_ORIGIN_CAPABILITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
-    "execution-capabilities", "runtime execution capability contract could not be admitted", 0};
+    "execution-capabilities", "runtime execution capability contract could not be admitted", 1};
 static const runtime_open_failure open_tokenizer = {
     YVEX_MODEL_ENGINE_FAILURE_DESCRIPTOR,
     YVEX_RUNTIME_FAILURE_ORIGIN_CAPABILITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
-    "tokenizer-plan", "artifact tokenizer could not be admitted and bound to the runtime model", 0};
+    "tokenizer-plan", "artifact tokenizer could not be admitted and bound to the runtime model", 1};
 static const runtime_open_failure open_seal = {
     YVEX_MODEL_ENGINE_FAILURE_BINDING,
     YVEX_RUNTIME_FAILURE_ORIGIN_EXTERNAL_REQUEST, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,

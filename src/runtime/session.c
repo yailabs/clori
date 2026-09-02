@@ -200,10 +200,21 @@ int yvex_runtime_private_session_sequence_state_open(
     unsigned long long *state_budget, unsigned long long *admitted_host_bytes,
     yvex_model_engine_failure *failure, yvex_error *err)
 {
+    yvex_sequence_state_plan derived;
+    const yvex_decoder_plan_summary *decoder;
     yvex_sequence_state_summary summary;
     unsigned long long bytes;
     int rc;
 
+    decoder = session && session->engine
+                  ? yvex_decoder_plan_summary_get(session->engine->view.decoder)
+                  : NULL;
+    if (!plan && decoder && decoder->recurrent_layer_count) {
+        rc = yvex_decoder_plan_sequence_state(
+            session->engine->view.decoder, &derived, err);
+        if (rc != YVEX_OK) return rc;
+        plan = &derived;
+    }
     if (!plan) return YVEX_OK;
     rc = yvex_sequence_state_open(&session->sequence_state, plan, err);
     if (rc == YVEX_OK)

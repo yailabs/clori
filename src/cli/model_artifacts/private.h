@@ -35,7 +35,7 @@ int yvex_fullmodel_command(int arg_count, char **args);
 void yvex_fullmodel_help(FILE *fp);
 int yvex_models_command(int arg_count, char **args);
 int yvex_model_profile_create_adapter(int arg_count, char **args,
-                                      int render_result);
+                                      int render_result, int replace_existing);
 void yvex_models_help(FILE *fp);
 int yvex_model_catalog_list_command(int arg_count, char **args);
 int yvex_model_catalog_show_command(int arg_count, char **args);

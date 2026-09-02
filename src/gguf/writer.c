@@ -280,7 +280,7 @@ static int writer_tokenizer_metadata_add(
     size_t raw_json_bytes, const unsigned char *raw_config, size_t raw_config_bytes,
     const char *prompt_policy, int standalone)
 {
-    int ok = (!standalone || writer_meta_text(metadata, count, "tokenizer.ggml.model", "gpt2")) &&
+    int ok = writer_meta_text(metadata, count, "tokenizer.ggml.model", "gpt2") &&
         writer_meta_text(metadata, count, "tokenizer.ggml.pre", tokenizer->pre_tokenizer) &&
         writer_meta_dynamic_array(metadata, count, "tokenizer.ggml.tokens",
                                   WRITER_META_TOKEN_ARRAY, YVEX_GGUF_VALUE_STRING,
@@ -291,10 +291,10 @@ static int writer_tokenizer_metadata_add(
         writer_meta_dynamic_array(metadata, count, "tokenizer.ggml.merges",
                                   WRITER_META_MERGE_ARRAY, YVEX_GGUF_VALUE_STRING,
                                   tokenizer->merge_count);
-    if (ok && standalone && tokenizer->bos_token_present)
+    if (ok && tokenizer->bos_token_present)
         ok = writer_meta_u32(metadata, count, "tokenizer.ggml.bos_token_id",
                              tokenizer->bos_token_id);
-    if (ok && standalone && tokenizer->eos_token_present)
+    if (ok && tokenizer->eos_token_present)
         ok = writer_meta_u32(metadata, count, "tokenizer.ggml.eos_token_id",
                              tokenizer->eos_token_id);
     if (ok && tokenizer->pad_token_present)

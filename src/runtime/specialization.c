@@ -397,7 +397,8 @@ static int specialization_build(
     maximum_width = model && model->verification_width_maximum
                         ? model->verification_width_maximum : 1ull;
     if (!out || !package || !model || !package->decision_count || maximum_width >= 63ull ||
-        model->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
+        (model->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 &&
+         model->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2) ||
         (backend_kind != YVEX_BACKEND_KIND_CPU && backend_kind != YVEX_BACKEND_KIND_CUDA) ||
         (backend_kind == YVEX_BACKEND_KIND_CUDA && !backend))
         return specialization_refuse(err, YVEX_ERR_INVALID_ARG,

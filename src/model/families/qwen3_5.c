@@ -1286,7 +1286,7 @@ static const yvex_conversation_protocol qwen_conversation = {
         "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
     .tokenizer_config_identity =
         "b11349aafa7cdc6a320767cf7ceb29ed82f7eda5d65e8e0819e76f0ce947bf27",
-    .vocabulary_size = 248320ull, .base_vocabulary_size = 248044ull,
+    .vocabulary_size = 248077ull, .base_vocabulary_size = 248044ull,
     .merge_count = 247587ull, .added_token_count = 33ull,
     .special_token_count = 21ull,
     .eos_token_id = 248046u, .pad_token_id = 248044u,

@@ -292,6 +292,9 @@ static int generation_capacity_graph_geometry(
     const yvex_attention_layer_plan *layers[2];
     unsigned long long layer_counts[2];
     unsigned long long plan_index;
+    const yvex_decoder_plan_summary *decoder =
+        yvex_decoder_plan_summary_get(yvex_compiled_model_plan_decoder(
+            context->model_view->compiled_plan));
     *workspace_capacity = NULL;
     if (!binding)
         return generation_context_refuse(
@@ -340,6 +343,18 @@ static int generation_capacity_graph_geometry(
         yvex_graph_attention_capacity_plan_close(&capacity);
         if (rc != YVEX_OK) return rc;
     }
+    if (decoder && decoder->recurrent_layer_count) {
+        unsigned long long bytes;
+        if (!yvex_core_u64_add(decoder->convolution_state_bytes,
+                               decoder->recurrent_state_bytes, &bytes) ||
+            !yvex_core_u64_mul(bytes, 2ull, &bytes) ||
+            !generation_capacity_fixed_add(
+                &geometry->classes[YVEX_MODEL_STATE_RECURRENT_SEQUENCE],
+                1ull, bytes))
+            return generation_context_refuse(
+                err, YVEX_ERR_BOUNDS,
+                "recurrent sequence-state geometry overflowed");
+    }
     if (semantic->residual_streams > 1ull) {
         unsigned long long bytes;
         if (!yvex_core_u64_mul(semantic->residual_streams,
@@ -369,6 +384,67 @@ static int generation_capacity_graph_geometry(
         prefix->kernel_tile_tokens = semantic->candidate_width;
         prefix->shared = 1;
         prefix->copy_on_write = 1;
+    }
+    return YVEX_OK;
+}
+
+static int generation_semantic_capacity_build(
+    yvex_runtime_generation_context *context,
+    generation_semantic_capacity *semantic, yvex_error *err)
+{
+    const yvex_transformer_plan_summary *transformer =
+        yvex_transformer_plan_summary_get(
+            yvex_compiled_model_plan_transformer(
+                context->model_view->compiled_plan, 0));
+    const yvex_decoder_plan_summary *decoder =
+        yvex_decoder_plan_summary_get(yvex_compiled_model_plan_decoder(
+            context->model_view->compiled_plan));
+    const yvex_speculation_family_policy *speculation = NULL;
+
+    memset(semantic, 0, sizeof(*semantic));
+    if (!context->model_view->binding || !context->model_view->compiled_plan ||
+        !yvex_runtime_binding_policies(
+            context->model_view->compiled_binding, NULL, NULL, &speculation))
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "generation requires one sealed semantic execution producer");
+    semantic->identity =
+        context->model_view->binding->model_execution_identity;
+    semantic->maximum_context =
+        context->model_view->binding->semantic_maximum_context;
+    if (!yvex_sha256_hex_valid(semantic->identity) ||
+        !semantic->maximum_context)
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "compiled semantic context capability is unavailable");
+    if (context->options.context_capacity > semantic->maximum_context)
+        return generation_context_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "requested context exceeds the model-authored semantic maximum");
+    if (!transformer && !decoder)
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "compiled model exposes no executable generation producer");
+    if (transformer && decoder)
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "compiled model exposes ambiguous generation producers");
+    if (decoder) {
+        if (context->options.mode == YVEX_GENERATION_MODE_SPECULATIVE)
+            return generation_context_refuse(
+                err, YVEX_ERR_UNSUPPORTED,
+                "decoder execution has no admitted draft producer");
+        semantic->hidden_width = decoder->hidden_width;
+        semantic->vocabulary_size = decoder->vocabulary_size;
+        semantic->residual_streams = 1ull;
+        semantic->candidate_width = 1ull;
+    } else {
+        semantic->hidden_width = transformer->hidden_width;
+        semantic->vocabulary_size = transformer->vocabulary_size;
+        semantic->residual_streams = transformer->residual_streams;
+        semantic->candidate_width = speculation && speculation->block_size
+                                        ? speculation->block_size + 1ull
+                                        : 1ull;
     }
     return YVEX_OK;
 }
@@ -698,8 +774,53 @@ static int generation_moe_workspace(
     return YVEX_OK;
 }
 
+static int generation_decoder_attention_workspace(
+    const yvex_runtime_generation_context *context, yvex_backend *backend,
+    unsigned long long *workspace, yvex_error *err)
+{
+    const yvex_backend_transformer_operations *operations =
+        yvex_backend_transformer_operations_get(backend);
+    const yvex_runtime_binding *binding = context->model_view->compiled_binding;
+    unsigned long long query_tokens = context->options.prefill_chunk_tokens;
+    unsigned long long index;
+
+    *workspace = 0ull;
+    if (!operations || !operations->attention_workspace_required || !binding ||
+        !binding->layers || !binding->summary.layer_count)
+        return generation_context_refuse(
+            err, YVEX_ERR_UNSUPPORTED,
+            "decoder exact-attention workspace capability is unavailable");
+    if (query_tokens > context->options.context_capacity)
+        query_tokens = context->options.context_capacity;
+    for (index = 0ull; index < binding->summary.layer_count; ++index) {
+        const yvex_attention_layer_plan *layer = &binding->layers[index];
+        yvex_transformer_attention_requirement requirement = {
+            .query_tokens = query_tokens,
+            .key_value_tokens = context->options.context_capacity,
+            .query_start = context->options.context_capacity - query_tokens,
+            .query_heads = layer->query_heads,
+            .key_value_heads = layer->kv_heads,
+            .head_dimension = layer->head_dimension,
+            .query_dtype = YVEX_DTYPE_F32,
+            .key_dtype = YVEX_DTYPE_F32,
+            .value_dtype = YVEX_DTYPE_F32,
+            .output_dtype = YVEX_DTYPE_F32,
+            .layout = YVEX_TRANSFORMER_ATTENTION_LAYOUT_TOKEN_HEAD_DIM,
+            .mask = YVEX_TRANSFORMER_ATTENTION_MASK_CAUSAL,
+            .numeric_contract = YVEX_TRANSFORMER_ATTENTION_NUMERIC_EXACT_F32,
+            .deterministic = 1};
+        unsigned long long bytes;
+        int rc = operations->attention_workspace_required(
+            &requirement, &bytes, err);
+        if (rc != YVEX_OK) return rc;
+        if (bytes > *workspace) *workspace = bytes;
+    }
+    return YVEX_OK;
+}
+
 static int generation_attention_workspace(
     const yvex_runtime_generation_context *context,
+    yvex_backend *backend,
     const yvex_graph_attention_capacity_plan *capacity,
     unsigned long long physical_rows, unsigned long long *workspace,
     yvex_error *err)
@@ -714,6 +835,10 @@ static int generation_attention_workspace(
         runtime_attention_evidence(context->options.evidence_profile) ==
             YVEX_ATTENTION_EVIDENCE_NONE;
     if (workspace) *workspace = 0ull;
+    if (context && yvex_compiled_model_plan_decoder(
+                       context->model_view->compiled_plan))
+        return generation_decoder_attention_workspace(
+            context, backend, workspace, err);
     if (!binding || !capacity || !physical_rows || !workspace)
         return generation_context_refuse(
             err, YVEX_ERR_INVALID_ARG,
@@ -773,11 +898,6 @@ static int generation_capacity_build_for(
     unsigned long long *required_out, unsigned long long *available_out,
     yvex_error *err)
 {
-    const yvex_transformer_plan_summary *transformer =
-        yvex_transformer_plan_summary_get(
-            yvex_compiled_model_plan_transformer(
-                context->model_view->compiled_plan, 0));
-    const yvex_speculation_family_policy *speculation = NULL;
     generation_semantic_capacity semantic;
     yvex_compiled_context_envelope context_envelope;
     generation_capacity_geometry geometry;
@@ -795,35 +915,8 @@ static int generation_capacity_build_for(
             &live_available, err) != YVEX_OK)
         return yvex_error_code(err);
     if (available_out) *available_out = live_available;
-    memset(&semantic, 0, sizeof(semantic));
-    if (!context->model_view->binding ||
-        !context->model_view->compiled_plan ||
-        !yvex_runtime_binding_policies(
-            context->model_view->compiled_binding, NULL, NULL, &speculation))
-        return generation_context_refuse(
-            err, YVEX_ERR_STATE,
-            "generation requires one sealed semantic model and compiled execution plan");
-    semantic.identity = context->model_view->binding->model_execution_identity;
-    semantic.maximum_context =
-        context->model_view->binding->semantic_maximum_context;
-    if (!yvex_sha256_hex_valid(semantic.identity) ||
-        !semantic.maximum_context)
-        return generation_context_refuse(
-            err, YVEX_ERR_STATE,
-            "compiled semantic context capability is unavailable");
-    if (context->options.context_capacity > semantic.maximum_context)
-        return generation_context_refuse(
-            err, YVEX_ERR_BOUNDS,
-            "requested context exceeds the model-authored semantic maximum");
-    if (!transformer)
-        return generation_context_refuse(
-            err, YVEX_ERR_STATE,
-            "compiled transformer geometry is unavailable");
-    semantic.hidden_width = transformer->hidden_width;
-    semantic.vocabulary_size = transformer->vocabulary_size;
-    semantic.residual_streams = transformer->residual_streams;
-    semantic.candidate_width = speculation && speculation->block_size
-                                   ? speculation->block_size + 1ull : 1ull;
+    if (generation_semantic_capacity_build(context, &semantic, err) != YVEX_OK)
+        return yvex_error_code(err);
     if (generation_capacity_workload(context, err) != YVEX_OK) return yvex_error_code(err);
     if (yvex_compiled_model_plan_context_envelope(
             context->model_view->compiled_plan, semantic.identity,
@@ -867,7 +960,7 @@ static int generation_capacity_build_for(
     context->sampling_workspace_bytes = sampling_workspace;
     if (sampling_workspace > workspace) workspace = sampling_workspace;
     if (generation_attention_workspace(
-            context, *workspace_capacity, physical_rows,
+            context, backend, *workspace_capacity, physical_rows,
             &attention_workspace, err) != YVEX_OK ||
         generation_moe_workspace(
             context, backend, context->options.prefill_chunk_tokens,

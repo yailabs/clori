@@ -470,8 +470,10 @@ int yvex_runtime_descriptor_import(
         strcmp(summary->artifact_identity, materialization->artifact_identity) != 0 ||
         strcmp(summary->materialization_plan_identity, materialization->plan_identity) != 0 ||
         (summary->model_execution.schema_version &&
-         (summary->model_execution.schema_version !=
-              YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
+         ((summary->model_execution.schema_version !=
+               YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 &&
+           summary->model_execution.schema_version !=
+               YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2) ||
           !yvex_sha256_hex_valid(summary->model_execution.identity) ||
           strcmp(summary->logical_model_identity,
                  summary->model_execution.logical_model_identity) != 0)))

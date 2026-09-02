@@ -287,6 +287,9 @@ static int test_compiled_family_policy(void)
             qwen_policy.default_reasoning_policy == YVEX_REASONING_MAXIMUM &&
             strcmp(qwen_policy.architecture, "qwen3_5") == 0 &&
             strcmp(qwen_policy.tokenizer_pre, "qwen2") == 0 &&
+            qwen_policy.vocabulary_size == 248077ull &&
+            qwen_policy.base_vocabulary_size == 248044ull &&
+            qwen_policy.added_token_count == 33ull &&
             yvex_tokenizer_family_policy_encode(
                 &qwen_policy, &encoded, &err) == YVEX_OK &&
             yvex_tokenizer_family_policy_decode(

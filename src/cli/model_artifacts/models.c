@@ -438,7 +438,7 @@ static int command_models_scan(int arg_count, char **args)
 }
 
 int yvex_model_profile_create_adapter(int arg_count, char **args,
-                                      int render_result)
+                                      int render_result, int replace_existing)
 {
     models_add_options cli_options;
     yvex_model_registry *registry = NULL;
@@ -561,6 +561,9 @@ int yvex_model_profile_create_adapter(int arg_count, char **args,
     }
 
     rc = models_registry_open(&registry, cli_options.registry_path, 1, &err);
+    if (rc == YVEX_OK && replace_existing &&
+        yvex_model_registry_find(registry, entry.alias))
+        rc = yvex_model_registry_remove(registry, entry.alias, &err);
     if (rc == YVEX_OK) rc = yvex_model_registry_add(registry, &entry, &err);
     if (rc == YVEX_OK) rc = yvex_model_registry_save(registry, cli_options.registry_path, &err);
     if (rc != YVEX_OK) {
@@ -581,7 +584,7 @@ int yvex_model_profile_create_adapter(int arg_count, char **args,
 
 static int command_models_add(int arg_count, char **args)
 {
-    return yvex_model_profile_create_adapter(arg_count, args, 1);
+    return yvex_model_profile_create_adapter(arg_count, args, 1, 0);
 }
 
 static int command_models_remote(int arg_count, char **args)
