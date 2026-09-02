@@ -94,7 +94,7 @@ require_text docs/model-families/integration.md '# Model-Family Integration Cont
 require_text docs/contracts/artifacts.md '# Artifact and Admission Contract'
 require_text docs/contracts/runtime.md 'A client connection is not a session.'
 require_text docs/contracts/runtime.md 'no explicit exact request silently changes'
-require_text docs/contracts/local-protocol.md 'YVEX_LOCAL_PROTOCOL_VERSION = 17'
+require_text docs/contracts/local-protocol.md 'YVEX_LOCAL_PROTOCOL_VERSION = 18'
 require_text docs/contracts/events-telemetry.md 'No consumer scrapes another renderer'
 require_text docs/contracts/c-api.md '## Compiled Operator Registry Boundary'
 require_text docs/openai-compatibility.md 'YVEX never executes application tools.'

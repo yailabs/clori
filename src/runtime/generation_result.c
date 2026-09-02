@@ -74,7 +74,8 @@ static int generation_workload_identity(
             return 0;
         for (index = 0ull; index < request->message_count; ++index) {
             const yvex_prompt_message *message = &request->messages[index];
-            if ((!message->content && message->content_len) ||
+            if (message->schema_version != YVEX_PROMPT_MESSAGE_SCHEMA_V1 ||
+                (!message->content && message->content_len) ||
                 message->content_len > SIZE_MAX ||
                 !yvex_sha256_update_u64(&hash, message->role) ||
                 !yvex_sha256_update_u64(&hash, message->content_len) ||

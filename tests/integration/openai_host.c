@@ -23,6 +23,16 @@ static int listener_fd = -1;
 
 static int serve_connection(int fd, yvex_error *err);
 
+static yvex_reasoning_policy
+fixture_reasoning_policy(yvex_reasoning_policy policy)
+{
+    /* The fixture engine represents DeepSeek, whose source-authored ordinary
+       mode is non-reasoning. Production resolves this from its tokenizer plan. */
+    return policy == YVEX_REASONING_SOURCE_DEFAULT
+               ? YVEX_REASONING_DISABLED
+               : policy;
+}
+
 static void stop_handler(int signal_number)
 {
     (void)signal_number;
@@ -532,7 +542,8 @@ static int send_generation(int fd, const yvex_client_request *request,
         struct pollfd listener = {.fd = listener_fd, .events = POLLIN};
         int ready;
         if (request_contains(provider, "REASONING_DISCONNECT")) {
-            if (provider->reasoning_policy == YVEX_REASONING_DISABLED) {
+            if (fixture_reasoning_policy(provider->reasoning_policy) ==
+                YVEX_REASONING_DISABLED) {
                 message_base(&message, YVEX_CLIENT_MESSAGE_ERROR, request);
                 message.status = YVEX_ERR_STATE;
                 strcpy(message.reason,
@@ -571,7 +582,8 @@ static int send_generation(int fd, const yvex_client_request *request,
             has_reasoning_history = 1;
     }
     if (rc == YVEX_OK && provider &&
-        provider->reasoning_policy != YVEX_REASONING_DISABLED)
+        fixture_reasoning_policy(provider->reasoning_policy) !=
+            YVEX_REASONING_DISABLED)
         rc = send_fragment(fd, request,
                            YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING,
                            "explicit model reasoning", NULL, NULL, err);
@@ -662,7 +674,8 @@ static int send_generation(int fd, const yvex_client_request *request,
     message.completion_tokens = 3u;
     message.total_tokens = 8u;
     message.generated_tokens = 3u;
-    if ((provider ? provider->reasoning_policy : request->reasoning_policy) !=
+    if (fixture_reasoning_policy(provider ? provider->reasoning_policy
+                                         : request->reasoning_policy) !=
         YVEX_REASONING_DISABLED) {
         message.reasoning_tokens = 2u;
         message.final_tokens = 1u;

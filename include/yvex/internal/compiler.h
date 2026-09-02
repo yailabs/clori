@@ -443,7 +443,7 @@ typedef struct yvex_family_binding_pipeline {
                              const void *lowering_context,
                              const struct yvex_quant_policy *policy,
                              const char *imatrix_identity, yvex_error *err);
-    const char *tokenizer_architecture;
+    const char *tokenizer_architecture, *tokenizer_pre;
     const char *imatrix_source_identity;
     const char *imatrix_dataset_identity;
     const char *imatrix_producer;

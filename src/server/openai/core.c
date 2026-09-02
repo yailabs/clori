@@ -967,7 +967,7 @@ static int generation_admit_engine(openai_gateway *gateway,
     const yvex_server_engine_summary *selected;
     unsigned long long engine_count = 0ull;
     int rc = openai_json_admit(http, endpoint,
-                               server_reasoning_automatic_policy(), admitted, err);
+                               YVEX_REASONING_SOURCE_DEFAULT, admitted, err);
     if (rc != YVEX_OK) {
         *error_status = http_status(rc, YVEX_CLIENT_FAILURE_NONE);
         return rc;

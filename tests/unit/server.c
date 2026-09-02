@@ -160,10 +160,15 @@ static int test_request_queue_serialization(void)
 static int test_session_store(void)
 {
     static const char second_message[] = {'o', 'k', '\0', '!'};
+    static const char second_reasoning[] = "typed reasoning";
     yvex_prompt_message messages[2] = {
-        {.role = YVEX_PROMPT_ROLE_USER, .content = "ciao", .content_len = 4ull},
-        {.role = YVEX_PROMPT_ROLE_ASSISTANT,
-         .content = second_message, .content_len = sizeof(second_message)}};
+        {.schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1,
+         .role = YVEX_PROMPT_ROLE_USER, .content = "ciao", .content_len = 4ull},
+        {.schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1,
+         .role = YVEX_PROMPT_ROLE_ASSISTANT,
+         .content = second_message, .content_len = sizeof(second_message),
+         .reasoning_content = second_reasoning,
+         .reasoning_content_len = sizeof(second_reasoning) - 1u}};
     unsigned int tokens[3] = {1u, 7u, 2u};
     server_session_store_view view = {0};
     server_session_store_state restored = {0};
@@ -223,8 +228,12 @@ static int test_session_store(void)
             restored.messages[1].content_len == sizeof(second_message) &&
             memcmp(restored.messages[1].content, second_message,
                    sizeof(second_message)) == 0 &&
+            restored.messages[1].reasoning_content_len ==
+                sizeof(second_reasoning) - 1u &&
+            memcmp(restored.messages[1].reasoning_content, second_reasoning,
+                   sizeof(second_reasoning) - 1u) == 0 &&
             strcmp(restored.payload_identity, payload_identity) == 0,
-        "session checkpoint roundtrips messages, tokens, policy, and RNG facts");
+        "session checkpoint roundtrips typed messages, policy, and RNG facts");
     yvex_server_session_store_close(&restored);
     view.generation_checkpoint.sampling.policy_identity[0] = '0';
     YVEX_TEST_ASSERT(

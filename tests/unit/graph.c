@@ -177,6 +177,7 @@ static const yvex_family_source_adapter *synthetic_family_source(void)
         .target_id = "synthetic-family-test",
         .family = "synthetic",
         .tokenizer_architecture = "synthetic",
+        .tokenizer_pre = "synthetic",
         .compile = synthetic_family_compile,
     };
 
@@ -190,6 +191,7 @@ static int test_family_descriptor_registration(void)
         .target_id = "synthetic-family-test",
         .family = "synthetic",
         .tokenizer_architecture = "synthetic",
+        .tokenizer_pre = "synthetic",
         .source = synthetic_family_source,
     };
     const yvex_family_descriptor *registered[] = {&descriptor};

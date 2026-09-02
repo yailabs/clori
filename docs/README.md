@@ -27,7 +27,7 @@ contracts, operation, and evidence.
 | MiniMax composite vertical | [MiniMax-H3](model-families/minimax-h3.md) |
 | Artifact admission | [Artifact contract](contracts/artifacts.md) |
 | Runtime behavior and failure | [Runtime contract](contracts/runtime.md) |
-| Local transport | [Local protocol v17](contracts/local-protocol.md) |
+| Local transport | [Local protocol v18](contracts/local-protocol.md) |
 | Installed and internal C ABI | [C API](contracts/c-api.md) |
 | Events and observability | [Events and telemetry](contracts/events-telemetry.md) |
 | OpenAI-compatible HTTP | [Compatibility profile](openai-compatibility.md) |

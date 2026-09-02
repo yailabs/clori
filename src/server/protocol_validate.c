@@ -190,8 +190,7 @@ int yvex_server_protocol_message_valid(const yvex_client_message *message)
            BOOL_VALID(console->progress_available) &&
            BOOL_VALID(console->selected_model_available) &&
            BOOL_VALID(console->explicit_reasoning_channel_supported) &&
-           ENUM_VALID(console->reasoning_policy, YVEX_REASONING_DISABLED,
-                      YVEX_REASONING_MAXIMUM) &&
+           yvex_reasoning_policy_valid(console->reasoning_policy) &&
            partial_turn_fields_valid(&message->partial_turn) &&
            checkpoint_fields_valid(&message->state_checkpoint) &&
            media_result_fields_valid(&message->media_result) &&

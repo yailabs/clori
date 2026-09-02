@@ -8,6 +8,7 @@
 #include <yvex/internal/families/qwen3_5.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/source_catalog.h>
+#include <yvex/internal/tokenizer.h>
 
 #include <stdlib.h>
 #include <math.h>
@@ -630,6 +631,16 @@ static int qwen_source_compile(yvex_family_source_products *out,
     return YVEX_OK;
 }
 
+static int qwen_tokenizer_policy(yvex_tokenizer_family_policy *out,
+                                 yvex_error *err)
+{
+    return yvex_tokenizer_family_policy_compile(
+               out, yvex_model_qwen3_5_conversation(),
+               YVEX_TOKENIZER_KIND_GGML_GPT2,
+               YVEX_TOKENIZER_MODEL_BPE_BYTELEVEL,
+               YVEX_TOKENIZER_PROMPT_CONVERSATION, err) == YVEX_OK;
+}
+
 static const yvex_family_source_adapter *qwen_source_adapter(void)
 {
     static const yvex_family_source_adapter adapter = {
@@ -637,6 +648,8 @@ static const yvex_family_source_adapter *qwen_source_adapter(void)
         .target_id = YVEX_QWEN3_8_27B_TARGET_ID,
         .family = YVEX_QWEN3_5_FAMILY_KEY,
         .tokenizer_architecture = YVEX_QWEN3_5_FAMILY_KEY,
+        .tokenizer_pre = "qwen2",
+        .tokenizer_policy = qwen_tokenizer_policy,
         .compile = qwen_source_compile};
 
     return &adapter;
@@ -647,4 +660,5 @@ const yvex_family_descriptor yvex_graph_family_descriptor_qwen3_5 = {
     .target_id = YVEX_QWEN3_8_27B_TARGET_ID,
     .family = YVEX_QWEN3_5_FAMILY_KEY,
     .tokenizer_architecture = YVEX_QWEN3_5_FAMILY_KEY,
+    .tokenizer_pre = "qwen2",
     .source = qwen_source_adapter};

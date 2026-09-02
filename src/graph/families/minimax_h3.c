@@ -1983,10 +1983,12 @@ static const yvex_family_source_adapter *minimax_source_adapter(void)
     static const yvex_family_source_adapter adapter = {
         .schema_version = YVEX_FAMILY_SOURCE_ADAPTER_SCHEMA_V1, .target_id = YVEX_MINIMAX_H3_TARGET_ID,
         .family = "minimax-h3", .tokenizer_architecture = "minimax-h3",
+        .tokenizer_pre = "qwen2",
         .tokenizer_policy = minimax_tokenizer_policy, .compile = minimax_source_compile};
     return &adapter;
 }
 const yvex_family_descriptor yvex_graph_family_descriptor_minimax_h3 = {
     .schema_version = YVEX_FAMILY_DESCRIPTOR_SCHEMA_V1, .target_id = YVEX_MINIMAX_H3_TARGET_ID,
     .family = "minimax-h3", .tokenizer_architecture = "minimax-h3",
+    .tokenizer_pre = "qwen2",
     .component = minimax_component_adapter, .source = minimax_source_adapter};

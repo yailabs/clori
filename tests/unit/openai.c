@@ -20,7 +20,8 @@ static int admit_fixture(const char *json, openai_endpoint endpoint,
 
     request.body = (unsigned char *)json;
     request.body_count = strlen(json);
-    return openai_json_admit(&request, endpoint, YVEX_REASONING_ENABLED,
+    return openai_json_admit(&request, endpoint,
+                             YVEX_REASONING_SOURCE_DEFAULT,
                              admitted, err);
 }
 
@@ -46,6 +47,9 @@ static int test_chat_admission(void)
     static const char none[] =
         "{\"model\":\"deepseek4-v4-flash-dspark\",\"messages\":[{"
         "\"role\":\"user\",\"content\":\"Fast\"}],\"reasoning_effort\":\"none\"}";
+    static const char low[] =
+        "{\"model\":\"qwen3.8-27b\",\"messages\":[{"
+        "\"role\":\"user\",\"content\":\"Briefly\"}],\"reasoning_effort\":\"low\"}";
     openai_admitted_request admitted = {0};
     yvex_error err;
     int rc = admit_fixture(basic, OPENAI_ENDPOINT_CHAT, &admitted, &err);
@@ -54,7 +58,7 @@ static int test_chat_admission(void)
         fprintf(stderr, "basic Chat admission: %s\n", yvex_error_message(&err));
     YVEX_TEST_ASSERT(rc == YVEX_OK, "basic Chat request must admit");
     YVEX_TEST_ASSERT(admitted.provider->schema_version ==
-                         YVEX_PROVIDER_SCHEMA_V3 &&
+                         YVEX_PROVIDER_SCHEMA_V4 &&
                          admitted.provider->maximum_output_tokens == 0u,
                      "omitted Chat limit must remain adaptive");
     YVEX_TEST_ASSERT(admitted.provider->reasoning_policy ==
@@ -79,13 +83,19 @@ static int test_chat_admission(void)
                      "JSON object policy must map exactly");
     YVEX_TEST_ASSERT(!admitted.provider->sampling.stochastic,
                      "temperature zero must select greedy generation");
-    YVEX_TEST_ASSERT(admitted.provider->reasoning_policy == YVEX_REASONING_ENABLED,
-                     "omitted reasoning effort must use the admitted model default");
+    YVEX_TEST_ASSERT(
+        admitted.provider->reasoning_policy == YVEX_REASONING_SOURCE_DEFAULT,
+        "omitted reasoning effort remains source-owned until model admission");
     openai_admitted_request_clear(&admitted);
     rc = admit_fixture(none, OPENAI_ENDPOINT_CHAT, &admitted, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && admitted.provider->reasoning_policy ==
                          YVEX_REASONING_DISABLED,
                      "explicit non-thinking policy must override the model default");
+    openai_admitted_request_clear(&admitted);
+    rc = admit_fixture(low, OPENAI_ENDPOINT_CHAT, &admitted, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && admitted.provider->reasoning_policy ==
+                         YVEX_REASONING_LOW,
+                     "low source reasoning policy remains typed");
     openai_admitted_request_clear(&admitted);
     return 0;
 }
@@ -122,7 +132,7 @@ static int test_request_refusals(void)
     static const char bad_reasoning[] =
         "{\"model\":\"deepseek4-v4-flash-dspark\","
         "\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
-        "\"reasoning_effort\":\"medium\"}";
+        "\"reasoning_effort\":\"extreme\"}";
     openai_admitted_request admitted = {0};
     yvex_error err;
 
@@ -152,7 +162,7 @@ static int test_request_refusals(void)
                      "strict tool schemas must refuse without constrained decoding");
     YVEX_TEST_ASSERT(admit_fixture(bad_reasoning, OPENAI_ENDPOINT_CHAT,
                                    &admitted, &err) == YVEX_ERR_UNSUPPORTED,
-                     "non-source reasoning effort must refuse");
+                     "unknown reasoning effort must refuse");
     return 0;
 }
 

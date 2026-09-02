@@ -23,7 +23,7 @@ typedef struct {
 typedef struct {
     unsigned int schema_version;
     const char *target_id, *family;
-    const char *tokenizer_architecture;
+    const char *tokenizer_architecture, *tokenizer_pre;
     int (*tokenizer_policy)(struct yvex_tokenizer_family_policy *, yvex_error *);
     int (*compile)(yvex_family_source_products *out,
                    const struct yvex_compilation_runtime_binding_request *request,
@@ -37,7 +37,7 @@ typedef const yvex_quant_preset_catalog *(*yvex_family_quant_provider)(void);
 typedef const yvex_family_source_adapter *(*yvex_family_source_provider)(void);
 typedef struct yvex_family_descriptor {
     unsigned int schema_version;
-    const char *target_id, *family, *tokenizer_architecture;
+    const char *target_id, *family, *tokenizer_architecture, *tokenizer_pre;
     yvex_family_execution_provider execution;
     yvex_family_component_provider component;
     yvex_family_quant_provider quant_presets;

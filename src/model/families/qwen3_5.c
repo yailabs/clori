@@ -1223,6 +1223,80 @@ static const char *qwen_failure_name(yvex_qwen3_5_failure_code code)
                : "unknown";
 }
 
+static const char qwen_reasoning_xhigh[] =
+    "Reasoning effort is set to xhigh. Please think carefully through the task, validate key "
+    "assumptions, consider plausible alternatives, and prioritize correctness, consistency, "
+    "and clarity in the final answer.";
+static const char qwen_reasoning_low[] =
+    "Reasoning effort is set to low. Keep your thinking brief and focused, moving directly to "
+    "the conclusion without unnecessary elaboration.";
+static const char qwen_tools_prefix[] =
+    "# Tools\n\nYou have access to the following functions:\n\n<tools>";
+static const char qwen_tools_suffix[] =
+    "\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO "
+    "suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>"
+    "\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the "
+    "second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>"
+    "\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner "
+    "<function=...></function> block must be nested within <tool_call></tool_call> XML tags\n"
+    "- Required parameters MUST be specified\n- You may provide optional reasoning for your "
+    "function call in natural language BEFORE the function call, but NOT after\n- If there is no "
+    "function call available, answer the question like normal with your current knowledge and do "
+    "not tell the user about function calls\n</IMPORTANT>";
+
+static const yvex_conversation_protocol qwen_conversation = {
+    .schema_version = YVEX_CONVERSATION_PROTOCOL_SCHEMA_V2,
+    .family_adapter_id = YVEX_QWEN3_5_ADAPTER_ID,
+    .family_adapter_version = YVEX_QWEN3_5_ADAPTER_VERSION,
+    .architecture = YVEX_QWEN3_5_FAMILY_KEY,
+    .source_revision = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+    .source_encoding_path = "tokenizer_config.json#chat_template",
+    .source_encoding_identity =
+        "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+    .bos = "", .eos = "<|im_end|>",
+    .system = "<|im_start|>system\n",
+    .user = "<|im_start|>user\n",
+    .assistant = "<|im_start|>assistant\n",
+    .message_end = "<|im_end|>\n",
+    .latest_reminder = "",
+    .thinking_start = "<think>", .thinking_start_suffix = "\n",
+    .thinking_end_prefix = "\n", .thinking_end = "</think>",
+    .thinking_end_suffix = "\n\n",
+    .tool_result_start = "\n<tool_response>\n",
+    .tool_result_end = "\n</tool_response>",
+    .tool_result_group_start = "<|im_start|>user",
+    .dsml = "<tool_call>", .tool_calls_start = "",
+    .tool_calls_end = "", .tool_invoke_start = "<tool_call>\n<function=",
+    .tool_invoke_name_end = ">\n",
+    .tool_invoke_end = "</function>\n</tool_call>",
+    .tool_parameter_start = "<parameter=",
+    .tool_parameter_name_end = ">\n", .tool_parameter_kind_end = "",
+    .tool_parameter_end = "\n</parameter>\n",
+    .reasoning_effort_low = qwen_reasoning_low,
+    .reasoning_effort_max = qwen_reasoning_xhigh,
+    .tools_prefix = qwen_tools_prefix, .tools_suffix = qwen_tools_suffix,
+    .response_format_prefix = "",
+    .grammar = YVEX_CONVERSATION_GRAMMAR_ROLE_ENVELOPED,
+    .tool_grammar = YVEX_CONVERSATION_TOOL_GRAMMAR_XML_ELEMENTS,
+    .default_reasoning_policy = YVEX_REASONING_MAXIMUM,
+    .drop_prior_reasoning_by_default = 0, .tools_preserve_reasoning = 1,
+    .tool_results_merge_into_user = 1,
+    .tokenizer_model = "gpt2", .tokenizer_pre = "qwen2",
+    .tokenizer_json_identity =
+        "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+    .tokenizer_config_identity =
+        "b11349aafa7cdc6a320767cf7ceb29ed82f7eda5d65e8e0819e76f0ce947bf27",
+    .vocabulary_size = 248320ull, .base_vocabulary_size = 248044ull,
+    .merge_count = 247587ull, .added_token_count = 33ull,
+    .special_token_count = 21ull,
+    .eos_token_id = 248046u, .pad_token_id = 248044u,
+    .eos_present = 1, .pad_present = 1};
+
+const yvex_conversation_protocol *yvex_model_qwen3_5_conversation(void)
+{
+    return &qwen_conversation;
+}
+
 const yvex_qwen3_5_api *yvex_model_register_qwen3_5(void)
 {
     static const yvex_qwen3_5_api api = {

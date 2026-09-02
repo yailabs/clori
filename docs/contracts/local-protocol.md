@@ -1,8 +1,8 @@
-# Local Protocol v17
+# Local Protocol v18
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 17`.
+Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 18`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -17,18 +17,18 @@ Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 17 and exchanges bounded typed frames.
+Every connection negotiates version 18 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
 malformed fields refuse without entering the server scheduler.
 
-Every earlier version, including v16, is refused explicitly. There is no private
+Every earlier version, including v17, is refused explicitly. There is no private
 pre-v0.1 compatibility decoder. Unknown operations and response kinds fail
 closed.
 
 ## Operations
 
-Protocol v17 carries host status/stop, engine load/list/unload, model and memory
+Protocol v18 carries host status/stop, engine load/list/unload, model and memory
 facts for each engine generation, text or media engine kind, target-only or
 speculative text execution strategy,
 session lifecycle, bounded copy-on-write session fork, generation turns and
@@ -107,15 +107,17 @@ unsupported kinds, malformed extents, or a condition attached to a non-media
 request fail before scheduler admission. Conditions are request-owned and do
 not alter engine identity or persist in a later turn.
 
-The admitted DeepSeek DSpark tokenizer contract classifies source-authored
-explicit reasoning separately from final text when the request selects
-`enabled` or `maximum`. The opening `<think>` token is part of the admitted
-generation prompt. Only the corresponding source-authored `</think>` token
-transitions the output stream to final text. Delimiter bytes are consumed by
-that owner and never enter either projection. An enabled stream that terminates
-without the transition fails as an incomplete grammar. Disabled reasoning is
-final-text only. Clients may not infer hidden reasoning, inspect arbitrary
-prose, or search output for delimiter-looking strings.
+The admitted tokenizer contract classifies source-authored explicit reasoning
+separately from final text. Protocol v18 permits an omitted policy to remain
+`source-default` until the exact loaded model resolves it; concrete `disabled`,
+`low`, `enabled`, and `maximum` choices remain request facts. Provider request
+v4 independently carries source-default/drop/preserve reasoning-history policy.
+The family conversation descriptor owns the exact generation prefix and full
+reasoning-to-answer delimiter, including structural whitespace. Delimiter bytes
+are consumed by that owner and never enter either projection. A reasoning
+stream that terminates without the required transition fails as incomplete;
+disabled reasoning is final-text only. Clients may not infer hidden reasoning,
+inspect arbitrary prose, or search output for delimiter-looking strings.
 
 DSpark proposal tokens are not stream fragments. Drafting, verification, and
 accepted-prefix events carry typed counters, but final text is emitted only
@@ -217,7 +219,7 @@ format.
 
 ## Non-claims
 
-Protocol v17 is not a public remote API, authentication protocol, TLS transport,
+Protocol v18 is not a public remote API, authentication protocol, TLS transport,
 stable cross-version SDK promise, distributed serving protocol, or model
 quality contract. Versioned checkpoints preserve the admitted model and
 semantic-session state across restart; the in-memory fork does not create a

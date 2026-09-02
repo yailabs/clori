@@ -1137,7 +1137,7 @@ The common persistent server now admits MiniMax-H3 as engine kind `media`.
 `yvex model load minimax-h3-fl2va` resolves the immutable component
 installation, CUDA backend, and media kind from its composite startup profile
 and creates one engine generation; the default owned publication
-directory comes from the common YVEX data path. Protocol v17 carries zero, one,
+directory comes from the common YVEX data path. Protocol v18 carries zero, one,
 or two typed image conditions with distinct `first` and `last` roles. The
 normal product surfaces are:
 

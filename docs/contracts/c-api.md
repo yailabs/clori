@@ -80,10 +80,13 @@ identity, but `yvex_server_create` refuses v3 before reading any field absent
 from its legacy layout. Repository callers use
 `YVEX_SERVER_OPTIONS_SCHEMA_CURRENT`; there is no binary v3 reinterpretation.
 
-`yvex_tokenizer_plan_summary` schema v4 identifies prompt composition with
-family-neutral `conversation` and `verbatim` values. Pretokenizer behavior is
-selected independently from the admitted tokenizer metadata. Schema v3 remains
-the historical family-named semantic identity; newly sealed plans publish v4.
+`yvex_tokenizer_plan_summary` schema v5 identifies prompt composition with
+family-neutral `conversation` and `verbatim` values, separates tokenizer
+architecture from pre-tokenizer behavior, and carries source-authored reasoning
+capabilities/defaults. Schema v3 and v4 remain historical identities; newly
+sealed plans publish v5. `yvex_prompt_message` schema v1 makes typed assistant
+reasoning history an explicit, rejectable input layout rather than an unchecked
+extension of the earlier pre-v0.1 prompt record.
 
 The installed catalog split introduced unversioned pre-v0.1 source/API
 migrations rather than assigning an existing schema identity to new layouts:
@@ -246,7 +249,7 @@ engine kind from text execution strategy while retaining alias, package,
 backend, capacity, memory, and generation facts. Engine schema v1 is refused
 before the added fields are read.
 The source-authored conversation boundary admits provider request/wire schema
-v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v17.
+v4, tokenizer plan v5, tokenizer provider result v2, and local protocol v18.
 Runtime event schema v5 and generation plan/result schema v5 remain current.
 Generation plan ABI v5 adds the workload-profile identity
 required to bind phase evidence to the compiled workload. Generation result
@@ -597,25 +600,28 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v17
+## Application Provider And Local Protocol v18
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
-result ABI. Provider schema v3 additionally represents an omitted completion
+result ABI. Provider schema v3 represents an omitted completion
 limit as adaptive while binding separate assistant reasoning content,
 reasoning policy, source-authored drop behavior, field-presence facts, and a
 bounded ordered tool-call set in addition to the v1 request facts. Provider wire
-v3 carries those fields and the adaptive limit. V1 remains readable and writable only with disabled
+v3 carries those fields and the adaptive limit. Provider schema/wire v4 adds a
+source-default reasoning request and a separate source-default/drop/preserve
+history policy, so model-family conversation policy remains authoritative when
+the application omits either choice. V1 remains readable and writable only with disabled
 reasoning, at most one assistant tool call, and its original field semantics.
 Clone and wire-decode publish only a complete owned request graph. The provider
 owner neither parses HTTP nor renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v17 carries the sealed provider request through the
+`<yvex/server.h>` protocol v18 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 explicit reasoning, function calls, usage, terminal completion, and failure.
 Typed events bind the provider adapter, provider-request identity, and external
 correlation ID while excluding prompt and output content.
 
-Protocol v17 carries host status/stop, engine load/list/unload, exact
+Protocol v18 carries host status/stop, engine load/list/unload, exact
 alias/generation routing, separate engine kind and semantic execution strategy,
 speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn
@@ -633,8 +639,8 @@ model-state checkpoint save/restore operations with an explicit file bound and
 typed digest/identity evidence. Version 9 adds the startup capacity-plan
 identity, required and unreserved bytes, admitted concurrent sequences, and
 separate independent-session-scheduling and continuous-batching readiness.
-Provider v3's adaptive limit and generation-bound routing are not executable by
-an older peer, so every non-v17 frame refuses during the handshake;
+Provider v4's source-default reasoning/history semantics and generation-bound
+routing are not executable by an older peer, so every non-v18 frame refuses during the handshake;
 there is no private pre-v0.1 compatibility decoder.
 
 Version 12 added the typed terminal media result. Version 13 separates host
@@ -657,6 +663,9 @@ Version 16 added typed image-conditioning and media execution selection without
 changing text routing. Version 17 adds engine load/unload lifecycle kinds,
 runtime-event schema v5, and explicit versus server-resolved completion-envelope
 facts. The event identity binds those new kinds and v16 frames fail closed.
+Version 18 carries provider request/wire v4 so omitted reasoning and reasoning
+history are resolved by the admitted source conversation policy; v17 frames
+fail closed.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map
 queue capacity, timeout, incompatible state and unsupported input without

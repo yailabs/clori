@@ -24,6 +24,9 @@ static int test_render_system_user(void)
         "</user>\n"
         "<assistant>\n";
 
+    memset(messages, 0, sizeof(messages));
+    messages[0].schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1;
+    messages[1].schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1;
     messages[0].role = YVEX_PROMPT_ROLE_SYSTEM;
     messages[0].content = "You are helpful";
     messages[1].role = YVEX_PROMPT_ROLE_USER;
@@ -48,6 +51,8 @@ static int test_render_variants_and_errors(void)
     yvex_error err;
     int rc;
 
+    memset(&message, 0, sizeof(message));
+    message.schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1;
     message.role = YVEX_PROMPT_ROLE_USER;
     message.content = "hello world";
     options.add_bos = 0;
@@ -105,6 +110,8 @@ static int test_rendered_prompt_tokenizes(void)
     rc = yvex_tokenizer_from_gguf(&tokenizer, gguf, model, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "build tokenizer");
 
+    memset(&message, 0, sizeof(message));
+    message.schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1;
     message.role = YVEX_PROMPT_ROLE_USER;
     message.content = "hello world";
     options.add_bos = 0;

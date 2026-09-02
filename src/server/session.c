@@ -36,6 +36,7 @@ typedef struct {
     unsigned long long rejected_tokens, discarded_tokens, verification_count;
     unsigned long long reasoning_bytes, final_bytes;
     unsigned long long reasoning_control_bytes;
+    unsigned long long reasoning_boundary_bytes;
     unsigned int reasoning_start_token_id, reasoning_end_token_id;
     const unsigned char *reasoning_end;
     unsigned long long reasoning_end_count;
@@ -253,19 +254,25 @@ static double elapsed_seconds(unsigned long long start,
 }
 static int session_message_append(server_session *session, yvex_prompt_role role,
                                   const unsigned char *bytes,
-                                  unsigned long long count, yvex_error *err)
+                                  unsigned long long count,
+                                  const unsigned char *reasoning,
+                                  unsigned long long reasoning_count,
+                                  yvex_error *err)
 {
     yvex_prompt_message *message;
-    unsigned long long next;
-    if (!session || (!bytes && count) ||
+    unsigned long long next, reasoning_next;
+    if (!session || (!bytes && count) || (!reasoning && reasoning_count) ||
         session->message_count >= SESSION_MAX_MESSAGES ||
         !yvex_core_u64_add(session->transcript_count, count + 1u, &next) ||
-        next > session->transcript_capacity) {
+        !yvex_core_u64_add(next, reasoning_count + 1u, &reasoning_next) ||
+        reasoning_next > session->transcript_capacity) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "server.session.transcript",
                        "session transcript capacity is exhausted");
         return YVEX_ERR_BOUNDS;
     }
     message = &session->messages[session->message_count];
+    memset(message, 0, sizeof(*message));
+    message->schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1;
     if (count)
         memcpy(session->transcript + session->transcript_count, bytes,
                (size_t)count);
@@ -273,7 +280,13 @@ static int session_message_append(server_session *session, yvex_prompt_role role
     message->role = role;
     message->content = (const char *)session->transcript + session->transcript_count;
     message->content_len = count;
-    session->transcript_count = next;
+    if (reasoning_count)
+        memcpy(session->transcript + next, reasoning,
+               (size_t)reasoning_count);
+    session->transcript[next + reasoning_count] = '\0';
+    message->reasoning_content = (const char *)session->transcript + next;
+    message->reasoning_content_len = reasoning_count;
+    session->transcript_count = reasoning_next;
     session->message_count++;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -322,7 +335,8 @@ static int session_policy(const yvex_client_request *request,
 }
 static int session_generation_policy(
     server_session_registry *registry, const yvex_client_request *request,
-    yvex_runtime_sampling_policy *policy, yvex_error *err)
+    yvex_runtime_sampling_policy *policy, yvex_reasoning_policy *reasoning,
+    yvex_error *err)
 {
     const yvex_model_engine_view *view = yvex_model_engine_view_get(registry->model);
     if (!view || !view->tokenizer)
@@ -330,18 +344,29 @@ static int session_generation_policy(
     {
         const yvex_tokenizer_plan_summary *tokenizer =
             yvex_tokenizer_plan_summary_get(view->tokenizer);
-        if (request->reasoning_policy > YVEX_REASONING_MAXIMUM ||
-            (request->provider_request &&
-             request->reasoning_policy !=
-                 request->provider_request->reasoning_policy) ||
-            (request->reasoning_policy != YVEX_REASONING_DISABLED &&
+        yvex_reasoning_policy resolved = request->reasoning_policy;
+        yvex_reasoning_policy provider = request->provider_request
+                                             ? request->provider_request->reasoning_policy
+                                             : resolved;
+        if (resolved == YVEX_REASONING_SOURCE_DEFAULT)
+            resolved = tokenizer ? tokenizer->default_reasoning_policy
+                                 : YVEX_REASONING_DISABLED;
+        if (provider == YVEX_REASONING_SOURCE_DEFAULT)
+            provider = tokenizer ? tokenizer->default_reasoning_policy
+                                 : YVEX_REASONING_DISABLED;
+        if (!reasoning || !yvex_reasoning_policy_valid(resolved) ||
+            provider != resolved ||
+            (resolved != YVEX_REASONING_DISABLED &&
              (!tokenizer || !tokenizer->explicit_reasoning_supported)) ||
-            (request->reasoning_policy == YVEX_REASONING_MAXIMUM &&
-             !tokenizer->maximum_reasoning_supported)) {
+            (resolved == YVEX_REASONING_MAXIMUM &&
+             !tokenizer->maximum_reasoning_supported) ||
+            (resolved == YVEX_REASONING_LOW &&
+             !tokenizer->low_reasoning_supported)) {
             yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "server.session.reasoning",
                            "requested reasoning policy is unavailable");
             return YVEX_ERR_UNSUPPORTED;
         }
+        *reasoning = resolved;
     }
     return session_policy(request, policy,
                           yvex_tokenizer_vocab_size(view->tokenizer), err);
@@ -560,7 +585,7 @@ static int turn_fragment(void *opaque,
         }
         sink->reasoning_active = 0;
         sink->reasoning_boundary_seen = 1;
-        sink->reasoning_control_bytes = byte_count;
+        sink->reasoning_control_bytes = sink->reasoning_boundary_bytes;
         sink->reasoning_completed_ns = now;
         classified_bytes = sink->reasoning_end;
         classified_count = sink->reasoning_end_count;
@@ -802,7 +827,7 @@ static int session_turn_commit(server_session *session,
         } else {
             transcript_rc = session_message_append(
                 session, YVEX_PROMPT_ROLE_USER, request->prompt,
-                request->prompt_bytes, &transcript_error);
+                request->prompt_bytes, NULL, 0u, &transcript_error);
         }
         if (transcript_rc == YVEX_OK)
             transcript_rc = turn_output_geometry(
@@ -812,7 +837,8 @@ static int session_turn_commit(server_session *session,
             transcript_rc = session_message_append(
                 session, YVEX_PROMPT_ROLE_ASSISTANT,
                 session->turn_text + final_offset,
-                sink->final_bytes, &transcript_error);
+                sink->final_bytes, session->turn_text,
+                sink->reasoning_bytes, &transcript_error);
         if (transcript_rc != YVEX_OK) {
             session->message_count = prior_messages;
             session->transcript_count = prior_transcript;
@@ -994,7 +1020,7 @@ static int session_provider_result_prepare(
         }
         final_visible = visible_count - final_offset;
         if (!yvex_core_u64_add(sink->reasoning_bytes,
-                               strlen(conversation->thinking_end),
+                               sink->reasoning_boundary_bytes,
                                &completion_count) ||
             !yvex_core_u64_add(completion_count, final_visible,
                                &completion_count))
@@ -1005,12 +1031,21 @@ static int session_provider_result_prepare(
         if (sink->reasoning_bytes)
             memcpy(owned_completion, session->turn_text,
                    (size_t)sink->reasoning_bytes);
-        memcpy(owned_completion + sink->reasoning_bytes,
-               conversation->thinking_end,
-               strlen(conversation->thinking_end));
+        {
+            unsigned long long offset = sink->reasoning_bytes;
+            const char *parts[] = {conversation->thinking_end_prefix,
+                                   conversation->thinking_end,
+                                   conversation->thinking_end_suffix};
+            unsigned int index;
+            for (index = 0u; index < sizeof(parts) / sizeof(parts[0]); ++index) {
+                size_t count = strlen(parts[index]);
+                memcpy(owned_completion + offset, parts[index], count);
+                offset += count;
+            }
+        }
         if (final_visible)
             memcpy(owned_completion + sink->reasoning_bytes +
-                       strlen(conversation->thinking_end),
+                       sink->reasoning_boundary_bytes,
                    session->turn_text + final_offset,
                    (size_t)final_visible);
         completion = owned_completion;
@@ -1450,6 +1485,83 @@ static int session_profile_publish(server_session_registry *registry,
     return rc;
 }
 
+static int session_turn_prompt_set(
+    const server_session_registry *registry, const server_session *session,
+    const yvex_client_request *request,
+    const yvex_model_engine_view *model_view,
+    yvex_prompt_message prompt_messages[SESSION_MAX_MESSAGES + 1u],
+    yvex_runtime_generation_request *prompt)
+{
+    memset(prompt, 0, sizeof(*prompt));
+    prompt->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3;
+    if (request->provider_request) {
+        prompt->kind = YVEX_GENERATION_INPUT_PROVIDER;
+        prompt->provider_request = request->provider_request;
+    } else {
+        const yvex_conversation_protocol *conversation =
+            session_conversation_protocol(model_view->tokenizer);
+        if (!conversation) return YVEX_ERR_STATE;
+        memcpy(prompt_messages, session->messages,
+               (size_t)session->message_count * sizeof(*prompt_messages));
+        memset(&prompt_messages[session->message_count], 0,
+               sizeof(prompt_messages[session->message_count]));
+        prompt_messages[session->message_count].schema_version =
+            YVEX_PROMPT_MESSAGE_SCHEMA_V1;
+        prompt_messages[session->message_count].role = YVEX_PROMPT_ROLE_USER;
+        prompt_messages[session->message_count].content =
+            (const char *)request->prompt;
+        prompt_messages[session->message_count].content_len =
+            request->prompt_bytes;
+        prompt->kind = YVEX_GENERATION_INPUT_MESSAGES;
+        prompt->messages = prompt_messages;
+        prompt->message_count = session->message_count + 1u;
+        prompt->prompt_options.add_bos = 1;
+        prompt->prompt_options.add_generation_prompt = 1;
+        prompt->prompt_options.drop_thinking =
+            conversation->drop_prior_reasoning_by_default;
+        prompt->prompt_options.mode =
+            request->reasoning_policy == YVEX_REASONING_DISABLED
+                ? YVEX_PROMPT_MODE_CHAT : YVEX_PROMPT_MODE_THINKING;
+        prompt->prompt_options.reasoning_policy = request->reasoning_policy;
+    }
+    prompt->encode_options.maximum_tokens = registry->options.context_capacity;
+    return YVEX_OK;
+}
+
+static int session_turn_sink_set(
+    turn_sink *sink, server_session_registry *registry,
+    server_session *session, const yvex_client_request *request,
+    const yvex_model_engine_view *model_view, const char *request_id,
+    double queue_seconds, server_message_emit emit, void *emit_context)
+{
+    const yvex_tokenizer_plan_summary *tokenizer =
+        yvex_tokenizer_plan_summary_get(model_view->tokenizer);
+    const yvex_conversation_protocol *conversation =
+        session_conversation_protocol(model_view->tokenizer);
+    if (!tokenizer || !conversation) return YVEX_ERR_STATE;
+    memset(sink, 0, sizeof(*sink));
+    sink->registry = registry;
+    sink->session = session;
+    sink->request = request;
+    sink->emit = emit;
+    sink->emit_context = emit_context;
+    sink->started_ns = monotonic_ns();
+    sink->queue_seconds = queue_seconds;
+    sink->reasoning_active =
+        request->reasoning_policy != YVEX_REASONING_DISABLED;
+    sink->reasoning_start_token_id = tokenizer->reasoning_start_token_id;
+    sink->reasoning_end_token_id = tokenizer->reasoning_end_token_id;
+    sink->reasoning_end = (const unsigned char *)conversation->thinking_end;
+    sink->reasoning_end_count = strlen(conversation->thinking_end);
+    sink->reasoning_boundary_bytes =
+        strlen(conversation->thinking_end_prefix) +
+        sink->reasoning_end_count + strlen(conversation->thinking_end_suffix);
+    yvex_core_text_copy(sink->request_id, sizeof(sink->request_id), request_id);
+    (void)snprintf(sink->turn_id, sizeof(sink->turn_id), "t%llu",
+                   session->turn_count + 1u);
+    return YVEX_OK;
+}
+
 static int session_turn(server_session_registry *registry,
                         server_session *session,
                         const yvex_client_request *request,
@@ -1467,6 +1579,8 @@ static int session_turn(server_session_registry *registry,
     yvex_runtime_generation_evidence evidence;
     yvex_runtime_sampling_policy policy;
     yvex_client_message started;
+    yvex_client_request resolved_request;
+    yvex_reasoning_policy reasoning;
     turn_sink sink;
     unsigned long long prior_messages = session->message_count;
     unsigned long long prior_transcript = session->transcript_count;
@@ -1498,33 +1612,14 @@ static int session_turn(server_session_registry *registry,
     }
     if (!model_view || !model_view->tokenizer)
         return YVEX_ERR_STATE;
-    rc = session_generation_policy(registry, request, &policy, err);
+    rc = session_generation_policy(registry, request, &policy, &reasoning, err);
     if (rc != YVEX_OK) return rc;
-    memset(&prompt, 0, sizeof(prompt));
-    prompt.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3;
-    if (request->provider_request) {
-        prompt.kind = YVEX_GENERATION_INPUT_PROVIDER;
-        prompt.provider_request = request->provider_request;
-    } else {
-        memcpy(prompt_messages, session->messages,
-               (size_t)session->message_count * sizeof(*prompt_messages));
-        prompt_messages[session->message_count].role = YVEX_PROMPT_ROLE_USER;
-        prompt_messages[session->message_count].content =
-            (const char *)request->prompt;
-        prompt_messages[session->message_count].content_len =
-            request->prompt_bytes;
-        prompt.kind = YVEX_GENERATION_INPUT_MESSAGES;
-        prompt.messages = prompt_messages;
-        prompt.message_count = session->message_count + 1u;
-        prompt.prompt_options.add_bos = 1;
-        prompt.prompt_options.add_generation_prompt = 1;
-        prompt.prompt_options.drop_thinking = 1;
-        prompt.prompt_options.mode =
-            request->reasoning_policy == YVEX_REASONING_DISABLED
-                ? YVEX_PROMPT_MODE_CHAT : YVEX_PROMPT_MODE_THINKING;
-        prompt.prompt_options.reasoning_policy = request->reasoning_policy;
-    }
-    prompt.encode_options.maximum_tokens = registry->options.context_capacity;
+    resolved_request = *request;
+    resolved_request.reasoning_policy = reasoning;
+    request = &resolved_request;
+    rc = session_turn_prompt_set(registry, session, request, model_view,
+                                 prompt_messages, &prompt);
+    if (rc != YVEX_OK) return rc;
     if (session->committed_count)
         rc = session_prompt_extends_prefix(
             model_view->tokenizer, &prompt, session, &extends, err);
@@ -1533,30 +1628,9 @@ static int session_turn(server_session_registry *registry,
     if (rc == YVEX_OK)
         rc = session_generation_open(registry, session, request, &policy, err);
     if (rc != YVEX_OK) return rc;
-    memset(&sink, 0, sizeof(sink));
-    sink.registry = registry;
-    sink.session = session;
-    sink.request = request;
-    sink.emit = emit;
-    sink.emit_context = emit_context;
-    sink.started_ns = monotonic_ns();
-    sink.queue_seconds = queue_seconds;
-    {
-        const yvex_tokenizer_plan_summary *tokenizer =
-            yvex_tokenizer_plan_summary_get(model_view->tokenizer);
-        const yvex_conversation_protocol *conversation =
-            session_conversation_protocol(model_view->tokenizer);
-        if (!tokenizer || !conversation) return YVEX_ERR_STATE;
-        sink.reasoning_active =
-            request->reasoning_policy != YVEX_REASONING_DISABLED;
-        sink.reasoning_start_token_id = tokenizer->reasoning_start_token_id;
-        sink.reasoning_end_token_id = tokenizer->reasoning_end_token_id;
-        sink.reasoning_end = (const unsigned char *)conversation->thinking_end;
-        sink.reasoning_end_count = strlen(conversation->thinking_end);
-    }
-    yvex_core_text_copy(sink.request_id, sizeof(sink.request_id), request_id);
-    (void)snprintf(sink.turn_id, sizeof(sink.turn_id), "t%llu",
-                   session->turn_count + 1u);
+    rc = session_turn_sink_set(&sink, registry, session, request, model_view,
+                               request_id, queue_seconds, emit, emit_context);
+    if (rc != YVEX_OK) return rc;
     rc = yvex_tokenizer_reasoning_stream_open(
         &sink.reasoning_stream, model_view->tokenizer,
         request->reasoning_policy, turn_classified_fragment, &sink, err);

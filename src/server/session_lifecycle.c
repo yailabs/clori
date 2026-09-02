@@ -392,7 +392,17 @@ int yvex_server_sessions_open(server_session_registry **out,
     registry->engine_generation = engine_generation;
     registry->event_scope = *event_scope;
     registry->continuous_batching = continuous_batching != 0;
-    registry->default_reasoning_policy = server_reasoning_automatic_policy();
+    {
+        const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
+        const yvex_tokenizer_plan_summary *tokenizer =
+            view && view->tokenizer
+                ? yvex_tokenizer_plan_summary_get(view->tokenizer) : NULL;
+        registry->default_reasoning_policy =
+            tokenizer && yvex_reasoning_policy_valid(
+                             tokenizer->default_reasoning_policy)
+                ? tokenizer->default_reasoning_policy
+                : server_reasoning_automatic_policy();
+    }
     registry->telemetry = telemetry;
     registry->capacity = options->maximum_sessions;
     registry->next_id = 1u;

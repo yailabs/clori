@@ -12,6 +12,7 @@ extern "C" {
 #endif
 
 #define YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V1 1u
+#define YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V2 2u
 #define YVEX_TOKENIZER_POLICY_TEXT_CAP 4096u
 #define YVEX_TOKENIZER_POLICY_NAME_CAP 64u
 
@@ -42,8 +43,18 @@ typedef enum {
     YVEX_TOKENIZER_POLICY_TOOLS_PREFIX,
     YVEX_TOKENIZER_POLICY_TOOLS_SUFFIX,
     YVEX_TOKENIZER_POLICY_RESPONSE_FORMAT_PREFIX,
+    YVEX_TOKENIZER_POLICY_SYSTEM,
+    YVEX_TOKENIZER_POLICY_MESSAGE_END,
+    YVEX_TOKENIZER_POLICY_THINKING_START_SUFFIX,
+    YVEX_TOKENIZER_POLICY_THINKING_END_PREFIX,
+    YVEX_TOKENIZER_POLICY_THINKING_END_SUFFIX,
+    YVEX_TOKENIZER_POLICY_REASONING_EFFORT_LOW,
+    YVEX_TOKENIZER_POLICY_TOOL_RESULT_GROUP_START,
     YVEX_TOKENIZER_POLICY_TEXT_COUNT
 } yvex_tokenizer_policy_text;
+
+#define YVEX_TOKENIZER_POLICY_TEXT_COUNT_V1 \
+    ((unsigned int)YVEX_TOKENIZER_POLICY_SYSTEM)
 
 typedef struct yvex_tokenizer_family_policy {
     unsigned int schema_version;
@@ -58,6 +69,9 @@ typedef struct yvex_tokenizer_family_policy {
     int add_bos_token, add_eos_token, byte_fallback;
     int drop_prior_reasoning_by_default, tools_preserve_reasoning;
     int tool_results_merge_into_user;
+    yvex_conversation_grammar grammar;
+    yvex_conversation_tool_grammar tool_grammar;
+    yvex_reasoning_policy default_reasoning_policy;
     char architecture[YVEX_TOKENIZER_POLICY_NAME_CAP];
     char tokenizer_model[YVEX_TOKENIZER_POLICY_NAME_CAP];
     char tokenizer_pre[YVEX_TOKENIZER_POLICY_NAME_CAP];

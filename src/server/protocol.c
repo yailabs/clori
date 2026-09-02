@@ -577,7 +577,7 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         request->operation > YVEX_CLIENT_OP_ENGINE_UNLOAD ||
         (int)request->trace_level < (int)YVEX_SERVER_TRACE_SUMMARY ||
         request->trace_level > YVEX_SERVER_TRACE_FULL ||
-        request->reasoning_policy > YVEX_REASONING_MAXIMUM ||
+        !yvex_reasoning_request_policy_valid(request->reasoning_policy) ||
         !request_state_fields_valid(request) ||
         !request_fork_fields_valid(request) ||
         !request_media_conditions_valid(request) ||
@@ -737,7 +737,8 @@ int yvex_protocol_request_decode(const unsigned char *input,
             break;
         case TAG_REASONING_POLICY:
             valid = reader_u64(bytes, count, &value) &&
-                    value <= YVEX_REASONING_MAXIMUM;
+                    yvex_reasoning_request_policy_valid(
+                        (yvex_reasoning_policy)value);
             if (valid)
                 candidate.reasoning_policy = (yvex_reasoning_policy)value;
             break;
@@ -1783,7 +1784,7 @@ static int message_console_field(yvex_client_message *candidate,
         break;
     case TAG_CONSOLE_REASONING_POLICY:
         valid = reader_u64(bytes, count, &value) &&
-                value <= YVEX_REASONING_MAXIMUM;
+                yvex_reasoning_policy_valid((yvex_reasoning_policy)value);
         if (valid)
             candidate->console.reasoning_policy =
                 (yvex_reasoning_policy)value;

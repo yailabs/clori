@@ -79,7 +79,8 @@ static int pipeline_valid(const yvex_family_compiler_adapter *adapter)
            pipeline->semantic_model_build &&
            pipeline->runtime_descriptor_build &&
            pipeline->quant_plan_default && pipeline->quant_plan_policy &&
-           pipeline->tokenizer_architecture && pipeline->tokenizer_architecture[0];
+           pipeline->tokenizer_architecture && pipeline->tokenizer_architecture[0] &&
+           pipeline->tokenizer_pre && pipeline->tokenizer_pre[0];
 }
 
 static void binding_compiler_close(binding_compiler *compiler)
@@ -265,7 +266,7 @@ static int binding_compiler_writer_build(
     writer.input.complete.lowering = yvex_gguf_writer_artifact_lowering_api();
     writer.input.complete.lowering_context = compiler->source.lowering_context;
     writer.input.complete.verification = compiler->source.verification;
-    writer.input.complete.tokenizer_architecture = compiler->pipeline->tokenizer_architecture;
+    writer.input.complete.tokenizer_architecture = compiler->pipeline->tokenizer_pre;
     return yvex_gguf_writer_plan_build(
         &compiler->writer, &writer, &compiler->writer_failure, err);
 }

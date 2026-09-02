@@ -343,6 +343,7 @@ static int command_prompt(int arg_count, char **args)
     int rc;
 
     yvex_error_clear(&err);
+    memset(messages, 0, sizeof(messages));
     memset(&rendered, 0, sizeof(rendered));
     options.add_bos = 1;
     options.add_eos = 0;
@@ -387,6 +388,7 @@ static int command_prompt(int arg_count, char **args)
             yvex_cli_out_writef(stderr, "yvex: too many prompt messages\n");
             return 2;
         }
+        messages[message_count].schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1;
         messages[message_count].role = role;
         messages[message_count].content = args[++i];
         messages[message_count].content_len =

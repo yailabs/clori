@@ -40,7 +40,7 @@ static int request_build(yvex_provider_request *request,
     tools[0].parameters_json.count = sizeof(schema) - 1u;
     stops[0].bytes = stop;
     stops[0].count = sizeof(stop) - 1u;
-    request->schema_version = YVEX_PROVIDER_SCHEMA_V3;
+    request->schema_version = YVEX_PROVIDER_SCHEMA_V4;
     strcpy(request->model, "deepseek4-v4-flash-dspark");
     request->messages = messages;
     request->message_count = 2u;
@@ -51,6 +51,7 @@ static int request_build(yvex_provider_request *request,
     request->tool_choice.kind = YVEX_PROVIDER_TOOL_CHOICE_AUTO;
     request->response_format = YVEX_PROVIDER_RESPONSE_JSON_OBJECT;
     request->reasoning_policy = YVEX_REASONING_ENABLED;
+    request->reasoning_history_policy = YVEX_REASONING_HISTORY_DROP;
     request->drop_thinking = 1;
     request->sampling.stochastic = 1;
     request->sampling.seed_present = 1;
@@ -94,10 +95,12 @@ static int test_request_roundtrip(void)
                            "provider wire identity");
     YVEX_TEST_ASSERT(decoded->message_count == 2u && decoded->tool_count == 1u,
                      "provider wire counts");
-    YVEX_TEST_ASSERT(decoded->schema_version == YVEX_PROVIDER_SCHEMA_V3 &&
+    YVEX_TEST_ASSERT(decoded->schema_version == YVEX_PROVIDER_SCHEMA_V4 &&
                          decoded->reasoning_policy == YVEX_REASONING_ENABLED &&
+                         decoded->reasoning_history_policy ==
+                             YVEX_REASONING_HISTORY_DROP &&
                          decoded->drop_thinking,
-                     "provider v3 reasoning policy roundtrip");
+                     "provider v4 reasoning and history policy roundtrip");
     YVEX_TEST_ASSERT_STREQ(decoded->tools[0].name, "get_match_context",
                            "provider wire tool");
     YVEX_TEST_ASSERT_STREQ(decoded->adapter, "openai",
@@ -148,6 +151,8 @@ static int test_refusal(void)
 
     strcpy(calls[1].call_id, "call_second");
     request.schema_version = YVEX_PROVIDER_SCHEMA_V2;
+    request.reasoning_history_policy =
+        YVEX_REASONING_HISTORY_SOURCE_DEFAULT;
     rc = yvex_provider_request_seal(&request, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && request.sealed,
                      "provider v2 remains readable and writable");
@@ -191,7 +196,7 @@ static int test_request_defaults(void)
 
     memset(&request, 0xa5, sizeof(request));
     yvex_provider_request_default(&request);
-    YVEX_TEST_ASSERT(request.schema_version == YVEX_PROVIDER_SCHEMA_V3,
+    YVEX_TEST_ASSERT(request.schema_version == YVEX_PROVIDER_SCHEMA_V4,
                      "provider default schema");
     YVEX_TEST_ASSERT(request.response_format == YVEX_PROVIDER_RESPONSE_TEXT,
                      "provider default response format");
@@ -199,9 +204,12 @@ static int test_request_defaults(void)
                      "provider default adaptive output limit");
     YVEX_TEST_ASSERT(request.tool_choice.kind == YVEX_PROVIDER_TOOL_CHOICE_AUTO,
                      "provider default tool choice");
-    YVEX_TEST_ASSERT(request.reasoning_policy == YVEX_REASONING_DISABLED &&
-                         request.drop_thinking,
-                     "provider defaults to source-authored non-thinking chat");
+    YVEX_TEST_ASSERT(
+        request.reasoning_policy == YVEX_REASONING_SOURCE_DEFAULT &&
+            request.reasoning_history_policy ==
+                YVEX_REASONING_HISTORY_SOURCE_DEFAULT &&
+            !request.drop_thinking,
+        "provider defaults defer reasoning and history to source policy");
     YVEX_TEST_ASSERT(!request.sampling.stochastic && !request.sampling.seed_present,
                      "provider default deterministic sampling");
     YVEX_TEST_ASSERT(request.sampling.temperature == 1.0 &&

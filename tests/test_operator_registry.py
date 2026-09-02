@@ -303,7 +303,7 @@ def test_product_surface(registry: dict[str, object]) -> None:
     require(slash == {"/help", "/status", "/context", "/sessions", "/session",
                       "/new", "/attach", "/detach",
                       "/reset", "/close", "/cancel", "/quit", "/nothink", "/think",
-                      "/think-max"},
+                      "/think-low", "/think-max"},
             f"unexpected slash catalog: {sorted(slash)}")
     slash_aliases = {alias for row in active for alias in row.get("slash_aliases", [])}
     require(slash_aliases == {"/exit"},

@@ -3,6 +3,7 @@
 #define INCLUDE_YVEX_INTERNAL_FAMILIES_QWEN3_5_H_INCLUDED
 
 #include <yvex/core.h>
+#include <yvex/internal/conversation.h>
 #include <yvex/internal/source.h>
 
 #ifdef __cplusplus
@@ -182,6 +183,7 @@ typedef struct {
 } yvex_qwen3_5_api;
 
 const yvex_qwen3_5_api *yvex_model_register_qwen3_5(void);
+const yvex_conversation_protocol *yvex_model_qwen3_5_conversation(void);
 
 #ifdef __cplusplus
 }

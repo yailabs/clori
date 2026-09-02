@@ -677,13 +677,17 @@ static int common_field(const char *key, yvex_json *json,
             return yvex_error_code(err);
         if (strcmp(effort, "none") == 0)
             request->reasoning_policy = YVEX_REASONING_DISABLED;
-        else if (strcmp(effort, "high") == 0)
+        else if (strcmp(effort, "low") == 0)
+            request->reasoning_policy = YVEX_REASONING_LOW;
+        else if (strcmp(effort, "medium") == 0 ||
+                 strcmp(effort, "high") == 0)
             request->reasoning_policy = YVEX_REASONING_ENABLED;
-        else if (strcmp(effort, "max") == 0)
+        else if (strcmp(effort, "max") == 0 ||
+                 strcmp(effort, "xhigh") == 0)
             request->reasoning_policy = YVEX_REASONING_MAXIMUM;
         else
             return json_refuse(err, YVEX_ERR_UNSUPPORTED,
-                               "reasoning_effort must be none, high, or max");
+                               "reasoning_effort must be none, low, medium, high, max, or xhigh");
         return YVEX_OK;
     }
     if (strcmp(key, "stop") == 0) return stops_parse(json, request, err);
@@ -846,7 +850,8 @@ int openai_json_admit(const openai_http_request *http, openai_endpoint endpoint,
     int model_seen = 0, input_seen = 0, maximum_seen = 0;
     int handled, rc = YVEX_OK;
     if (admitted) memset(admitted, 0, sizeof(*admitted));
-    if (!http || !admitted || !http->body || default_reasoning > YVEX_REASONING_MAXIMUM ||
+    if (!http || !admitted || !http->body ||
+        !yvex_reasoning_request_policy_valid(default_reasoning) ||
         !http->body_count || http->body_count > SIZE_MAX)
         return json_refuse(err, YVEX_ERR_INVALID_ARG, "one bounded JSON request body is required");
     request = calloc(1u, sizeof(*request));

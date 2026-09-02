@@ -151,7 +151,7 @@ session, observation, memory, and recovery procedures.
 | `yvex` | Persistent host, native/OpenAI clients, REPL, model lifecycle controls, and bounded offline compilation/inspection/execution operations |
 | `libyvex` | Reusable source, compilation, package, engine, runtime, graph, backend, tokenizer, generation, and media implementation |
 
-Runtime-facing native clients cross private local protocol v17. The `serve`
+Runtime-facing native clients cross private local protocol v18. The `serve`
 entrypoint owns host lifetime in the same executable; engine commands own
 loaded-generation lifecycle through that protocol, and client handlers do not
 open weights or initialize CUDA. Finite offline operations close their engine

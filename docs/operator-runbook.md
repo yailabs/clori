@@ -446,7 +446,7 @@ view and a prompt labelled with the product model name, not the deployment
 profile alias:
 
 ```text
-YVEX 0.1.0 · protocol 17
+YVEX 0.1.0 · protocol 18
 
   model      DeepSeek V4 Flash
   variant    IQ2_XXS/Q2_K/MXFP4
@@ -498,7 +498,8 @@ manage the session; `/cancel` cancels active generation; and `/quit` exits
 locally. `/exit` is a registry-owned alias for `/quit`; bare `exit` remains
 ordinary model input. Tab completes an unambiguous slash command. Commands for an unsupported
 explicit reasoning channel refuse rather than simulate support. The current
-DSpark profile admits `/think`, `/think-max`, and `/nothink`; they select its
+DSpark profile admits `/think`, `/think-max`, and `/nothink`; a family with an
+authenticated low-effort policy additionally admits `/think-low`. They select the
 source-authored model-emitted channel and never expose hidden reasoning. A
 policy change that alters the encoded prefix safely rebuilds only physical
 sequence state and re-prefills the authoritative semantic history; reset is
@@ -534,8 +535,8 @@ success, refusal, disconnect and cancellation path.
 
 ## Interactive and programmatic requests
 
-Human generation remains inside `yvex chat`. `/nothink`, `/think`, and
-`/think-max` select the source-authored reasoning policy for the attached
+Human generation remains inside `yvex chat`. `/nothink`, `/think-low`, `/think`,
+and `/think-max` select an admitted source-authored reasoning policy for the attached
 session and that policy remains active until changed. Reuse an existing named
 session by starting chat with `--session NAME`. Omitting
 `--max-new-tokens` sends no client cap: the host resolves an adaptive envelope
@@ -604,7 +605,7 @@ state, and persistent KV while sharing immutable model resources:
 
 Client disconnect and detach do not close the engine. A partial or cancelled
 turn can retain model-committed state and is never silently marked complete.
-Protocol v17 reports the exact engine generation, committed position,
+Protocol v18 reports the exact engine generation, committed position,
 token/text counts, state generations, failure class, and reset requirement.
 Reset clears the session KV, tokens, transcript, decoder, and RNG policy without
 closing the engine or host.

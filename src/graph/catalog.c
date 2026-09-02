@@ -44,6 +44,9 @@ static const yvex_family_descriptor *family_descriptor_at(size_t index)
     if (!descriptor || descriptor->schema_version != YVEX_FAMILY_DESCRIPTOR_SCHEMA_V1 ||
         !descriptor->target_id || !descriptor->target_id[0] ||
         !descriptor->family || !descriptor->family[0] ||
+        !descriptor->tokenizer_architecture ||
+        !descriptor->tokenizer_architecture[0] ||
+        !descriptor->tokenizer_pre || !descriptor->tokenizer_pre[0] ||
         (!descriptor->execution && !descriptor->component && !descriptor->source))
         return NULL;
     execution = descriptor->execution ? descriptor->execution() : NULL;
@@ -69,7 +72,11 @@ static const yvex_family_descriptor *family_descriptor_at(size_t index)
         (descriptor->source &&
          (!source || source->schema_version != YVEX_FAMILY_SOURCE_ADAPTER_SCHEMA_V1 ||
           !source->family || strcmp(source->target_id, descriptor->target_id) != 0 ||
-          strcmp(source->family, descriptor->family) != 0)))
+          strcmp(source->family, descriptor->family) != 0 ||
+          !source->tokenizer_architecture || !source->tokenizer_pre ||
+          strcmp(source->tokenizer_architecture,
+                 descriptor->tokenizer_architecture) != 0 ||
+          strcmp(source->tokenizer_pre, descriptor->tokenizer_pre) != 0)))
         return NULL;
     return descriptor;
 }

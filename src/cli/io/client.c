@@ -78,6 +78,18 @@ static int client_error(const yvex_error *err)
         fprintf(stderr, "hint: start one with `yvex serve`; then use `yvex model load`\n");
     return 1;
 }
+static const char *reasoning_policy_name(yvex_reasoning_policy policy)
+{
+    switch (policy) {
+    case YVEX_REASONING_DISABLED: return "none";
+    case YVEX_REASONING_LOW: return "low";
+    case YVEX_REASONING_ENABLED: return "medium";
+    case YVEX_REASONING_MAXIMUM: return "xhigh";
+    case YVEX_REASONING_SOURCE_DEFAULT: return "source-default";
+    case YVEX_REASONING_POLICY_COUNT: break;
+    }
+    return "unknown";
+}
 void yvex_cli_client_request_init(yvex_client_request *request, yvex_client_operation operation)
 {
     static unsigned long long next_request = 1u;
@@ -126,7 +138,7 @@ static void turn_options_init(client_turn_options *options)
 {
     memset(options, 0, sizeof(*options));
     yvex_provider_sampling_default(&options->sampling);
-    options->reasoning_policy = (yvex_reasoning_policy)(YVEX_REASONING_MAXIMUM + 1u);
+    options->reasoning_policy = YVEX_REASONING_POLICY_COUNT;
 }
 static int turn_condition_path(char output[YVEX_SERVER_STATE_PATH_CAP], const char *source) {
     char *resolved; if (!output || !source || !source[0] || !(resolved = realpath(source, NULL))) return 0;
@@ -807,10 +819,10 @@ static int generation_turn(const client_engine_binding *engine,
     int rc, started = 0, progress_active = 0, renderer_finished = 0;
     int terminal_output = isatty(fileno(stdout));
     if (connection_lost) *connection_lost = 0;
-    if (reasoning_policy > YVEX_REASONING_MAXIMUM &&
+    if (!yvex_reasoning_policy_valid(reasoning_policy) &&
         console_status_fetch(engine, session_name, &message, &err) != YVEX_OK)
         return client_error(&err);
-    if (reasoning_policy > YVEX_REASONING_MAXIMUM)
+    if (!yvex_reasoning_policy_valid(reasoning_policy))
         reasoning_policy = message.console.reasoning_policy;
     yvex_cli_terminal_style_get(status_output, &style);
     yvex_cli_stream_renderer_open(&renderer, stdout, terminal_output);
@@ -1327,10 +1339,7 @@ static void repl_reasoning_policy(
     yvex_client_message status;
     yvex_cli_terminal_style style;
     yvex_error err;
-    const char *name = policy == YVEX_REASONING_DISABLED
-                           ? "disabled"
-                           : policy == YVEX_REASONING_MAXIMUM ? "maximum"
-                                                              : "enabled";
+    const char *name = reasoning_policy_name(policy);
     yvex_cli_terminal_style_get(stdout, &style);
     if (console_status_fetch(engine, session, &status, &err) != YVEX_OK) {
         (void)client_error(&err);
@@ -1432,6 +1441,9 @@ static int repl_command(const char *line, const client_engine_binding *engine,
         break;
     case YVEX_OPERATOR_RUNTIME_REASONING_DISABLED:
         repl_reasoning_policy(engine, current, options, YVEX_REASONING_DISABLED);
+        break;
+    case YVEX_OPERATOR_RUNTIME_REASONING_LOW:
+        repl_reasoning_policy(engine, current, options, YVEX_REASONING_LOW);
         break;
     case YVEX_OPERATOR_RUNTIME_REASONING_ENABLED:
         repl_reasoning_policy(engine, current, options, YVEX_REASONING_ENABLED);
@@ -1759,8 +1771,7 @@ static void render_console_status(
                               ? product->quant_precision
                           : product && product->variant[0] ? product->variant
                                                            : status->physical_variant_identity;
-    const char *reasoning = status->reasoning_policy == YVEX_REASONING_DISABLED ? "none" :
-        status->reasoning_policy == YVEX_REASONING_MAXIMUM ? "max" : "high";
+    const char *reasoning = reasoning_policy_name(status->reasoning_policy);
     yvex_cli_terminal_style style;
     yvex_cli_terminal_style_get(stdout, &style);
     if (startup) {
@@ -1972,6 +1983,7 @@ int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
     case YVEX_OPERATOR_RUNTIME_CONSOLE_STATUS:
         return console_status(NULL, name ? name : "main");
     case YVEX_OPERATOR_RUNTIME_REASONING_DISABLED:
+    case YVEX_OPERATOR_RUNTIME_REASONING_LOW:
     case YVEX_OPERATOR_RUNTIME_REASONING_ENABLED:
     case YVEX_OPERATOR_RUNTIME_REASONING_MAXIMUM:
     case YVEX_OPERATOR_RUNTIME_COUNT: break;

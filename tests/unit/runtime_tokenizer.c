@@ -10,6 +10,7 @@
 #include <yvex/internal/compiler.h>
 #include <yvex/internal/family_catalog.h>
 #include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/families/qwen3_5.h>
 
 #include <pthread.h>
 #include <sched.h>
@@ -19,6 +20,7 @@
 #define TEST_DSML "\xef\xbd\x9c" "DSML" "\xef\xbd\x9c"
 
 extern const yvex_family_descriptor yvex_graph_family_descriptor_minimax_h3;
+extern const yvex_family_descriptor yvex_graph_family_descriptor_qwen3_5;
 
 typedef struct {
     pthread_mutex_t mutex;
@@ -182,6 +184,27 @@ static void fixture_open(yvex_tokenizer *tokenizer, yvex_token_info tokens[4])
     memcpy(tokenizer->plan.tokenizer_plan_identity, identity, sizeof(identity));
 }
 
+static int qwen_fixture_open(yvex_tokenizer *tokenizer,
+                             yvex_token_info tokens[4], yvex_error *err)
+{
+    const yvex_family_source_adapter *source =
+        yvex_graph_family_descriptor_qwen3_5.source();
+    fixture_open(tokenizer, tokens);
+    memset(&tokenizer->compiled_policy, 0, sizeof(tokenizer->compiled_policy));
+    if (!source || !source->tokenizer_policy ||
+        !source->tokenizer_policy(&tokenizer->compiled_policy, err) ||
+        !yvex_tokenizer_family_policy_conversation(
+            &tokenizer->compiled_policy, &tokenizer->conversation_view))
+        return 0;
+    tokenizer->conversation = &tokenizer->conversation_view;
+    tokenizer->plan.schema_version = YVEX_TOKENIZER_PLAN_SCHEMA_V5;
+    tokenizer->plan.explicit_reasoning_supported = 1;
+    tokenizer->plan.maximum_reasoning_supported = 1;
+    tokenizer->plan.low_reasoning_supported = 1;
+    tokenizer->plan.default_reasoning_policy = YVEX_REASONING_MAXIMUM;
+    return 1;
+}
+
 static yvex_provider_span text_span(const char *text)
 {
     yvex_provider_span span = {
@@ -198,7 +221,10 @@ static int test_compiled_family_policy(void)
     const yvex_family_source_adapter *minimax =
         minimax_descriptor && minimax_descriptor->source
             ? minimax_descriptor->source() : NULL;
-    yvex_tokenizer_family_policy first, decoded, changed, direct, direct_decoded;
+    const yvex_family_source_adapter *qwen =
+        yvex_graph_family_descriptor_qwen3_5.source();
+    yvex_tokenizer_family_policy first, decoded, changed, direct, direct_decoded,
+        qwen_policy, qwen_decoded;
     yvex_conversation_protocol view;
     yvex_core_bytes encoded = {0}, repeated = {0}, direct_encoded = {0};
     yvex_error err;
@@ -252,9 +278,203 @@ static int test_compiled_family_policy(void)
     YVEX_TEST_ASSERT(
         yvex_tokenizer_family_policy_validate(&changed, &err) == YVEX_ERR_FORMAT,
         "direct family tokenizer policy rejects prompt-contract drift");
+    encoded.count = 0u;
+    YVEX_TEST_ASSERT(
+        qwen && qwen->tokenizer_policy &&
+            qwen->tokenizer_policy(&qwen_policy, &err) &&
+            qwen_policy.schema_version ==
+                YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V2 &&
+            qwen_policy.default_reasoning_policy == YVEX_REASONING_MAXIMUM &&
+            strcmp(qwen_policy.architecture, "qwen3_5") == 0 &&
+            strcmp(qwen_policy.tokenizer_pre, "qwen2") == 0 &&
+            yvex_tokenizer_family_policy_encode(
+                &qwen_policy, &encoded, &err) == YVEX_OK &&
+            yvex_tokenizer_family_policy_decode(
+                &qwen_decoded, encoded.data, encoded.count, &err) == YVEX_OK &&
+            strcmp(qwen_decoded.policy_identity,
+                   qwen_policy.policy_identity) == 0,
+        "Qwen role-enveloped policy roundtrips with exact architecture and pre-tokenizer facts");
     free(encoded.data);
     free(repeated.data);
     free(direct_encoded.data);
+    return 0;
+}
+
+static int test_qwen_prompt_policy(void)
+{
+    static const char expected_default[] =
+        "<|im_start|>system\nReasoning effort is set to xhigh. Please think carefully through "
+        "the task, validate key assumptions, consider plausible alternatives, and prioritize "
+        "correctness, consistency, and clarity in the final answer.<|im_end|>\n"
+        "<|im_start|>user\nhello<|im_end|>\n"
+        "<|im_start|>assistant\n<think>\n";
+    static const char expected_disabled[] =
+        "<|im_start|>user\nhello<|im_end|>\n"
+        "<|im_start|>assistant\n<think>\n\n</think>\n\n";
+    static const char expected_history[] =
+        "<|im_start|>system\nReasoning effort is set to xhigh. Please think carefully through "
+        "the task, validate key assumptions, consider plausible alternatives, and prioritize "
+        "correctness, consistency, and clarity in the final answer.<|im_end|>\n"
+        "<|im_start|>user\nq1<|im_end|>\n"
+        "<|im_start|>assistant\n<think>\nr1\n</think>\n\na1<|im_end|>\n"
+        "<|im_start|>user\nq2<|im_end|>\n"
+        "<|im_start|>assistant\n<think>\n";
+    yvex_tokenizer tokenizer;
+    yvex_token_info tokens[4];
+    yvex_prompt_message native[3] = {0};
+    yvex_prompt_message tool_history[5] = {0};
+    yvex_prompt_options options = {0};
+    yvex_provider_message provider_messages[3] = {0};
+    yvex_provider_request request;
+    yvex_rendered_prompt rendered = {0};
+    yvex_error err;
+    unsigned int index;
+
+    YVEX_TEST_ASSERT(qwen_fixture_open(&tokenizer, tokens, &err),
+                     "Qwen prompt fixture admits its compiled source policy");
+    for (index = 0u; index < 3u; ++index)
+        native[index].schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1;
+    for (index = 0u; index < 5u; ++index)
+        tool_history[index].schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1;
+    native[0].role = YVEX_PROMPT_ROLE_USER;
+    native[0].content = "  hello  ";
+    YVEX_TEST_ASSERT(
+        yvex_prompt_render(&rendered, &tokenizer, native, 1u, NULL, &err) ==
+                YVEX_OK &&
+            rendered.len == sizeof(expected_default) - 1u &&
+            memcmp(rendered.text, expected_default, rendered.len) == 0,
+        "Qwen native default is exact source-authored xhigh prompt bytes");
+    yvex_rendered_prompt_free(&rendered);
+    options.add_bos = 1;
+    options.add_generation_prompt = 1;
+    options.drop_thinking = 0;
+    options.mode = YVEX_PROMPT_MODE_CHAT;
+    options.reasoning_policy = YVEX_REASONING_DISABLED;
+    YVEX_TEST_ASSERT(
+        yvex_prompt_render(&rendered, &tokenizer, native, 1u, &options,
+                           &err) == YVEX_OK &&
+            rendered.len == sizeof(expected_disabled) - 1u &&
+            memcmp(rendered.text, expected_disabled, rendered.len) == 0,
+        "Qwen disabled thinking emits the exact closed source prefix");
+    yvex_rendered_prompt_free(&rendered);
+    native[0].content = "q1";
+    native[1].role = YVEX_PROMPT_ROLE_ASSISTANT;
+    native[1].reasoning_content = " r1 ";
+    native[1].content = "a1";
+    native[2].role = YVEX_PROMPT_ROLE_USER;
+    native[2].content = "q2";
+    YVEX_TEST_ASSERT(
+        yvex_prompt_render(&rendered, &tokenizer, native, 3u, NULL, &err) ==
+                YVEX_OK &&
+            rendered.len == sizeof(expected_history) - 1u &&
+            memcmp(rendered.text, expected_history, rendered.len) == 0,
+        "Qwen native multi-turn preserves typed reasoning exactly by source default");
+    yvex_rendered_prompt_free(&rendered);
+
+    provider_messages[0].role = YVEX_PROVIDER_ROLE_USER;
+    provider_messages[0].content = text_span("q1");
+    provider_messages[1].role = YVEX_PROVIDER_ROLE_ASSISTANT;
+    provider_messages[1].reasoning_content = text_span(" r1 ");
+    provider_messages[1].content = text_span("a1");
+    provider_messages[2].role = YVEX_PROVIDER_ROLE_USER;
+    provider_messages[2].content = text_span("q2");
+    yvex_provider_request_default(&request);
+    strcpy(request.model, "qwen3.8-27b");
+    request.messages = provider_messages;
+    request.message_count = 3u;
+    YVEX_TEST_ASSERT(
+        yvex_provider_request_seal(&request, &err) == YVEX_OK &&
+            yvex_tokenizer_provider_prompt(
+                &tokenizer, &request, &rendered, &err) == YVEX_OK &&
+            rendered.len == sizeof(expected_history) - 1u &&
+            memcmp(rendered.text, expected_history, rendered.len) == 0,
+        "provider source-default reasoning and history match native Qwen bytes");
+    yvex_rendered_prompt_free(&rendered);
+
+    tool_history[0].role = YVEX_PROMPT_ROLE_USER;
+    tool_history[0].content = "old";
+    tool_history[1].role = YVEX_PROMPT_ROLE_ASSISTANT;
+    tool_history[1].reasoning_content = "drop-me";
+    tool_history[1].content = "old-answer";
+    tool_history[2].role = YVEX_PROMPT_ROLE_USER;
+    tool_history[2].content = "tool-query";
+    tool_history[3].role = YVEX_PROMPT_ROLE_ASSISTANT;
+    tool_history[3].reasoning_content = "keep-tool-reasoning";
+    tool_history[3].content = "call";
+    tool_history[4].role = YVEX_PROMPT_ROLE_TOOL;
+    tool_history[4].content = "result";
+    options.mode = YVEX_PROMPT_MODE_THINKING;
+    options.reasoning_policy = YVEX_REASONING_ENABLED;
+    options.drop_thinking = 1;
+    YVEX_TEST_ASSERT(
+        yvex_prompt_render(&rendered, &tokenizer, tool_history, 5u, &options,
+                           &err) == YVEX_OK &&
+            strstr(rendered.text, "drop-me") == NULL &&
+            strstr(rendered.text, "keep-tool-reasoning") != NULL,
+        "Qwen native drop policy preserves active multi-step tool reasoning only");
+    yvex_rendered_prompt_free(&rendered);
+    return 0;
+}
+
+static int test_qwen_tool_grammar(void)
+{
+    static const unsigned char schema[] =
+        "{\"type\":\"object\",\"properties\":{"
+        "\"city\":{\"type\":\"string\"},\"days\":{\"type\":\"integer\"}},"
+        "\"required\":[\"city\"]}";
+    static const unsigned char completion[] =
+        "checking<tool_call>\n<function=weather>\n"
+        "<parameter=city>\nRome\n</parameter>\n"
+        "<parameter=days>\n2\n</parameter>\n"
+        "</function>\n</tool_call>";
+    yvex_tokenizer tokenizer;
+    yvex_token_info tokens[4];
+    yvex_provider_message message = {0};
+    yvex_provider_function_tool tool = {0};
+    yvex_provider_request request;
+    yvex_rendered_prompt rendered = {0};
+    yvex_tokenizer_provider_result result = {0};
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(qwen_fixture_open(&tokenizer, tokens, &err),
+                     "Qwen tool fixture opens");
+    message.role = YVEX_PROVIDER_ROLE_USER;
+    message.content = text_span("weather");
+    strcpy(tool.name, "weather");
+    tool.description = text_span("Weather lookup");
+    tool.description_present = 1;
+    tool.parameters_json =
+        (yvex_provider_span){schema, sizeof(schema) - 1u};
+    yvex_provider_request_default(&request);
+    strcpy(request.model, "qwen3.8-27b");
+    request.messages = &message;
+    request.message_count = 1u;
+    request.tools = &tool;
+    request.tool_count = 1u;
+    request.reasoning_policy = YVEX_REASONING_DISABLED;
+    YVEX_TEST_ASSERT(
+        yvex_provider_request_seal(&request, &err) == YVEX_OK &&
+            yvex_tokenizer_provider_prompt(
+                &tokenizer, &request, &rendered, &err) == YVEX_OK &&
+            strstr(rendered.text, "<tools>\n{\"type\": \"function\"") != NULL &&
+            strstr(rendered.text,
+                   "<|im_start|>assistant\n<think>\n\n</think>\n\n") != NULL,
+        "Qwen tool schema and disabled-thinking prefix match source grammar");
+    yvex_rendered_prompt_free(&rendered);
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_parse_provider_completion(
+            &tokenizer, &request, completion, sizeof(completion) - 1u,
+            &result, &err) == YVEX_OK &&
+            result.kind == YVEX_PROVIDER_OUTPUT_FUNCTION_CALL &&
+            result.content_count == 8u &&
+            memcmp(result.content, "checking", 8u) == 0 &&
+            result.tool_call_count == 1u &&
+            strcmp(result.tool_calls[0].name, "weather") == 0 &&
+            result.tool_calls[0].arguments_json.count == 27u &&
+            memcmp(result.tool_calls[0].arguments_json.bytes,
+                   "{\"city\": \"Rome\", \"days\": 2}", 27u) == 0,
+        "Qwen XML completion becomes one grounded typed tool call");
+    yvex_tokenizer_provider_result_clear(&result);
     return 0;
 }
 
@@ -379,6 +599,8 @@ static int test_source_prompt_modes(void)
     unsigned int index;
 
     fixture_open(&tokenizer, tokens);
+    native_messages[0].schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1;
+    native_messages[1].schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1;
     YVEX_TEST_ASSERT(
         strcmp(tokenizer.conversation->source_encoding_path,
                "encoding/encoding_dsv4.py") == 0 &&
@@ -464,6 +686,7 @@ static int test_source_multiturn_and_tools(void)
         "ordinary multi-turn drops prior reasoning exactly like source");
     yvex_rendered_prompt_free(&rendered);
     request.drop_thinking = 0;
+    request.reasoning_history_policy = YVEX_REASONING_HISTORY_PRESERVE;
     YVEX_TEST_ASSERT(
         request_reseal(&request, &err) == YVEX_OK &&
             yvex_tokenizer_provider_prompt(
@@ -507,6 +730,7 @@ static int test_source_multiturn_and_tools(void)
     request.tools = &tool;
     request.tool_count = 1u;
     request.drop_thinking = 1;
+    request.reasoning_history_policy = YVEX_REASONING_HISTORY_DROP;
     YVEX_TEST_ASSERT(
         request_reseal(&request, &err) == YVEX_OK &&
             yvex_tokenizer_provider_prompt(
@@ -1024,6 +1248,10 @@ int yvex_test_runtime_tokenizer(void)
     if (test_source_multiturn_and_tools() != 0)
         return 1;
     if (test_source_developer_boundary() != 0)
+        return 1;
+    if (test_qwen_prompt_policy() != 0)
+        return 1;
+    if (test_qwen_tool_grammar() != 0)
         return 1;
     if (test_provider_projection() != 0)
         return 1;

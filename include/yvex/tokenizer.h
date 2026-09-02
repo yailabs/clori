@@ -64,7 +64,8 @@ typedef struct {
 #define YVEX_TOKENIZER_PLAN_SCHEMA_V2 2u
 #define YVEX_TOKENIZER_PLAN_SCHEMA_V3 3u
 #define YVEX_TOKENIZER_PLAN_SCHEMA_V4 4u
-#define YVEX_TOKENIZER_PLAN_SCHEMA_CURRENT YVEX_TOKENIZER_PLAN_SCHEMA_V4
+#define YVEX_TOKENIZER_PLAN_SCHEMA_V5 5u
+#define YVEX_TOKENIZER_PLAN_SCHEMA_CURRENT YVEX_TOKENIZER_PLAN_SCHEMA_V5
 #define YVEX_TOKENIZER_EXECUTION_SCHEMA_V1 1u
 #define YVEX_TOKENIZER_DECODER_SCHEMA_V1 1u
 #define YVEX_TOKENIZER_APPEND_SCHEMA_V1 1u
@@ -92,6 +93,8 @@ typedef struct {
     int bos_present, eos_present, pad_present, unk_present;
     int add_bos_token, add_eos_token, byte_fallback, sealed, runtime_bound;
     int explicit_reasoning_supported, maximum_reasoning_supported;
+    int low_reasoning_supported;
+    yvex_reasoning_policy default_reasoning_policy;
     yvex_tokenizer_model_policy model_policy;
     yvex_tokenizer_prompt_policy prompt_policy;
     char artifact_identity[YVEX_SHA256_HEX_CAP];
@@ -351,10 +354,14 @@ typedef enum {
     YVEX_PROMPT_ROLE_TOOL
 } yvex_prompt_role;
 
+#define YVEX_PROMPT_MESSAGE_SCHEMA_V1 1u
 typedef struct {
+    unsigned int schema_version;
     yvex_prompt_role role;
     const char *content;
     unsigned long long content_len;
+    const char *reasoning_content;
+    unsigned long long reasoning_content_len;
 } yvex_prompt_message;
 
 typedef enum {

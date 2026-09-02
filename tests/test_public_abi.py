@@ -25,8 +25,8 @@ RECORDS = {
         "include/yvex/registry.h", "YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT", 1, 304,
         "5e137d2540df9dfcfb8d6ec7402cf0a0480b8aa00495f2b93869fc7fa869263f"),
     "yvex_provider_request": (
-        "include/yvex/provider.h", "YVEX_PROVIDER_SCHEMA_V3", 3, 584,
-        "3a388fb2e598e86e1f5e5bcc8870ac46061489808a8e97becde33c5b321e5f9b"),
+        "include/yvex/provider.h", "YVEX_PROVIDER_SCHEMA_V4", 4, 584,
+        "d3e3c5bf3bc93bfac00b5cac56f317b1106ca4b216cd8c10b3577b639ffda0e5"),
     "yvex_provider_output": (
         "include/yvex/provider.h", "YVEX_PROVIDER_SCHEMA_V1", 1, 344,
         "82baeac3ca91c06196a7cc2aa053aecd99c86f98e9902155a0c638629703cb59"),
@@ -76,14 +76,17 @@ RECORDS = {
         "include/yvex/server.h", "YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1", 1, 524,
         "15b251a93051e0f0cf0c70e1a14c2cdcb019b54d7e27851b6c36b02bcac9802b"),
     "yvex_client_request": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 17, 2024,
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 18, 2024,
         "eda70b9000088f58c57b639c0eb14a15d4893bf1c128d2b7f5f477b20a0a8c84"),
     "yvex_client_message": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 17, 10280,
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 18, 10280,
         "4a7747aa931f4404e186cb903bd7f49691f02b595d4653273a6501e68ac18872"),
     "yvex_tokenizer_plan_summary": (
-        "include/yvex/tokenizer.h", "YVEX_TOKENIZER_PLAN_SCHEMA_CURRENT", 4, 864,
-        "cca1ce6ec52182dcee89615b486db711590c2bcdb05a94117deecda5f695beb4"),
+        "include/yvex/tokenizer.h", "YVEX_TOKENIZER_PLAN_SCHEMA_CURRENT", 5, 872,
+        "93fbfdefccd98e3add82e774a6ae9d3aa50384dd991e9bdc0cd90a01d5cdcb6e"),
+    "yvex_prompt_message": (
+        "include/yvex/tokenizer.h", "YVEX_PROMPT_MESSAGE_SCHEMA_V1", 1, 40,
+        "d678684317619f7be55ea840626b7b4945d04f4852d5ab97a483236f0c058fa3"),
     "yvex_tokenizer_encode_result": (
         "include/yvex/tokenizer.h", "YVEX_TOKENIZER_EXECUTION_SCHEMA_V1", 1, 328,
         "2326e86e866ae2cd28b38d44ea02952132c7fcd1efdbda696faf21328cd59a28"),
@@ -167,12 +170,16 @@ def compiler_source() -> str:
         '"legacy tokenizer plan v3 identity changed");',
         'ABI_ASSERT(YVEX_TOKENIZER_PLAN_SCHEMA_V4 == 4u, '
         '"tokenizer plan v4 identity changed");',
+        'ABI_ASSERT(YVEX_TOKENIZER_PLAN_SCHEMA_V5 == 5u, '
+        '"tokenizer plan v5 identity changed");',
+        'ABI_ASSERT(YVEX_PROMPT_MESSAGE_SCHEMA_V1 == 1u, '
+        '"prompt message v1 identity changed");',
         'ABI_ASSERT(YVEX_TOKENIZER_PROMPT_NONE == 0, "prompt none value changed");',
         'ABI_ASSERT(YVEX_TOKENIZER_PROMPT_CONVERSATION == 1, '
         '"prompt conversation value changed");',
         'ABI_ASSERT(YVEX_TOKENIZER_PROMPT_VERBATIM == 2, '
         '"prompt verbatim value changed");',
-        'ABI_ASSERT(YVEX_LOCAL_PROTOCOL_VERSION == 17u, "local protocol identity changed");',
+        'ABI_ASSERT(YVEX_LOCAL_PROTOCOL_VERSION == 18u, "local protocol identity changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_NONE == 0, "engine-kind none value changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_TEXT == 1, "engine-kind text value changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_MEDIA == 2, "engine-kind media value changed");',

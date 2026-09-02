@@ -1614,10 +1614,14 @@ static int graph_cli_transformer_generate(
     } else {
         request.input_kind = YVEX_GENERATION_INPUT_MESSAGES;
         if (args->transformer.system) {
+            messages[message_count].schema_version =
+                YVEX_PROMPT_MESSAGE_SCHEMA_V1;
             messages[message_count].role = YVEX_PROMPT_ROLE_SYSTEM;
             messages[message_count].content = args->transformer.system;
             messages[message_count++].content_len = strlen(args->transformer.system);
         }
+        messages[message_count].schema_version =
+            YVEX_PROMPT_MESSAGE_SCHEMA_V1;
         messages[message_count].role = YVEX_PROMPT_ROLE_USER;
         messages[message_count].content = args->transformer.user;
         messages[message_count++].content_len = strlen(args->transformer.user);

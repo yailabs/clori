@@ -339,6 +339,7 @@ src/tokenizer/compilation.c	tokenizer	tokenizer.family_policy	generic	private	fi
 src/tokenizer/decode.c	tokenizer	tokenizer.decode	generic	private	resource-lifecycle	runtime,generation	implementation	none
 src/tokenizer/execution.c	tokenizer	tokenizer.execution	generic	private	reusable-algorithm	runtime,cli,generation	implementation	none
 src/tokenizer/normalization.c	tokenizer	tokenizer.normalization	generic	private	reusable-algorithm	tokenizer.execution	implementation	none
+src/tokenizer/prompt.c	tokenizer	tokenizer.prompt	generic	private	reusable-algorithm	runtime,server,generation	implementation	none
 src/tokenizer/provider.c	tokenizer	tokenizer.provider	generic	private	reusable-algorithm	server,generation,provider	implementation	none
 src/tokenizer/private.h	tokenizer	tokenizer.shared	generic	private	source-local-interface	tokenizer.core,tokenizer.execution,tokenizer.decode,tokenizer.provider	interface	none
 src/tokenizer/token_input.c	tokenizer	tokenizer.token_input	generic	private	reusable-algorithm	runtime,cli	implementation	none

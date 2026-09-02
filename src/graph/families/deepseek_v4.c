@@ -325,7 +325,7 @@ static const yvex_family_binding_pipeline deepseek_binding_pipeline = {
     .runtime_descriptor_build = deepseek_compilation_descriptor,
     .quant_plan_default = deepseek_compilation_quant_default,
     .quant_plan_policy = deepseek_compilation_quant_policy,
-    .tokenizer_architecture = "deepseek-v3",
+    .tokenizer_architecture = "deepseek-v3", .tokenizer_pre = "deepseek-v3",
     .imatrix_source_identity = YVEX_DEEPSEEK_QUANT_IMATRIX_SOURCE_IDENTITY,
     .imatrix_dataset_identity = YVEX_DEEPSEEK_QUANT_IMATRIX_DATASET_IDENTITY,
     .imatrix_producer = "llama.cpp-imatrix",
@@ -1605,7 +1605,8 @@ static const yvex_quant_preset_catalog *deepseek_quant_presets(void)
 const yvex_family_descriptor yvex_graph_family_descriptor_deepseek_v4 = {
     .schema_version = YVEX_FAMILY_DESCRIPTOR_SCHEMA_V1,
     .target_id = "deepseek4-v4-flash-dspark", .family = "deepseek-v4",
-    .tokenizer_architecture = "deepseek-v3", .execution = deepseek_execution_binding,
+    .tokenizer_architecture = "deepseek-v3", .tokenizer_pre = "deepseek-v3",
+    .execution = deepseek_execution_binding,
     .quant_presets = deepseek_quant_presets};
 
 typedef struct {

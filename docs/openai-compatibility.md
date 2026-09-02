@@ -9,7 +9,7 @@ adapter follows the hosted runtime lifecycle and owns no model, session, KV,
 worker, or telemetry authority.
 
 `yvex.openai.compat.v2` is a bounded, local application-provider profile. It
-adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v17 and
+adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v18 and
 the persistent foreground host. It is not a claim of full OpenAI API or OpenAI
 service equivalence.
 
@@ -26,7 +26,7 @@ Those moving interfaces do not expand this explicitly versioned YVEX subset.
 application or SDK
   -> loopback HTTP/1.1
   -> YVEX server OpenAI adapter
-  -> provider-neutral request over YVEX protocol v17
+  -> provider-neutral request over YVEX protocol v18
   -> engine-manager routing by model alias and generation
   -> engine session and generation owners
 ```
@@ -42,15 +42,17 @@ target-verified committed fragments from the same server turn. Draft
 candidates are never emitted over JSON/SSE and never enter compatibility
 usage. This internal execution mode does not change compatibility profile v2.
 
-Profile v2 maps `reasoning_effort` values `none`, `high`, and `max` to the
-admitted source-authored model policies. Chat responses and deltas expose
+Profile v2 maps `reasoning_effort` values `none`, `low`, `medium`/`high`, and
+`max`/`xhigh` to typed source-authored model policies. An omitted field remains
+source-default until the loaded model resolves it. Chat responses and deltas expose
 explicit model-emitted text as `reasoning_content`; Responses objects use the
 same documented YVEX field and the
 `response.reasoning_content.delta`/`response.reasoning_content.done` events.
 Final `content` remains separate. The adapter never emits `<think>` delimiters,
 folds explicit reasoning into final content, infers reasoning from prose, or
 exposes hidden runtime state. A profile or model without the typed capability
-refuses `high` and `max`.
+refuses enabled or maximum policies, and a model without a low-effort source
+policy refuses `low`.
 
 For ordinary multi-turn thinking requests, the prompt owner applies the
 source-authored `drop_thinking` rule and omits prior assistant reasoning before
@@ -108,7 +110,7 @@ Supported fields are:
 | `stop` | one string or at most four bounded strings |
 | `max_tokens`, `max_completion_tokens` | positive bounded integer |
 | `n` | exactly 1 |
-| `reasoning_effort` | `none`, `high`, or `max` |
+| `reasoning_effort` | `none`, `low`, `medium`, `high`, `max`, or `xhigh` |
 | `tools` | bounded function definitions |
 | `tool_choice` | `none`, `auto`, `required`, or one named function |
 | `parallel_tool_calls` | boolean; true admits multiple source-authored calls |
@@ -142,7 +144,7 @@ Supported fields are:
 | `max_output_tokens` | positive bounded integer |
 | `temperature`, `top_p` | same ranges as Chat Completions |
 | `stream` | boolean |
-| `reasoning_effort` | `none`, `high`, or `max` |
+| `reasoning_effort` | `none`, `low`, `medium`, `high`, `max`, or `xhigh` |
 | `tools` | flat Responses function definitions |
 | `tool_choice` | none, auto, required, or one named function |
 | `parallel_tool_calls` | boolean |

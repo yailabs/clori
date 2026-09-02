@@ -823,8 +823,8 @@ static int test_stale_frame_refusal(void)
                      "stale peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 17") != NULL,
-                     "immediately prior v16 frame explicitly refuses");
+                         strstr(yvex_error_message(&err), "version 18") != NULL,
+                     "immediately prior v17 frame explicitly refuses");
     YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "stale peer join");
     (void)close(peer.listener);
     (void)unlink(path);

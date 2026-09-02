@@ -153,6 +153,7 @@ static inline yvex_reasoning_policy server_reasoning_automatic_policy(void)
 }
 
 #define YVEX_SERVER_SESSION_STORE_SCHEMA_V1 1u
+#define YVEX_SERVER_SESSION_STORE_SCHEMA_V2 2u
 typedef struct {
     const yvex_prompt_message *messages;
     const unsigned int *committed_tokens;
@@ -172,6 +173,7 @@ typedef struct {
     yvex_prompt_message *messages;
     unsigned char *transcript;
     unsigned int *committed_tokens;
+    unsigned long long schema_version;
     unsigned long long message_count, transcript_count, committed_count;
     unsigned long long turn_count, message_history_generation, transcript_generation;
     yvex_runtime_sampling_policy policy;
