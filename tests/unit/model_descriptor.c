@@ -543,6 +543,69 @@ static int test_hybrid_decoder_semantics(void)
     return 0;
 }
 
+static void model_test_identity(char output[YVEX_SHA256_HEX_CAP], char value)
+{
+    memset(output, value, YVEX_SHA256_HEX_CAP - 1u);
+    output[YVEX_SHA256_HEX_CAP - 1u] = '\0';
+}
+
+static int test_decoder_output_head_identity(void)
+{
+    yvex_runtime_logits_plan_summary summary = {
+        .schema_version = YVEX_OUTPUT_HEAD_PLAN_SCHEMA_CURRENT,
+        .producer_kind = YVEX_EXECUTION_PLAN_DECODER,
+        .family_adapter_id = 9ull,
+        .family_adapter_version = 1ull,
+        .output_head_tensor_id = 7ull,
+        .row_width = 4ull,
+        .row_count = 8ull,
+        .row_bytes = 8ull,
+        .encoded_bytes = 64ull,
+        .vocabulary_size = 8ull,
+        .hidden_width = 4ull,
+        .role = YVEX_TENSOR_ROLE_OUTPUT_HEAD,
+        .qtype = YVEX_GGUF_QTYPE_BF16,
+        .separate_output_head = 1};
+    yvex_runtime_logits_plan_summary mutated;
+    yvex_error err;
+    model_test_identity(summary.artifact_identity, '1');
+    model_test_identity(summary.materialization_identity, '2');
+    model_test_identity(summary.logical_model_identity, '3');
+    model_test_identity(summary.runtime_numeric_identity, '4');
+    model_test_identity(summary.runtime_descriptor_identity, '5');
+    model_test_identity(summary.decoder_plan_identity, '6');
+    YVEX_TEST_ASSERT(
+        yvex_output_head_plan_seal(&summary, &err) == YVEX_OK &&
+            yvex_output_head_plan_validate(&summary, &err) == YVEX_OK &&
+            !summary.transformer_plan_identity[0],
+        "decoder output head seals exact non-Transformer producer lineage");
+    mutated = summary;
+    model_test_identity(mutated.transformer_plan_identity, '7');
+    YVEX_TEST_ASSERT(
+        yvex_output_head_plan_validate(&mutated, &err) == YVEX_ERR_FORMAT,
+        "output head refuses simultaneous Transformer and decoder producers");
+    mutated = summary;
+    mutated.decoder_plan_identity[0] =
+        mutated.decoder_plan_identity[0] == '0' ? '1' : '0';
+    YVEX_TEST_ASSERT(
+        yvex_output_head_plan_validate(&mutated, &err) == YVEX_ERR_STATE,
+        "output head identity authenticates decoder producer lineage");
+    memset(summary.decoder_plan_identity, 0,
+           sizeof(summary.decoder_plan_identity));
+    summary.producer_kind = YVEX_EXECUTION_PLAN_TRANSFORMER;
+    model_test_identity(summary.transformer_plan_identity, '8');
+    YVEX_TEST_ASSERT(
+        yvex_output_head_plan_seal(&summary, &err) == YVEX_OK &&
+            yvex_output_head_plan_validate(&summary, &err) == YVEX_OK,
+        "current output head also seals exact Transformer producer lineage");
+    summary.schema_version = YVEX_OUTPUT_HEAD_PLAN_SCHEMA_V1;
+    YVEX_TEST_ASSERT(
+        yvex_output_head_plan_seal(&summary, &err) == YVEX_OK &&
+            yvex_output_head_plan_validate(&summary, &err) == YVEX_OK,
+        "legacy Transformer output-head identity remains admissible");
+    return 0;
+}
+
 int yvex_test_model_descriptor(void)
 {
     if (test_descriptor_from_c1_fixture() != 0) {
@@ -556,5 +619,6 @@ int yvex_test_model_descriptor(void)
     }
     if (test_semantic_model_ir() != 0) return 1;
     if (test_hybrid_decoder_semantics() != 0) return 1;
+    if (test_decoder_output_head_identity() != 0) return 1;
     return 0;
 }

@@ -13,6 +13,7 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/media_target.h>
 #include <yvex/internal/model.h>
+#include <yvex/internal/output_head.h>
 #include <yvex/internal/semantic_decoder.h>
 #include <yvex/registry.h>
 #ifdef __cplusplus
@@ -21,11 +22,9 @@ extern "C" {
 #define YVEX_FAMILY_COMPILER_SCHEMA_V2 2u
 #define YVEX_RUNTIME_EXECUTION_CAPABILITY_SCHEMA_V2 2u
 #define YVEX_TRANSFORMER_PLAN_SCHEMA_V2 2u
-#define YVEX_RUNTIME_LOGITS_SCHEMA_V3 3u
-#define YVEX_RUNTIME_LOGITS_SCHEMA_V2 YVEX_RUNTIME_LOGITS_SCHEMA_V3
-#define YVEX_RUNTIME_LOGITS_SCHEMA_V1 YVEX_RUNTIME_LOGITS_SCHEMA_V3
 #define YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 1u
 #define YVEX_COMPILED_CONTEXT_ENVELOPE_SCHEMA_V1 1u
+#define YVEX_COMPILED_CONTEXT_ENVELOPE_SCHEMA_V2 2u
 #define YVEX_SPECULATION_MAX_BLOCK 8u
 #define YVEX_SPECULATION_MAX_FEATURE_LAYERS YVEX_MODEL_EXECUTION_FEATURE_LAYER_CAP
 #define YVEX_SPECULATION_IDENTITY_CAP (YVEX_SHA256_HEX_BYTES + 1u)
@@ -133,28 +132,6 @@ typedef struct yvex_transformer_family_policy {
     double mhc_epsilon, output_norm_epsilon;
     int attention_then_moe, deferred_ffn_post, final_norm_after_head;
 } yvex_transformer_family_policy;
-
-typedef struct yvex_logits_family_policy {
-    unsigned int schema_version;
-    int separate_output_head, tied_output_head, output_head_bias;
-} yvex_logits_family_policy;
-
-typedef struct yvex_runtime_logits_plan_summary {
-    unsigned int schema_version;
-    unsigned long long family_adapter_id, family_adapter_version;
-    unsigned long long output_head_tensor_id, row_width, row_count, row_bytes;
-    unsigned long long encoded_bytes, vocabulary_size, hidden_width;
-    yvex_tensor_role role;
-    unsigned int qtype;
-    int separate_output_head, output_head_bias;
-    char artifact_identity[YVEX_SHA256_HEX_BYTES];
-    char materialization_identity[YVEX_SHA256_HEX_BYTES];
-    char logical_model_identity[YVEX_SHA256_HEX_BYTES];
-    char runtime_numeric_identity[YVEX_SHA256_HEX_BYTES];
-    char runtime_descriptor_identity[YVEX_SHA256_HEX_BYTES];
-    char transformer_plan_identity[YVEX_SHA256_HEX_BYTES];
-    char output_head_plan_identity[YVEX_SHA256_HEX_BYTES];
-} yvex_runtime_logits_plan_summary;
 
 typedef struct yvex_speculation_family_policy {
     unsigned int schema_version;
@@ -546,11 +523,13 @@ typedef struct {
 } yvex_compiled_model_plan_admission;
 typedef struct {
     unsigned int schema_version;
+    yvex_execution_plan_kind target_kind;
     unsigned long long semantic_maximum_context;
     unsigned long long target_maximum_context, draft_maximum_context;
     int draft_available;
     char model_execution_identity[YVEX_SHA256_HEX_BYTES];
     char target_transformer_identity[YVEX_SHA256_HEX_BYTES];
+    char target_decoder_identity[YVEX_SHA256_HEX_BYTES];
     char draft_transformer_identity[YVEX_SHA256_HEX_BYTES];
 } yvex_compiled_context_envelope;
 int yvex_compiled_model_plan_build(
@@ -583,17 +562,6 @@ const struct yvex_runtime_logits_plan_summary *yvex_compiled_model_plan_output_h
 const char *yvex_compiled_model_plan_operator_graph_identity(
     const yvex_compiled_model_plan *plan);
 void yvex_compiled_model_plan_close(yvex_compiled_model_plan **plan);
-int yvex_output_head_plan_build(
-    yvex_runtime_logits_plan_summary *out,
-    unsigned long long family_adapter_id,
-    unsigned long long family_adapter_version,
-    const struct yvex_materialization_session *materialization,
-    const struct yvex_runtime_descriptor *descriptor,
-    const struct yvex_transformer_plan *transformer,
-    const yvex_logits_family_policy *policy, yvex_error *err);
-int yvex_output_head_plan_validate(
-    const yvex_runtime_logits_plan_summary *summary, yvex_error *err);
-
 #ifdef __cplusplus
 }
 #endif

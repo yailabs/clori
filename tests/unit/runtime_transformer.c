@@ -106,7 +106,8 @@ static int transformer_test_family(void)
 static int transformer_test_context_envelope(void)
 {
     yvex_compiled_context_envelope envelope = {
-        .schema_version = YVEX_COMPILED_CONTEXT_ENVELOPE_SCHEMA_V1,
+        .schema_version = YVEX_COMPILED_CONTEXT_ENVELOPE_SCHEMA_V2,
+        .target_kind = YVEX_EXECUTION_PLAN_TRANSFORMER,
         .semantic_maximum_context = 1048576ull,
         .target_maximum_context = 1048576ull};
     yvex_error err;
@@ -126,6 +127,16 @@ static int transformer_test_context_envelope(void)
         yvex_compiled_context_envelope_admit(
             &envelope, 4096ull, 1, &err) == YVEX_ERR_UNSUPPORTED,
         "target-only compiled envelope does not invent draft capacity");
+    memset(envelope.target_transformer_identity, 0,
+           sizeof(envelope.target_transformer_identity));
+    envelope.target_kind = YVEX_EXECUTION_PLAN_DECODER;
+    transformer_test_identity(envelope.target_decoder_identity, 12u);
+    YVEX_TEST_ASSERT(
+        yvex_compiled_context_envelope_admit(
+            &envelope, 8192ull, 0, &err) == YVEX_OK &&
+            yvex_compiled_context_envelope_admit(
+                &envelope, 8192ull, 1, &err) == YVEX_ERR_UNSUPPORTED,
+        "hybrid decoder context is exact without fabricated draft identity");
     return 0;
 }
 
