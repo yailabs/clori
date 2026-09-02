@@ -201,6 +201,12 @@ int yvex_runtime_session_prefix_capture(
                            "source session cannot publish a prefix", err);
         goto done;
     }
+    if (source->sequence_state) {
+        rc = prefix_refuse(
+            failure, YVEX_ERR_UNSUPPORTED,
+            "session prefix does not yet encode recurrent sequence state", err);
+        goto done;
+    }
     prefix = calloc(1u, sizeof(*prefix));
     if (!prefix) {
         rc = prefix_refuse(failure, YVEX_ERR_NOMEM,
@@ -353,7 +359,8 @@ int yvex_runtime_session_prefix_attach(
             &draft_pristine, err);
     if (rc != YVEX_OK || !destination->summary.open ||
         destination->summary.busy || destination->closing ||
-        destination->summary.invalidated || destination->state_residency ||
+        destination->summary.invalidated || destination->sequence_state ||
+        destination->state_residency ||
         destination->draft_state_residency ||
         !destination->attention_state_provider_ready ||
         (prefix->draft &&

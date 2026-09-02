@@ -1414,8 +1414,8 @@ static int runtime_session_resources_release(yvex_runtime_execution_session *ses
         }
     }
     session->invalidation_pending = 0;
-    yvex_sequence_state_close(&session->sequence_state);
-    session->view.sequence_state = NULL;
+    rc = yvex_runtime_private_session_sequence_state_close(session, err);
+    if (rc != YVEX_OK) return rc;
     if (session->state_resolver_attached) {
         yvex_backend_state_residency_detach(session->backend);
         session->state_resolver_attached = 0;
@@ -1645,8 +1645,7 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
     unsigned long long workspace_bytes = 0ull, draft_workspace_bytes = 0ull;
     unsigned long long admitted_host_bytes = 0ull, state_budget;
     int rc, publishable, uploaded = 0;
-    if (out)
-        *out = NULL;
+    if (out) *out = NULL;
     if (!out || !model || !request ||
         (request->backend != YVEX_BACKEND_KIND_CPU &&
          request->backend != YVEX_BACKEND_KIND_CUDA))
@@ -1758,6 +1757,8 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
                                      "runtime session backend could not be opened");
         return runtime_session_open_fail(out, session, rc, failure, err);
     }
+    rc = yvex_runtime_private_session_sequence_state_attach(session, failure, err);
+    if (rc != YVEX_OK) return runtime_session_open_fail(out, session, rc, failure, err);
     rc = yvex_runtime_private_model_specialization_prepare(
         model, request->backend, session->backend, &specialization, err);
     if (rc != YVEX_OK) {
@@ -1825,8 +1826,7 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
             YVEX_ERR_STATE);
         return runtime_session_open_fail(out, session, rc, failure, err);
     }
-    if (failure)
-        memset(failure, 0, sizeof(*failure));
+    if (failure) memset(failure, 0, sizeof(*failure));
     return yvex_runtime_private_success(err);
 }
 

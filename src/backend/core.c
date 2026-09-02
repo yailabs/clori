@@ -772,6 +772,32 @@ int yvex_backend_tensor_read(yvex_backend *backend,
     }
     return backend->vtable->tensor_read(backend, tensor, dst, len, err);
 }
+
+int yvex_backend_tensor_zero(yvex_backend *backend,
+                             yvex_device_tensor *tensor,
+                             yvex_error *err)
+{
+    int rc;
+    if (!backend || !tensor) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "backend.tensor.zero",
+                       "backend and owned mutable tensor are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = backend_dispatch_admit(backend, "backend.tensor.zero", err);
+    if (rc != YVEX_OK) return rc;
+    if (!backend_tensor_owner_is(backend, tensor) || tensor->borrowed_host) {
+        yvex_error_set(err, YVEX_ERR_STATE, "backend.tensor.zero",
+                       "tensor is not mutable storage owned by this backend");
+        return YVEX_ERR_STATE;
+    }
+    if (!backend->vtable || !backend->vtable->tensor_zero) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "backend.tensor.zero",
+                       "backend does not support tensor zeroing");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    return backend->vtable->tensor_zero(backend, tensor, err);
+}
+
 int yvex_backend_tensor_copy(yvex_backend *backend,
                              yvex_device_tensor *dst,
                              const yvex_device_tensor *src,

@@ -23,6 +23,7 @@ static int cpu_tensor_write(yvex_backend *, yvex_device_tensor *, const void *,
                                  unsigned long long, yvex_error *);
 static int cpu_tensor_read(yvex_backend *, const yvex_device_tensor *, void *,
                                 unsigned long long, yvex_error *);
+static int cpu_tensor_zero(yvex_backend *, yvex_device_tensor *, yvex_error *);
 static int cpu_tensor_copy(yvex_backend *, yvex_device_tensor *,
                                 const yvex_device_tensor *, yvex_error *);
 static int cpu_op_embed(yvex_backend *, const yvex_device_tensor *, const unsigned int *,
@@ -99,6 +100,7 @@ static const yvex_backend_vtable cpu_vtable = {
     .tensor_free = cpu_tensor_free,
     .tensor_write = cpu_tensor_write,
     .tensor_read = cpu_tensor_read,
+    .tensor_zero = cpu_tensor_zero,
     .tensor_copy = cpu_tensor_copy,
     .sync = cpu_sync,
     .query_capability = cpu_query_capability,
@@ -741,6 +743,20 @@ static int cpu_tensor_read(yvex_backend *backend,
         return rc;
     }
     memcpy(dst, tensor->data, (size_t)len);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int cpu_tensor_zero(yvex_backend *backend, yvex_device_tensor *tensor,
+                           yvex_error *err)
+{
+    if (!backend_tensor_owner_is(backend, tensor) || tensor->borrowed_host) {
+        yvex_error_set(err, YVEX_ERR_STATE, "cpu.tensor.zero",
+                       "one CPU-owned mutable tensor is required");
+        return YVEX_ERR_STATE;
+    }
+    memset(tensor->data, 0, (size_t)tensor->bytes);
+    tensor->is_written = 1;
     yvex_error_clear(err);
     return YVEX_OK;
 }

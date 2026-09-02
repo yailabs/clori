@@ -89,6 +89,10 @@ int yvex_test_sequence_state(void)
             summary.recurrent_state_bytes == 96ull &&
             summary.committed_state_bytes == 256ull &&
             summary.candidate_state_bytes == 256ull &&
+            summary.host_state_bytes == 512ull &&
+            summary.device_state_bytes == 0ull &&
+            summary.host_authoritative && !summary.device_authoritative &&
+            summary.fork_supported &&
             yvex_sha256_hex_valid(summary.plan_identity),
         "state summary exposes exact committed and candidate bytes");
 

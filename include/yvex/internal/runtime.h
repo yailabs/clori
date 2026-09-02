@@ -446,6 +446,8 @@ typedef struct {
     unsigned long long sequence_state_binding_count, sequence_state_generation;
     unsigned long long sequence_committed_state_bytes;
     unsigned long long sequence_candidate_state_bytes;
+    unsigned long long sequence_host_state_bytes;
+    unsigned long long sequence_device_state_bytes;
     int host_workspace_owned, host_workspace_pinned;
     int device_index, compute_capability_major, compute_capability_minor;
     unsigned long long total_device_bytes, sustainable_read_bytes_per_second, sustainable_copy_bytes_per_second;

@@ -540,6 +540,11 @@ int yvex_runtime_private_session_sequence_state_open(
     const yvex_sequence_state_plan *plan, int bounded,
     unsigned long long *state_budget, unsigned long long *admitted_host_bytes,
     yvex_model_engine_failure *failure, yvex_error *err);
+int yvex_runtime_private_session_sequence_state_attach(
+    yvex_runtime_execution_session *session,
+    yvex_model_engine_failure *failure, yvex_error *err);
+int yvex_runtime_private_session_sequence_state_close(
+    yvex_runtime_execution_session *session, yvex_error *err);
 int yvex_runtime_private_state_residency_resolve(
     const void *context, const void *host, unsigned long long bytes,
     unsigned long long *device_address);

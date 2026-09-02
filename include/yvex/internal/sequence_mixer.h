@@ -49,6 +49,16 @@ typedef struct {
 } yvex_gated_delta_state_output;
 
 typedef struct {
+    const yvex_device_tensor *convolution;
+    const yvex_device_tensor *recurrent;
+} yvex_gated_delta_device_state_view;
+
+typedef struct {
+    yvex_device_tensor *convolution;
+    yvex_device_tensor *recurrent;
+} yvex_gated_delta_device_state_output;
+
+typedef struct {
     unsigned long long token_count;
     const float *projected_qkv;
     unsigned long long projected_qkv_capacity;

@@ -1238,6 +1238,36 @@ static int cuda_tensor_read(yvex_backend *backend,
     return yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_TENSOR_READ,
                                  "yvex_backend_tensor_read", err);
 }
+
+static int cuda_tensor_zero(yvex_backend *backend, yvex_device_tensor *tensor,
+                            yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    int rc;
+    if (!state || !backend_tensor_owner_is(backend, tensor) ||
+        tensor->borrowed_host) {
+        yvex_error_set(err, YVEX_ERR_STATE, "cuda.tensor.zero",
+                       "one CUDA-owned mutable tensor is required");
+        return YVEX_ERR_STATE;
+    }
+    rc = yvex_cuda_require_capability(backend, YVEX_BACKEND_VARIANT_TENSOR_ZERO,
+                                      "cuda.tensor.zero", err);
+    if (rc == YVEX_OK) rc = yvex_cuda_set_current(backend, "cuda.tensor.zero", err);
+    tensor->is_written = 0;
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemsetD8_v2(
+                yvex_cuda_tensor_ptr(tensor), 0u, (size_t)tensor->bytes),
+            "cuda.tensor.zero", err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_synchronize(
+            backend, YVEX_BACKEND_VARIANT_TENSOR_ZERO,
+            "cuda.tensor.zero", err);
+    if (rc == YVEX_OK) tensor->is_written = 1;
+    return rc;
+}
+
 static int cuda_tensor_copy(yvex_backend *backend,
                           yvex_device_tensor *dst,
                           const yvex_device_tensor *src,
@@ -1697,6 +1727,7 @@ static const yvex_backend_vtable cuda_vtable = {
     .tensor_free = cuda_tensor_free,
     .tensor_write = cuda_tensor_write,
     .tensor_read = cuda_tensor_read,
+    .tensor_zero = cuda_tensor_zero,
     .tensor_copy = cuda_tensor_copy,
     .tensor_copy_async = cuda_tensor_copy_async,
     .tensor_copy_shared_async = cuda_tensor_copy_shared_async,

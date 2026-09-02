@@ -104,6 +104,15 @@ static int test_tensor_memory_and_copy(void)
     rc = yvex_backend_tensor_read(backend, a, out, sizeof(out), &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "read full tensor");
     YVEX_TEST_ASSERT(memcmp(data, out, sizeof(data)) == 0, "read equals written");
+    rc = yvex_backend_tensor_zero(backend, a, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && yvex_device_tensor_is_written(a),
+                     "zero publishes initialized mutable storage");
+    memset(out, 1, sizeof(out));
+    rc = yvex_backend_tensor_read(backend, a, out, sizeof(out), &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && out[0] == 0.0f && out[3] == 0.0f,
+                     "zero clears the exact CPU tensor extent");
+    rc = yvex_backend_tensor_write(backend, a, data, sizeof(data), &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "rewrite tensor after zero");
 
     make_desc(&desc, "b", 2, 2);
     rc = yvex_backend_tensor_alloc(backend, &desc, &b, &err);

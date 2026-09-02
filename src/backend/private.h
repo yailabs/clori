@@ -39,6 +39,7 @@ typedef struct yvex_backend_vtable {
                         unsigned long long, yvex_error *);
     int (*tensor_read)(yvex_backend *, const yvex_device_tensor *, void *,
                        unsigned long long, yvex_error *);
+    int (*tensor_zero)(yvex_backend *, yvex_device_tensor *, yvex_error *);
     int (*tensor_copy)(yvex_backend *, yvex_device_tensor *, const yvex_device_tensor *,
                        yvex_error *);
     int (*tensor_copy_async)(yvex_backend *, yvex_device_tensor *,

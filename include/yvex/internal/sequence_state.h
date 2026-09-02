@@ -15,8 +15,11 @@ typedef struct {
     unsigned long long generation, staged_layers;
     unsigned long long convolution_state_bytes, recurrent_state_bytes;
     unsigned long long committed_state_bytes, candidate_state_bytes;
+    unsigned long long host_state_bytes, device_state_bytes;
     char plan_identity[YVEX_SHA256_HEX_CAP];
-    int transaction_active, prepared, invalidated;
+    yvex_backend_kind storage_backend;
+    int host_authoritative, device_authoritative, device_attached;
+    int fork_supported, transaction_active, prepared, invalidated;
 } yvex_sequence_state_summary;
 
 typedef struct yvex_sequence_state yvex_sequence_state;
@@ -24,6 +27,11 @@ typedef struct yvex_sequence_state yvex_sequence_state;
 int yvex_sequence_state_open(
     yvex_sequence_state **out, const yvex_sequence_state_plan *plan,
     yvex_error *err);
+int yvex_sequence_state_open_for_backend(
+    yvex_sequence_state **out, const yvex_sequence_state_plan *plan,
+    yvex_backend_kind backend, yvex_error *err);
+int yvex_sequence_state_attach_device(
+    yvex_sequence_state *state, yvex_backend *backend, yvex_error *err);
 int yvex_sequence_state_fork(
     yvex_sequence_state **out, const yvex_sequence_state *source,
     yvex_error *err);
@@ -34,6 +42,10 @@ int yvex_sequence_state_layer(
     yvex_sequence_state *state, unsigned long long layer_index,
     yvex_gated_delta_state_view *committed,
     yvex_gated_delta_state_output *candidate, yvex_error *err);
+int yvex_sequence_state_device_layer(
+    yvex_sequence_state *state, unsigned long long layer_index,
+    yvex_gated_delta_device_state_view *committed,
+    yvex_gated_delta_device_state_output *candidate, yvex_error *err);
 int yvex_sequence_state_stage(
     yvex_sequence_state *state, unsigned long long layer_index,
     yvex_error *err);
@@ -49,6 +61,8 @@ int yvex_sequence_state_invalidate(
 int yvex_sequence_state_summary_copy(
     const yvex_sequence_state *state, yvex_sequence_state_summary *summary,
     yvex_error *err);
+int yvex_sequence_state_close_checked(
+    yvex_sequence_state **state, yvex_error *err);
 void yvex_sequence_state_close(yvex_sequence_state **state);
 
 #ifdef __cplusplus

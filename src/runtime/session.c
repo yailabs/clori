@@ -216,16 +216,22 @@ int yvex_runtime_private_session_sequence_state_open(
         plan = &derived;
     }
     if (!plan) return YVEX_OK;
-    rc = yvex_sequence_state_open(&session->sequence_state, plan, err);
+    rc = yvex_sequence_state_open_for_backend(
+        &session->sequence_state, plan, session->summary.backend, err);
     if (rc == YVEX_OK)
         rc = yvex_sequence_state_summary_copy(
             session->sequence_state, &summary, err);
     if (rc == YVEX_OK &&
-        (!yvex_core_u64_add(summary.committed_state_bytes,
-                            summary.candidate_state_bytes, &bytes) ||
-         (bounded && bytes > *state_budget) ||
+        !yvex_core_u64_add(summary.committed_state_bytes,
+                           summary.candidate_state_bytes, &bytes))
+        rc = YVEX_ERR_BOUNDS;
+    if (rc == YVEX_OK && session->summary.backend == YVEX_BACKEND_KIND_CPU &&
+        ((bounded && bytes > *state_budget) ||
          !yvex_core_u64_add(*admitted_host_bytes, bytes,
                             admitted_host_bytes)))
+        rc = YVEX_ERR_BOUNDS;
+    if (rc == YVEX_OK && session->summary.backend == YVEX_BACKEND_KIND_CUDA &&
+        session->maximum_device_bytes && bytes > session->maximum_device_bytes)
         rc = YVEX_ERR_BOUNDS;
     if (rc != YVEX_OK) {
         yvex_sequence_state_close(&session->sequence_state);
@@ -233,11 +239,14 @@ int yvex_runtime_private_session_sequence_state_open(
             failure, YVEX_MODEL_ENGINE_FAILURE_GRAPH, "sequence-state",
             bounded ? *state_budget : 0ull, 0ull,
             rc == YVEX_ERR_BOUNDS
-                ? "recurrent sequence state exceeds the admitted session host budget"
+                ? session->summary.backend == YVEX_BACKEND_KIND_CUDA
+                      ? "recurrent sequence state exceeds the admitted session device budget"
+                      : "recurrent sequence state exceeds the admitted session host budget"
                 : "recurrent sequence state could not open",
             err, (yvex_status)rc);
     }
-    if (bounded) *state_budget -= bytes;
+    if (bounded && session->summary.backend == YVEX_BACKEND_KIND_CPU)
+        *state_budget -= bytes;
     session->view.sequence_state = session->sequence_state;
     session->summary.sequence_state_binding_count = summary.binding_count;
     session->summary.sequence_state_generation = summary.generation;
@@ -245,7 +254,47 @@ int yvex_runtime_private_session_sequence_state_open(
         summary.committed_state_bytes;
     session->summary.sequence_candidate_state_bytes =
         summary.candidate_state_bytes;
+    session->summary.sequence_host_state_bytes = summary.host_state_bytes;
+    session->summary.sequence_device_state_bytes = summary.device_state_bytes;
     return YVEX_OK;
+}
+
+int yvex_runtime_private_session_sequence_state_attach(
+    yvex_runtime_execution_session *session,
+    yvex_model_engine_failure *failure, yvex_error *err)
+{
+    yvex_sequence_state_summary summary;
+    int rc;
+
+    if (!session->sequence_state ||
+        session->summary.backend != YVEX_BACKEND_KIND_CUDA)
+        return YVEX_OK;
+    rc = yvex_sequence_state_attach_device(
+        session->sequence_state, session->backend, err);
+    if (rc != YVEX_OK) {
+        yvex_runtime_private_failure_record(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND,
+            "sequence-state-device", 1ull, 0ull,
+            "CUDA recurrent sequence state could not become resident");
+        return rc;
+    }
+    rc = yvex_sequence_state_summary_copy(
+        session->sequence_state, &summary, err);
+    if (rc != YVEX_OK) return rc;
+    session->summary.sequence_host_state_bytes = summary.host_state_bytes;
+    session->summary.sequence_device_state_bytes = summary.device_state_bytes;
+    return YVEX_OK;
+}
+
+int yvex_runtime_private_session_sequence_state_close(
+    yvex_runtime_execution_session *session, yvex_error *err)
+{
+    int rc;
+
+    if (!session) return YVEX_OK;
+    rc = yvex_sequence_state_close_checked(&session->sequence_state, err);
+    session->view.sequence_state = session->sequence_state;
+    return rc;
 }
 
 static int runtime_session_workspace_requirements(
@@ -1002,6 +1051,8 @@ static int runtime_sequence_state_summary_record(
         summary.committed_state_bytes;
     session->summary.sequence_candidate_state_bytes =
         summary.candidate_state_bytes;
+    session->summary.sequence_host_state_bytes = summary.host_state_bytes;
+    session->summary.sequence_device_state_bytes = summary.device_state_bytes;
     if (out) *out = summary;
     return YVEX_OK;
 }
