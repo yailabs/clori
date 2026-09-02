@@ -69,6 +69,10 @@ rc=$?
 contains "$OUT_DIR/help.out" "yvex inspect backend"
 contains "$OUT_DIR/help.out" "yvex inspect moe"
 contains "$OUT_DIR/help.out" "yvex inspect target"
-contains "$OUT_DIR/help.out" "yvex inspect cuda"
+
+"$YVEX_BIN" help inspect >"$OUT_DIR/inspect_help.out" 2>"$OUT_DIR/inspect_help.err"
+rc=$?
+[ "$rc" -eq 0 ] || fail "help inspect exit code was $rc"
+contains "$OUT_DIR/inspect_help.out" "yvex inspect cuda"
 
 printf 'cli cuda smoke: ok\n'

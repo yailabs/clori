@@ -32,6 +32,13 @@ static const yvex_backend_transformer_operations transformer_operations = {
     .linear_execute = yvex_cuda_transformer_linear_execute,
     .linear_summary = yvex_cuda_transformer_linear_summary,
     .linear_release = yvex_cuda_transformer_linear_release,
+    .rotary_half_f32 = yvex_cuda_transformer_rotary_half_f32,
+    .split_interleaved_two_f32 =
+        yvex_cuda_decoder_split_interleaved_two_f32,
+    .silu_product_bf16 = yvex_cuda_transformer_silu_product_bf16,
+    .sigmoid_product_bf16 = yvex_cuda_decoder_sigmoid_product_bf16,
+    .add_bf16 = yvex_cuda_transformer_add_bf16,
+    .bf16_round = yvex_cuda_transformer_bf16_round,
     .dense_decoder_execute = yvex_cuda_transformer_dense_decoder_execute,
 };
 
@@ -223,6 +230,8 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(attention_validate_function)},
     {"yvex_silu_product_bf16_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(silu_product_function)},
+    {"yvex_sigmoid_product_bf16_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(sigmoid_product_function)},
     {"yvex_silu_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(silu_function)},
     {"yvex_gelu_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -233,6 +242,8 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(split_three_function)},
     {"yvex_split_interleaved_three_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(split_interleaved_function)},
+    {"yvex_split_interleaved_two_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(split_interleaved_two_function)},
     {"yvex_swiglu_split_bf16_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(swiglu_split_function)},
     {"yvex_swiglu_split_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,

@@ -275,9 +275,9 @@ typedef struct {
     CUfunction rotary_half_function, rotary_half_plain_function, gqa_function,
         gqa_wide_function;
     CUfunction gqa_softmax_function, gqa_softmax_warp_function, attention_validate_function;
-    CUfunction silu_product_function, silu_function, gelu_function, timestep_embedding_function;
-    CUfunction split_three_function, split_interleaved_function;
-    CUfunction swiglu_split_function, swiglu_split_f32_function;
+    CUfunction silu_product_function, sigmoid_product_function, silu_function, gelu_function;
+    CUfunction timestep_embedding_function, split_three_function, split_interleaved_function;
+    CUfunction split_interleaved_two_function, swiglu_split_function, swiglu_split_f32_function;
     CUfunction modulation_function, gated_residual_function, bias_function, add_bf16_function;
     CUfunction scaled_residual_f32_function, layer_norm_f32_function;
     CUfunction conv_scale_function, conv1d_function, conv1d_transposed_function;

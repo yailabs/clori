@@ -111,6 +111,17 @@ int yvex_cuda_transformer_silu_product_bf16(
     const yvex_device_tensor *up, yvex_device_tensor *output,
     unsigned long long count, yvex_backend_operation_facts *facts,
     yvex_error *err);
+int yvex_cuda_decoder_split_interleaved_two_f32(
+    yvex_backend *backend, const yvex_device_tensor *input,
+    yvex_device_tensor *first, yvex_device_tensor *second,
+    unsigned long long rows, unsigned long long heads,
+    unsigned long long head_dimension, yvex_backend_operation_facts *facts,
+    yvex_error *err);
+int yvex_cuda_decoder_sigmoid_product_bf16(
+    yvex_backend *backend, const yvex_device_tensor *values,
+    const yvex_device_tensor *gate, yvex_device_tensor *output,
+    unsigned long long count, yvex_backend_operation_facts *facts,
+    yvex_error *err);
 int yvex_cuda_transformer_silu(
     yvex_backend *backend, const yvex_device_tensor *input,
     yvex_device_tensor *output, unsigned long long count, int bf16_output,

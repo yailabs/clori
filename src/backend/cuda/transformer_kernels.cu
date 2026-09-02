@@ -349,6 +349,20 @@ extern "C" __global__ void yvex_silu_product_bf16_f32(
     output[index] = float_to_bf16_rne(value * up[index]);
 }
 
+/* Apply the family-neutral sigmoid output gate used by attention projections. */
+extern "C" __global__ void yvex_sigmoid_product_bf16_f32(
+    const float *values, const float *gate, float *output,
+    unsigned long long count)
+{
+    unsigned long long index =
+        ((unsigned long long)blockIdx.x * (unsigned long long)blockDim.x) +
+        (unsigned long long)threadIdx.x;
+    float scale;
+    if (!values || !gate || !output || index >= count) return;
+    scale = 1.0f / (1.0f + expf(-gate[index]));
+    output[index] = float_to_bf16_rne(values[index] * scale);
+}
+
 extern "C" __global__ void yvex_silu_f32(
     const float *input, float *output, unsigned long long count, int bf16_output)
 {
@@ -436,6 +450,26 @@ extern "C" __global__ void yvex_split_interleaved_three_f32(
     first[index] = input[input_base];
     second[index] = input[input_base + head_dim];
     third[index] = input[input_base + 2ull * head_dim];
+}
+
+extern "C" __global__ void yvex_split_interleaved_two_f32(
+    const float *input, float *first, float *second,
+    unsigned long long rows, unsigned long long heads,
+    unsigned long long head_dim)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned long long width = heads * head_dim;
+    unsigned long long row, within, head, lane, input_base;
+    if (!input || !first || !second || !heads || !head_dim ||
+        index >= rows * width) return;
+    row = index / width;
+    within = index % width;
+    head = within / head_dim;
+    lane = within % head_dim;
+    input_base = row * 2ull * width + head * 2ull * head_dim + lane;
+    first[index] = input[input_base];
+    second[index] = input[input_base + head_dim];
 }
 
 extern "C" __global__ void yvex_swiglu_split_bf16_f32(

@@ -287,6 +287,49 @@ static int sampling_test_greedy(void)
     return 0;
 }
 
+static int sampling_test_padded_output_vocabulary(void)
+{
+    const float logits[6] = {1.0f, 5.0f, 4.0f, 2.0f, 100.0f, 99.0f};
+    yvex_runtime_logits_plan_summary plan;
+    yvex_runtime_logits_row_result row;
+    yvex_runtime_sampling_policy policy = {
+        .schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1,
+        .strategy = YVEX_SAMPLING_STRATEGY_GREEDY,
+        .temperature = 1.0, .top_p = 1.0, .typical_p = 1.0};
+    yvex_runtime_sampling_options options = {
+        .maximum_vocabulary_size = 4ull,
+        .selection_vocabulary_size = 4ull,
+        .maximum_rows = 1ull};
+    yvex_runtime_sampling_context *context = NULL;
+    yvex_runtime_sampling_source source;
+    yvex_runtime_sampling_result result;
+    yvex_error err;
+
+    sampling_test_plan(&plan, 6ull);
+    YVEX_TEST_ASSERT(
+        sampling_test_row(&plan, logits, 6ull, 0ull, &row) &&
+            yvex_runtime_sampling_policy_seal(&policy, 4ull, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_open(
+                &context, &plan, &policy, &options, &err) == YVEX_OK &&
+            yvex_runtime_sampling_source_from_logits(
+                context, &source, logits, 6ull, &row, &err) == YVEX_OK &&
+            source.vocabulary_size == 4ull && source.logits_stride == 6ull &&
+            yvex_runtime_sampling_select(
+                context, NULL, &source, &result, &err) == YVEX_OK &&
+            result.selected_token_id == 1u && result.values_considered == 4ull,
+        "logical tokenizer vocabulary excludes padded output-head rows from sampling");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_context_close(&context, &err) == YVEX_OK,
+        "padded output-vocabulary sampling context closes");
+    options.selection_vocabulary_size = 7ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_context_open(
+            &context, &plan, &policy, &options, &err) == YVEX_ERR_NOMEM &&
+            !context,
+        "logical selection vocabulary cannot exceed the physical output envelope");
+    return 0;
+}
+
 /* Exercise each canonical filter, endpoint tie order, and stable softmax edge. */
 static int sampling_test_filter_matrix(void)
 {
@@ -1043,6 +1086,7 @@ int yvex_test_runtime_sampling(void)
     if (sampling_test_policy()) return 1;
     if (sampling_test_numeric_boundaries()) return 1;
     if (sampling_test_greedy()) return 1;
+    if (sampling_test_padded_output_vocabulary()) return 1;
     if (sampling_test_filter_matrix()) return 1;
     if (sampling_test_stochastic()) return 1;
     if (sampling_test_rng_vectors()) return 1;

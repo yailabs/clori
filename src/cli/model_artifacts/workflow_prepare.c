@@ -515,6 +515,47 @@ static int prepare_already_ready(const model_prepare_options *options,
     return 0;
 }
 
+static int prepare_profile_is_current(
+    const yvex_model_library *library, unsigned long long model_index,
+    const model_prepare_plan *plan)
+{
+    unsigned long long index;
+    for (index = 0u;
+         index < yvex_model_library_profile_count(library, model_index);
+         ++index) {
+        const yvex_model_runtime_profile_fact *profile =
+            yvex_model_library_profile_at(library, model_index, index);
+        yvex_runtime_binding *binding = NULL;
+        yvex_runtime_binding_summary summary = {0};
+        yvex_runtime_binding_failure failure = {0};
+        yvex_error err;
+        int rc, current;
+
+        if (!profile || !profile->launchable ||
+            strcmp(profile->alias, plan->profile_alias) ||
+            strcmp(profile->artifact_path, plan->artifact_path) ||
+            strcmp(profile->runtime_target, plan->execution->target_id) ||
+            strcmp(profile->backend, plan->deployment->backend) ||
+            strcmp(profile->execution_strategy,
+                   plan->deployment->execution_strategy) ||
+            !profile->runtime_binding[0])
+            continue;
+        yvex_error_clear(&err);
+        rc = yvex_runtime_binding_open(
+            &binding, profile->runtime_binding, &summary, NULL, &failure,
+            &err);
+        current = rc == YVEX_OK &&
+                  !strcmp(summary.artifact_identity,
+                          profile->artifact_identity) &&
+                  summary.family_adapter_id == plan->execution->adapter_id &&
+                  summary.family_adapter_version ==
+                      plan->execution->adapter_version;
+        yvex_runtime_binding_close(binding);
+        if (current) return 1;
+    }
+    return 0;
+}
+
 int yvex_model_prepare_command(int arg_count, char **args)
 {
     model_prepare_options options;
@@ -523,7 +564,7 @@ int yvex_model_prepare_command(int arg_count, char **args)
     yvex_source_payload_verification_result verification;
     yvex_error err;
     unsigned long long model_index = 0u;
-    int binding_published = 0, changed = 0, rc;
+    int binding_published = 0, changed = 0, plan_built = 0, rc;
 
     rc = prepare_options_parse(arg_count, args, &options);
     if (rc) return rc;
@@ -531,12 +572,23 @@ int yvex_model_prepare_command(int arg_count, char **args)
     if (rc) return rc;
     if (yvex_model_library_at(library, model_index)->profile_launchable &&
         !options.quant && !options.imatrix) {
-        rc = prepare_already_ready(&options, yvex_model_library_at(library, model_index));
-        yvex_model_library_close(library);
-        return rc;
+        yvex_error_clear(&err);
+        rc = prepare_plan_build(
+            &options, library, model_index, &plan, &err);
+        if (rc != YVEX_OK ||
+            prepare_profile_is_current(library, model_index, &plan)) {
+            rc = prepare_already_ready(
+                &options, yvex_model_library_at(library, model_index));
+            yvex_model_library_close(library);
+            return rc;
+        }
+        plan_built = 1;
     }
     yvex_error_clear(&err);
-    rc = prepare_plan_build(&options, library, model_index, &plan, &err);
+    rc = plan_built
+             ? YVEX_OK
+             : prepare_plan_build(
+                   &options, library, model_index, &plan, &err);
     if (rc != YVEX_OK) {
         const yvex_model_library_entry *model = yvex_model_library_at(library, model_index);
         const yvex_local_source_record *source =

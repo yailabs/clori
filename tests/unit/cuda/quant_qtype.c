@@ -2969,6 +2969,83 @@ static int quant_cuda_gqa_large(yvex_backend *backend)
     return 0;
 }
 
+static int quant_cuda_decoder_elementwise(yvex_backend *backend)
+{
+    yvex_device_tensor *interleaved_device = NULL, *first_device = NULL;
+    yvex_device_tensor *second_device = NULL, *values_device = NULL;
+    yvex_device_tensor *gate_device = NULL, *output_device = NULL;
+    const float interleaved[8] = {1.0f, 2.0f, 3.0f, 4.0f,
+                                  5.0f, 6.0f, 7.0f, 8.0f};
+    const float values[4] = {1.0f, -2.0f, 0.5f, 4.0f};
+    const float gates[4] = {0.0f, 1.0986122886681098f,
+                            -1.0986122886681098f, 1.0f};
+    float first[4], second[4], output[4];
+    yvex_backend_operation_facts facts;
+    yvex_error err;
+    unsigned long long index;
+
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "decoder-interleaved", YVEX_DTYPE_F32,
+                          interleaved, sizeof(interleaved),
+                          &interleaved_device, &err) &&
+            quant_cuda_tensor(backend, "decoder-first", YVEX_DTYPE_F32,
+                              NULL, sizeof(first), &first_device, &err) &&
+            quant_cuda_tensor(backend, "decoder-second", YVEX_DTYPE_F32,
+                              NULL, sizeof(second), &second_device, &err) &&
+            yvex_cuda_decoder_split_interleaved_two_f32(
+                backend, interleaved_device, first_device, second_device,
+                1ull, 2ull, 2ull, &facts, &err) == YVEX_OK &&
+            facts.kernel_launches == 1ull &&
+            yvex_backend_tensor_read(
+                backend, first_device, first, sizeof(first), &err) == YVEX_OK &&
+            yvex_backend_tensor_read(
+                backend, second_device, second, sizeof(second), &err) == YVEX_OK,
+        "decoder two-way per-head split executes");
+    YVEX_TEST_ASSERT(
+        first[0] == 1.0f && first[1] == 2.0f &&
+            first[2] == 5.0f && first[3] == 6.0f &&
+            second[0] == 3.0f && second[1] == 4.0f &&
+            second[2] == 7.0f && second[3] == 8.0f,
+        "decoder split preserves per-head interleaved order");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_decoder_split_interleaved_two_f32(
+            backend, interleaved_device, interleaved_device, second_device,
+            1ull, 2ull, 2ull, &facts, &err) == YVEX_ERR_FORMAT,
+        "decoder split refuses aliased publication storage");
+
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "decoder-values", YVEX_DTYPE_F32,
+                          values, sizeof(values), &values_device, &err) &&
+            quant_cuda_tensor(backend, "decoder-gates", YVEX_DTYPE_F32,
+                              gates, sizeof(gates), &gate_device, &err) &&
+            quant_cuda_tensor(backend, "decoder-gated", YVEX_DTYPE_F32,
+                              NULL, sizeof(output), &output_device, &err) &&
+            yvex_cuda_decoder_sigmoid_product_bf16(
+                backend, values_device, gate_device, output_device, 4ull,
+                &facts, &err) == YVEX_OK &&
+            facts.kernel_launches == 1ull &&
+            yvex_backend_tensor_read(
+                backend, output_device, output, sizeof(output), &err) == YVEX_OK,
+        "decoder sigmoid gate executes");
+    for (index = 0ull; index < 4ull; ++index) {
+        const float expected = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode(
+                values[index] / (1.0f + expf(-gates[index]))));
+        YVEX_TEST_ASSERT(output[index] == expected,
+                         "decoder sigmoid gate matches BF16 scalar authority");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &output_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &gate_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &values_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &second_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &first_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(
+                backend, &interleaved_device, &err) == YVEX_OK,
+        "decoder elementwise resources release cleanly");
+    return 0;
+}
+
 static int quant_cuda_video_transformer(yvex_backend *backend)
 {
     yvex_device_tensor *input = NULL, *first = NULL, *second = NULL, *third = NULL;
@@ -3669,6 +3746,8 @@ int yvex_cuda_test_quant_qtype(void)
                      "scalable exact accelerated attention");
     YVEX_TEST_ASSERT(quant_cuda_gqa_large(backend) == 0,
                      "large exact-attention qualification ladder");
+    YVEX_TEST_ASSERT(quant_cuda_decoder_elementwise(backend) == 0,
+                     "heterogeneous decoder elementwise primitives");
     YVEX_TEST_ASSERT(quant_cuda_video_transformer(backend) == 0,
                      "video transformer activation primitives");
     YVEX_TEST_ASSERT(quant_cuda_dense_decoder(backend) == 0,

@@ -310,6 +310,29 @@ struct yvex_backend_transformer_operations {
                           yvex_transformer_linear_executable_summary *, yvex_error *);
     int (*linear_release)(yvex_backend *, yvex_transformer_linear_executable **,
                           yvex_error *);
+    int (*rotary_half_f32)(yvex_backend *, yvex_device_tensor *,
+                           const yvex_device_tensor *, const yvex_device_tensor *,
+                           unsigned long long, unsigned long long,
+                           unsigned long long, unsigned long long,
+                           yvex_backend_operation_facts *, yvex_error *);
+    int (*split_interleaved_two_f32)(
+        yvex_backend *, const yvex_device_tensor *, yvex_device_tensor *,
+        yvex_device_tensor *, unsigned long long, unsigned long long,
+        unsigned long long, yvex_backend_operation_facts *, yvex_error *);
+    int (*silu_product_bf16)(yvex_backend *, const yvex_device_tensor *,
+                             const yvex_device_tensor *, yvex_device_tensor *,
+                             unsigned long long, yvex_backend_operation_facts *,
+                             yvex_error *);
+    int (*sigmoid_product_bf16)(yvex_backend *, const yvex_device_tensor *,
+                                const yvex_device_tensor *, yvex_device_tensor *,
+                                unsigned long long, yvex_backend_operation_facts *,
+                                yvex_error *);
+    int (*add_bf16)(yvex_backend *, const yvex_device_tensor *,
+                    const yvex_device_tensor *, yvex_device_tensor *,
+                    unsigned long long, unsigned long long,
+                    yvex_backend_operation_facts *, yvex_error *);
+    int (*bf16_round)(yvex_backend *, yvex_device_tensor *, unsigned long long,
+                      yvex_backend_operation_facts *, yvex_error *);
     int (*dense_decoder_execute)(yvex_backend *,
                                  const yvex_transformer_dense_decoder_request *,
                                  yvex_transformer_dense_decoder_result *, yvex_error *);

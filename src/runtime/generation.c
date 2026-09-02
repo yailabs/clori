@@ -22,8 +22,10 @@ struct runtime_generation_turn_state {
     unsigned char *text;
     yvex_runtime_generation_result *result;
     const yvex_transformer_plan_summary *transformer;
+    const yvex_decoder_plan_summary *decoder_plan;
     yvex_runtime_transformer_result current;
     yvex_runtime_decode_step_result last_decode;
+    yvex_runtime_decoder_execution_result current_decoder, last_decoder;
     yvex_backend_cuda_attention_graph_summary graph_before;
     float *prefill_hidden;
     const float *current_hidden;
@@ -199,6 +201,9 @@ static int generation_refuse(yvex_error *err, yvex_status status, const char *re
 static const unsigned long long generation_transformer_phase_facts =
     (1ull << YVEX_EXECUTION_PHASE_FACT_MOVEMENT) | (1ull << YVEX_EXECUTION_PHASE_FACT_KERNELS) |
     (1ull << YVEX_EXECUTION_PHASE_FACT_SYNCHRONIZATIONS);
+static const unsigned long long generation_decoder_phase_facts =
+    (1ull << YVEX_EXECUTION_PHASE_FACT_MOVEMENT) |
+    (1ull << YVEX_EXECUTION_PHASE_FACT_KERNELS);
 static int generation_phase_time(
     yvex_runtime_generation_context *context, yvex_execution_roofline_phase phase,
     unsigned long long duration, unsigned long long work, unsigned long long committed,
@@ -235,26 +240,6 @@ static int generation_phase_physical(
         generation_transformer_phase_facts |
             (physical->memory.complete ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull), err);
 }
-static int generation_state_summary(const yvex_runtime_execution_session *session,
-    yvex_graph_attention_state_summary *summary, yvex_error *err)
-{
-    const yvex_runtime_session_view *view = yvex_runtime_session_view_get(session);
-    if (!view || !view->attention_state_provider ||
-        !view->attention_state_provider->summary ||
-        view->attention_state_provider->summary(
-            view->attention_state_provider->context, summary, err) != YVEX_OK)
-        return generation_refuse(err, YVEX_ERR_STATE,
-                                 "persistent generation state is unavailable");
-    return YVEX_OK;
-}
-static int generation_cancelled(const yvex_runtime_generation_context *context, yvex_error *err)
-{
-    if (context->options.cancel_requested &&
-        context->options.cancel_requested(context->options.cancel_context))
-        return generation_refuse(err, YVEX_ERR_CANCELLED,
-                                 "generation was cancelled");
-    return YVEX_OK;
-}
 static int generation_producer_begin(yvex_runtime_generation_context *context,
                                      int *active, yvex_error *err)
 {
@@ -264,7 +249,6 @@ static int generation_producer_begin(yvex_runtime_generation_context *context,
     if (rc == YVEX_OK) *active = 1;
     return rc;
 }
-
 static int generation_progress_enter(
     yvex_runtime_generation_context *context,
     yvex_engine_progress_kind kind,
@@ -275,7 +259,6 @@ static int generation_progress_enter(
         context->options.cancel_requested, context->options.cancel_context,
         lease, err);
 }
-
 static int generation_progress_transition(
     runtime_engine_progress_lease *lease,
     yvex_engine_progress_kind kind, yvex_error *err)
@@ -358,11 +341,80 @@ static int generation_encode_prompt(
                                "encoded prompt is empty or exceeds context capacity");
     return rc;
 }
+static int generation_decoder_prefill(
+    yvex_runtime_generation_context *context,
+    const yvex_tokenizer_encode_result *encoded,
+    unsigned long long reusable_prefix,
+    const yvex_runtime_generation_turn_request *turn,
+    yvex_runtime_decoder_execution_result *final_result,
+    unsigned long long *completed_chunks,
+    yvex_runtime_profile_record *profile, yvex_error *err)
+{
+    const yvex_decoder_plan_summary *plan = yvex_decoder_plan_summary_get(
+        yvex_runtime_decoder_execution_plan(context->decoder_execution));
+    unsigned long long offset = 0ull;
+    const unsigned long long suffix_count =
+        encoded->tokens.len - reusable_prefix;
+    int rc = plan ? YVEX_OK
+                  : generation_refuse(
+                        err, YVEX_ERR_STATE,
+                        "heterogeneous decoder plan is unavailable");
+    memset(final_result, 0, sizeof(*final_result));
+    *completed_chunks = 0ull;
+    while (rc == YVEX_OK && offset < suffix_count) {
+        yvex_runtime_decoder_execution_request request = {0};
+        yvex_runtime_decoder_execution_result result = {0};
+        char input_identity[YVEX_SHA256_HEX_CAP];
+        unsigned long long count = suffix_count - offset;
+        unsigned long long started, completed;
+        if (count > context->options.prefill_chunk_tokens)
+            count = context->options.prefill_chunk_tokens;
+        request.token_ids =
+            encoded->tokens.ids + reusable_prefix + offset;
+        request.token_start = reusable_prefix + offset;
+        request.token_count = count;
+        if (!yvex_runtime_generation_decoder_input_identity(
+                plan, request.token_ids, request.token_start,
+                request.token_count, input_identity))
+            rc = generation_refuse(
+                err, YVEX_ERR_STATE,
+                "decoder prefill input identity derivation failed");
+        request.input_identity = input_identity;
+        started = yvex_core_monotonic_ns();
+        if (rc == YVEX_OK)
+            rc = yvex_runtime_decoder_execution_execute(
+                context->decoder_execution, &request, &result, err);
+        completed = yvex_core_monotonic_ns();
+        if (rc == YVEX_OK)
+            rc = yvex_runtime_generation_profile_decoder(profile, &result, err);
+        if (rc == YVEX_OK)
+            rc = generation_phase_time(
+                context, YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER,
+                completed - started, count, 0ull, NULL, result.h2d_bytes,
+                result.d2h_bytes, result.d2d_bytes,
+                result.kernel_launches, 0ull,
+                generation_decoder_phase_facts, err);
+        if (rc == YVEX_OK) {
+            *final_result = result;
+            ++*completed_chunks;
+            offset += count;
+            if (turn->progress_sink)
+                rc = turn->progress_sink(
+                    turn->progress_context,
+                    YVEX_GENERATION_PROGRESS_PREFILL_PROGRESS, offset,
+                    suffix_count, err);
+        }
+    }
+    return rc;
+}
+
 static int generation_prefill(
     yvex_runtime_generation_context *context, const yvex_tokenizer_encode_result *encoded,
     unsigned long long reusable_prefix, const yvex_runtime_generation_turn_request *turn,
     float **final_hidden, unsigned long long *final_hidden_count,
-    yvex_runtime_transformer_result *final_result, unsigned long long *completed_chunks,
+    yvex_runtime_transformer_result *final_result,
+    yvex_runtime_decoder_execution_result *final_decoder,
+    unsigned long long *completed_chunks,
     yvex_runtime_profile_record *profile, yvex_error *err)
 {
     const yvex_transformer_plan_summary *plan = yvex_transformer_plan_summary_get(
@@ -380,9 +432,14 @@ static int generation_prefill(
     *final_hidden_count = 0ull;
     *completed_chunks = 0ull;
     memset(final_result, 0, sizeof(*final_result));
+    memset(final_decoder, 0, sizeof(*final_decoder));
     if (reusable_prefix >= encoded->tokens.len)
         return generation_refuse(err, YVEX_ERR_STATE,
                                  "generation turn requires one exact new prompt suffix token");
+    if (context->decoder_execution)
+        return generation_decoder_prefill(
+            context, encoded, reusable_prefix, turn, final_decoder,
+            completed_chunks, profile, err);
     suffix_count = encoded->tokens.len - reusable_prefix;
     maximum_chunk = context->options.prefill_chunk_tokens;
     rc = yvex_model_engine_scheduler_maximum_width_copy(context->model, &compiled_row_width, err);
@@ -482,13 +539,6 @@ static int generation_prefill(
     yvex_core_free(buffer);
     return rc;
 }
-static int generation_profile_count(yvex_runtime_profile_record *profile,
-    yvex_runtime_profile_counter counter, unsigned long long value, yvex_error *err)
-{
-    return !profile || !value ||
-                   yvex_runtime_profile_counter_add(profile, counter, value, err) == YVEX_OK
-               ? YVEX_OK : yvex_error_code(err);
-}
 static int generation_observe_worklists(
     yvex_runtime_generation_evidence *evidence,
     const yvex_expert_worklist_observation *observation, yvex_error *err)
@@ -498,40 +548,29 @@ static int generation_observe_worklists(
                : yvex_expert_worklist_observation_add(
                      &evidence->expert_worklists, observation, err);
 }
-static int generation_profile_graph_delta(yvex_runtime_profile_record *profile,
-    const yvex_backend_cuda_attention_graph_summary *before,
-    const yvex_backend_cuda_attention_graph_summary *after, yvex_error *err)
-{
-    const unsigned long long prior[] = {before->launch_count, before->capture_count,
-                                        before->replay_count};
-    const unsigned long long current[] = {after->launch_count, after->capture_count,
-                                          after->replay_count};
-    const yvex_runtime_profile_counter counters[] = {
-        YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES, YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES,
-        YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS};
-    size_t index;
-    for (index = 0u; index < sizeof(prior) / sizeof(prior[0]); ++index) {
-        if (current[index] < prior[index])
-            return generation_refuse(err, YVEX_ERR_STATE,
-                "CUDA graph evidence regressed during one generation turn");
-        if (generation_profile_count(
-                profile, counters[index], current[index] - prior[index], err) != YVEX_OK)
-            return yvex_error_code(err);
-    }
-    return YVEX_OK;
-}
 /* Derive token-step identity from published fields, never pointers, padding, or object bytes. */
 static int generation_project_logits(yvex_runtime_generation_context *context,
     const yvex_runtime_transformer_result *prefill,
     const float *prefill_hidden, unsigned long long prefill_hidden_count,
-    const yvex_runtime_decode_step_result *decode, yvex_runtime_logits_row_result *logits_result,
+    const yvex_runtime_decode_step_result *decode,
+    const yvex_runtime_decoder_execution_result *decoder,
+    yvex_logits_source_phase decoder_phase,
+    yvex_runtime_logits_row_result *logits_result,
     yvex_runtime_profile_record *profile, yvex_error *err)
 {
     yvex_runtime_logits_source logits_source;
     unsigned long long started, completed;
     int shared_attribution, rc;
     memset(logits_result, 0, sizeof(*logits_result));
-    if (prefill)
+    if (!!prefill + !!decode + !!decoder != 1)
+        rc = generation_refuse(
+            err, YVEX_ERR_STATE,
+            "generation logits require exactly one model producer");
+    else if (decoder)
+        rc = yvex_runtime_logits_source_from_decoder(
+            context->logits, &logits_source, decoder, decoder_phase,
+            decoder->token_count - 1ull, err);
+    else if (prefill)
         rc = yvex_runtime_logits_source_from_transformer(
             context->logits, &logits_source, prefill, prefill_hidden,
             prefill_hidden_count, prefill->token_count - 1ull, err);
@@ -565,46 +604,30 @@ static int generation_project_logits(yvex_runtime_generation_context *context,
                     YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_SYNCHRONIZATIONS), err);
         if (rc == YVEX_OK && profile &&
             profile->mode != YVEX_RUNTIME_PROFILE_OFF &&
-            (generation_profile_count(profile, YVEX_RUNTIME_PROFILE_H2D_BYTES,
+            (yvex_runtime_generation_profile_count(profile, YVEX_RUNTIME_PROFILE_H2D_BYTES,
                                       logits_result->h2d_bytes, err) != YVEX_OK ||
-             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_D2H_BYTES,
+             yvex_runtime_generation_profile_count(profile, YVEX_RUNTIME_PROFILE_D2H_BYTES,
                                       logits_result->d2h_bytes, err) != YVEX_OK ||
-             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_LOGITS_H2D_BYTES,
+             yvex_runtime_generation_profile_count(profile, YVEX_RUNTIME_PROFILE_LOGITS_H2D_BYTES,
                                       logits_result->h2d_bytes, err) != YVEX_OK ||
-             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES,
+             yvex_runtime_generation_profile_count(profile, YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES,
                                       logits_result->d2h_bytes, err) != YVEX_OK ||
-             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES,
+             yvex_runtime_generation_profile_count(profile, YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES,
                                       logits_result->full_array_host_scan_bytes, err) != YVEX_OK ||
-             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES,
+             yvex_runtime_generation_profile_count(profile, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES,
                                       logits_result->kernel_launches, err) != YVEX_OK))
             rc = yvex_error_code(err);
     }
-    return rc;
-}
-static int generation_sampling_account(
-    yvex_runtime_profile_record *profile, const yvex_runtime_sampling_result *sampling,
-    unsigned long long elapsed, yvex_error *err)
-{
-    const unsigned long long d2h = sampling->d2h_bytes, scans = sampling->full_array_host_scan_bytes;
-    const unsigned long long kernels = sampling->kernel_launches, streams = sampling->queue_synchronizations;
-    const unsigned long long devices = sampling->device_synchronizations;
-    int rc = yvex_runtime_generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_SAMPLING, elapsed, err);
-    if (rc == YVEX_OK && profile &&
-        profile->mode != YVEX_RUNTIME_PROFILE_OFF &&
-        (generation_profile_count(profile, YVEX_RUNTIME_PROFILE_D2H_BYTES, d2h, err) != YVEX_OK ||
-         generation_profile_count(profile, YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES, d2h, err) != YVEX_OK ||
-         generation_profile_count(profile, YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES, scans, err) != YVEX_OK ||
-         generation_profile_count(profile, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES, kernels, err) != YVEX_OK ||
-         generation_profile_count(profile, YVEX_RUNTIME_PROFILE_QUEUE_SYNCHRONIZATIONS, streams, err) != YVEX_OK ||
-         generation_profile_count(profile, YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS, devices, err) != YVEX_OK))
-        rc = yvex_error_code(err);
     return rc;
 }
 static int generation_project_sample(
     yvex_runtime_generation_context *context,
     const yvex_runtime_transformer_result *prefill,
     const float *prefill_hidden, unsigned long long prefill_hidden_count,
-    const yvex_runtime_decode_step_result *decode, yvex_runtime_logits_row_result *logits_result,
+    const yvex_runtime_decode_step_result *decode,
+    const yvex_runtime_decoder_execution_result *decoder,
+    yvex_logits_source_phase decoder_phase,
+    yvex_runtime_logits_row_result *logits_result,
     yvex_runtime_sampling_result *sampling_result,
     yvex_runtime_profile_record *profile, yvex_error *err)
 {
@@ -613,8 +636,9 @@ static int generation_project_sample(
     unsigned long long started, completed;
     int rc;
     memset(sampling_result, 0, sizeof(*sampling_result));
-    rc = generation_project_logits(context, prefill, prefill_hidden, prefill_hidden_count,
-                                   decode, logits_result, profile, err);
+    rc = generation_project_logits(
+        context, prefill, prefill_hidden, prefill_hidden_count, decode,
+        decoder, decoder_phase, logits_result, profile, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_sampling_source_from_logits(
             context->sampling, &source, context->logits_row,
@@ -627,8 +651,8 @@ static int generation_project_sample(
         rc = yvex_runtime_sampling_select(context->sampling, transaction, &source, sampling_result, err);
         completed = yvex_core_monotonic_ns();
         if (rc == YVEX_OK)
-            rc = generation_sampling_account(profile, sampling_result,
-                                             completed - started, err);
+            rc = yvex_runtime_generation_sampling_account(
+                profile, sampling_result, completed - started, err);
     }
     if (transaction && rc == YVEX_OK)
         rc = yvex_runtime_sampling_transaction_prepare_commit(transaction, err);
@@ -661,15 +685,51 @@ static int generation_terminal_token(
                                  "terminal token identity derivation failed");
     return YVEX_OK;
 }
+static int generation_commit_physical(
+    yvex_runtime_generation_context *context, int decoder_producer,
+    unsigned long long started, unsigned long long completed,
+    const yvex_runtime_decode_step_result *decode,
+    const yvex_runtime_decoder_execution_result *decoder, yvex_error *err)
+{
+    const yvex_execution_memory_facts *memory =
+        !decoder_producer && decode->memory.complete ? &decode->memory : NULL;
+    const unsigned long long h2d = decoder_producer ? decoder->h2d_bytes : decode->h2d_bytes;
+    const unsigned long long d2h = decoder_producer ? decoder->d2h_bytes : decode->d2h_bytes;
+    const unsigned long long d2d = decoder_producer ? decoder->d2d_bytes : decode->d2d_bytes;
+    const unsigned long long kernels = decoder_producer
+                                           ? decoder->kernel_launches
+                                           : decode->kernel_launches;
+    unsigned long long synchronizations = 0ull;
+    unsigned long long facts = decoder_producer
+                                   ? generation_decoder_phase_facts
+                                   : generation_transformer_phase_facts;
+    if (!decoder_producer &&
+        !yvex_core_u64_add(decode->queue_synchronizations,
+                           decode->device_synchronizations,
+                           &synchronizations))
+        return generation_refuse(
+            err, YVEX_ERR_BOUNDS, "decode physical accounting overflowed");
+    if (memory) facts |= YVEX_EXECUTION_PHASE_MEMORY_FACTS;
+    return generation_phase_time(
+        context, YVEX_EXECUTION_ROOFLINE_DECODE_LAYER, completed - started,
+        1ull, 1ull, memory, h2d, d2h, d2d, kernels, synchronizations, facts, err);
+}
 static int generation_commit_ordinary(
     yvex_runtime_generation_context *context,
     yvex_runtime_generation_token_result *token,
     unsigned long long sequence_ordinal, unsigned char *text,
     unsigned long long text_capacity, yvex_runtime_generation_result *result,
-    yvex_runtime_decode_step_result *decode_result, yvex_error *err)
+    yvex_runtime_decode_step_result *decode_result,
+    yvex_runtime_decoder_execution_result *decoder_result,
+    yvex_error *err)
 {
     yvex_tokenizer_fragment fragment;
-    unsigned long long next_text, started, completed, synchronizations = 0ull;
+    yvex_graph_attention_state_summary state_after = {0};
+    yvex_runtime_decoder_execution_request decoder_request = {0};
+    const yvex_decoder_plan_summary *decoder_plan = NULL;
+    char decoder_input_identity[YVEX_SHA256_HEX_CAP];
+    unsigned long long next_text, started, completed;
+    const int decoder_producer = context->decoder_execution != NULL;
     const int device_only =
         context->options.backend == YVEX_BACKEND_KIND_CUDA &&
         context->options.mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
@@ -677,13 +737,18 @@ static int generation_commit_ordinary(
         context->options.evidence_profile == YVEX_EXECUTION_EVIDENCE_PRODUCTION;
     int rc;
     memset(&fragment, 0, sizeof(fragment));
+    if ((!context->decode) == (!context->decoder_execution))
+        return generation_refuse(
+            err, YVEX_ERR_STATE,
+            "ordinary generation requires exactly one decode producer");
     rc = yvex_token_sequence_transition(
         context->sequence, sequence_ordinal, YVEX_TOKEN_APPEND_PROPOSED,
         YVEX_TOKEN_APPEND_APPENDED, err);
     token->sequence_state_after = rc == YVEX_OK
                                       ? YVEX_TOKEN_APPEND_APPENDED
                                       : YVEX_TOKEN_APPEND_PROPOSED;
-    if (rc == YVEX_OK) rc = generation_cancelled(context, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_private_generation_cancelled(context, err);
     if (rc == YVEX_OK) {
         rc = yvex_token_sequence_transition(
             context->sequence, sequence_ordinal, YVEX_TOKEN_APPEND_APPENDED,
@@ -696,11 +761,34 @@ static int generation_commit_ordinary(
     }
     if (rc == YVEX_OK) {
         started = yvex_core_monotonic_ns();
-        rc = yvex_runtime_decode_step(
-            context->decode, token->ordinal, token->position_before,
-            token->sampled_token_id, context->options.backend,
-            device_only ? NULL : context->hidden,
-            device_only ? 0ull : context->hidden_count, decode_result, err);
+        if (decoder_producer) {
+            decoder_plan = yvex_decoder_plan_summary_get(
+                yvex_runtime_decoder_execution_plan(
+                    context->decoder_execution));
+            decoder_request.token_ids = &token->sampled_token_id;
+            decoder_request.token_start = token->position_before;
+            decoder_request.token_count = 1ull;
+            if (!decoder_plan ||
+                !yvex_runtime_generation_decoder_input_identity(
+                    decoder_plan, decoder_request.token_ids,
+                    decoder_request.token_start,
+                    decoder_request.token_count, decoder_input_identity))
+                rc = generation_refuse(
+                    err, YVEX_ERR_STATE,
+                    "decoder token input identity derivation failed");
+            decoder_request.input_identity = decoder_input_identity;
+            if (rc == YVEX_OK)
+                rc = yvex_runtime_decoder_execution_execute(
+                    context->decoder_execution, &decoder_request,
+                    decoder_result, err);
+        } else {
+            rc = yvex_runtime_decode_step(
+                context->decode, token->ordinal, token->position_before,
+                token->sampled_token_id, context->options.backend,
+                device_only ? NULL : context->hidden,
+                device_only ? 0ull : context->hidden_count, decode_result,
+                err);
+        }
         completed = yvex_core_monotonic_ns();
         if (rc == YVEX_OK)
             rc = yvex_runtime_generation_profile_phase(
@@ -708,40 +796,53 @@ static int generation_commit_ordinary(
                 result->decode_step_count ? YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE
                                           : YVEX_RUNTIME_PROFILE_FIRST_DECODE,
                 completed - started, err);
-        if (rc == YVEX_OK)
+        if (rc == YVEX_OK && decoder_producer)
+            rc = yvex_runtime_generation_profile_decoder(
+                generation_profile(context), decoder_result, err);
+        else if (rc == YVEX_OK)
             rc = yvex_runtime_generation_profile_decode(
                 generation_profile(context), decode_result, err);
-        if (rc == YVEX_OK)
+        if (rc == YVEX_OK && !decoder_producer)
             rc = generation_observe_worklists(
                 generation_evidence(context), &decode_result->expert_worklists, err);
     }
+    if (rc == YVEX_OK && decoder_producer)
+        rc = yvex_runtime_generation_state_summary(context->session, &state_after, err);
     if (rc == YVEX_OK) {
         rc = yvex_token_sequence_transition(
             context->sequence, sequence_ordinal, YVEX_TOKEN_APPEND_SUBMITTED,
             YVEX_TOKEN_APPEND_MODEL_COMMITTED, err);
         token->sequence_state_after = YVEX_TOKEN_APPEND_MODEL_COMMITTED;
         token->model_committed = 1;
-        token->position_after = decode_result->position_after;
-        token->persistent_generation_after = decode_result->generation_after;
-        yvex_runtime_identity_copy(token->decode_execution_identity,
-                                   decode_result->decode_step_identity);
-        yvex_runtime_identity_copy(token->persistent_state_digest,
-                                   decode_result->persistent_state_digest);
+        token->position_after = decoder_producer
+                                    ? decoder_result->position_after
+                                    : decode_result->position_after;
+        token->persistent_generation_after = decoder_producer
+                                                  ? state_after.generation
+                                                  : decode_result->generation_after;
+        yvex_runtime_identity_copy(
+            token->decode_execution_identity,
+            decoder_producer ? decoder_result->execution_identity
+                             : decode_result->decode_step_identity);
+        yvex_runtime_identity_copy(
+            token->persistent_state_digest,
+            decoder_producer ? decoder_result->persistent_state_identity
+                             : decode_result->persistent_state_digest);
+        if (decoder_producer &&
+            (state_after.next_position != decoder_result->position_after ||
+             state_after.generation <= token->persistent_generation_before))
+            rc = generation_refuse(
+                err, YVEX_ERR_STATE,
+                "decoder token did not publish its exact mixed state");
         result->model_committed_token_count++;
         result->decode_step_count++;
-        if (!yvex_core_u64_add(decode_result->queue_synchronizations,
-                               decode_result->device_synchronizations, &synchronizations))
-            rc = generation_refuse(err, YVEX_ERR_BOUNDS, "decode physical accounting overflowed");
         if (rc == YVEX_OK)
-            rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_DECODE_LAYER,
-                completed - started, 1ull, 1ull,
-                decode_result->memory.complete ? &decode_result->memory : NULL,
-                decode_result->h2d_bytes, decode_result->d2h_bytes,
-                decode_result->d2d_bytes, decode_result->kernel_launches, synchronizations,
-                generation_transformer_phase_facts |
-                    (decode_result->memory.complete ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull), err);
+            rc = generation_commit_physical(
+                context, decoder_producer, started, completed, decode_result,
+                decoder_result, err);
     }
-    if (rc == YVEX_OK) rc = generation_cancelled(context, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_private_generation_cancelled(context, err);
     if (rc == YVEX_OK) {
         started = yvex_core_monotonic_ns();
         rc = yvex_tokenizer_decoder_push(context->decoder,
@@ -1192,10 +1293,11 @@ static int generation_speculative_current_step(
     int rc;
     *terminal = 0;
     memset(step, 0, sizeof(*step));
-    rc = generation_cancelled(context, err);
+    rc = yvex_runtime_private_generation_cancelled(context, err);
     if (rc == YVEX_OK)
         rc = generation_project_logits(context, anchor, anchor_hidden,
-            anchor_hidden_count, NULL, &logits, generation_profile(context), err);
+            anchor_hidden_count, NULL, NULL, YVEX_LOGITS_SOURCE_PREFILL,
+            &logits, generation_profile(context), err);
     if (rc == YVEX_OK && context->device_selection &&
         (!logits.device_values_available || logits.full_array_host_scan_bytes))
         rc = generation_refuse(err, YVEX_ERR_STATE,
@@ -1210,8 +1312,9 @@ static int generation_speculative_current_step(
             context->speculation, before->next_position, &source, step, &selection, err);
         completed = yvex_core_monotonic_ns();
         if (rc == YVEX_OK)
-            rc = generation_sampling_account(generation_profile(context), &selection,
-                                             completed - started, err);
+            rc = yvex_runtime_generation_sampling_account(
+                generation_profile(context), &selection,
+                completed - started, err);
     }
     if (rc == YVEX_OK && context->device_selection &&
         (!selection.device_selection || selection.full_array_host_scan_bytes))
@@ -1252,7 +1355,7 @@ static int generation_speculative_candidate_cycle(
     int rc;
     *terminal = 0;
     memset(commit, 0, sizeof(*commit));
-    rc = generation_state_summary(context->session, &before, err);
+    rc = yvex_runtime_generation_state_summary(context->session, &before, err);
     if (rc != YVEX_OK) return rc;
     remaining_output = turn->maximum_new_tokens -
                        result->model_committed_token_count;
@@ -1275,7 +1378,7 @@ static int generation_speculative_candidate_cycle(
             result->sampling_draw_count += anchor_step->target_rng_draw_count;
         return rc;
     }
-    rc = generation_cancelled(context, err);
+    rc = yvex_runtime_private_generation_cancelled(context, err);
     if (rc == YVEX_OK) {
         yvex_runtime_speculation_cycle_request request = {
             .position = before.next_position,
@@ -1414,7 +1517,8 @@ static int generation_speculative_step(
         result->stop_reason = YVEX_GENERATION_STOP_MAX_NEW_TOKENS;
         return YVEX_OK;
     }
-    if (rc == YVEX_OK) rc = generation_state_summary(context->session, &before, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_generation_state_summary(context->session, &before, err);
     if (rc == YVEX_OK && before.next_position == context->options.context_capacity) {
         result->stop_reason = YVEX_GENERATION_STOP_CONTEXT_CAPACITY;
         return YVEX_OK;
@@ -1469,6 +1573,7 @@ static int generation_turn_prepare(
     const yvex_runtime_generation_turn_request *turn,
     yvex_tokenizer_encode_result *encoded, yvex_rendered_prompt *rendered,
     const yvex_transformer_plan_summary **transformer,
+    const yvex_decoder_plan_summary **decoder,
     yvex_runtime_generation_result *result, yvex_error *err)
 {
     const yvex_runtime_generation_request *request = turn->prompt;
@@ -1480,7 +1585,7 @@ static int generation_turn_prepare(
         return generation_refuse(
             err, YVEX_ERR_STATE,
             "generation context requires reset after an incomplete turn");
-    rc = generation_state_summary(context->session, &initial_state, err);
+    rc = yvex_runtime_generation_state_summary(context->session, &initial_state, err);
     if (rc == YVEX_OK &&
         (initial_state.next_position != turn->committed_prefix_token_count ||
          initial_state.committed_sequence_length !=
@@ -1507,7 +1612,8 @@ static int generation_turn_prepare(
     if (rc == YVEX_OK)
         yvex_runtime_identity_copy(result->initial_rng_identity,
                                    initial_sampling.rng_state_identity);
-    if (rc == YVEX_OK) rc = generation_cancelled(context, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_private_generation_cancelled(context, err);
     if (rc == YVEX_OK)
         rc = generation_encode_prompt(context, request, rendered, encoded,
                                       result->prompt_identity, err);
@@ -1521,8 +1627,10 @@ static int generation_turn_prepare(
     }
     *transformer = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(context->transformer));
+    *decoder = yvex_decoder_plan_summary_get(
+        yvex_runtime_decoder_execution_plan(context->decoder_execution));
     if (rc == YVEX_OK &&
-        (!*transformer ||
+        ((!*transformer == !*decoder) ||
          encoded->tokens.len > context->options.context_capacity ||
          encoded->tokens.len <= turn->committed_prefix_token_count ||
          turn->prompt_token_capacity < encoded->tokens.len))
@@ -1564,17 +1672,26 @@ static int generation_target_step(yvex_runtime_generation_context *context,
         result->stop_reason = YVEX_GENERATION_STOP_MAX_NEW_TOKENS;
         return YVEX_OK;
     }
-    rc = generation_state_summary(context->session, &before, err);
+    rc = yvex_runtime_generation_state_summary(context->session, &before, err);
     if (rc == YVEX_OK && before.next_position == context->options.context_capacity) {
         result->stop_reason = YVEX_GENERATION_STOP_CONTEXT_CAPACITY;
         return YVEX_OK;
     }
-    if (rc == YVEX_OK) rc = generation_cancelled(context, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_private_generation_cancelled(context, err);
     if (rc == YVEX_OK)
         rc = generation_project_sample(
-            context, turn->use_current ? &turn->current : NULL,
+            context,
+            turn->use_current && turn->transformer ? &turn->current : NULL,
             turn->current_hidden, turn->current_hidden_count,
-            turn->use_current ? NULL : &turn->last_decode,
+            !turn->use_current && turn->transformer ? &turn->last_decode
+                                                    : NULL,
+            turn->decoder_plan
+                ? (turn->use_current ? &turn->current_decoder
+                                     : &turn->last_decoder)
+                : NULL,
+            turn->use_current ? YVEX_LOGITS_SOURCE_PREFILL
+                              : YVEX_LOGITS_SOURCE_DECODE,
             &logits_result, &sample, generation_profile(context), err);
     if (logits_result.completed) result->logits_projection_count++;
     if (rc != YVEX_OK) return rc;
@@ -1602,14 +1719,16 @@ static int generation_target_step(yvex_runtime_generation_context *context,
     if (rc == YVEX_OK)
         rc = yvex_token_sequence_append(
             context->sequence, token->sampled_token_id,
-            turn->transformer->vocabulary_size, &sequence_ordinal, err);
+            turn->transformer ? turn->transformer->vocabulary_size
+                              : turn->decoder_plan->vocabulary_size,
+            &sequence_ordinal, err);
     if (rc == YVEX_OK && (token->classification.eos || token->classification.stop ||
                           additional_stop))
         rc = generation_terminal_token(token, result, additional_stop, err);
     else if (rc == YVEX_OK)
         rc = generation_commit_ordinary(
             context, token, sequence_ordinal, turn->text, turn->text_capacity,
-            result, &turn->last_decode, err);
+            result, &turn->last_decode, &turn->last_decoder, err);
     if (rc == YVEX_OK && turn->request.fragment_sink && token->text_published) {
         started = yvex_core_monotonic_ns();
         rc = turn->request.fragment_sink(
@@ -1697,7 +1816,8 @@ int yvex_runtime_generation_turn_begin(
     started = yvex_core_monotonic_ns();
     if (rc == YVEX_OK)
         rc = generation_turn_prepare(context, turn, &encoded, &rendered,
-                                     &state->transformer, result, err);
+                                     &state->transformer,
+                                     &state->decoder_plan, result, err);
     completed = yvex_core_monotonic_ns();
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_profile_phase(generation_profile(context),
@@ -1729,8 +1849,9 @@ int yvex_runtime_generation_turn_begin(
     if (rc == YVEX_OK)
         rc = generation_prefill(context, &encoded, turn->committed_prefix_token_count, turn,
             &state->prefill_hidden, &state->current_hidden_count, &state->current,
-            &prefill_chunks, generation_profile(context), err);
-    if (rc == YVEX_OK)
+            &state->current_decoder, &prefill_chunks,
+            generation_profile(context), err);
+    if (rc == YVEX_OK && state->transformer)
         rc = generation_observe_worklists(
             generation_evidence(context), &state->current.expert_worklists, err);
     completed = yvex_core_monotonic_ns();
@@ -1843,7 +1964,7 @@ int yvex_runtime_generation_turn_finish(yvex_runtime_generation_context *context
         rc = view && view->backend &&
                      yvex_backend_cuda_attention_graph_summary_get(
                          view->backend, &graph_after, err) == YVEX_OK
-                 ? generation_profile_graph_delta(
+                 ? yvex_runtime_generation_profile_graph_delta(
                        generation_profile(context), &turn->graph_before,
                        &graph_after, err)
                  : generation_refuse(err, YVEX_ERR_STATE,

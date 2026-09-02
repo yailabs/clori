@@ -177,6 +177,105 @@ int yvex_runtime_generation_profile_transformer(
     return YVEX_OK;
 }
 
+int yvex_runtime_generation_profile_decoder(
+    yvex_runtime_profile_record *profile,
+    const yvex_runtime_decoder_execution_result *value, yvex_error *err)
+{
+#define COUNTER(kind_, value_)                                                   \
+    do {                                                                         \
+        if ((value_) &&                                                          \
+            yvex_runtime_profile_counter_add(                                    \
+                profile, (kind_), (value_), err) != YVEX_OK)                     \
+            return yvex_error_code(err);                                         \
+    } while (0)
+    if (!profile || profile->mode == YVEX_RUNTIME_PROFILE_OFF || !value ||
+        !value->completed)
+        return YVEX_OK;
+    COUNTER(YVEX_RUNTIME_PROFILE_H2D_BYTES, value->h2d_bytes);
+    COUNTER(YVEX_RUNTIME_PROFILE_D2H_BYTES, value->d2h_bytes);
+    COUNTER(YVEX_RUNTIME_PROFILE_D2D_BYTES, value->d2d_bytes);
+    COUNTER(YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES, value->kernel_launches);
+    COUNTER(YVEX_RUNTIME_PROFILE_ACCELERATED_MATRIX_LAUNCHES,
+            value->accelerated_matrix_operations);
+#undef COUNTER
+    if (yvex_runtime_generation_profile_phase(
+            profile, YVEX_RUNTIME_PROFILE_EMBEDDING,
+            value->embedding_nanoseconds, err) != YVEX_OK ||
+        yvex_runtime_generation_profile_phase(
+            profile, YVEX_RUNTIME_PROFILE_FINAL_NORMALIZATION,
+            value->final_nanoseconds, err) != YVEX_OK)
+        return yvex_error_code(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_generation_profile_count(
+    yvex_runtime_profile_record *profile, yvex_runtime_profile_counter counter,
+    unsigned long long value, yvex_error *err)
+{
+    return !profile || !value ||
+                   yvex_runtime_profile_counter_add(profile, counter, value, err) == YVEX_OK
+               ? YVEX_OK : yvex_error_code(err);
+}
+
+int yvex_runtime_generation_profile_graph_delta(
+    yvex_runtime_profile_record *profile,
+    const yvex_backend_cuda_attention_graph_summary *before,
+    const yvex_backend_cuda_attention_graph_summary *after, yvex_error *err)
+{
+    const unsigned long long prior[] = {before->launch_count, before->capture_count,
+                                        before->replay_count};
+    const unsigned long long current[] = {after->launch_count, after->capture_count,
+                                          after->replay_count};
+    const yvex_runtime_profile_counter counters[] = {
+        YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES, YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES,
+        YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS};
+    size_t index;
+    for (index = 0u; index < sizeof(prior) / sizeof(prior[0]); ++index) {
+        if (current[index] < prior[index])
+            return generation_result_refuse(
+                err, YVEX_ERR_STATE,
+                "CUDA graph evidence regressed during one generation turn");
+        if (yvex_runtime_generation_profile_count(
+                profile, counters[index], current[index] - prior[index], err) != YVEX_OK)
+            return yvex_error_code(err);
+    }
+    return YVEX_OK;
+}
+
+int yvex_runtime_generation_sampling_account(
+    yvex_runtime_profile_record *profile,
+    const yvex_runtime_sampling_result *sampling,
+    unsigned long long elapsed, yvex_error *err)
+{
+    const unsigned long long d2h = sampling->d2h_bytes;
+    const unsigned long long scans = sampling->full_array_host_scan_bytes;
+    const unsigned long long kernels = sampling->kernel_launches;
+    const unsigned long long streams = sampling->queue_synchronizations;
+    const unsigned long long devices = sampling->device_synchronizations;
+    int rc = yvex_runtime_generation_profile_phase(
+        profile, YVEX_RUNTIME_PROFILE_SAMPLING, elapsed, err);
+    if (rc == YVEX_OK && profile &&
+        profile->mode != YVEX_RUNTIME_PROFILE_OFF &&
+        (yvex_runtime_generation_profile_count(
+             profile, YVEX_RUNTIME_PROFILE_D2H_BYTES, d2h, err) != YVEX_OK ||
+         yvex_runtime_generation_profile_count(
+             profile, YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES, d2h, err) != YVEX_OK ||
+         yvex_runtime_generation_profile_count(
+             profile, YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES,
+             scans, err) != YVEX_OK ||
+         yvex_runtime_generation_profile_count(
+             profile, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES,
+             kernels, err) != YVEX_OK ||
+         yvex_runtime_generation_profile_count(
+             profile, YVEX_RUNTIME_PROFILE_QUEUE_SYNCHRONIZATIONS,
+             streams, err) != YVEX_OK ||
+         yvex_runtime_generation_profile_count(
+             profile, YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS,
+             devices, err) != YVEX_OK))
+        rc = yvex_error_code(err);
+    return rc;
+}
+
 int yvex_runtime_generation_profile_decode(
     yvex_runtime_profile_record *profile,
     const yvex_runtime_decode_step_result *value, yvex_error *err)
@@ -217,7 +316,7 @@ int yvex_runtime_generation_profile_decode(
         profile, &projected, err);
 }
 
-static int generation_result_state_summary(
+int yvex_runtime_generation_state_summary(
     const yvex_runtime_execution_session *session,
     yvex_graph_attention_state_summary *summary, yvex_error *err)
 {
@@ -347,7 +446,7 @@ int yvex_runtime_private_generation_result_finish(
     yvex_error secondary;
     int finish_rc;
     yvex_error_clear(&secondary);
-    finish_rc = generation_result_state_summary(
+    finish_rc = yvex_runtime_generation_state_summary(
         context->session, &state, &secondary);
     if (finish_rc == YVEX_OK) {
         result->final_position = state.next_position;
@@ -571,6 +670,29 @@ int yvex_runtime_generation_prefix_identity(
     return generation_hash_finish(&hash, output);
 }
 
+int yvex_runtime_generation_decoder_input_identity(
+    const yvex_decoder_plan_summary *plan, const unsigned int *tokens,
+    unsigned long long token_start, unsigned long long token_count,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+    if (!plan || !tokens || !token_count || !output) return 0;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(
+            &hash, "yvex.runtime.decoder.token-input.v1") ||
+        !yvex_sha256_update_text(&hash, plan->decoder_plan_identity) ||
+        !yvex_sha256_update_u64(&hash, token_start) ||
+        !yvex_sha256_update_u64(&hash, token_count))
+        return 0;
+    for (index = 0ull; index < token_count; ++index)
+        if (!yvex_sha256_update_u64(&hash, tokens[index])) return 0;
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
 int yvex_runtime_generation_stop_identity(
     const yvex_tokenizer_plan_summary *tokenizer,
     const unsigned int *additional, unsigned long long count,
@@ -597,8 +719,9 @@ int yvex_runtime_generation_plan_identity(
     yvex_sha256 hash;
     if (!plan || !output) return 0;
     yvex_sha256_init(&hash);
-    return yvex_sha256_update_text(&hash, "yvex.runtime.generation.plan.v5") &&
+    return yvex_sha256_update_text(&hash, "yvex.runtime.generation.plan.v6") &&
            yvex_sha256_update_u64(&hash, plan->schema_version) &&
+           yvex_sha256_update_u64(&hash, plan->producer_kind) &&
            yvex_sha256_update_u64(&hash, plan->backend) &&
            yvex_sha256_update_u64(&hash, plan->mode) &&
            yvex_sha256_update_u64(&hash, plan->context_capacity) &&
@@ -613,7 +736,7 @@ int yvex_runtime_generation_plan_identity(
            yvex_sha256_update_text(&hash, plan->runtime_descriptor_identity) &&
            yvex_sha256_update_text(&hash, plan->tokenizer_plan_identity) &&
            yvex_sha256_update_text(&hash, plan->prompt_policy_identity) &&
-           yvex_sha256_update_text(&hash, plan->transformer_plan_identity) &&
+           yvex_sha256_update_text(&hash, plan->producer_plan_identity) &&
            yvex_sha256_update_text(&hash, plan->logits_plan_identity) &&
            yvex_sha256_update_text(&hash, plan->sampling_policy_identity) &&
            yvex_sha256_update_text(&hash, plan->speculation_policy_identity) &&
@@ -902,8 +1025,11 @@ int yvex_runtime_generation_result_validate(
                           &expected_final_position);
     if (!plan || !result || (!tokens && result->sampled_token_count) ||
         (!text && result->generated_text_bytes) ||
-        plan->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V5 ||
+        plan->schema_version != YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_V6 ||
         result->schema_version != YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V5 ||
+        (plan->producer_kind != YVEX_EXECUTION_PLAN_TRANSFORMER &&
+         plan->producer_kind != YVEX_EXECUTION_PLAN_DECODER) ||
+        !yvex_sha256_hex_valid(plan->producer_plan_identity) ||
         plan->evidence_profile > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
         plan->execution_class > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE ||
         !yvex_sha256_hex_valid(plan->kernel_bundle_identity) ||

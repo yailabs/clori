@@ -707,7 +707,10 @@ static int generation_test_plan_binds_workload_profile(void)
     yvex_runtime_generation_plan_summary plan;
     char before[YVEX_SHA256_HEX_CAP], after[YVEX_SHA256_HEX_CAP];
     memset(&plan, 0, sizeof(plan));
-    plan.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
+    plan.schema_version = YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_V6;
+    plan.producer_kind = YVEX_EXECUTION_PLAN_TRANSFORMER;
+    strcpy(plan.producer_plan_identity,
+           "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
     strcpy(plan.workload_profile_identity,
            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     YVEX_TEST_ASSERT(yvex_runtime_generation_plan_identity(&plan, before),
@@ -716,6 +719,17 @@ static int generation_test_plan_binds_workload_profile(void)
     YVEX_TEST_ASSERT(yvex_runtime_generation_plan_identity(&plan, after) &&
                          strcmp(before, after) != 0,
                      "workload profile changes must alter generation plan identity");
+    strcpy(plan.workload_profile_identity,
+           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    plan.producer_kind = YVEX_EXECUTION_PLAN_DECODER;
+    YVEX_TEST_ASSERT(yvex_runtime_generation_plan_identity(&plan, after) &&
+                         strcmp(before, after) != 0,
+                     "generation producer kind must alter generation plan identity");
+    plan.producer_kind = YVEX_EXECUTION_PLAN_TRANSFORMER;
+    plan.producer_plan_identity[0] = 'd';
+    YVEX_TEST_ASSERT(yvex_runtime_generation_plan_identity(&plan, after) &&
+                         strcmp(before, after) != 0,
+                     "generation producer identity must alter generation plan identity");
     return 0;
 }
 

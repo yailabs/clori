@@ -12,6 +12,7 @@
 #include <string.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/decoder_plan.h>
+#include <yvex/internal/decoder_execution.h>
 #include <yvex/internal/decode.h>
 #include <yvex/internal/generation.h>
 #include <yvex/internal/graph.h>
@@ -445,6 +446,7 @@ struct yvex_runtime_generation_context {
     const yvex_model_engine_view *model_view;
     const yvex_tokenizer *tokenizer;
     yvex_runtime_transformer_context *transformer;
+    yvex_runtime_decoder_execution_context *decoder_execution;
     yvex_runtime_decode_context *decode;
     yvex_runtime_logits_context *logits;
     yvex_runtime_sampling_context *sampling;
@@ -477,6 +479,8 @@ struct yvex_runtime_generation_context {
 
 int yvex_runtime_private_generation_enter(
     yvex_runtime_generation_context *context, yvex_error *err);
+int yvex_runtime_private_generation_cancelled(
+    const yvex_runtime_generation_context *context, yvex_error *err);
 void yvex_runtime_private_generation_leave(
     yvex_runtime_generation_context *context, int rc, int executed);
 
@@ -560,6 +564,27 @@ int yvex_runtime_generation_profile_transformer(yvex_runtime_profile_record *pro
 int yvex_runtime_generation_profile_decode(
     yvex_runtime_profile_record *profile,
     const yvex_runtime_decode_step_result *value, yvex_error *err);
+int yvex_runtime_generation_profile_decoder(
+    yvex_runtime_profile_record *profile,
+    const yvex_runtime_decoder_execution_result *value, yvex_error *err);
+int yvex_runtime_generation_profile_count(
+    yvex_runtime_profile_record *profile, yvex_runtime_profile_counter counter,
+    unsigned long long value, yvex_error *err);
+int yvex_runtime_generation_profile_graph_delta(
+    yvex_runtime_profile_record *profile,
+    const yvex_backend_cuda_attention_graph_summary *before,
+    const yvex_backend_cuda_attention_graph_summary *after, yvex_error *err);
+int yvex_runtime_generation_sampling_account(
+    yvex_runtime_profile_record *profile,
+    const yvex_runtime_sampling_result *sampling,
+    unsigned long long elapsed, yvex_error *err);
+int yvex_runtime_generation_decoder_input_identity(
+    const yvex_decoder_plan_summary *plan, const unsigned int *tokens,
+    unsigned long long token_start, unsigned long long token_count,
+    char output[YVEX_SHA256_HEX_CAP]);
+int yvex_runtime_generation_state_summary(
+    const yvex_runtime_execution_session *session,
+    yvex_graph_attention_state_summary *summary, yvex_error *err);
 int yvex_runtime_private_generation_result_finish(
     yvex_runtime_generation_context *context, yvex_runtime_generation_evidence *evidence,
     yvex_runtime_generation_token_result *tokens,

@@ -45,7 +45,8 @@ typedef struct yvex_runtime_sampling_source {
     unsigned int schema_version;
     int host_values_available, device_values_available;
     yvex_logits_source_phase source_phase;
-    unsigned long long source_position, vocabulary_size, logits_capacity;
+    unsigned long long source_position, vocabulary_size, logits_stride;
+    unsigned long long logits_capacity;
     const float *logits;
     yvex_execution_device_view device_logits;
     char raw_logits_digest[YVEX_SHA256_HEX_CAP];
@@ -96,7 +97,8 @@ typedef struct {
 } yvex_runtime_sampling_execution;
 
 typedef struct {
-    unsigned long long maximum_vocabulary_size, maximum_rows, maximum_host_bytes;
+    unsigned long long maximum_vocabulary_size, selection_vocabulary_size;
+    unsigned long long maximum_rows, maximum_host_bytes;
     int device_selection;
     int (*cancel_requested)(void *context);
     void *cancel_context;

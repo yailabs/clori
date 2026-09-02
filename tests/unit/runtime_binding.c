@@ -18,6 +18,7 @@
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/runtime_prefix.h>
 #include <yvex/internal/runtime_state_store.h>
+#include <yvex/internal/stateful_attention.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -4082,19 +4083,24 @@ static void runtime_paged_capacity_fixture(yvex_execution_capacity_plan *capacit
 
 static int runtime_state_device_token_commit(
     yvex_runtime_state_residency *residency,
+    yvex_backend *backend,
     const yvex_attention_state_provider *provider,
     const yvex_attention_layer_plan *layer, unsigned long long position,
     yvex_error *err)
 {
     const yvex_attention_history_view *history = NULL;
+    yvex_runtime_state_history_device_view device = {0};
+    yvex_graph_attention_state_summary state = {0};
     yvex_attention_publication publication = {0};
     yvex_attention_failure failure = {0};
+    yvex_device_tensor value_target, position_target;
     float values[4] = {0.25f, -0.25f, 0.5f, -0.5f};
     unsigned int token = (unsigned int)(position + 7ull);
     char delta[YVEX_SHA256_HEX_CAP];
     int rc;
 
-    if (!residency || !provider || !layer || layer->head_dimension != 4ull)
+    if (!residency || !backend || !provider || !layer ||
+        layer->head_dimension != 4ull)
         return YVEX_ERR_INVALID_ARG;
     rc = provider->begin(
         provider->context, 0ull, layer, NULL, position, 1ull, NULL,
@@ -4103,6 +4109,40 @@ static int runtime_state_device_token_commit(
         rc = yvex_runtime_state_residency_transition(
             residency, provider, NULL, 0ull, 1ull,
             YVEX_RUNTIME_STATE_BEGIN, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_state_residency_candidate_history(
+            residency, 0ull, YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY,
+            &device, err);
+    if (rc == YVEX_OK &&
+        (device.value_width != 4ull || device.visible_tokens != position ||
+         device.admitted_tokens <= position ||
+         device.values.bytes < (position + 1ull) * sizeof(values) ||
+         device.positions.bytes <
+             (position + 1ull) * sizeof(unsigned long long))) {
+        yvex_error_set(err, YVEX_ERR_STATE, "test.runtime.state.device",
+                       "candidate CUDA history geometry is invalid");
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc == YVEX_OK) {
+        value_target = device.values;
+        value_target.data += position * sizeof(values);
+        value_target.bytes = sizeof(values);
+        value_target.rank = 1u;
+        memset(value_target.dims, 0, sizeof(value_target.dims));
+        value_target.dims[0] = 4ull;
+        rc = yvex_backend_tensor_write(
+            backend, &value_target, values, sizeof(values), err);
+    }
+    if (rc == YVEX_OK) {
+        position_target = device.positions;
+        position_target.data += position * sizeof(position);
+        position_target.bytes = sizeof(position);
+        position_target.rank = 1u;
+        memset(position_target.dims, 0, sizeof(position_target.dims));
+        position_target.dims[0] = 1ull;
+        rc = yvex_backend_tensor_write(
+            backend, &position_target, &position, sizeof(position), err);
+    }
     publication.owned = publication.complete = 1;
     publication.layer_index = layer->layer_index;
     publication.attention_class = layer->attention_class;
@@ -4112,7 +4152,7 @@ static int runtime_state_device_token_commit(
     publication.kv_width = layer->head_dimension;
     publication.raw_kv = values;
     publication.device_state_staged = 1;
-    publication.device_state_staged_bytes = sizeof(values);
+    publication.device_state_staged_bytes = sizeof(values) + sizeof(position);
     (void)snprintf(publication.execution_identity,
                    sizeof(publication.execution_identity), "%064llx",
                    position + 101ull);
@@ -4124,9 +4164,31 @@ static int runtime_state_device_token_commit(
             residency, provider, &publication, 0ull, 0ull,
             YVEX_RUNTIME_STATE_STAGE, err);
     if (rc == YVEX_OK)
+        rc = provider->summary(provider->context, &state, err);
+    if (rc == YVEX_OK && !state.staged_batch_complete) {
+        yvex_error_setf(
+            err, YVEX_ERR_STATE, "test.runtime.state.device",
+            "logical candidate is incomplete: active=%d candidate=%d abort=%d "
+            "prepared=%llu staged=%llu next=%llu",
+            state.transaction_active, state.candidate_active,
+            state.abort_required, state.prepared_layer_count,
+            state.staged_layer_count, state.next_position);
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc == YVEX_OK)
         rc = yvex_runtime_state_residency_prepare_commit(residency, err);
     if (rc == YVEX_OK)
         rc = provider->prepare_commit(provider->context, &failure, err);
+    if (rc != YVEX_OK)
+        fprintf(stderr,
+                "CUDA state transaction facts: active=%d candidate=%d "
+                "staged=%d prepared=%llu staged_layers=%llu next=%llu "
+                "staged_next=%llu cancelled=%d invalidated=%d\n",
+                state.transaction_active, state.candidate_active,
+                state.staged_batch_complete, state.prepared_layer_count,
+                state.staged_layer_count, state.next_position,
+                state.staged_next_position, state.cancelled,
+                state.invalidated);
     if (rc == YVEX_OK) {
         yvex_runtime_state_residency_publish_commit(residency);
         provider->publish_commit(provider->context);
@@ -4189,6 +4251,7 @@ static int test_runtime_paged_state_cuda_pack(
     attention_request.scope = YVEX_ATTENTION_PROBE_SCOPE_QUICK;
     attention_request.token_count = 3ull;
     attention_request.execution_count = 1ull;
+    attention_request.use_requested_position = 1;
     attention_request.select_layer = 1;
     YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
                          &attention_capacity, yvex_model_engine_view_get(model)->attention,
@@ -4212,6 +4275,7 @@ static int test_runtime_paged_state_cuda_pack(
                                  residency, &summary, &err) == YVEX_OK,
                          "native CUDA state residency prepares from provider pages");
         if (yvex_backend_virtual_tensor_supported(backend)) {
+            yvex_runtime_state_history_device_view candidate = {0};
             YVEX_TEST_ASSERT(summary.paged && !summary.host_bytes,
                              "native CUDA state uses page-backed device storage");
             YVEX_TEST_ASSERT(summary.virtual_device_bytes && summary.page_granularity,
@@ -4221,9 +4285,20 @@ static int test_runtime_paged_state_cuda_pack(
             YVEX_TEST_ASSERT(yvex_runtime_state_residency_transition(
                                  residency, provider, NULL, 0ull, 1ull,
                                  YVEX_RUNTIME_STATE_BEGIN, &err) == YVEX_OK &&
+                                 yvex_runtime_state_residency_candidate_history(
+                                     residency, 0ull,
+                                     YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY,
+                                     &candidate, &err) == YVEX_OK &&
                                  yvex_runtime_state_residency_summary_copy(
                                      residency, &summary, &err) == YVEX_OK,
                              "candidate growth admits its CUDA pages before execution");
+            YVEX_TEST_ASSERT(candidate.value_width == 4ull &&
+                                 !candidate.visible_tokens &&
+                                 candidate.admitted_tokens >= 1ull &&
+                                 candidate.values.bytes >= 4ull * sizeof(float) &&
+                                 candidate.positions.bytes >=
+                                     sizeof(unsigned long long),
+                             "candidate CUDA history exposes only admitted direct state");
             YVEX_TEST_ASSERT(summary.page_commit_count,
                              "native CUDA state commits admitted physical pages");
             YVEX_TEST_ASSERT(summary.device_bytes ==
@@ -4240,18 +4315,21 @@ static int test_runtime_paged_state_cuda_pack(
                 unsigned long long one_token =
                     runtime_state_one_token_copy_bytes(&layer->recipe);
                 unsigned long long copied;
+                int commit_rc = runtime_state_device_token_commit(
+                    residency, backend, provider, attention_layer, 0ull, &err);
+                if (commit_rc != YVEX_OK)
+                    fprintf(stderr, "first CUDA state commit failed: %s: %s\n",
+                            yvex_error_where(&err), yvex_error_message(&err));
                 YVEX_TEST_ASSERT(
-                    one_token &&
-                        runtime_state_device_token_commit(
-                            residency, provider, attention_layer, 0ull, &err) ==
-                            YVEX_OK &&
+                    one_token && commit_rc == YVEX_OK &&
                         yvex_runtime_state_residency_summary_copy(
                             residency, &summary, &err) == YVEX_OK,
                     "first device-authored state token publishes exactly");
                 copied = summary.copy_bytes;
                 YVEX_TEST_ASSERT(
                     runtime_state_device_token_commit(
-                        residency, provider, attention_layer, 1ull, &err) ==
+                        residency, backend, provider, attention_layer, 1ull,
+                        &err) ==
                             YVEX_OK &&
                         yvex_runtime_state_residency_summary_copy(
                             residency, &summary, &err) == YVEX_OK &&
@@ -4260,7 +4338,8 @@ static int test_runtime_paged_state_cuda_pack(
                 copied = summary.copy_bytes;
                 YVEX_TEST_ASSERT(
                     runtime_state_device_token_commit(
-                        residency, provider, attention_layer, 2ull, &err) ==
+                        residency, backend, provider, attention_layer, 2ull,
+                        &err) ==
                             YVEX_OK &&
                         yvex_runtime_state_residency_summary_copy(
                             residency, &summary, &err) == YVEX_OK &&

@@ -8,6 +8,7 @@
 #define INCLUDE_YVEX_INTERNAL_LOGITS_H_INCLUDED
 
 #include <yvex/internal/decode.h>
+#include <yvex/internal/decoder_execution.h>
 #include <yvex/internal/device_view.h>
 #include <yvex/internal/execution_observation.h>
 #include <yvex/internal/runtime.h>
@@ -28,6 +29,7 @@ typedef struct yvex_runtime_logits_plan yvex_runtime_logits_plan;
 
 typedef struct {
     unsigned int schema_version;
+    yvex_execution_plan_kind producer_kind;
     int host_values_available, device_values_available;
     yvex_logits_source_phase source_phase;
     unsigned long long source_position, row_count, hidden_width;
@@ -35,8 +37,8 @@ typedef struct {
     yvex_execution_device_view device_hidden;
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
     char runtime_binding_identity[YVEX_SHA256_HEX_CAP];
-    char transformer_plan_identity[YVEX_SHA256_HEX_CAP];
-    char transformer_execution_identity[YVEX_SHA256_HEX_CAP];
+    char producer_plan_identity[YVEX_SHA256_HEX_CAP];
+    char producer_execution_identity[YVEX_SHA256_HEX_CAP];
     char normalized_hidden_digest[YVEX_SHA256_HEX_CAP];
     char source_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_logits_source;
@@ -119,6 +121,11 @@ int yvex_runtime_logits_context_open(
     yvex_runtime_execution_session *session,
     const yvex_transformer_plan *transformer_plan,
     const yvex_runtime_logits_options *options, yvex_error *err);
+int yvex_runtime_logits_context_open_decoder(
+    yvex_runtime_logits_context **out, yvex_model_engine *model,
+    yvex_runtime_execution_session *session,
+    const yvex_decoder_plan *decoder_plan,
+    const yvex_runtime_logits_options *options, yvex_error *err);
 const yvex_runtime_logits_plan_summary *yvex_runtime_logits_plan_summary_get(
     const yvex_runtime_logits_context *context);
 int yvex_runtime_logits_admit_shared_draft_plan(
@@ -135,6 +142,12 @@ int yvex_runtime_logits_source_from_decode(
     yvex_runtime_logits_source *source,
     const yvex_runtime_decode_step_result *producer,
     const float *normalized_hidden, unsigned long long hidden_capacity,
+    yvex_error *err);
+int yvex_runtime_logits_source_from_decoder(
+    const yvex_runtime_logits_context *context,
+    yvex_runtime_logits_source *source,
+    const yvex_runtime_decoder_execution_result *producer,
+    yvex_logits_source_phase phase, unsigned long long row_ordinal,
     yvex_error *err);
 int yvex_runtime_logits_source_from_draft(
     const yvex_runtime_logits_context *context,

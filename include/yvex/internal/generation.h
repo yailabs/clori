@@ -16,6 +16,7 @@ extern "C" {
 #endif
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V3 3u
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V5 5u
+#define YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_V6 6u
 #define YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V5 5u
 #define YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1 1u
 #define YVEX_RUNTIME_PARTIAL_TURN_SCHEMA_V1 1u
@@ -75,6 +76,7 @@ typedef struct {
 } yvex_runtime_generation_request;
 typedef struct {
     unsigned int schema_version;
+    yvex_execution_plan_kind producer_kind;
     yvex_backend_kind backend;
     yvex_runtime_generation_mode mode;
     unsigned long long context_capacity, prefill_chunk_tokens, maximum_new_tokens;
@@ -87,7 +89,7 @@ typedef struct {
     char runtime_descriptor_identity[YVEX_SHA256_HEX_CAP];
     char tokenizer_plan_identity[YVEX_SHA256_HEX_CAP];
     char prompt_policy_identity[YVEX_SHA256_HEX_CAP];
-    char transformer_plan_identity[YVEX_SHA256_HEX_CAP];
+    char producer_plan_identity[YVEX_SHA256_HEX_CAP];
     char logits_plan_identity[YVEX_SHA256_HEX_CAP];
     char sampling_policy_identity[YVEX_SHA256_HEX_CAP];
     char speculation_policy_identity[YVEX_SHA256_HEX_CAP];

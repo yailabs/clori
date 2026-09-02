@@ -247,7 +247,8 @@ int yvex_attention_workspace_recipe_build(
 {
     const yvex_attention_state_component_recipe *local, *compressed, *indexer, *main, *index;
     yvex_attention_state_recipe state_copy;
-    unsigned long long query, index_query = 0ull, head_bytes, index_bytes = 0ull;
+    unsigned long long query, index_query = 0ull, head_bytes, local_bytes = 0ull;
+    unsigned long long index_bytes = 0ull;
     unsigned long long input_bytes, residual_bytes, output_low, candidates = 0ull, selected = 0ull;
     unsigned long long counts[sizeof(workspace_recipe_layout) / sizeof(workspace_recipe_layout[0])];
     unsigned long long widths[sizeof(workspace_recipe_layout) / sizeof(workspace_recipe_layout[0])] = {0ull};
@@ -272,6 +273,9 @@ int yvex_attention_workspace_recipe_build(
     indexer = state_recipe_component(state, YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY);
     main = state_recipe_component(state, YVEX_ATTENTION_STATE_BINDING_MAIN_ROLLING);
     index = state_recipe_component(state, YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING);
+    if (local &&
+        !yvex_core_u64_mul(local->value_width, sizeof(float), &local_bytes))
+        goto malformed;
     if (indexer && !yvex_core_u64_add(indexer->capacity, 1ull, &candidates)) goto malformed;
     selected = candidates < layer->indexer_topk ? candidates : layer->indexer_topk;
     if (layer->indexer_required && !selected) selected = 1ull;
@@ -321,8 +325,11 @@ int yvex_attention_workspace_recipe_build(
     counts[33] = output_low;
     counts[34] = selected;
     counts[35] = counts[36] = candidates;
-    widths[0] = scope == YVEX_ATTENTION_OPERATION_CORE ? input_bytes : residual_bytes;
-    widths[1] = head_bytes;
+    widths[0] = scope == YVEX_ATTENTION_OPERATION_CORE ||
+                        attention_uses_dense_qkv(layer)
+                    ? input_bytes
+                    : residual_bytes;
+    widths[1] = local_bytes;
     widths[2] = sizeof(unsigned long long);
     widths[3] = head_bytes;
     widths[4] = sizeof(unsigned long long);

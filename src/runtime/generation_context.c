@@ -27,6 +27,16 @@ static int generation_context_refuse(yvex_error *err, yvex_status status,
     return status;
 }
 
+int yvex_runtime_private_generation_cancelled(
+    const yvex_runtime_generation_context *context, yvex_error *err)
+{
+    if (context->options.cancel_requested &&
+        context->options.cancel_requested(context->options.cancel_context))
+        return generation_context_refuse(
+            err, YVEX_ERR_CANCELLED, "generation was cancelled");
+    return YVEX_OK;
+}
+
 int yvex_runtime_private_generation_enter(yvex_runtime_generation_context *context, yvex_error *err)
 {
     unsigned int expected = 0u;
@@ -1207,25 +1217,45 @@ static int generation_plan_build(yvex_runtime_generation_context *context,
 {
     yvex_model_engine_summary model;
     const yvex_transformer_plan_summary *transformer;
+    const yvex_decoder_plan_summary *decoder;
     const yvex_runtime_logits_plan_summary *logits;
     const yvex_tokenizer_plan_summary *tokenizer;
+    const char *producer_identity;
+    unsigned long long producer_vocabulary;
+    yvex_execution_plan_kind producer_kind;
     yvex_runtime_generation_plan_summary plan = {0};
     if (yvex_model_engine_summary_copy(context->model, &model, err) != YVEX_OK)
         return yvex_error_code(err);
     transformer = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(context->transformer));
+    decoder = yvex_decoder_plan_summary_get(
+        yvex_runtime_decoder_execution_plan(context->decoder_execution));
     logits = yvex_runtime_logits_plan_summary_get(context->logits);
     tokenizer = yvex_tokenizer_plan_summary_get(context->tokenizer);
-    if (!transformer || !logits || !tokenizer || !tokenizer->sealed ||
-        !tokenizer->runtime_bound ||
-        tokenizer->vocabulary_size != transformer->vocabulary_size ||
-        tokenizer->vocabulary_size != logits->vocabulary_size ||
-        strcmp(transformer->transformer_plan_identity,
-               logits->transformer_plan_identity) != 0)
+    if ((transformer == NULL) == (decoder == NULL) || !logits || !tokenizer ||
+        !tokenizer->sealed || !tokenizer->runtime_bound)
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "generation lower-owner plans are unavailable");
+    producer_kind = transformer ? YVEX_EXECUTION_PLAN_TRANSFORMER
+                                : YVEX_EXECUTION_PLAN_DECODER;
+    producer_identity = transformer ? transformer->transformer_plan_identity
+                                    : decoder->decoder_plan_identity;
+    producer_vocabulary = transformer ? transformer->vocabulary_size
+                                      : decoder->vocabulary_size;
+    if (
+        tokenizer->vocabulary_size > producer_vocabulary ||
+        producer_vocabulary != logits->vocabulary_size ||
+        logits->producer_kind != producer_kind ||
+        strcmp(producer_identity,
+               producer_kind == YVEX_EXECUTION_PLAN_TRANSFORMER
+                   ? logits->transformer_plan_identity
+                   : logits->decoder_plan_identity) != 0)
         return generation_context_refuse(
             err, YVEX_ERR_STATE,
             "generation lower-owner plans are incompatible");
-    plan.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
+    plan.schema_version = YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_V6;
+    plan.producer_kind = producer_kind;
     plan.backend = context->options.backend;
     plan.mode = context->options.mode;
     plan.context_capacity = context->options.context_capacity;
@@ -1245,8 +1275,8 @@ static int generation_plan_build(yvex_runtime_generation_context *context,
                                tokenizer->tokenizer_plan_identity);
     yvex_runtime_identity_copy(plan.prompt_policy_identity,
                                tokenizer->prompt_policy_identity);
-    yvex_runtime_identity_copy(plan.transformer_plan_identity,
-                               transformer->transformer_plan_identity);
+    yvex_runtime_identity_copy(plan.producer_plan_identity,
+                               producer_identity);
     yvex_runtime_identity_copy(plan.logits_plan_identity,
                                logits->output_head_plan_identity);
     yvex_runtime_identity_copy(plan.sampling_policy_identity,
@@ -1288,18 +1318,30 @@ static int generation_execution_owners_open(
     unsigned long long *workspace_bytes, yvex_error *err)
 {
     yvex_runtime_transformer_options transformer = {0};
+    yvex_runtime_decoder_execution_options decoder = {0};
     yvex_runtime_logits_options logits = {0};
     yvex_runtime_sampling_options sampling = {0};
     yvex_runtime_speculation_options speculation = {0};
     const yvex_runtime_session_view *session_view =
         yvex_runtime_session_view_get(context->session);
     unsigned long long compatible_width = 0ull, draft_workspace = 0ull;
+    unsigned long long workspace_token_capacity;
+    const int decoder_producer =
+        context->model_view && context->model_view->decoder != NULL;
     int device_selection = session_view &&
         generation_device_selection(context, session_view->backend);
     int rc;
 
     context->device_selection = device_selection;
     *workspace_bytes = 0ull;
+    if (decoder_producer &&
+        (options->mode != YVEX_GENERATION_MODE_TARGET_ONLY ||
+         options->continuous_batching))
+        return generation_context_refuse(
+            err, YVEX_ERR_UNSUPPORTED,
+            options->continuous_batching
+                ? "heterogeneous decoder continuous batching is not admitted"
+                : "heterogeneous decoder execution has no admitted draft producer");
     if (options->continuous_batching) {
         rc = generation_scheduler_maximum_width(context, &compatible_width, err);
         if (rc != YVEX_OK) return rc;
@@ -1312,17 +1354,18 @@ static int generation_execution_owners_open(
     if (rc != YVEX_OK) return rc;
     context->scheduler_acquired = 1;
 
+    workspace_token_capacity = options->prefill_chunk_tokens;
+    if (options->mode == YVEX_GENERATION_MODE_SPECULATIVE &&
+        workspace_token_capacity < YVEX_SPECULATION_MAX_BLOCK + 2ull)
+        workspace_token_capacity = YVEX_SPECULATION_MAX_BLOCK + 2ull;
+    if (options->continuous_batching &&
+        workspace_token_capacity < options->concurrent_sequences)
+        workspace_token_capacity = options->concurrent_sequences;
     transformer.maximum_host_bytes = options->maximum_host_bytes;
     transformer.maximum_device_bytes = options->maximum_device_bytes;
     transformer.context_capacity = options->context_capacity;
-    transformer.workspace_token_capacity = options->prefill_chunk_tokens;
+    transformer.workspace_token_capacity = workspace_token_capacity;
     transformer.minimum_device_workspace_bytes = context->sampling_workspace_bytes;
-    if (options->mode == YVEX_GENERATION_MODE_SPECULATIVE &&
-        transformer.workspace_token_capacity < YVEX_SPECULATION_MAX_BLOCK + 2ull)
-        transformer.workspace_token_capacity = YVEX_SPECULATION_MAX_BLOCK + 2ull;
-    if (options->continuous_batching &&
-        transformer.workspace_token_capacity < options->concurrent_sequences)
-        transformer.workspace_token_capacity = options->concurrent_sequences;
     transformer.engine_scheduling = options->continuous_batching;
     transformer.scheduler_maximum_width = options->continuous_batching
                                               ? compatible_width : 0ull;
@@ -1333,9 +1376,22 @@ static int generation_execution_owners_open(
     transformer.device_hidden_output =
         device_selection && options->mode == YVEX_GENERATION_MODE_TARGET_ONLY;
     transformer.execution_profile = &context->execution_profile;
-    rc = yvex_runtime_transformer_context_open(
-        &context->transformer, context->model, context->session, &transformer,
-        workspace_bytes, err);
+    if (decoder_producer) {
+        decoder.context_capacity = options->context_capacity;
+        decoder.token_capacity = workspace_token_capacity;
+        decoder.maximum_host_bytes = options->maximum_host_bytes;
+        decoder.maximum_device_bytes = options->maximum_device_bytes;
+        decoder.cancel_requested = options->cancel_requested;
+        decoder.cancel_context = options->cancel_context;
+        decoder.execution_profile = &context->execution_profile;
+        rc = yvex_runtime_decoder_execution_context_open(
+            &context->decoder_execution, context->model, context->session,
+            &decoder, err);
+    } else {
+        rc = yvex_runtime_transformer_context_open(
+            &context->transformer, context->model, context->session,
+            &transformer, workspace_bytes, err);
+    }
     logits.maximum_rows = options->mode == YVEX_GENERATION_MODE_SPECULATIVE
                               ? YVEX_SPECULATION_MAX_BLOCK + 1ull
                               : options->continuous_batching ? compatible_width : 1ull;
@@ -1346,7 +1402,12 @@ static int generation_execution_owners_open(
     logits.execution_profile = &context->execution_profile;
     logits.cancel_requested = options->cancel_requested;
     logits.cancel_context = options->cancel_context;
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK && decoder_producer)
+        rc = yvex_runtime_logits_context_open_decoder(
+            &context->logits, context->model, context->session,
+            yvex_runtime_decoder_execution_plan(context->decoder_execution),
+            &logits, err);
+    else if (rc == YVEX_OK)
         rc = yvex_runtime_logits_context_open(
             &context->logits, context->model, context->session,
             yvex_runtime_transformer_context_plan(context->transformer),
@@ -1358,7 +1419,10 @@ static int generation_execution_owners_open(
         rc = generation_context_refuse(
             err, YVEX_ERR_STATE, "runtime logits plan is unavailable");
     if (rc != YVEX_OK) return rc;
-    sampling.maximum_vocabulary_size = (*logits_plan)->vocabulary_size;
+    sampling.maximum_vocabulary_size =
+        yvex_tokenizer_vocab_size(context->tokenizer);
+    sampling.selection_vocabulary_size =
+        yvex_tokenizer_vocab_size(context->tokenizer);
     sampling.maximum_rows = options->mode == YVEX_GENERATION_MODE_SPECULATIVE
                                 ? YVEX_SPECULATION_MAX_BLOCK + 1ull : 1ull;
     sampling.maximum_host_bytes = options->maximum_host_bytes;
@@ -1527,8 +1591,10 @@ int yvex_runtime_generation_context_open(
     decode_options.maximum_steps = options->maximum_new_tokens;
     decode_options.cancel_requested = options->cancel_requested;
     decode_options.cancel_context = options->cancel_context;
-    rc = yvex_runtime_decode_context_open(
-        &context->decode, context->transformer, session, &decode_options, err);
+    if (context->transformer)
+        rc = yvex_runtime_decode_context_open(
+            &context->decode, context->transformer, session, &decode_options,
+            err);
     if (rc != YVEX_OK) goto failure;
     decoder_options.skip_special_tokens = 1;
     decoder_options.require_complete_utf8 = 1;
@@ -1603,6 +1669,8 @@ failure:
             &context->speculation, &cleanup);
         (void)yvex_runtime_sampling_context_close(&context->sampling, &cleanup);
         (void)yvex_runtime_logits_context_close(&context->logits, &cleanup);
+        (void)yvex_runtime_decoder_execution_context_close(
+            &context->decoder_execution, &cleanup);
         (void)yvex_runtime_transformer_context_close(
             &context->transformer, &cleanup);
         (void)yvex_runtime_private_model_scheduler_finish(
@@ -1746,6 +1814,9 @@ int yvex_runtime_generation_context_close(
         rc = yvex_runtime_logits_context_close(&owner->logits, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_decode_context_close(&owner->decode, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_decoder_execution_context_close(
+            &owner->decoder_execution, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_transformer_context_close(&owner->transformer, err);
     if (rc == YVEX_OK)

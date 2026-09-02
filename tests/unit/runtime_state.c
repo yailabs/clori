@@ -280,8 +280,12 @@ static int test_direct_kv_state_width(const state_plan_fixture *fixture)
     yvex_attention_layer_plan layer = fixture->layers[0];
     yvex_attention_state_recipe_request request = {0};
     yvex_attention_state_recipe recipe;
+    yvex_attention_workspace_recipe workspace;
+    const yvex_attention_workspace_component *ingress = NULL;
+    const yvex_attention_workspace_component *local = NULL;
     yvex_attention_failure failure;
     yvex_error err;
+    unsigned int index;
 
     layer.query_lora_rank = 0ull;
     request.layer_ordinal = layer.layer_index;
@@ -295,6 +299,26 @@ static int test_direct_kv_state_width(const state_plan_fixture *fixture)
             recipe.components[0].value_width ==
                 2ull * layer.kv_heads * layer.head_dimension,
         "direct grouped-query attention retains complete K and V rows");
+    YVEX_TEST_ASSERT(
+        yvex_attention_workspace_recipe_build(
+            &layer, &recipe, YVEX_ATTENTION_EXECUTION_FULL,
+            YVEX_ATTENTION_OPERATION_ENVELOPE, YVEX_ATTENTION_EVIDENCE_NONE,
+            2ull, &workspace, &failure, &err) == YVEX_OK,
+        "direct grouped-query attention admits an envelope workspace");
+    for (index = 0u; index < workspace.component_count; ++index) {
+        const yvex_attention_workspace_component *component =
+            &workspace.components[index];
+        if (component->kind == YVEX_ATTENTION_WORKSPACE_INGRESS)
+            ingress = component;
+        else if (component->kind == YVEX_ATTENTION_WORKSPACE_LOCAL_VALUES)
+            local = component;
+    }
+    YVEX_TEST_ASSERT(
+        ingress && ingress->element_width ==
+                       layer.hidden_dimension * sizeof(float) &&
+            local && local->element_width ==
+                         recipe.components[0].value_width * sizeof(float),
+        "dense QKV workspace follows hidden input and complete K/V state geometry");
     return 0;
 }
 

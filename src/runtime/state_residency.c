@@ -14,6 +14,7 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/stateful_attention.h>
 
 typedef struct {
     const void *host[2][3];
@@ -21,7 +22,7 @@ typedef struct {
     unsigned long long device_valid[2][3];
 } state_resident_component;
 typedef struct {
-    int selected, staged, staged_replaces_prefix;
+    int selected, begun, staged, staged_replaces_prefix;
     int banks_synchronized, paged, needs_upload[2];
     unsigned long long bytes, page_granularity;
     unsigned int committed_bank, staged_bank;
@@ -787,6 +788,8 @@ static int state_residency_begin(
     if (!residency || !provider || !provider->view || !provider->summary ||
         layer_index >= residency->layer_count ||
         !residency->layers[layer_index].selected ||
+        residency->layers[layer_index].begun ||
+        residency->layers[layer_index].staged ||
         residency->summary.invalidated) {
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.begin",
                        "valid selected persistent state layer is required");
@@ -818,7 +821,10 @@ static int state_residency_begin(
     }
     if (rc == YVEX_OK && layer->paged)
         rc = state_resident_admit_growth(residency, layer, bank, count, err);
-    if (rc == YVEX_OK) layer->needs_upload[bank] = 0;
+    if (rc == YVEX_OK) {
+        layer->needs_upload[bank] = 0;
+        layer->begun = 1;
+    }
     /* Once admitted, the candidate device bank may change before any host publication occurs. */
     if (rc == YVEX_OK && yvex_backend_kind_of(residency->backend) == YVEX_BACKEND_KIND_CUDA)
         layer->banks_synchronized = 0;
@@ -844,6 +850,8 @@ static int state_residency_stage(
     if (!residency || !provider || !provider->view ||
         layer_index >= residency->layer_count ||
         !residency->layers[layer_index].selected ||
+        (publication && publication->device_state_staged &&
+         !residency->layers[layer_index].begun) ||
         residency->summary.invalidated) {
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.stage",
                        "valid selected persistent state layer is required");
@@ -901,6 +909,7 @@ static int state_residency_stage(
     }
     if (rc != YVEX_OK) return rc;
     layer->needs_upload[bank] = 0;
+    layer->begun = 0;
     layer->staged_bank = bank;
     if (!device_staged) layer->staged_replaces_prefix = 1;
     layer->banks_synchronized = 0;
@@ -908,6 +917,78 @@ static int state_residency_stage(
         layer->staged = 1;
         residency->summary.staged_layer_count++;
     }
+    return YVEX_OK;
+}
+
+int yvex_runtime_state_residency_candidate_history(
+    yvex_runtime_state_residency *residency, unsigned long long layer_index,
+    yvex_attention_state_binding binding,
+    yvex_runtime_state_history_device_view *out, yvex_error *err)
+{
+    state_resident_layer *layer;
+    state_resident_component *component = NULL;
+    const yvex_attention_state_component_recipe *recipe = NULL;
+    unsigned long long row_bytes, visible_positions, admitted_positions;
+    unsigned int bank, index;
+
+    if (out) memset(out, 0, sizeof(*out));
+    if (!residency || !out || residency->summary.invalidated ||
+        !residency->summary.cuda_ready || layer_index >= residency->layer_count ||
+        !residency->layers[layer_index].selected ||
+        !residency->layers[layer_index].begun) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.view",
+                       "one active CUDA state candidate is required");
+        return YVEX_ERR_STATE;
+    }
+    layer = &residency->layers[layer_index];
+    for (index = 0u; index < layer->component_count; ++index)
+        if (layer->recipe.components[index].binding == binding) {
+            component = &layer->components[index];
+            recipe = &layer->recipe.components[index];
+            break;
+        }
+    bank = 1u - layer->committed_bank;
+    if (!component || !recipe ||
+        recipe->kind != YVEX_ATTENTION_STATE_COMPONENT_HISTORY ||
+        !recipe->value_width ||
+        !yvex_core_u64_mul(recipe->value_width, sizeof(float), &row_bytes) ||
+        component->visible[bank][0] % row_bytes ||
+        component->admitted[bank][0] % row_bytes ||
+        component->visible[bank][1] % sizeof(unsigned long long) ||
+        component->admitted[bank][1] % sizeof(unsigned long long)) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.state.residency.view",
+                       "candidate history geometry is incompatible");
+        return YVEX_ERR_FORMAT;
+    }
+    out->value_width = recipe->value_width;
+    out->visible_tokens = component->visible[bank][0] / row_bytes;
+    out->admitted_tokens = component->admitted[bank][0] / row_bytes;
+    visible_positions = component->visible[bank][1] /
+                        sizeof(unsigned long long);
+    admitted_positions = component->admitted[bank][1] /
+                         sizeof(unsigned long long);
+    if (visible_positions != out->visible_tokens ||
+        admitted_positions < out->admitted_tokens ||
+        out->visible_tokens > out->admitted_tokens ||
+        component->device_valid[bank][0] < component->visible[bank][0] ||
+        component->device_valid[bank][1] < component->visible[bank][1]) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.view",
+                       "candidate history prefix is not fully resident");
+        return YVEX_ERR_STATE;
+    }
+    state_resident_tensor_view(
+        layer->device[bank], component->offset[0],
+        component->admitted[bank][0], &out->values);
+    state_resident_tensor_view(
+        layer->device[bank], component->offset[1],
+        component->admitted[bank][1], &out->positions);
+    out->values.dtype = YVEX_DTYPE_F32;
+    out->values.rank = 2u;
+    out->values.dims[0] = out->admitted_tokens;
+    out->values.dims[1] = out->value_width;
+    out->values.is_written = component->visible[bank][0] != 0ull;
+    out->positions.is_written = component->visible[bank][1] != 0ull;
+    yvex_error_clear(err);
     return YVEX_OK;
 }
 
@@ -977,6 +1058,7 @@ void yvex_runtime_state_residency_publish_commit(
             layer->committed_bank = layer->staged_bank;
         }
         layer->staged_replaces_prefix = 0;
+        layer->begun = 0;
         layer->staged = 0;
     }
     residency->summary.staged_layer_count = 0ull;
@@ -999,6 +1081,7 @@ void yvex_runtime_state_residency_abort(yvex_runtime_state_residency *residency)
             state_resident_device_valid_clear(
                 layer, 1u - layer->committed_bank);
         layer->staged_replaces_prefix = 0;
+        layer->begun = 0;
         layer->staged = 0;
     }
     residency->summary.staged_layer_count = 0ull;
