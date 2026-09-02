@@ -155,6 +155,21 @@ static int plan_get_text(model_plan_cursor *cursor,
     return 1;
 }
 
+static int plan_get_optional_text(model_plan_cursor *cursor,
+                                  char output[YVEX_SHA256_HEX_CAP])
+{
+    unsigned long long count;
+    if (!cursor || !output || !plan_get_u64(cursor, &count) ||
+        count >= YVEX_SHA256_HEX_CAP || cursor->offset > cursor->count ||
+        count > cursor->count - cursor->offset)
+        return 0;
+    memset(output, 0, YVEX_SHA256_HEX_CAP);
+    if (count)
+        memcpy(output, cursor->data + cursor->offset, (size_t)count);
+    cursor->offset += (size_t)count;
+    return 1;
+}
+
 static int moe_summary_write(yvex_core_bytes *bytes,
                              const yvex_moe_plan_summary *summary)
 {
@@ -531,9 +546,12 @@ static int output_head_read(model_plan_cursor *cursor,
         !plan_get_text(cursor, summary->logical_model_identity) ||
         !plan_get_text(cursor, summary->runtime_numeric_identity) ||
         !plan_get_text(cursor, summary->runtime_descriptor_identity) ||
-        !plan_get_text(cursor, summary->transformer_plan_identity) ||
+        !(legacy_layout
+              ? plan_get_text(cursor, summary->transformer_plan_identity)
+              : plan_get_optional_text(
+                    cursor, summary->transformer_plan_identity)) ||
         (!legacy_layout &&
-         !plan_get_text(cursor, summary->decoder_plan_identity)) ||
+         !plan_get_optional_text(cursor, summary->decoder_plan_identity)) ||
         !plan_get_text(cursor, summary->output_head_plan_identity))
         return model_plan_refuse(err, YVEX_ERR_FORMAT,
                                  "compiled output-head identities are malformed");

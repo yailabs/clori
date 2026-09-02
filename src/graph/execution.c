@@ -23,6 +23,11 @@ static int execution_hash_finish(yvex_sha256 *hash,
     yvex_sha256_hex(digest, output);
     return 1;
 }
+static int execution_model_schema_supported(unsigned int schema_version)
+{
+    return schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
+           schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2;
+}
 static yvex_execution_consumer_class execution_consumer(yvex_tensor_role role)
 {
     switch (role) {
@@ -274,8 +279,8 @@ int yvex_physical_execution_ir_build(
         materialization_summary->status != YVEX_MATERIALIZATION_STATUS_COMMITTED ||
         descriptor_summary->tensor_count != materialization_summary->tensor_count ||
         !descriptor_summary->tensor_count ||
-        descriptor_summary->model_execution.schema_version !=
-            YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
+        !execution_model_schema_supported(
+            descriptor_summary->model_execution.schema_version) ||
         !yvex_sha256_hex_valid(physical_variant_identity))
         return execution_refuse(
             err, YVEX_ERR_INVALID_ARG, "runtime.execution.physical",

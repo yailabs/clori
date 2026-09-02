@@ -350,7 +350,7 @@ int yvex_attention_reject(yvex_attention_failure *failure,
 {
     attention_failure_set(failure, code, binding, layer_index, role, expected,
                           actual, reason);
-    yvex_error_set(err, err_code, "yvex_deepseek_attention", reason);
+    yvex_error_set(err, err_code, "yvex_attention", reason);
     return err_code;
 }
 
@@ -705,19 +705,19 @@ static int attention_bind_role(
             layer_index, role, ULLONG_MAX,
             layer_plan ? layer_plan->required_binding_count : 0ull,
             err, YVEX_ERR_BOUNDS,
-            "DeepSeek attention binding count overflowed");
+            "attention binding count overflowed");
     layer_plan->required_binding_count = total;
     if (!binding || !binding->binding) {
         return yvex_attention_reject(
             failure, YVEX_ATTENTION_FAILURE_MISSING_BINDING, binding,
             layer_index, role, 1ull, 0ull, err, YVEX_ERR_FORMAT,
-            "DeepSeek attention binding is missing from runtime descriptor");
+            "attention binding is missing from runtime descriptor");
     }
     if (!binding->binding->encoded_bytes || !binding->binding->rank) {
         return yvex_attention_reject(
             failure, YVEX_ATTENTION_FAILURE_DIMENSION, binding,
             layer_index, role, 1ull, 0ull, err, YVEX_ERR_FORMAT,
-            "DeepSeek attention binding has empty shape or byte range");
+            "attention binding has empty shape or byte range");
     }
     capability = yvex_quant_numeric_capability_at(binding->qtype);
     if (!capability || !capability->identity_known ||
@@ -727,14 +727,14 @@ static int attention_bind_role(
         return yvex_attention_reject(
             failure, YVEX_ATTENTION_FAILURE_QTYPE, binding,
             layer_index, role, 1ull, 0ull, err, YVEX_ERR_UNSUPPORTED,
-            "DeepSeek attention binding qtype lacks admitted CPU row compute");
+            "attention binding qtype lacks admitted CPU row compute");
     }
     if (binding->qtype >= YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP)
         return yvex_attention_reject(
             failure, YVEX_ATTENTION_FAILURE_QTYPE, binding,
             layer_index, role, YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP,
             binding->qtype, err, YVEX_ERR_BOUNDS,
-            "DeepSeek attention binding qtype is outside the canonical identity space");
+            "attention binding qtype is outside the canonical identity space");
     if (!yvex_core_u64_add(summary->qtype_binding_counts[binding->qtype],
                            1ull, &total))
         return yvex_attention_reject(
@@ -742,7 +742,7 @@ static int attention_bind_role(
             layer_index, role, ULLONG_MAX,
             summary->qtype_binding_counts[binding->qtype], err,
             YVEX_ERR_BOUNDS,
-            "DeepSeek attention qtype binding count overflowed");
+            "attention qtype binding count overflowed");
     summary->qtype_binding_counts[binding->qtype] = total;
     if (!yvex_core_u64_add(layer_plan->payload_bytes_bound,
                            binding->binding->encoded_bytes, &total))
@@ -750,18 +750,19 @@ static int attention_bind_role(
             failure, YVEX_ATTENTION_FAILURE_DIMENSION, binding,
             layer_index, role, ULLONG_MAX,
             binding->binding->encoded_bytes, err, YVEX_ERR_BOUNDS,
-            "DeepSeek attention payload byte count overflowed");
+            "attention payload byte count overflowed");
     layer_plan->payload_bytes_bound = total;
     return YVEX_OK;
 }
 
 enum {
-    ATTENTION_BASE_ROLE_COUNT = 8,
-    ATTENTION_COMPRESSOR_ROLE_COUNT = 12,
-    ATTENTION_REQUIRED_ROLE_COUNT = 18
+    ATTENTION_FACTORIZED_BASE_ROLE_COUNT = 8,
+    ATTENTION_FACTORIZED_COMPRESSOR_ROLE_COUNT = 12,
+    ATTENTION_FACTORIZED_ROLE_COUNT = 18,
+    ATTENTION_DENSE_QKV_ROLE_COUNT = 6
 };
 
-static const yvex_tensor_role attention_required_roles[] = {
+static const yvex_tensor_role attention_factorized_roles[] = {
     YVEX_TENSOR_ROLE_ATTENTION_SINKS, YVEX_TENSOR_ROLE_ATTENTION_Q_A_NORM,
     YVEX_TENSOR_ROLE_ATTENTION_KV_NORM, YVEX_TENSOR_ROLE_ATTENTION_Q_A,
     YVEX_TENSOR_ROLE_ATTENTION_Q_B, YVEX_TENSOR_ROLE_ATTENTION_KV,
@@ -772,9 +773,28 @@ static const yvex_tensor_role attention_required_roles[] = {
     YVEX_TENSOR_ROLE_INDEXER_COMPRESSOR_GATE, YVEX_TENSOR_ROLE_INDEXER_COMPRESSOR_KV,
     YVEX_TENSOR_ROLE_INDEXER_ATTENTION_Q_B, YVEX_TENSOR_ROLE_INDEXER_PROJECTION,
 };
-_Static_assert(sizeof(attention_required_roles) / sizeof(attention_required_roles[0]) ==
-                   ATTENTION_REQUIRED_ROLE_COUNT,
-               "attention role table must preserve the complete binding order");
+static const yvex_tensor_role attention_dense_qkv_roles[] = {
+    YVEX_TENSOR_ROLE_ATTENTION_Q,
+    YVEX_TENSOR_ROLE_ATTENTION_K,
+    YVEX_TENSOR_ROLE_ATTENTION_V,
+    YVEX_TENSOR_ROLE_ATTENTION_OUT,
+    YVEX_TENSOR_ROLE_ATTENTION_Q_NORM,
+    YVEX_TENSOR_ROLE_ATTENTION_K_NORM};
+_Static_assert(sizeof(attention_factorized_roles) /
+                       sizeof(attention_factorized_roles[0]) ==
+                   ATTENTION_FACTORIZED_ROLE_COUNT,
+               "factorized attention role table must preserve binding order");
+_Static_assert(sizeof(attention_dense_qkv_roles) /
+                       sizeof(attention_dense_qkv_roles[0]) ==
+                   ATTENTION_DENSE_QKV_ROLE_COUNT,
+               "dense QKV attention role table must preserve binding order");
+
+static int attention_uses_dense_qkv(const yvex_attention_layer_plan *layer)
+{
+    return layer && layer->query_lora_rank == 0ull &&
+           layer->output_lora_rank == 0ull && layer->output_groups == 0ull &&
+           !layer->compressor_required && !layer->indexer_required;
+}
 
 /*
  * Reconstruct an immutable attention plan from authenticated runtime-binding records.
@@ -884,18 +904,28 @@ static int attention_bind_required_layer_roles(
 {
     yvex_tensor_scope scope = layer->tensor_scope;
     unsigned long long layer_index = layer->layer_index;
+    int dense_qkv = attention_uses_dense_qkv(layer);
+    const yvex_tensor_role *roles = dense_qkv ? attention_dense_qkv_roles
+                                              : attention_factorized_roles;
+    unsigned int role_count = dense_qkv
+                                  ? ATTENTION_DENSE_QKV_ROLE_COUNT
+                                  : ATTENTION_FACTORIZED_ROLE_COUNT;
     unsigned int index;
     int rc;
 
-    for (index = 0u; index < ATTENTION_REQUIRED_ROLE_COUNT; ++index) {
-        if (index >= ATTENTION_BASE_ROLE_COUNT &&
-            index < ATTENTION_COMPRESSOR_ROLE_COUNT && !layer->compressor_required)
+    for (index = 0u; index < role_count; ++index) {
+        if (!dense_qkv &&
+            index >= ATTENTION_FACTORIZED_BASE_ROLE_COUNT &&
+            index < ATTENTION_FACTORIZED_COMPRESSOR_ROLE_COUNT &&
+            !layer->compressor_required)
             continue;
-        if (index >= ATTENTION_COMPRESSOR_ROLE_COUNT && !layer->indexer_required)
+        if (!dense_qkv &&
+            index >= ATTENTION_FACTORIZED_COMPRESSOR_ROLE_COUNT &&
+            !layer->indexer_required)
             continue;
         rc = attention_bind_role(descriptor, layer_plan, summary, scope, layer_index,
                                  layer->predictor_index,
-                                 attention_required_roles[index], failure, err);
+                                 roles[index], failure, err);
         if (rc != YVEX_OK) return rc;
     }
     return YVEX_OK;
@@ -1060,7 +1090,7 @@ static int attention_plan_build(
             failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_INVALID_ARG,
-            "DeepSeek attention plan requires IR, materialization session, and descriptor");
+            "attention plan requires IR, materialization session, and descriptor");
     runtime = yvex_runtime_descriptor_summary_get(descriptor);
     materialization = yvex_materialization_session_summary(session);
     if (!materialization || !materialization->committed ||
@@ -1069,20 +1099,20 @@ static int attention_plan_build(
             failure, YVEX_ATTENTION_FAILURE_MATERIALIZATION, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_STATE,
-            "DeepSeek attention requires committed materialization");
+            "attention planning requires committed materialization");
     if (!runtime || runtime->status != YVEX_RUNTIME_DESCRIPTOR_STATUS_READY)
         return yvex_attention_reject(
             failure, YVEX_ATTENTION_FAILURE_DESCRIPTOR, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_STATE,
-            "DeepSeek attention requires a ready runtime descriptor");
+            "attention planning requires a ready runtime descriptor");
     if (!runtime->runtime_numeric_identity[0] ||
         runtime->runtime_numeric_schema_version == 0u)
         return yvex_attention_reject(
             failure, YVEX_ATTENTION_FAILURE_DESCRIPTOR, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_STATE,
-            "DeepSeek attention requires runtime numeric descriptor facts");
+            "attention planning requires runtime numeric descriptor facts");
     if (!recipe->identity(recipe->context, logical_identity) ||
         strcmp(logical_identity, runtime->logical_model_identity) != 0 ||
         strcmp(materialization->plan_identity,
@@ -1091,11 +1121,11 @@ static int attention_plan_build(
             failure, YVEX_ATTENTION_FAILURE_DESCRIPTOR, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_STATE,
-            "DeepSeek attention refused a stale runtime descriptor identity");
+            "attention planning refused a stale runtime descriptor identity");
     layer_count = recipe->layer_count;
     rc = attention_plan_allocate(
-        &plan, layer_count, "failed to allocate DeepSeek attention plan",
-        "failed to allocate DeepSeek attention layer plans", failure, err);
+        &plan, layer_count, "failed to allocate attention plan",
+        "failed to allocate attention layer plans", failure, err);
     if (rc != YVEX_OK) return rc;
     attention_summary_initialize(&plan->summary, runtime, recipe);
 
@@ -1106,7 +1136,7 @@ static int attention_plan_build(
             return yvex_attention_reject(
                 failure, YVEX_ATTENTION_FAILURE_ARCHITECTURE, NULL,
                 i, YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull, err,
-                YVEX_ERR_FORMAT, "DeepSeek attention layer is missing");
+                YVEX_ERR_FORMAT, "attention layer is missing");
         }
         if (layer->ordinal != i || layer->tensor_scope != recipe->tensor_scope ||
             layer->tensor_scope == YVEX_TENSOR_SCOPE_GLOBAL) {
@@ -1125,7 +1155,7 @@ static int attention_plan_build(
                 layer->layer_index, YVEX_TENSOR_ROLE_UNKNOWN,
                 YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
                 layer->compute_contract, err, YVEX_ERR_UNSUPPORTED,
-                "DeepSeek attention compute contract is unsupported");
+                "attention compute contract is unsupported");
             yvex_attention_plan_close(plan);
             return rc;
         }
@@ -1142,7 +1172,7 @@ static int attention_plan_build(
                 failure, YVEX_ATTENTION_FAILURE_DIMENSION, NULL,
                 i, YVEX_TENSOR_ROLE_UNKNOWN, ULLONG_MAX,
                 plan->layers[i].required_binding_count, err, YVEX_ERR_BOUNDS,
-                "DeepSeek attention summary binding count overflowed");
+                "attention summary binding count overflowed");
             yvex_attention_plan_close(plan);
             return rc;
         }
@@ -1157,7 +1187,7 @@ static int attention_plan_build(
                 failure, YVEX_ATTENTION_FAILURE_DIMENSION, NULL,
                 i, YVEX_TENSOR_ROLE_UNKNOWN, ULLONG_MAX,
                 plan->layers[i].payload_bytes_bound, err, YVEX_ERR_BOUNDS,
-                "DeepSeek attention summary accounting overflowed");
+                "attention summary accounting overflowed");
             yvex_attention_plan_close(plan);
             return rc;
         }
@@ -1242,13 +1272,22 @@ yvex_attention_binding_class yvex_attention_plan_binding_classify(
         return YVEX_ATTENTION_BINDING_NOT_REQUIRED;
     layer = attention_plan_find_layer(plan, binding);
     if (!layer) return YVEX_ATTENTION_BINDING_NOT_REQUIRED;
-    for (unsigned int index = 0u; index < ATTENTION_REQUIRED_ROLE_COUNT; ++index) {
-        if (binding->role != attention_required_roles[index]) continue;
-        if (index < ATTENTION_BASE_ROLE_COUNT ||
-            (index < ATTENTION_COMPRESSOR_ROLE_COUNT && layer->compressor_required) ||
-            (index >= ATTENTION_COMPRESSOR_ROLE_COUNT && layer->indexer_required))
-            return YVEX_ATTENTION_BINDING_CORE;
-        return YVEX_ATTENTION_BINDING_NOT_REQUIRED;
+    if (attention_uses_dense_qkv(layer)) {
+        for (unsigned int index = 0u; index < ATTENTION_DENSE_QKV_ROLE_COUNT; ++index)
+            if (binding->role == attention_dense_qkv_roles[index])
+                return YVEX_ATTENTION_BINDING_CORE;
+    } else {
+        for (unsigned int index = 0u;
+             index < ATTENTION_FACTORIZED_ROLE_COUNT; ++index) {
+            if (binding->role != attention_factorized_roles[index]) continue;
+            if (index < ATTENTION_FACTORIZED_BASE_ROLE_COUNT ||
+                (index < ATTENTION_FACTORIZED_COMPRESSOR_ROLE_COUNT &&
+                 layer->compressor_required) ||
+                (index >= ATTENTION_FACTORIZED_COMPRESSOR_ROLE_COUNT &&
+                 layer->indexer_required))
+                return YVEX_ATTENTION_BINDING_CORE;
+            return YVEX_ATTENTION_BINDING_NOT_REQUIRED;
+        }
     }
     if (layer->attention_input_norm_required &&
         binding->role == layer->attention_input_norm_role)

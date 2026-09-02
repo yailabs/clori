@@ -1183,8 +1183,9 @@ static int fixture_attention_build(binding_fixture *fixture)
     return 1;
 }
 
-static int fixture_model_execution_build(
-    yvex_model_execution_descriptor *model, yvex_error *err)
+static int fixture_model_execution_build_schema(
+    yvex_model_execution_descriptor *model, unsigned int schema_version,
+    yvex_error *err)
 {
     char logical[YVEX_SHA256_HEX_CAP], source[YVEX_SHA256_HEX_CAP];
     char schedule[YVEX_SHA256_HEX_CAP], state[YVEX_SHA256_HEX_CAP];
@@ -1194,7 +1195,7 @@ static int fixture_model_execution_build(
     (void)snprintf(source, sizeof(source), "%064x", 32);
     (void)snprintf(schedule, sizeof(schedule), "%064x", 33);
     (void)snprintf(state, sizeof(state), "%064x", 34);
-    request.schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1;
+    request.schema_version = schema_version;
     request.logical_model_identity = logical;
     request.source_model_identity = source;
     request.attention_schedule_identity = schedule;
@@ -1213,12 +1214,61 @@ static int fixture_model_execution_build(
     request.swa_layers = 1ull;
     request.sliding_window = 4ull;
     request.normalization_epsilon = 1e-6;
+    if (schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2)
+        request.dense_ffn_width = 8ull;
     request.output_input_width = 4ull;
     request.output_vocabulary_size = 4ull;
     request.persistent_state_class_mask =
         YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_SWA_RING);
     request.eos_token_id = 1ull;
     return yvex_model_execution_descriptor_seal(&request, model, err) == YVEX_OK;
+}
+
+static int fixture_model_execution_build(
+    yvex_model_execution_descriptor *model, yvex_error *err)
+{
+    return fixture_model_execution_build_schema(
+        model, YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1, err);
+}
+
+static int test_physical_execution_v2(binding_fixture *fixture)
+{
+    yvex_model_execution_descriptor model;
+    yvex_runtime_descriptor_family_facts family = {0};
+    yvex_runtime_descriptor_failure descriptor_failure = {0};
+    yvex_runtime_descriptor *descriptor = NULL;
+    yvex_physical_execution_ir *physical = NULL;
+    const yvex_physical_execution_summary *summary;
+    yvex_error err;
+    int rc;
+
+    YVEX_TEST_ASSERT(
+        fixture_model_execution_build_schema(
+            &model, YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2, &err),
+        "stateful-capable model execution descriptor should seal");
+    family.logical_model_identity = model.logical_model_identity;
+    family.runtime_numeric_identity = model.source_model_identity;
+    family.runtime_hadamard_revision = "fixture-hadamard-v1";
+    family.runtime_numeric_schema_version = 1u;
+    family.runtime_compute_policy_count = 1ull;
+    family.layer_count = model.layer_count;
+    family.vocabulary_size = model.vocabulary_size;
+    family.model_execution = &model;
+    rc = yvex_runtime_descriptor_build(
+        &descriptor, &fixture->admission, fixture->materialization,
+        &family, &descriptor_failure, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_physical_execution_ir_build(
+            &physical, fixture->materialization, descriptor,
+            fixture->admission.profile_identity, &err);
+    summary = yvex_physical_execution_ir_summary(physical);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && summary &&
+            summary->decision_count == fixture->admission.tensor_count,
+        "physical execution compiler should admit model execution schema v2");
+    yvex_physical_execution_ir_close(&physical);
+    yvex_runtime_descriptor_close(descriptor);
+    return 0;
 }
 
 static void fixture_disable_unavailable_execution(
@@ -4619,6 +4669,7 @@ static int runtime_binding_suite(int cuda_only)
                      "runtime artifact fixture copied and bound to one attention tensor");
     YVEX_TEST_ASSERT(fixture_build(&fixture, artifact_path, 1),
                      "runtime binding fixture built");
+    if (!cuda_only && test_physical_execution_v2(&fixture) != 0) goto done;
     if (!cuda_only && test_runtime_capability_contract() != 0) goto done;
     if (!cuda_only && test_runtime_v2_policy_contract() != 0) goto done;
     if (test_prepare_reopen_import(&fixture, root, &prepared, &binding) != 0) goto done;

@@ -506,6 +506,9 @@ static int qwen_attention_layer(
         out->rope_head_dimension = architecture->text.rotary_dimension;
         out->hidden_dimension = architecture->text.hidden_size;
         out->rms_norm_epsilon = architecture->text.rms_norm_epsilon;
+        out->attention_input_norm_required = 1;
+        out->attention_input_norm_width = architecture->text.hidden_size;
+        out->attention_input_norm_role = YVEX_TENSOR_ROLE_ATTENTION_NORM;
         out->position.rope_dimension = architecture->text.rotary_dimension;
         out->position.theta = architecture->text.rope_theta;
         out->position.scaling_factor = 1ull;
@@ -825,17 +828,54 @@ static int qwen_artifact_admit(
     const yvex_artifact *artifact, yvex_complete_artifact_admission *out,
     yvex_artifact_admission_failure *failure, yvex_error *err)
 {
-    if (out) memset(out, 0, sizeof(*out));
-    if (failure) {
-        memset(failure, 0, sizeof(*failure));
-        failure->code = YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH;
-        yvex_core_text_copy(failure->field, sizeof(failure->field),
-                            "qwen-qualified-physical-catalog");
-        failure->actual = artifact ? yvex_artifact_size(artifact) : 0ull;
+    static const yvex_complete_artifact_admission catalog = {
+        .artifact_class = YVEX_ARTIFACT_CLASS_COMPLETE_YVEX,
+        .metadata_count = 41ull,
+        .tensor_count = 851ull,
+        .payload_bytes = 53791996928ull,
+        .file_bytes = 53815809056ull,
+        .source_snapshot_identity = 0x68e43e0684055187ull,
+        .mapping_identity = 0x8098da2e9ca3cb80ull,
+        .payload_identity =
+            "e7ebb46fc5c820ff11c02ed47f42ca930da67067b4addaa0e0ff8056ed38fa9e",
+        .transform_identity =
+            "696effbc4ff0ef46962ca566cf00502c14ec2dd502c0650db725b76bd51111ce",
+        .profile_identity =
+            "a699007af97b96ad6fe85969d9825bc2036b58f3e621bcf2be5187215918b902",
+        .profile_name = QWEN_SOURCE_FAITHFUL_PRESET,
+        .quant_execution_identity =
+            "5dcbcfb1f9149a4593cf4a860f3974ef47af2f0de8aa1bac5af4b676e8ddc1d0",
+        .payload_plan_identity =
+            "594c6ef4d15363a6b4962cb6997eecd3a19f8e5ff1032ef2d4f90f70391bdf26",
+        .payload_byte_identity =
+            "4b163fe409fe3064bd870fe6e131c243a46a1a860b4a03602bbb9826d2373edc",
+        .writer_plan_identity =
+            "5b628caa68e2d07d0e6719c5b5a3df5c3d722d0a4a7acb9378c3dcf80e09435e",
+        .artifact_identity =
+            "6188af6efbac9ff4b690fbf4fdefd4a416b92668fba056bed5b9ac1cd7421792",
+        .official_reader_revision = YVEX_GGUF_OFFICIAL_READER_REVISION,
+        .tokenizer_complete = 1,
+        .native_reader_accepted = 1,
+        .official_reader_accepted = 1,
+        .payload_integrity_accepted = 1,
+        .materialization_input_ready = 1};
+    yvex_artifact_catalog_contract contract = {.catalog = &catalog};
+
+    if (artifact && yvex_artifact_size(artifact) != catalog.file_bytes) {
+        if (out) memset(out, 0, sizeof(*out));
+        if (failure) {
+            memset(failure, 0, sizeof(*failure));
+            failure->code = YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH;
+            failure->expected = catalog.file_bytes;
+            failure->actual = yvex_artifact_size(artifact);
+            yvex_core_text_copy(failure->field, sizeof(failure->field), "file-bytes");
+        }
+        yvex_error_set(err, YVEX_ERR_FORMAT, "qwen3_5.artifact-catalog",
+                       "artifact extent is not the qualified Qwen physical representation");
+        return YVEX_ERR_FORMAT;
     }
-    yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "qwen3_5.artifact-catalog",
-                   "Qwen source-faithful artifact has not entered the qualified physical catalog");
-    return YVEX_ERR_UNSUPPORTED;
+    return yvex_artifact_admit_catalog(
+        artifact, NULL, NULL, &contract, out, failure, err);
 }
 
 static int qwen_runtime_descriptor(
