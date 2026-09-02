@@ -255,7 +255,8 @@ typedef enum {
     YVEX_TRANSFORMER_ATTENTION_NUMERIC_EXACT_F32
 } yvex_transformer_attention_numeric_contract;
 typedef struct yvex_transformer_attention_requirement {
-    unsigned long long tokens, query_heads, key_value_heads, head_dimension;
+    unsigned long long query_tokens, key_value_tokens, query_start;
+    unsigned long long query_heads, key_value_heads, head_dimension;
     yvex_dtype query_dtype, key_dtype, value_dtype, output_dtype;
     yvex_transformer_attention_layout layout;
     yvex_transformer_attention_mask mask;

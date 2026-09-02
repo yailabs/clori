@@ -1129,7 +1129,9 @@ int yvex_component_joint_transformer_execute(
         }
     }
     if (rc == YVEX_OK) {
-        attention.tokens = request->packed_rows;
+        attention.query_tokens = request->packed_rows;
+        attention.key_value_tokens = request->packed_rows;
+        attention.query_start = 0ull;
         attention.query_heads = request->recipe->attention_heads;
         attention.key_value_heads = request->recipe->attention_heads;
         attention.head_dimension = request->recipe->head_dimension;

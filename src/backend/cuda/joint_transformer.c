@@ -101,7 +101,8 @@ static int joint_exact_attention(
         yvex_backend_transformer_operations_get(backend);
     yvex_transformer_attention_request request = {
         .requirement = {
-            .tokens = tokens,
+            .query_tokens = tokens, .key_value_tokens = tokens,
+            .query_start = 0ull,
             .query_heads = heads,
             .key_value_heads = heads,
             .head_dimension = JOINT_HEAD_DIM,

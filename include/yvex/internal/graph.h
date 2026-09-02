@@ -57,7 +57,8 @@ typedef struct yvex_attention_layer_plan {
 typedef int (*yvex_attention_recipe_identity_fn)(const void *context, char output[65]);
 typedef int (*yvex_attention_recipe_layer_fn)(const void *context, unsigned long long index,
                                               yvex_attention_layer_plan *output);
-
+int yvex_attention_layer_local_state_width(const yvex_attention_layer_plan *layer,
+                                           unsigned long long *width, yvex_error *err);
 typedef struct {
     const void *context;
     unsigned long long layer_count, auxiliary_layer_count;

@@ -618,7 +618,8 @@ static int text_attention(text_layer_run *run, yvex_error *err)
         rc = yvex_cuda_transformer_gqa(
             run->backend, run->device[TEXT_DEVICE_QUERY], run->device[TEXT_DEVICE_KEY],
             run->device[TEXT_DEVICE_VALUE], run->device[TEXT_DEVICE_ATTENTION],
-            run->tokens, geometry->query_heads, geometry->kv_heads,
+            run->tokens, run->tokens, 0ull,
+            geometry->query_heads, geometry->kv_heads,
             geometry->head_dimension, 1, &facts, err);
     if (rc == YVEX_OK && !text_facts_add(&run->facts, &facts))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.text-layer.facts",

@@ -24,6 +24,37 @@ static void state_recipe_history_add(
         .binding = binding, .capacity = capacity, .value_width = width};
 }
 
+static int attention_uses_dense_qkv(const yvex_attention_layer_plan *layer)
+{
+    return layer && layer->query_lora_rank == 0ull &&
+           layer->output_lora_rank == 0ull && layer->output_groups == 0ull &&
+           !layer->compressor_required && !layer->indexer_required;
+}
+
+int yvex_attention_layer_local_state_width(
+    const yvex_attention_layer_plan *layer, unsigned long long *width,
+    yvex_error *err)
+{
+    unsigned long long one_side;
+
+    if (!layer || !width || !layer->head_dimension) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph.attention.state-width",
+                       "one admitted attention layer and width output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    *width = layer->head_dimension;
+    if (attention_uses_dense_qkv(layer) &&
+        (!layer->kv_heads ||
+         !yvex_core_u64_mul(layer->kv_heads, layer->head_dimension, &one_side) ||
+         !yvex_core_u64_mul(one_side, 2ull, width))) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "graph.attention.state-width",
+                       "direct K/V state geometry overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int state_recipe_rolling_add(
     yvex_attention_state_recipe *recipe, const yvex_attention_layer_plan *layer,
     yvex_attention_rolling_kind kind, yvex_attention_state_binding binding)
@@ -68,6 +99,7 @@ int yvex_attention_state_recipe_build(
     yvex_error *err)
 {
     unsigned long long local_capacity, compressed_capacity = 0ull;
+    unsigned long long local_width;
     if (!layer || !request || !recipe || !request->attention_plan_identity ||
         request->final_position < request->initial_position || !layer->sliding_window)
         return yvex_attention_reject(
@@ -89,8 +121,11 @@ int yvex_attention_state_recipe_build(
     local_capacity = layer->sliding_window -
                      (layer->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT ? 0ull : 1ull);
     if (request->final_position < local_capacity) local_capacity = request->final_position;
+    if (yvex_attention_layer_local_state_width(
+            layer, &local_width, err) != YVEX_OK)
+        return yvex_error_code(err);
     state_recipe_history_add(recipe, YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY,
-                             local_capacity, layer->head_dimension);
+                             local_capacity, local_width);
     if (layer->compressor_required) {
         if (!layer->compression_ratio) goto malformed;
         compressed_capacity = request->final_position / layer->compression_ratio;
@@ -788,13 +823,6 @@ _Static_assert(sizeof(attention_dense_qkv_roles) /
                        sizeof(attention_dense_qkv_roles[0]) ==
                    ATTENTION_DENSE_QKV_ROLE_COUNT,
                "dense QKV attention role table must preserve binding order");
-
-static int attention_uses_dense_qkv(const yvex_attention_layer_plan *layer)
-{
-    return layer && layer->query_lora_rank == 0ull &&
-           layer->output_lora_rank == 0ull && layer->output_groups == 0ull &&
-           !layer->compressor_required && !layer->indexer_required;
-}
 
 /*
  * Reconstruct an immutable attention plan from authenticated runtime-binding records.

@@ -486,21 +486,25 @@ typedef struct {
     yvex_backend *backend;
     yvex_cuda_backend_state *state;
     CUdeviceptr query, key, value, output, scores, status;
-    unsigned long long tokens, heads, head_dim;
+    unsigned long long query_tokens, key_value_tokens, query_start;
+    unsigned long long heads, head_dim;
     int causal;
 } gqa_tile_context;
-static int gqa_tile_execute(gqa_tile_context *chunk, unsigned long long query_start,
+static int gqa_tile_execute(gqa_tile_context *chunk, unsigned long long local_query_start,
                             unsigned long long query_rows, yvex_error *err)
 {
     unsigned long long score_stride, matrix_stride, query_offset, softmax_rows;
+    unsigned long long absolute_query_start;
     CUdeviceptr query_chunk, output_chunk;
     const float scale = 1.0f / sqrtf((float)chunk->head_dim), zero = 0.0f, one = 1.0f;
     int blas_status, rc = YVEX_OK;
-    if (!yvex_core_u64_mul(query_rows, chunk->tokens, &score_stride) ||
+    if (!yvex_core_u64_mul(query_rows, chunk->key_value_tokens, &score_stride) ||
         !yvex_core_u64_mul(chunk->heads, chunk->head_dim, &matrix_stride) ||
-        !yvex_core_u64_mul(query_start, matrix_stride, &query_offset) ||
+        !yvex_core_u64_mul(local_query_start, matrix_stride, &query_offset) ||
         !yvex_core_u64_mul(query_offset, sizeof(float), &query_offset) ||
         !yvex_core_u64_mul(chunk->heads, query_rows, &softmax_rows) ||
+        !yvex_core_u64_add(chunk->query_start, local_query_start,
+                           &absolute_query_start) ||
         score_stride > LLONG_MAX || matrix_stride > INT_MAX || softmax_rows > UINT_MAX) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.transformer.gqa.blas",
                        "tiled attention launch geometry overflowed");
@@ -510,12 +514,13 @@ static int gqa_tile_execute(gqa_tile_context *chunk, unsigned long long query_st
     output_chunk = chunk->output + query_offset;
     blas_status = chunk->state->blas.gemm_strided_batched_ex(
         chunk->state->blas.handle, GQA_BLAS_OP_T, GQA_BLAS_OP_N,
-        (int)chunk->tokens, (int)query_rows, (int)chunk->head_dim, &scale,
+        (int)chunk->key_value_tokens, (int)query_rows, (int)chunk->head_dim, &scale,
         (const void *)(uintptr_t)chunk->key, GQA_BLAS_R_32F,
         (int)matrix_stride, (long long)chunk->head_dim,
         (const void *)(uintptr_t)query_chunk, GQA_BLAS_R_32F, (int)matrix_stride,
         (long long)chunk->head_dim, &zero,
-        (void *)(uintptr_t)chunk->scores, GQA_BLAS_R_32F, (int)chunk->tokens,
+        (void *)(uintptr_t)chunk->scores, GQA_BLAS_R_32F,
+        (int)chunk->key_value_tokens,
         (long long)score_stride, (int)chunk->heads, GQA_BLAS_COMPUTE_32F,
         GQA_BLAS_DEFAULT);
     if (blas_status != 0) {
@@ -524,14 +529,17 @@ static int gqa_tile_execute(gqa_tile_context *chunk, unsigned long long query_st
         rc = YVEX_ERR_BACKEND;
     }
     if (rc == YVEX_OK) {
-        CUfunction function = chunk->tokens <= 1024ull
+        CUfunction function = chunk->key_value_tokens <= 1024ull
                                   ? chunk->state->gqa_softmax_warp_function
                                   : chunk->state->gqa_softmax_function;
-        unsigned int block = chunk->tokens <= 1024ull ? 32u : GQA_BLAS_BLOCK;
-        unsigned int shared = chunk->tokens <= 1024ull ? 0u : GQA_BLAS_BLOCK * sizeof(float);
+        unsigned int block = chunk->key_value_tokens <= 1024ull
+                                 ? 32u : GQA_BLAS_BLOCK;
+        unsigned int shared = chunk->key_value_tokens <= 1024ull
+                                  ? 0u : GQA_BLAS_BLOCK * sizeof(float);
         void *parameters[] = {
-            &chunk->scores, &chunk->scores, &query_rows, &chunk->tokens,
-            &query_start, &chunk->causal, &chunk->status,
+            &chunk->scores, &chunk->scores, &query_rows,
+            &chunk->key_value_tokens,
+            &absolute_query_start, &chunk->causal, &chunk->status,
         };
         rc = gqa_enqueue(chunk->backend, function, (unsigned int)softmax_rows, block, shared,
                          parameters, "cuda.transformer.gqa.softmax", err);
@@ -539,11 +547,12 @@ static int gqa_tile_execute(gqa_tile_context *chunk, unsigned long long query_st
     if (rc == YVEX_OK) {
         blas_status = chunk->state->blas.gemm_strided_batched_ex(
             chunk->state->blas.handle, GQA_BLAS_OP_N, GQA_BLAS_OP_N,
-            (int)chunk->head_dim, (int)query_rows, (int)chunk->tokens, &one,
+            (int)chunk->head_dim, (int)query_rows,
+            (int)chunk->key_value_tokens, &one,
             (const void *)(uintptr_t)chunk->value, GQA_BLAS_R_32F,
             (int)matrix_stride, (long long)chunk->head_dim,
             (const void *)(uintptr_t)chunk->scores, GQA_BLAS_R_32F,
-            (int)chunk->tokens, (long long)score_stride, &zero,
+            (int)chunk->key_value_tokens, (long long)score_stride, &zero,
             (void *)(uintptr_t)output_chunk, GQA_BLAS_R_32F, (int)matrix_stride,
             (long long)chunk->head_dim, (int)chunk->heads,
             GQA_BLAS_COMPUTE_32F, GQA_BLAS_DEFAULT);
@@ -560,7 +569,8 @@ static int gqa_tile_execute(gqa_tile_context *chunk, unsigned long long query_st
 static int gqa_tiled_execute(
     yvex_backend *backend, const yvex_device_tensor *query,
     const yvex_device_tensor *key, const yvex_device_tensor *value,
-    yvex_device_tensor *output, unsigned long long tokens,
+    yvex_device_tensor *output, unsigned long long query_tokens,
+    unsigned long long key_value_tokens, unsigned long long query_start,
     unsigned long long heads, unsigned long long head_dim, int causal,
     yvex_backend_operation_facts *facts, yvex_error *err)
 {
@@ -571,18 +581,20 @@ static int gqa_tiled_execute(
     unsigned long long chunks = 0ull, query_tile;
     unsigned long long score_bytes;
     unsigned long long temporary_bytes = 0ull;
-    unsigned long long query_start;
+    unsigned long long local_query_start;
     int host_status = 0, rc = YVEX_OK, cleanup_rc;
     yvex_error cleanup;
-    query_tile = tokens < GQA_BLAS_QUERY_CHUNK ? tokens : GQA_BLAS_QUERY_CHUNK;
+    query_tile = query_tokens < GQA_BLAS_QUERY_CHUNK
+                     ? query_tokens : GQA_BLAS_QUERY_CHUNK;
     if (!state || !state->blas.ready || !state->blas.gemm_strided_batched_ex ||
         !state->gqa_softmax_function || !state->gqa_softmax_warp_function ||
-        !state->attention_validate_function || tokens > INT_MAX ||
+        !state->attention_validate_function || query_tokens > INT_MAX ||
+        key_value_tokens > INT_MAX ||
         heads > INT_MAX || head_dim > INT_MAX ||
         !yvex_core_u64_mul(heads, query_tile, &score_elements) ||
-        !yvex_core_u64_mul(score_elements, tokens, &score_elements) ||
+        !yvex_core_u64_mul(score_elements, key_value_tokens, &score_elements) ||
         !yvex_core_u64_mul(score_elements, sizeof(float), &score_bytes) ||
-        !yvex_core_u64_mul(tokens, heads, &output_elements) ||
+        !yvex_core_u64_mul(query_tokens, heads, &output_elements) ||
         !yvex_core_u64_mul(output_elements, head_dim, &output_elements) ||
         !yvex_core_u64_add(output_elements, GQA_BLAS_BLOCK - 1ull, &validation_tasks) ||
         score_elements > LLONG_MAX || score_bytes > SIZE_MAX ||
@@ -614,12 +626,13 @@ static int gqa_tiled_execute(
         gqa_tile_context chunk = {
             backend, state, yvex_cuda_tensor_ptr(query), yvex_cuda_tensor_ptr(key),
             yvex_cuda_tensor_ptr(value), yvex_cuda_tensor_ptr(output), scores, status,
-            tokens, heads, head_dim, causal};
-        for (query_start = 0ull; rc == YVEX_OK && query_start < tokens;
-             query_start += GQA_BLAS_QUERY_CHUNK) {
-            unsigned long long query_rows = tokens - query_start;
+            query_tokens, key_value_tokens, query_start, heads, head_dim, causal};
+        for (local_query_start = 0ull;
+             rc == YVEX_OK && local_query_start < query_tokens;
+             local_query_start += GQA_BLAS_QUERY_CHUNK) {
+            unsigned long long query_rows = query_tokens - local_query_start;
             if (query_rows > GQA_BLAS_QUERY_CHUNK) query_rows = GQA_BLAS_QUERY_CHUNK;
-            rc = gqa_tile_execute(&chunk, query_start, query_rows, err);
+            rc = gqa_tile_execute(&chunk, local_query_start, query_rows, err);
             ++chunks;
         }
     }
@@ -677,7 +690,13 @@ static int attention_requirement_validate(
     const yvex_transformer_attention_requirement *requirement,
     const char *stage, yvex_error *err)
 {
-    if (!requirement || !requirement->tokens || !requirement->query_heads ||
+    unsigned long long query_end;
+    if (!requirement || !requirement->query_tokens ||
+        !requirement->key_value_tokens ||
+        !yvex_core_u64_add(requirement->query_start,
+                           requirement->query_tokens, &query_end) ||
+        query_end > requirement->key_value_tokens ||
+        !requirement->query_heads ||
         !requirement->key_value_heads ||
         requirement->query_heads % requirement->key_value_heads ||
         !requirement->head_dimension) {
@@ -702,14 +721,16 @@ static int attention_requirement_validate(
 }
 
 static int gqa_workspace_required(
-    unsigned long long tokens, unsigned long long query_heads,
+    unsigned long long query_tokens, unsigned long long key_value_tokens,
+    unsigned long long query_heads,
     unsigned long long kv_heads, unsigned long long head_dim,
     unsigned long long *bytes, yvex_error *err)
 {
     unsigned long long score_elements, scores, query_tile;
     unsigned long long total = 0ull;
     if (bytes) *bytes = 0ull;
-    if (!bytes || !tokens || !query_heads || !kv_heads || !head_dim ||
+    if (!bytes || !query_tokens || !key_value_tokens || !query_heads ||
+        !kv_heads || !head_dim ||
         query_heads % kv_heads) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.transformer.gqa.workspace",
                        "bounded grouped-query attention geometry is required");
@@ -719,9 +740,10 @@ static int gqa_workspace_required(
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    query_tile = tokens < GQA_BLAS_QUERY_CHUNK ? tokens : GQA_BLAS_QUERY_CHUNK;
+    query_tile = query_tokens < GQA_BLAS_QUERY_CHUNK
+                     ? query_tokens : GQA_BLAS_QUERY_CHUNK;
     if (!yvex_core_u64_mul(query_heads, query_tile, &score_elements) ||
-        !yvex_core_u64_mul(score_elements, tokens, &score_elements) ||
+        !yvex_core_u64_mul(score_elements, key_value_tokens, &score_elements) ||
         !yvex_core_u64_mul(score_elements, sizeof(float), &scores) ||
         !gqa_workspace_add(&total, scores) ||
         !gqa_workspace_add(&total, sizeof(int)) || total > SIZE_MAX) {
@@ -744,7 +766,8 @@ int yvex_cuda_transformer_attention_workspace_required(
         requirement, "cuda.transformer.attention.workspace", err);
     if (rc != YVEX_OK) return rc;
     return gqa_workspace_required(
-        requirement->tokens, requirement->query_heads,
+        requirement->query_tokens, requirement->key_value_tokens,
+        requirement->query_heads,
         requirement->key_value_heads, requirement->head_dimension, bytes, err);
 }
 
@@ -764,7 +787,9 @@ int yvex_cuda_transformer_attention_execute(
     if (rc != YVEX_OK) return rc;
     return yvex_cuda_transformer_gqa(
         backend, request->query, request->key, request->value, request->output,
-        request->requirement.tokens, request->requirement.query_heads,
+        request->requirement.query_tokens,
+        request->requirement.key_value_tokens,
+        request->requirement.query_start, request->requirement.query_heads,
         request->requirement.key_value_heads,
         request->requirement.head_dimension,
         request->requirement.mask == YVEX_TRANSFORMER_ATTENTION_MASK_CAUSAL,
@@ -774,25 +799,29 @@ int yvex_cuda_transformer_attention_execute(
 int yvex_cuda_transformer_gqa(
     yvex_backend *backend, const yvex_device_tensor *query,
     const yvex_device_tensor *key, const yvex_device_tensor *value,
-    yvex_device_tensor *output, unsigned long long tokens,
+    yvex_device_tensor *output, unsigned long long query_tokens,
+    unsigned long long key_value_tokens, unsigned long long query_start,
     unsigned long long query_heads, unsigned long long kv_heads,
     unsigned long long head_dim, int causal, yvex_backend_operation_facts *facts,
     yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
-    unsigned long long query_elements, kv_elements, rows, grid_rows;
+    unsigned long long query_elements, kv_elements, rows, grid_rows, query_end;
     float scale;
     int rc;
     if (facts) memset(facts, 0, sizeof(*facts));
-    if (!state || !facts || !tokens || !query_heads || !kv_heads || query_heads % kv_heads ||
+    if (!state || !facts || !query_tokens || !key_value_tokens ||
+        !yvex_core_u64_add(query_start, query_tokens, &query_end) ||
+        query_end > key_value_tokens || !query_heads || !kv_heads ||
+        query_heads % kv_heads ||
         (causal != 0 && causal != 1) ||
         !head_dim || head_dim > GQA_HEAD_DIMENSION_MAX ||
-        !yvex_core_u64_mul(tokens, query_heads, &rows) ||
+        !yvex_core_u64_mul(query_tokens, query_heads, &rows) ||
         !yvex_core_u64_mul(rows, head_dim, &query_elements) ||
-        !yvex_core_u64_mul(tokens, kv_heads, &kv_elements) ||
+        !yvex_core_u64_mul(key_value_tokens, kv_heads, &kv_elements) ||
         !yvex_core_u64_mul(kv_elements, head_dim, &kv_elements) ||
-        !yvex_core_u64_mul(tokens / GQA_QUERIES_PER_BLOCK +
-                               (tokens % GQA_QUERIES_PER_BLOCK != 0ull),
+        !yvex_core_u64_mul(query_tokens / GQA_QUERIES_PER_BLOCK +
+                               (query_tokens % GQA_QUERIES_PER_BLOCK != 0ull),
                            query_heads, &grid_rows) || grid_rows > UINT_MAX ||
         !transformer_tensor(backend, query, query_elements, 1) ||
         !transformer_tensor(backend, key, kv_elements, 1) ||
@@ -806,8 +835,10 @@ int yvex_cuda_transformer_gqa(
         state->blas.gemm_strided_batched_ex && state->gqa_softmax_function &&
         state->gqa_softmax_warp_function && state->attention_validate_function &&
         !yvex_cuda_capture_active(backend)) {
-        rc = gqa_tiled_execute(backend, query, key, value, output, tokens,
-                              query_heads, head_dim, causal, facts, err);
+        rc = gqa_tiled_execute(
+            backend, query, key, value, output, query_tokens,
+            key_value_tokens, query_start, query_heads, head_dim,
+            causal, facts, err);
         if (rc == YVEX_OK) output->is_written = 1;
         return rc;
     }
@@ -817,7 +848,8 @@ int yvex_cuda_transformer_gqa(
     scale = 1.0f / sqrtf((float)head_dim);
     {
         void *parameters[] = {
-            &query_ptr, &key_ptr, &value_ptr, &output_ptr, &tokens,
+            &query_ptr, &key_ptr, &value_ptr, &output_ptr,
+            &query_tokens, &key_value_tokens, &query_start,
             &query_heads, &kv_heads, &head_dim, &scale, &causal,
         };
         rc = transformer_launch(
@@ -1742,7 +1774,8 @@ static int dense_attention(dense_decoder_run *run,
     if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_gqa(
             run->backend, run->device[DENSE_QUERY], run->device[DENSE_KEY],
-            run->device[DENSE_VALUE], run->device[DENSE_ATTENTION], r->rows,
+            run->device[DENSE_VALUE], run->device[DENSE_ATTENTION],
+            r->rows, r->rows, 0ull,
             r->heads, r->heads, r->head_dim, 0, &facts, err);
     return dense_primitive(run, rc, &facts, err);
 }

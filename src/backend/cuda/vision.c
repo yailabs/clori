@@ -420,7 +420,8 @@ static int vision_block_attention(vision_run *run, unsigned long long layer,
     if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_gqa(
             run->backend, run->device[VISION_QUERY], run->device[VISION_KEY],
-            run->device[VISION_VALUE], run->device[VISION_ATTENTION], run->rows,
+            run->device[VISION_VALUE], run->device[VISION_ATTENTION],
+            run->rows, run->rows, 0ull,
             run->recipe->heads, run->recipe->heads, run->recipe->head_dimension,
             0, &facts, err);
     if (rc == YVEX_OK && !vision_facts_add(run, &facts)) rc = YVEX_ERR_BOUNDS;

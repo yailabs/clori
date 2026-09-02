@@ -455,7 +455,7 @@ static int neutral_transformer_workspace(
                                          unsigned long long *bytes,
                                          yvex_error *err)
 {
-    return neutral_workspace(request ? request->tokens : 0ull, bytes, err);
+    return neutral_workspace(request ? request->query_tokens : 0ull, bytes, err);
 }
 
 static int neutral_transformer_attention(

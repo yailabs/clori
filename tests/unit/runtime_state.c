@@ -44,6 +44,7 @@ static yvex_attention_layer_plan state_layer(unsigned long long index,
     layer.layer_index = index;
     layer.attention_class = attention_class;
     layer.head_dimension = 2ull;
+    layer.query_lora_rank = 1ull;
     layer.hidden_dimension = 4ull;
     layer.query_heads = 2ull;
     layer.kv_heads = 1ull;
@@ -149,7 +150,7 @@ static int state_recipe_project(
     yvex_attention_state_recipe *recipe, yvex_attention_failure *failure,
     yvex_error *err)
 {
-    unsigned long long local_limit, compressed_capacity = 0ull;
+    unsigned long long local_limit, local_width, compressed_capacity = 0ull;
 
     if (!layer || !request || !recipe ||
         request->layer_ordinal != layer->layer_index ||
@@ -167,11 +168,13 @@ static int state_recipe_project(
     (void)snprintf(recipe->attention_plan_identity,
                    sizeof(recipe->attention_plan_identity), "%s",
                    request->attention_plan_identity);
+    if (yvex_attention_layer_local_state_width(layer, &local_width, err) != YVEX_OK)
+        return yvex_error_code(err);
     local_limit = layer->sliding_window - 1ull;
     state_recipe_history(recipe, YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY,
                          request->final_position < local_limit
                              ? request->final_position : local_limit,
-                         layer->head_dimension);
+                         local_width);
     if (layer->compressor_required) {
         compressed_capacity = request->final_position / layer->compression_ratio;
         state_recipe_history(
@@ -269,6 +272,29 @@ static int test_state_recipe_identity(const state_plan_fixture *fixture)
             yvex_attention_state_recipe_seal(&changed, &err) == YVEX_OK &&
             strcmp(baseline, changed.identity) != 0,
         "family selection-key mutation changes the state recipe identity");
+    return 0;
+}
+
+static int test_direct_kv_state_width(const state_plan_fixture *fixture)
+{
+    yvex_attention_layer_plan layer = fixture->layers[0];
+    yvex_attention_state_recipe_request request = {0};
+    yvex_attention_state_recipe recipe;
+    yvex_attention_failure failure;
+    yvex_error err;
+
+    layer.query_lora_rank = 0ull;
+    request.layer_ordinal = layer.layer_index;
+    request.final_position = 3ull;
+    request.attention_plan_identity = fixture->plan.summary.attention_plan_identity;
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        state_recipe_project(&layer, &request, &recipe, &failure, &err) == YVEX_OK &&
+            recipe.components[0].binding ==
+                YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY &&
+            recipe.components[0].value_width ==
+                2ull * layer.kv_heads * layer.head_dimension,
+        "direct grouped-query attention retains complete K and V rows");
     return 0;
 }
 
@@ -2383,6 +2409,7 @@ int yvex_test_runtime_state(void)
 
     state_plan_open(&fixture);
     if (test_state_recipe_identity(&fixture) != 0) return 1;
+    if (test_direct_kv_state_width(&fixture) != 0) return 1;
     if (test_workspace_recipe_identity() != 0) return 1;
     if (test_workspace_capture_geometry(&fixture) != 0) return 1;
     if (test_capacity_plan(&fixture) != 0) return 1;
