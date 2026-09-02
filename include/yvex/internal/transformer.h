@@ -258,6 +258,10 @@ typedef enum {
 typedef struct yvex_transformer_attention_requirement {
     unsigned long long query_tokens, key_value_tokens, query_start;
     unsigned long long query_heads, key_value_heads, head_dimension;
+    /* Zero selects the packed token/head/dimension row width. Non-zero strides
+     * admit authenticated subviews such as [Q|gate] and [K|V] without copying
+     * the retained prefix. Strides are measured in F32 elements per token. */
+    unsigned long long query_token_stride, key_token_stride, value_token_stride;
     yvex_dtype query_dtype, key_dtype, value_dtype, output_dtype;
     yvex_transformer_attention_layout layout;
     yvex_transformer_attention_mask mask;

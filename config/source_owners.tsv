@@ -90,6 +90,7 @@ src/backend/cuda/component_ops.h	backend.cuda	backend.cuda.component_ops	backend
 src/backend/cuda/convolution.c	backend.cuda	backend.cuda.convolution	backend	private	reusable-algorithm	graph.family,backend.cuda.family	implementation	none
 src/backend/cuda/convolution_kernels.cu	backend.cuda	backend.cuda.convolution	backend	private	backend-kernel	graph.family,backend.cuda.family	backend-kernel	none
 src/backend/cuda/errors.c	backend.cuda	backend.cuda.errors	backend	private	reusable-algorithm	backend,graph	implementation	none
+src/backend/cuda/exact_attention.c	backend.cuda	backend.cuda.exact_attention	backend	private	reusable-algorithm	graph,runtime,backend.cuda.family	implementation	none
 src/backend/cuda/graph.c	backend.cuda	backend.cuda.graph	backend	private	resource-lifecycle	backend,runtime	implementation	none
 src/backend/cuda/attention.c	backend.cuda	backend.cuda.attention	backend	private	reusable-algorithm	graph,backend.cuda.graph	implementation	none
 src/backend/cuda/attention_kernels.cu	backend.cuda	backend.cuda.attention_kernels	backend	private	backend-kernel	backend.cuda.attention,graph	backend-kernel	none

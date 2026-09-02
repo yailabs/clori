@@ -2554,6 +2554,131 @@ static int quant_cuda_attention_cached_qwen_geometry(yvex_backend *backend)
     return 0;
 }
 
+static int quant_cuda_attention_strided_qwen_geometry(yvex_backend *backend)
+{
+    enum {
+        QUERY_TOKENS = 2u, KEY_VALUE_TOKENS = 4u,
+        QUERY_HEADS = 24u, KV_HEADS = 4u, HEAD_DIM = 256u
+    };
+    const unsigned long long query_width =
+        (unsigned long long)QUERY_HEADS * HEAD_DIM;
+    const unsigned long long kv_width = (unsigned long long)KV_HEADS * HEAD_DIM;
+    const unsigned long long query_stride = query_width * 2ull;
+    const unsigned long long kv_stride = kv_width * 2ull;
+    const unsigned long long query_count =
+        (QUERY_TOKENS - 1ull) * query_stride + query_width;
+    const unsigned long long kv_count =
+        (KEY_VALUE_TOKENS - 1ull) * kv_stride + kv_stride;
+    const unsigned long long packed_query_count = QUERY_TOKENS * query_width;
+    const unsigned long long packed_kv_count = KEY_VALUE_TOKENS * kv_width;
+    const size_t query_bytes = (size_t)query_count * sizeof(float);
+    const size_t kv_bytes = (size_t)kv_count * sizeof(float);
+    const size_t output_bytes = (size_t)packed_query_count * sizeof(float);
+    const yvex_backend_transformer_operations *operations =
+        yvex_backend_transformer_operations_get(backend);
+    yvex_device_tensor *query_storage = NULL, *kv_storage = NULL, *output = NULL;
+    yvex_device_tensor query = {0}, key = {0}, value = {0};
+    float *query_values = calloc((size_t)packed_query_count, sizeof(float));
+    float *key_values = calloc((size_t)packed_kv_count, sizeof(float));
+    float *value_values = calloc((size_t)packed_kv_count, sizeof(float));
+    float *query_interleaved = calloc((size_t)query_count, sizeof(float));
+    float *kv_interleaved = calloc((size_t)kv_count, sizeof(float));
+    float *result = malloc(output_bytes), *reference = malloc(output_bytes);
+    yvex_transformer_attention_request request = {
+        .requirement = quant_attention_requirement(
+            QUERY_TOKENS, QUERY_HEADS, KV_HEADS, HEAD_DIM, 1),
+    };
+    yvex_backend_operation_facts facts;
+    yvex_error err;
+    int rc;
+    unsigned long long token, lane;
+
+    YVEX_TEST_ASSERT(
+        operations && operations->attention_execute && query_values && key_values &&
+            value_values && query_interleaved && kv_interleaved && result && reference,
+        "strided Qwen exact-attention oracle storage allocates");
+    for (lane = 0ull; lane < packed_query_count; ++lane)
+        query_values[lane] =
+            (float)((int)((lane * 19ull + 3ull) % 59ull) - 29) / 32.0f;
+    for (lane = 0ull; lane < packed_kv_count; ++lane) {
+        key_values[lane] =
+            (float)((int)((lane * 23ull + 5ull) % 61ull) - 30) / 32.0f;
+        value_values[lane] =
+            (float)((int)((lane * 29ull + 7ull) % 67ull) - 33) / 16.0f;
+    }
+    for (token = 0ull; token < QUERY_TOKENS; ++token)
+        memcpy(query_interleaved + token * query_stride,
+               query_values + token * query_width,
+               (size_t)query_width * sizeof(float));
+    for (token = 0ull; token < KEY_VALUE_TOKENS; ++token) {
+        memcpy(kv_interleaved + token * kv_stride,
+               key_values + token * kv_width,
+               (size_t)kv_width * sizeof(float));
+        memcpy(kv_interleaved + token * kv_stride + kv_width,
+               value_values + token * kv_width,
+               (size_t)kv_width * sizeof(float));
+    }
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "strided-qwen-query", YVEX_DTYPE_F32,
+                          query_interleaved, query_bytes, &query_storage, &err) &&
+            quant_cuda_tensor(backend, "strided-qwen-kv", YVEX_DTYPE_F32,
+                              kv_interleaved, kv_bytes, &kv_storage, &err) &&
+            quant_cuda_tensor(backend, "strided-qwen-output", YVEX_DTYPE_F32,
+                              NULL, output_bytes, &output, &err) &&
+            yvex_backend_tensor_f32_subview(
+                query_storage, 0ull, query_count, &query) &&
+            yvex_backend_tensor_f32_subview(
+                kv_storage, 0ull, kv_count - kv_width, &key) &&
+            yvex_backend_tensor_f32_subview(
+                kv_storage, kv_width, kv_count - kv_width, &value),
+        "strided Q/gate and interleaved K/V views bind without a prefix copy");
+    request.requirement.key_value_tokens = KEY_VALUE_TOKENS;
+    request.requirement.query_start = KEY_VALUE_TOKENS - QUERY_TOKENS;
+    request.requirement.query_token_stride = query_stride;
+    request.requirement.key_token_stride = kv_stride;
+    request.requirement.value_token_stride = kv_stride;
+    request.query = &query;
+    request.key = &key;
+    request.value = &value;
+    request.output = output;
+    rc = operations->attention_execute(backend, &request, &facts, &err);
+    if (rc != YVEX_OK)
+        fprintf(stderr, "strided Qwen GQA failed: %s: %s\n",
+                yvex_error_where(&err), yvex_error_message(&err));
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && facts.kernel_launches == 1ull &&
+            yvex_backend_tensor_read(
+                backend, output, result, output_bytes, &err) == YVEX_OK,
+        "strided Qwen GQA consumes retained interleaved K/V in one exact launch");
+    quant_gqa_grouped_reference(
+        query_values, key_values, value_values, reference, QUERY_TOKENS,
+        KEY_VALUE_TOKENS, KEY_VALUE_TOKENS - QUERY_TOKENS, QUERY_HEADS,
+        KV_HEADS, HEAD_DIM, 1);
+    for (lane = 0ull; lane < packed_query_count; ++lane)
+        YVEX_TEST_ASSERT(
+            fabsf(result[lane] - reference[lane]) <
+                2e-4f * (1.0f + fabsf(reference[lane])),
+            "strided Qwen GQA matches the packed independent oracle");
+    request.requirement.value_token_stride = kv_width - 1ull;
+    YVEX_TEST_ASSERT(
+        operations->attention_execute(backend, &request, &facts, &err) ==
+            YVEX_ERR_INVALID_ARG,
+        "exact attention rejects a stride narrower than one semantic token row");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &kv_storage, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &query_storage, &err) == YVEX_OK,
+        "strided exact-attention tensors release cleanly");
+    free(reference);
+    free(result);
+    free(kv_interleaved);
+    free(query_interleaved);
+    free(value_values);
+    free(key_values);
+    free(query_values);
+    return 0;
+}
+
 static void quant_gqa_source_reference(const float *query, const float *key,
                                        const float *value, float *output,
                                        unsigned int tokens, unsigned int head_dim,
@@ -3538,6 +3663,8 @@ int yvex_cuda_test_quant_qtype(void)
                      "Qwen 24/4/256 exact-attention geometry");
     YVEX_TEST_ASSERT(quant_cuda_attention_cached_qwen_geometry(backend) == 0,
                      "cached Qwen 24/4/256 exact-attention geometry");
+    YVEX_TEST_ASSERT(quant_cuda_attention_strided_qwen_geometry(backend) == 0,
+                     "strided Qwen Q/gate and retained K/V geometry");
     YVEX_TEST_ASSERT(quant_cuda_gqa_blas(backend) == 0,
                      "scalable exact accelerated attention");
     YVEX_TEST_ASSERT(quant_cuda_gqa_large(backend) == 0,

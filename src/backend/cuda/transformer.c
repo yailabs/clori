@@ -686,41 +686,7 @@ static int gqa_workspace_add(unsigned long long *cursor, unsigned long long byte
     return yvex_core_u64_add(aligned, bytes, cursor);
 }
 
-static int attention_requirement_validate(
-    const yvex_transformer_attention_requirement *requirement,
-    const char *stage, yvex_error *err)
-{
-    unsigned long long query_end;
-    if (!requirement || !requirement->query_tokens ||
-        !requirement->key_value_tokens ||
-        !yvex_core_u64_add(requirement->query_start,
-                           requirement->query_tokens, &query_end) ||
-        query_end > requirement->key_value_tokens ||
-        !requirement->query_heads ||
-        !requirement->key_value_heads ||
-        requirement->query_heads % requirement->key_value_heads ||
-        !requirement->head_dimension) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, stage,
-                       "complete exact-attention geometry is required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    if (requirement->layout != YVEX_TRANSFORMER_ATTENTION_LAYOUT_TOKEN_HEAD_DIM ||
-        requirement->mask < YVEX_TRANSFORMER_ATTENTION_MASK_FULL ||
-        requirement->mask > YVEX_TRANSFORMER_ATTENTION_MASK_CAUSAL ||
-        requirement->numeric_contract != YVEX_TRANSFORMER_ATTENTION_NUMERIC_EXACT_F32 ||
-        requirement->head_dimension > GQA_HEAD_DIMENSION_MAX ||
-        requirement->query_dtype != YVEX_DTYPE_F32 ||
-        requirement->key_dtype != YVEX_DTYPE_F32 ||
-        requirement->value_dtype != YVEX_DTYPE_F32 ||
-        requirement->output_dtype != YVEX_DTYPE_F32 || !requirement->deterministic) {
-        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, stage,
-                       "CUDA requires deterministic token/head/dimension exact F32 attention");
-        return YVEX_ERR_UNSUPPORTED;
-    }
-    return YVEX_OK;
-}
-
-static int gqa_workspace_required(
+int yvex_cuda_transformer_gqa_workspace_required(
     unsigned long long query_tokens, unsigned long long key_value_tokens,
     unsigned long long query_heads,
     unsigned long long kv_heads, unsigned long long head_dim,
@@ -756,57 +722,20 @@ static int gqa_workspace_required(
     return YVEX_OK;
 }
 
-int yvex_cuda_transformer_attention_workspace_required(
-    const yvex_transformer_attention_requirement *requirement,
-    unsigned long long *bytes, yvex_error *err)
-{
-    int rc;
-    if (bytes) *bytes = 0ull;
-    rc = attention_requirement_validate(
-        requirement, "cuda.transformer.attention.workspace", err);
-    if (rc != YVEX_OK) return rc;
-    return gqa_workspace_required(
-        requirement->query_tokens, requirement->key_value_tokens,
-        requirement->query_heads,
-        requirement->key_value_heads, requirement->head_dimension, bytes, err);
-}
-
-int yvex_cuda_transformer_attention_execute(
-    yvex_backend *backend, const yvex_transformer_attention_request *request,
-    yvex_backend_operation_facts *facts, yvex_error *err)
-{
-    int rc;
-    if (!request || !request->query || !request->key || !request->value ||
-        !request->output || !facts) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.transformer.attention",
-                       "complete exact-attention tensors and result facts are required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    rc = attention_requirement_validate(
-        &request->requirement, "cuda.transformer.attention", err);
-    if (rc != YVEX_OK) return rc;
-    return yvex_cuda_transformer_gqa(
-        backend, request->query, request->key, request->value, request->output,
-        request->requirement.query_tokens,
-        request->requirement.key_value_tokens,
-        request->requirement.query_start, request->requirement.query_heads,
-        request->requirement.key_value_heads,
-        request->requirement.head_dimension,
-        request->requirement.mask == YVEX_TRANSFORMER_ATTENTION_MASK_CAUSAL,
-        facts, err);
-}
-
-int yvex_cuda_transformer_gqa(
+int yvex_cuda_transformer_gqa_strided(
     yvex_backend *backend, const yvex_device_tensor *query,
     const yvex_device_tensor *key, const yvex_device_tensor *value,
     yvex_device_tensor *output, unsigned long long query_tokens,
     unsigned long long key_value_tokens, unsigned long long query_start,
     unsigned long long query_heads, unsigned long long kv_heads,
-    unsigned long long head_dim, int causal, yvex_backend_operation_facts *facts,
-    yvex_error *err)
+    unsigned long long head_dim, unsigned long long query_stride,
+    unsigned long long key_stride, unsigned long long value_stride, int causal,
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
-    unsigned long long query_elements, kv_elements, rows, grid_rows, query_end;
+    unsigned long long query_elements, key_elements, value_elements, output_elements;
+    unsigned long long query_width, kv_width;
+    unsigned long long rows, grid_rows, query_end;
     float scale;
     int rc;
     if (facts) memset(facts, 0, sizeof(*facts));
@@ -817,21 +746,34 @@ int yvex_cuda_transformer_gqa(
         (causal != 0 && causal != 1) ||
         !head_dim || head_dim > GQA_HEAD_DIMENSION_MAX ||
         !yvex_core_u64_mul(query_tokens, query_heads, &rows) ||
-        !yvex_core_u64_mul(rows, head_dim, &query_elements) ||
-        !yvex_core_u64_mul(key_value_tokens, kv_heads, &kv_elements) ||
-        !yvex_core_u64_mul(kv_elements, head_dim, &kv_elements) ||
+        !yvex_core_u64_mul(query_heads, head_dim, &query_width) ||
+        !yvex_core_u64_mul(kv_heads, head_dim, &kv_width) ||
+        (query_stride && query_stride < query_width) ||
+        (key_stride && key_stride < kv_width) ||
+        (value_stride && value_stride < kv_width) ||
+        !(query_stride = query_stride ? query_stride : query_width) ||
+        !(key_stride = key_stride ? key_stride : kv_width) ||
+        !(value_stride = value_stride ? value_stride : kv_width) ||
+        !yvex_core_u64_mul(query_tokens - 1ull, query_stride, &query_elements) ||
+        !yvex_core_u64_add(query_elements, query_width, &query_elements) ||
+        !yvex_core_u64_mul(query_tokens, query_width, &output_elements) ||
+        !yvex_core_u64_mul(key_value_tokens - 1ull, key_stride, &key_elements) ||
+        !yvex_core_u64_add(key_elements, kv_width, &key_elements) ||
+        !yvex_core_u64_mul(key_value_tokens - 1ull, value_stride, &value_elements) ||
+        !yvex_core_u64_add(value_elements, kv_width, &value_elements) ||
         !yvex_core_u64_mul(query_tokens / GQA_QUERIES_PER_BLOCK +
                                (query_tokens % GQA_QUERIES_PER_BLOCK != 0ull),
                            query_heads, &grid_rows) || grid_rows > UINT_MAX ||
         !transformer_tensor(backend, query, query_elements, 1) ||
-        !transformer_tensor(backend, key, kv_elements, 1) ||
-        !transformer_tensor(backend, value, kv_elements, 1) ||
-        !transformer_tensor(backend, output, query_elements, 0)) {
+        !transformer_tensor(backend, key, key_elements, 1) ||
+        !transformer_tensor(backend, value, value_elements, 1) ||
+        !transformer_tensor(backend, output, output_elements, 0)) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "cuda.transformer.gqa",
-                       "bounded packed Q/K/V geometry is required");
+                       "bounded Q/K/V views matching the declared token strides are required");
         return YVEX_ERR_FORMAT;
     }
-    if (query_heads == kv_heads && state->blas.ready &&
+    if (query_heads == kv_heads && query_stride == query_width &&
+        key_stride == kv_width && value_stride == kv_width && state->blas.ready &&
         state->blas.gemm_strided_batched_ex && state->gqa_softmax_function &&
         state->gqa_softmax_warp_function && state->attention_validate_function &&
         !yvex_cuda_capture_active(backend)) {
@@ -850,7 +792,8 @@ int yvex_cuda_transformer_gqa(
         void *parameters[] = {
             &query_ptr, &key_ptr, &value_ptr, &output_ptr,
             &query_tokens, &key_value_tokens, &query_start,
-            &query_heads, &kv_heads, &head_dim, &scale, &causal,
+            &query_heads, &kv_heads, &head_dim, &query_stride, &key_stride,
+            &value_stride, &scale, &causal,
         };
         rc = transformer_launch(
             backend, head_dim > TRANSFORMER_BLOCK ? state->gqa_wide_function
@@ -861,6 +804,21 @@ int yvex_cuda_transformer_gqa(
     }
     if (rc == YVEX_OK) output->is_written = 1;
     return rc;
+}
+
+int yvex_cuda_transformer_gqa(
+    yvex_backend *backend, const yvex_device_tensor *query,
+    const yvex_device_tensor *key, const yvex_device_tensor *value,
+    yvex_device_tensor *output, unsigned long long query_tokens,
+    unsigned long long key_value_tokens, unsigned long long query_start,
+    unsigned long long query_heads, unsigned long long kv_heads,
+    unsigned long long head_dim, int causal, yvex_backend_operation_facts *facts,
+    yvex_error *err)
+{
+    return yvex_cuda_transformer_gqa_strided(
+        backend, query, key, value, output, query_tokens, key_value_tokens,
+        query_start, query_heads, kv_heads, head_dim, 0ull, 0ull, 0ull,
+        causal, facts, err);
 }
 
 int yvex_cuda_transformer_silu_product_bf16(

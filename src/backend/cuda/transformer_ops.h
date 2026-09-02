@@ -93,6 +93,19 @@ int yvex_cuda_transformer_gqa(
     unsigned long long query_heads, unsigned long long kv_heads,
     unsigned long long head_dim, int causal,
     yvex_backend_operation_facts *facts, yvex_error *err);
+int yvex_cuda_transformer_gqa_strided(
+    yvex_backend *backend, const yvex_device_tensor *query,
+    const yvex_device_tensor *key, const yvex_device_tensor *value,
+    yvex_device_tensor *output, unsigned long long query_tokens,
+    unsigned long long key_value_tokens, unsigned long long query_start,
+    unsigned long long query_heads, unsigned long long kv_heads,
+    unsigned long long head_dim, unsigned long long query_stride,
+    unsigned long long key_stride, unsigned long long value_stride, int causal,
+    yvex_backend_operation_facts *facts, yvex_error *err);
+int yvex_cuda_transformer_gqa_workspace_required(
+    unsigned long long query_tokens, unsigned long long key_value_tokens,
+    unsigned long long query_heads, unsigned long long kv_heads,
+    unsigned long long head_dim, unsigned long long *bytes, yvex_error *err);
 int yvex_cuda_transformer_silu_product_bf16(
     yvex_backend *backend, const yvex_device_tensor *gate,
     const yvex_device_tensor *up, yvex_device_tensor *output,
