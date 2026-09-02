@@ -4080,6 +4080,79 @@ static void runtime_paged_capacity_fixture(yvex_execution_capacity_plan *capacit
     }
 }
 
+static int runtime_state_device_token_commit(
+    yvex_runtime_state_residency *residency,
+    const yvex_attention_state_provider *provider,
+    const yvex_attention_layer_plan *layer, unsigned long long position,
+    yvex_error *err)
+{
+    const yvex_attention_history_view *history = NULL;
+    yvex_attention_publication publication = {0};
+    yvex_attention_failure failure = {0};
+    float values[4] = {0.25f, -0.25f, 0.5f, -0.5f};
+    unsigned int token = (unsigned int)(position + 7ull);
+    char delta[YVEX_SHA256_HEX_CAP];
+    int rc;
+
+    if (!residency || !provider || !layer || layer->head_dimension != 4ull)
+        return YVEX_ERR_INVALID_ARG;
+    rc = provider->begin(
+        provider->context, 0ull, layer, NULL, position, 1ull, NULL,
+        &history, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_state_residency_transition(
+            residency, provider, NULL, 0ull, 1ull,
+            YVEX_RUNTIME_STATE_BEGIN, err);
+    publication.owned = publication.complete = 1;
+    publication.layer_index = layer->layer_index;
+    publication.attention_class = layer->attention_class;
+    publication.token_position = position;
+    publication.token_count = 1ull;
+    publication.token_ids = &token;
+    publication.kv_width = layer->head_dimension;
+    publication.raw_kv = values;
+    publication.device_state_staged = 1;
+    publication.device_state_staged_bytes = sizeof(values);
+    (void)snprintf(publication.execution_identity,
+                   sizeof(publication.execution_identity), "%064llx",
+                   position + 101ull);
+    if (rc == YVEX_OK)
+        rc = provider->stage(
+            provider->context, &publication, NULL, delta, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_state_residency_transition(
+            residency, provider, &publication, 0ull, 0ull,
+            YVEX_RUNTIME_STATE_STAGE, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_state_residency_prepare_commit(residency, err);
+    if (rc == YVEX_OK)
+        rc = provider->prepare_commit(provider->context, &failure, err);
+    if (rc == YVEX_OK) {
+        yvex_runtime_state_residency_publish_commit(residency);
+        provider->publish_commit(provider->context);
+    }
+    return rc;
+}
+
+static unsigned long long runtime_state_one_token_copy_bytes(
+    const yvex_attention_state_recipe *recipe)
+{
+    unsigned long long bytes = 0ull;
+    unsigned int index;
+
+    for (index = 0u; recipe && index < recipe->component_count; ++index) {
+        const yvex_attention_state_component_recipe *component =
+            &recipe->components[index];
+        if (component->kind == YVEX_ATTENTION_STATE_COMPONENT_HISTORY)
+            bytes += component->value_width * sizeof(float) +
+                     sizeof(unsigned long long);
+        else
+            bytes += (component->rolling.kv_state_extent +
+                      component->rolling.score_state_extent) * sizeof(float);
+    }
+    return bytes;
+}
+
 /* CUDA staging must not read virtual history pages before their provider admission. */
 static int test_runtime_paged_state_cuda_pack(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
@@ -4090,6 +4163,7 @@ static int test_runtime_paged_state_cuda_pack(
     yvex_backend *backend = NULL;
     const yvex_attention_state_provider *provider;
     const yvex_graph_attention_capacity_layer *layer;
+    const yvex_attention_layer_plan *attention_layer;
     yvex_graph_attention_capacity_plan *attention_capacity = NULL;
     yvex_graph_attention_capacity_request attention_request = {0};
     yvex_execution_capacity_plan page_capacity;
@@ -4113,7 +4187,7 @@ static int test_runtime_paged_state_cuda_pack(
                          session, &page_capacity, &model_failure, &err) == YVEX_OK,
                      "runtime provider admits class-specific virtual pages");
     attention_request.scope = YVEX_ATTENTION_PROBE_SCOPE_QUICK;
-    attention_request.token_count = 1ull;
+    attention_request.token_count = 3ull;
     attention_request.execution_count = 1ull;
     attention_request.select_layer = 1;
     YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
@@ -4121,7 +4195,10 @@ static int test_runtime_paged_state_cuda_pack(
                          &attention_request, &err) == YVEX_OK,
                      "one-layer paged state capacity seals");
     layer = yvex_graph_attention_capacity_plan_layer(attention_capacity, 0ull);
+    attention_layer = yvex_attention_plan_layer_at(
+        yvex_model_engine_view_get(model)->attention, 0ull);
     YVEX_TEST_ASSERT(layer && layer->selected &&
+                         attention_layer &&
                          provider->prepare(provider->context, 0ull, &layer->recipe,
                                            NULL, &attention_failure, &err) == YVEX_OK,
                      "empty committed and candidate histories reserve inaccessible tails");
@@ -4159,6 +4236,37 @@ static int test_runtime_paged_state_cuda_pack(
                                  !summary.device_bytes &&
                                  summary.page_release_count == committed_pages,
                              "state reset releases physical pages but retains virtual geometry");
+            {
+                unsigned long long one_token =
+                    runtime_state_one_token_copy_bytes(&layer->recipe);
+                unsigned long long copied;
+                YVEX_TEST_ASSERT(
+                    one_token &&
+                        runtime_state_device_token_commit(
+                            residency, provider, attention_layer, 0ull, &err) ==
+                            YVEX_OK &&
+                        yvex_runtime_state_residency_summary_copy(
+                            residency, &summary, &err) == YVEX_OK,
+                    "first device-authored state token publishes exactly");
+                copied = summary.copy_bytes;
+                YVEX_TEST_ASSERT(
+                    runtime_state_device_token_commit(
+                        residency, provider, attention_layer, 1ull, &err) ==
+                            YVEX_OK &&
+                        yvex_runtime_state_residency_summary_copy(
+                            residency, &summary, &err) == YVEX_OK &&
+                        summary.copy_bytes - copied == one_token,
+                    "second token synchronizes only one committed history delta");
+                copied = summary.copy_bytes;
+                YVEX_TEST_ASSERT(
+                    runtime_state_device_token_commit(
+                        residency, provider, attention_layer, 2ull, &err) ==
+                            YVEX_OK &&
+                        yvex_runtime_state_residency_summary_copy(
+                            residency, &summary, &err) == YVEX_OK &&
+                        summary.copy_bytes - copied == one_token,
+                    "third token avoids replaying the complete committed history");
+            }
         } else {
             YVEX_TEST_ASSERT(!summary.paged && summary.host_bytes == summary.device_bytes,
                              "CUDA without VMM exposes its explicit full-bank fallback");

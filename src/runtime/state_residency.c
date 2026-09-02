@@ -18,9 +18,11 @@
 typedef struct {
     const void *host[2][3];
     unsigned long long offset[3], bytes[3], visible[2][3], admitted[2][3];
+    unsigned long long device_valid[2][3];
 } state_resident_component;
 typedef struct {
-    int selected, staged, banks_synchronized, paged, needs_upload[2];
+    int selected, staged, staged_replaces_prefix;
+    int banks_synchronized, paged, needs_upload[2];
     unsigned long long bytes, page_granularity;
     unsigned int committed_bank, staged_bank;
     yvex_attention_state_recipe recipe;
@@ -220,6 +222,27 @@ static int state_resident_pack(
     return YVEX_OK;
 }
 
+static void state_resident_device_valid_clear(
+    state_resident_layer *layer, unsigned int bank)
+{
+    unsigned int component;
+
+    for (component = 0u; component < layer->component_count; ++component)
+        memset(layer->components[component].device_valid[bank], 0,
+               sizeof(layer->components[component].device_valid[bank]));
+}
+
+static void state_resident_device_valid_publish(
+    state_resident_layer *layer, unsigned int bank)
+{
+    unsigned int component;
+
+    for (component = 0u; component < layer->component_count; ++component)
+        memcpy(layer->components[component].device_valid[bank],
+               layer->components[component].visible[bank],
+               sizeof(layer->components[component].device_valid[bank]));
+}
+
 static void state_resident_tensor_view(const yvex_device_tensor *tensor,
                                        unsigned long long offset,
                                        unsigned long long bytes,
@@ -312,7 +335,10 @@ static int state_resident_upload(yvex_runtime_state_residency *residency,
     if (rc == YVEX_ERR_BOUNDS && !yvex_error_is_set(err))
         yvex_error_set(err, rc, "runtime.state.residency.upload",
                        "persistent state upload accounting overflowed");
-    if (rc == YVEX_OK) layer->needs_upload[bank] = 0;
+    if (rc == YVEX_OK) {
+        state_resident_device_valid_publish(layer, bank);
+        layer->needs_upload[bank] = 0;
+    }
     return rc;
 }
 
@@ -692,20 +718,44 @@ static int state_resident_copy_bank(
 {
     unsigned int source_bank = layer->committed_bank, component, span;
     for (component = 0u; component < layer->component_count; ++component) {
+        const yvex_attention_state_component_recipe *recipe =
+            &layer->recipe.components[component];
         state_resident_component *part = &layer->components[component];
         for (span = 0u; span < 3u; ++span) {
             yvex_device_tensor source, target;
-            unsigned long long bytes = part->visible[source_bank][span];
+            unsigned long long source_bytes = part->visible[source_bank][span];
+            unsigned long long source_valid =
+                part->device_valid[source_bank][span];
+            unsigned long long target_valid =
+                part->device_valid[target_bank][span];
+            unsigned long long start, bytes;
             int rc;
-            if (!bytes) continue;
+            if (source_valid < source_bytes) {
+                yvex_error_set(err, YVEX_ERR_STATE,
+                               "runtime.state.residency.begin",
+                               "committed device state is not fully resident");
+                return YVEX_ERR_STATE;
+            }
+            start = recipe->kind == YVEX_ATTENTION_STATE_COMPONENT_HISTORY &&
+                            target_valid <= source_bytes
+                        ? target_valid
+                        : 0ull;
+            bytes = source_bytes - start;
+            if (!source_bytes) {
+                part->device_valid[target_bank][span] = 0ull;
+                continue;
+            }
             rc = state_resident_commit_range(
-                residency, layer, target_bank, part->offset[span], bytes,
+                residency, layer, target_bank, part->offset[span], source_bytes,
                 &part->admitted[target_bank][span], err);
             if (rc != YVEX_OK) return rc;
+            if (!bytes) continue;
             state_resident_tensor_view(
-                layer->device[source_bank], part->offset[span], bytes, &source);
+                layer->device[source_bank], part->offset[span] + start,
+                bytes, &source);
             state_resident_tensor_view(
-                layer->device[target_bank], part->offset[span], bytes, &target);
+                layer->device[target_bank], part->offset[span] + start,
+                bytes, &target);
             rc = yvex_backend_tensor_copy_async(
                 residency->backend, &target, &source, err);
             if (rc != YVEX_OK) return rc;
@@ -717,6 +767,7 @@ static int state_resident_copy_bank(
                                "persistent state copy accounting overflowed");
                 return YVEX_ERR_BOUNDS;
             }
+            part->device_valid[target_bank][span] = source_bytes;
         }
     }
     layer->needs_upload[target_bank] = 0;
@@ -762,25 +813,7 @@ static int state_residency_begin(
         rc = state_resident_pack(layer, bank, view, &layer->recipe, 0, err);
     if (rc == YVEX_OK && !state.extension_ready && !layer->banks_synchronized &&
         yvex_backend_kind_of(residency->backend) == YVEX_BACKEND_KIND_CUDA) {
-        if (layer->paged) {
-            rc = state_resident_copy_bank(residency, layer, bank, err);
-        } else {
-            unsigned long long next_bytes, next_count;
-            if (!yvex_core_u64_add(residency->summary.copy_bytes, layer->bytes,
-                                   &next_bytes) ||
-                !yvex_core_u64_add(residency->summary.copy_count, 1ull, &next_count)) {
-                yvex_error_set(err, YVEX_ERR_BOUNDS, "runtime.state.residency.begin",
-                               "persistent state copy accounting overflowed");
-                return YVEX_ERR_BOUNDS;
-            }
-            rc = yvex_backend_tensor_copy_async(
-                residency->backend, layer->device[bank],
-                layer->device[layer->committed_bank], err);
-            if (rc == YVEX_OK) {
-                residency->summary.copy_bytes = next_bytes;
-                residency->summary.copy_count = next_count;
-            }
-        }
+        rc = state_resident_copy_bank(residency, layer, bank, err);
         if (rc == YVEX_OK) layer->banks_synchronized = 1;
     }
     if (rc == YVEX_OK && layer->paged)
@@ -869,6 +902,7 @@ static int state_residency_stage(
     if (rc != YVEX_OK) return rc;
     layer->needs_upload[bank] = 0;
     layer->staged_bank = bank;
+    if (!device_staged) layer->staged_replaces_prefix = 1;
     layer->banks_synchronized = 0;
     if (!layer->staged) {
         layer->staged = 1;
@@ -935,7 +969,14 @@ void yvex_runtime_state_residency_publish_commit(
     if (!residency || !residency->commit_prepared) return;
     for (index = 0ull; index < residency->layer_count; ++index) {
         state_resident_layer *layer = &residency->layers[index];
-        if (layer->staged) layer->committed_bank = layer->staged_bank;
+        if (layer->staged) {
+            unsigned int prior_bank = layer->committed_bank;
+            state_resident_device_valid_publish(layer, layer->staged_bank);
+            if (layer->staged_replaces_prefix)
+                state_resident_device_valid_clear(layer, prior_bank);
+            layer->committed_bank = layer->staged_bank;
+        }
+        layer->staged_replaces_prefix = 0;
         layer->staged = 0;
     }
     residency->summary.staged_layer_count = 0ull;
@@ -952,8 +993,14 @@ void yvex_runtime_state_residency_abort(yvex_runtime_state_residency *residency)
 {
     unsigned long long index;
     if (!residency) return;
-    for (index = 0ull; index < residency->layer_count; ++index)
-        residency->layers[index].staged = 0;
+    for (index = 0ull; index < residency->layer_count; ++index) {
+        state_resident_layer *layer = &residency->layers[index];
+        if (layer->selected)
+            state_resident_device_valid_clear(
+                layer, 1u - layer->committed_bank);
+        layer->staged_replaces_prefix = 0;
+        layer->staged = 0;
+    }
     residency->summary.staged_layer_count = 0ull;
     residency->prepared_generation = 0ull;
     residency->prepared_commit_count = 0ull;
@@ -1022,6 +1069,8 @@ int yvex_runtime_state_residency_reset(
         yvex_runtime_state_residency_abort(residency);
         for (index = 0ull; index < residency->layer_count; ++index) {
             residency->layers[index].committed_bank = 0u;
+            state_resident_device_valid_clear(&residency->layers[index], 0u);
+            state_resident_device_valid_clear(&residency->layers[index], 1u);
             residency->layers[index].banks_synchronized =
                 !residency->layers[index].paged;
         }
