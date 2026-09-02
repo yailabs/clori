@@ -651,6 +651,19 @@ static int qwen_compilation_source_open(
     options.models_root = request->models_root;
     options.manifest_path = request->source_manifest_path;
     yvex_source_payload_budget_default(&options.budget);
+    if (request->source_stream_count > 64u) {
+        qwen_source_release(owner);
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "qwen3_5.compilation-source",
+                       "source stream count exceeds the bounded compiler worker limit");
+        return YVEX_ERR_BOUNDS;
+    }
+    if (request->source_stream_count) {
+        options.budget.maximum_streams = request->source_stream_count;
+        if (options.budget.maximum_open_handles < request->source_stream_count)
+            options.budget.maximum_open_handles = request->source_stream_count;
+        options.budget.maximum_inflight_host_bytes =
+            options.budget.chunk_bytes * request->source_stream_count;
+    }
     options.chunk_bytes = options.budget.chunk_bytes;
     options.page_bytes = options.budget.page_bytes;
     rc = yvex_compilation_source_operations.open(

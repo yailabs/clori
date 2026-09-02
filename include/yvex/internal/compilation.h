@@ -573,6 +573,7 @@ typedef struct yvex_compilation_runtime_binding_request {
     const char *physical_variant_plan_path;
     unsigned long long family_adapter_id;
     unsigned long long family_adapter_version;
+    unsigned int source_stream_count;
 } yvex_compilation_runtime_binding_request;
 typedef struct yvex_compilation_runtime_binding_result {
     char path[YVEX_PATH_CAP];

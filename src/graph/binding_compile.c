@@ -550,6 +550,7 @@ static int variant_complete_open(
     source.quant_policy_path = request->quant_policy_path;
     source.quant_preset_name = request->quant_preset_name;
     source.imatrix_path = request->imatrix_path;
+    source.source_stream_count = request->worker_count;
     rc = compiler->pipeline->source_open(&compiler->source, &source, err);
     if (rc == YVEX_OK &&
         (!compiler->source.verification || !compiler->source.verification->verified))
