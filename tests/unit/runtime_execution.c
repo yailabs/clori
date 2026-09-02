@@ -31,6 +31,7 @@ static int execution_test_planning(void)
     unsigned char wire[YVEX_MODEL_EXECUTION_WIRE_BYTES];
     unsigned long long index;
     yvex_error err;
+    int capacity_rc;
 
     execution_test_identity(logical, 'a');
     execution_test_identity(source, 'b');
@@ -200,7 +201,7 @@ static int execution_test_planning(void)
     capacity_request.workload = &workload;
     capacity_request.model_bytes = 90ull * 1024ull * 1024ull * 1024ull;
     capacity_request.derived_layout_bytes = 1ull * 1024ull * 1024ull * 1024ull;
-    for (index = 0ull; index < YVEX_MODEL_STATE_CLASS_COUNT; ++index) {
+    for (index = 0ull; index < YVEX_MODEL_STATE_CLASS_COUNT_V1; ++index) {
         states[index].state_class = (yvex_model_state_class)index;
         states[index].extent = YVEX_EXECUTION_STATE_EXTENT_CONTEXT;
         states[index].logical_block_tokens = 1ull;
@@ -236,15 +237,19 @@ static int execution_test_planning(void)
     states[YVEX_MODEL_STATE_PREFIX_CHECKPOINT].shared = 1;
     states[YVEX_MODEL_STATE_PREFIX_CHECKPOINT].copy_on_write = 1;
     capacity_request.state_classes = states;
-    capacity_request.state_class_count = YVEX_MODEL_STATE_CLASS_COUNT;
+    capacity_request.state_class_count = YVEX_MODEL_STATE_CLASS_COUNT_V1;
     capacity_request.workspace_bytes = 2ull * 1024ull * 1024ull * 1024ull;
     capacity_request.scheduler_bytes = 128ull * 1024ull * 1024ull;
     capacity_request.graph_bytes = 256ull * 1024ull * 1024ull;
-    YVEX_TEST_ASSERT(yvex_execution_capacity_plan_build(
-                         &capacity_request, &capacity, &err) == YVEX_OK &&
+    capacity_rc = yvex_execution_capacity_plan_build(
+        &capacity_request, &capacity, &err);
+    if (capacity_rc != YVEX_OK)
+        fprintf(stderr, "capacity refusal: %s: %s\n",
+                yvex_error_where(&err), yvex_error_message(&err));
+    YVEX_TEST_ASSERT(capacity_rc == YVEX_OK &&
                          capacity.per_session_maximum == 131072ull &&
                          capacity.concurrent_sequences == 4ull &&
-                         capacity.state_class_count == YVEX_MODEL_STATE_CLASS_COUNT &&
+                         capacity.state_class_count == YVEX_MODEL_STATE_CLASS_COUNT_V1 &&
                          capacity.state_classes[YVEX_MODEL_STATE_SWA_RING].page_tokens == 16ull &&
                          capacity.state_classes[YVEX_MODEL_STATE_COMPRESSED_HISTORY].page_tokens ==
                              128ull &&

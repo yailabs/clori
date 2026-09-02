@@ -202,21 +202,20 @@ static int model_execution_descriptor_export(
     unsigned long long scalars[YVEX_MODEL_EXECUTION_SCALAR_COUNT],
     const char *identities[YVEX_MODEL_EXECUTION_IDENTITY_COUNT]);
 
-int yvex_model_execution_descriptor_seal(
-    const yvex_model_execution_descriptor_request *request,
-    yvex_model_execution_descriptor *descriptor, yvex_error *err)
+static int model_execution_request_validate(
+    const yvex_model_execution_descriptor_request *request, yvex_error *err)
 {
-    const char *identities[YVEX_MODEL_EXECUTION_IDENTITY_COUNT];
-    unsigned long long values[YVEX_MODEL_EXECUTION_SCALAR_COUNT];
-    yvex_sha256 hash;
     unsigned long long attention_layers;
-    size_t index, value_count = 0u;
-    int routed_complete, dense_complete;
+    const char *identities[YVEX_MODEL_EXECUTION_IDENTITY_COUNT];
+    size_t index;
+    int routed_complete, dense_complete, schema_v2;
 
-    if (descriptor) memset(descriptor, 0, sizeof(*descriptor));
+    schema_v2 = request &&
+                request->schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2;
     routed_complete = request && request->routed_experts && request->experts_per_row &&
                       request->experts_per_row <= request->routed_experts &&
                       request->routed_ffn_width &&
+                      !request->dense_ffn_width &&
                       request->hash_router_layer_count <= request->layer_count &&
                       isfinite(request->routed_scaling_factor) &&
                       request->routed_scaling_factor > 0.0 &&
@@ -224,10 +223,13 @@ int yvex_model_execution_descriptor_seal(
     dense_complete = request && !request->routed_experts && !request->experts_per_row &&
                      !request->shared_experts && !request->routed_ffn_width &&
                      !request->shared_ffn_width && !request->hash_router_layer_count &&
+                     (schema_v2 ? request->dense_ffn_width != 0ull
+                                : request->dense_ffn_width == 0ull) &&
                      request->routed_scaling_factor == 0.0 &&
                      request->activation_limit == 0.0;
-    if (!request || !descriptor ||
-        request->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1)
+    if (!request ||
+        (request->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 &&
+         request->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2))
         return model_execution_refuse(
             err, YVEX_ERR_INVALID_ARG, "model execution descriptor schema is unsupported");
     if (!request->maximum_context || !request->original_context ||
@@ -272,9 +274,20 @@ int yvex_model_execution_descriptor_seal(
                            &attention_layers) ||
         !yvex_core_u64_add(attention_layers, request->hca_layers,
                            &attention_layers) ||
+        !yvex_core_u64_add(attention_layers, request->sequence_mixer_layers,
+                           &attention_layers) ||
         attention_layers != request->layer_count)
         return model_execution_refuse(
             err, YVEX_ERR_INVALID_ARG, "attention schedule does not cover every model layer");
+    if ((!schema_v2 && (request->sequence_mixer_layers ||
+                        request->dense_ffn_width)) ||
+        (schema_v2 &&
+         (!!request->sequence_mixer_layers !=
+          !!(request->persistent_state_class_mask &
+             YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_RECURRENT_SEQUENCE)))))
+        return model_execution_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "stateful decoder geometry does not match its descriptor schema");
     if (request->draft_layer_count &&
         (!request->proposal_width || request->proposal_width == ULLONG_MAX ||
          request->verification_width_maximum < request->proposal_width + 1ull ||
@@ -316,6 +329,32 @@ int yvex_model_execution_descriptor_seal(
         if (!yvex_sha256_hex_valid(identities[index]))
             return model_execution_refuse(
                 err, YVEX_ERR_FORMAT, "model execution identity input is malformed");
+    return YVEX_OK;
+}
+
+int yvex_model_execution_descriptor_seal(
+    const yvex_model_execution_descriptor_request *request,
+    yvex_model_execution_descriptor *descriptor, yvex_error *err)
+{
+    const char *identities[YVEX_MODEL_EXECUTION_IDENTITY_COUNT];
+    unsigned long long values[YVEX_MODEL_EXECUTION_SCALAR_COUNT];
+    yvex_sha256 hash;
+    size_t index, value_count;
+    int schema_v2;
+
+    if (descriptor) memset(descriptor, 0, sizeof(*descriptor));
+    if (!descriptor)
+        return model_execution_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "model execution descriptor output is required");
+    if (model_execution_request_validate(request, err) != YVEX_OK)
+        return yvex_error_code(err);
+    schema_v2 =
+        request->schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2;
+    identities[0] = request->logical_model_identity;
+    identities[1] = request->source_model_identity;
+    identities[2] = request->attention_schedule_identity;
+    identities[3] = request->persistent_state_identity;
 
     descriptor->schema_version = request->schema_version;
 #define COPY_MODEL_FIELD(name) descriptor->name = request->name
@@ -336,6 +375,7 @@ int yvex_model_execution_descriptor_seal(
     COPY_MODEL_FIELD(swa_layers);
     COPY_MODEL_FIELD(csa_layers);
     COPY_MODEL_FIELD(hca_layers);
+    COPY_MODEL_FIELD(sequence_mixer_layers);
     COPY_MODEL_FIELD(sliding_window);
     COPY_MODEL_FIELD(minimum_compression_ratio);
     COPY_MODEL_FIELD(maximum_compression_ratio);
@@ -352,6 +392,7 @@ int yvex_model_execution_descriptor_seal(
     COPY_MODEL_FIELD(routed_ffn_width);
     COPY_MODEL_FIELD(shared_ffn_width);
     COPY_MODEL_FIELD(hash_router_layer_count);
+    COPY_MODEL_FIELD(dense_ffn_width);
     COPY_MODEL_FIELD(routed_scaling_factor);
     COPY_MODEL_FIELD(activation_limit);
     COPY_MODEL_FIELD(output_input_width);
@@ -380,7 +421,8 @@ int yvex_model_execution_descriptor_seal(
                         sizeof(descriptor->persistent_state_identity), identities[3]);
 
     if (!model_execution_descriptor_export(descriptor, values, identities)) goto identity_failed;
-    value_count = YVEX_MODEL_EXECUTION_SCALAR_COUNT;
+    value_count = schema_v2 ? YVEX_MODEL_EXECUTION_SCALAR_COUNT_V2
+                            : YVEX_MODEL_EXECUTION_SCALAR_COUNT_V1;
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.model-execution-descriptor.v1") ||
         !yvex_sha256_update_u64(&hash, descriptor->schema_version))
@@ -411,8 +453,11 @@ static int model_execution_descriptor_export(
     size_t index = 0u;
 
     if (!descriptor || !scalars || !identities ||
-        descriptor->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1)
+        (descriptor->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 &&
+         descriptor->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2))
         return 0;
+    memset(scalars, 0,
+           YVEX_MODEL_EXECUTION_SCALAR_COUNT * sizeof(*scalars));
 #define EXPORT_MODEL_FIELD(name) scalars[index++] = descriptor->name
     EXPORT_MODEL_FIELD(maximum_context);
     EXPORT_MODEL_FIELD(original_context);
@@ -467,6 +512,8 @@ static int model_execution_descriptor_export(
     EXPORT_MODEL_FIELD(bos_token_id);
     EXPORT_MODEL_FIELD(eos_token_id);
     EXPORT_MODEL_FIELD(draft_noise_token_id);
+    EXPORT_MODEL_FIELD(sequence_mixer_layers);
+    EXPORT_MODEL_FIELD(dense_ffn_width);
 #undef EXPORT_MODEL_FIELD
     identities[0] = descriptor->logical_model_identity;
     identities[1] = descriptor->source_model_identity;
@@ -477,6 +524,7 @@ static int model_execution_descriptor_export(
 
 static int model_execution_descriptor_import(
     const unsigned long long scalars[YVEX_MODEL_EXECUTION_SCALAR_COUNT],
+    unsigned int schema_version, size_t scalar_count,
     const char *const identities[YVEX_MODEL_EXECUTION_IDENTITY_COUNT],
     const char *expected_identity, yvex_model_execution_descriptor *descriptor,
     yvex_error *err)
@@ -489,7 +537,15 @@ static int model_execution_descriptor_import(
         !yvex_sha256_hex_valid(expected_identity))
         return model_execution_refuse(
             err, YVEX_ERR_INVALID_ARG, "serialized model execution facts are required");
-    request.schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1;
+    if ((schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 &&
+         scalar_count != YVEX_MODEL_EXECUTION_SCALAR_COUNT_V1 &&
+         scalar_count != YVEX_MODEL_EXECUTION_SCALAR_COUNT_V2) ||
+        (schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2 &&
+         scalar_count != YVEX_MODEL_EXECUTION_SCALAR_COUNT_V2))
+        return model_execution_refuse(
+            err, YVEX_ERR_FORMAT,
+            "serialized model execution schema extent is invalid");
+    request.schema_version = schema_version;
     request.logical_model_identity = identities[0];
     request.source_model_identity = identities[1];
     request.attention_schedule_identity = identities[2];
@@ -551,8 +607,14 @@ static int model_execution_descriptor_import(
     IMPORT_MODEL_FIELD(bos_token_id);
     IMPORT_MODEL_FIELD(eos_token_id);
     IMPORT_MODEL_FIELD(draft_noise_token_id);
+    if (scalar_count == YVEX_MODEL_EXECUTION_SCALAR_COUNT_V2) {
+        IMPORT_MODEL_FIELD(sequence_mixer_layers);
+        IMPORT_MODEL_FIELD(dense_ffn_width);
+    }
 #undef IMPORT_MODEL_FIELD
-    if (index != YVEX_MODEL_EXECUTION_SCALAR_COUNT)
+    if (index != scalar_count ||
+        (schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 &&
+         (request.sequence_mixer_layers || request.dense_ffn_width)))
         return model_execution_refuse(
             err, YVEX_ERR_STATE, "serialized model execution field count drifted");
     rc = yvex_model_execution_descriptor_seal(&request, descriptor, err);
@@ -594,6 +656,7 @@ int yvex_model_execution_descriptor_encode(
                        descriptor, scalars, identities))
         return model_execution_refuse(
             err, YVEX_ERR_INVALID_ARG, "sealed model execution descriptor is required");
+    memset(output, 0, YVEX_MODEL_EXECUTION_WIRE_BYTES);
     model_execution_wire_put_u64(output, descriptor->schema_version);
     offset += 8u;
     for (index = 0u; index < YVEX_MODEL_EXECUTION_SCALAR_COUNT; ++index, offset += 8u)
@@ -619,15 +682,27 @@ int yvex_model_execution_descriptor_decode(
     char storage[YVEX_MODEL_EXECUTION_IDENTITY_COUNT][YVEX_MODEL_EXECUTION_IDENTITY_CAP];
     const char *identities[YVEX_MODEL_EXECUTION_IDENTITY_COUNT];
     char expected[YVEX_MODEL_EXECUTION_IDENTITY_CAP];
-    size_t offset = 0u;
+    size_t offset = 0u, scalar_count;
+    unsigned int schema_version;
     unsigned int index;
-    if (!bytes || byte_count != YVEX_MODEL_EXECUTION_WIRE_BYTES || !descriptor ||
-        model_execution_wire_get_u64(bytes) !=
-            YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1)
+    if (!bytes || !descriptor ||
+        (byte_count != YVEX_MODEL_EXECUTION_WIRE_BYTES_V1 &&
+         byte_count != YVEX_MODEL_EXECUTION_WIRE_BYTES))
         return model_execution_refuse(
             err, YVEX_ERR_FORMAT, "model execution wire record is malformed");
+    schema_version = (unsigned int)model_execution_wire_get_u64(bytes);
+    scalar_count = byte_count == YVEX_MODEL_EXECUTION_WIRE_BYTES_V1
+                       ? YVEX_MODEL_EXECUTION_SCALAR_COUNT_V1
+                       : YVEX_MODEL_EXECUTION_SCALAR_COUNT_V2;
+    if ((schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 &&
+         schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2) ||
+        (schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2 &&
+         scalar_count != YVEX_MODEL_EXECUTION_SCALAR_COUNT_V2))
+        return model_execution_refuse(
+            err, YVEX_ERR_FORMAT, "model execution wire schema is malformed");
+    memset(scalars, 0, sizeof(scalars));
     offset += 8u;
-    for (index = 0u; index < YVEX_MODEL_EXECUTION_SCALAR_COUNT; ++index, offset += 8u)
+    for (index = 0u; index < scalar_count; ++index, offset += 8u)
         scalars[index] = model_execution_wire_get_u64(bytes + offset);
     for (index = 0u; index < YVEX_MODEL_EXECUTION_IDENTITY_COUNT; ++index) {
         memcpy(storage[index], bytes + offset, YVEX_SHA256_HEX_BYTES);
@@ -642,7 +717,8 @@ int yvex_model_execution_descriptor_decode(
         return model_execution_refuse(
             err, YVEX_ERR_FORMAT, "model execution wire extent is noncanonical");
     return model_execution_descriptor_import(
-        scalars, identities, expected, descriptor, err);
+        scalars, schema_version, scalar_count, identities, expected,
+        descriptor, err);
 }
 
 /* Dtype registry */

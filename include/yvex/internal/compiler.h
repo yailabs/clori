@@ -13,8 +13,8 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/media_target.h>
 #include <yvex/internal/model.h>
+#include <yvex/internal/semantic_decoder.h>
 #include <yvex/registry.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -299,8 +299,8 @@ typedef struct yvex_physical_variant_api {
     const yvex_physical_variant_view *(*view)(
         const yvex_physical_variant_session *session);
 } yvex_physical_variant_api;
-
 #define YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1 1u
+#define YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2 2u
 #define YVEX_SEMANTIC_NUMERIC_CONTRACT_SCHEMA_V1 1u
 typedef struct {
     unsigned int schema_version;
@@ -348,6 +348,7 @@ typedef struct {
     unsigned int schema_version;
     unsigned long long family_adapter_id, family_adapter_version;
     unsigned long long attention_layer_count, draft_attention_layer_count;
+    unsigned long long decoder_layer_count;
     yvex_model_execution_descriptor execution_descriptor;
     yvex_semantic_numeric_contract numeric_contract;
     char target_id[128];
@@ -371,6 +372,9 @@ typedef struct {
     unsigned long long attention_layer_count;
     yvex_semantic_attention_layer_fn draft_attention_layer;
     unsigned long long draft_attention_layer_count;
+    const void *decoder_context;
+    yvex_semantic_decoder_layer_fn decoder_layer;
+    unsigned long long decoder_layer_count;
     const yvex_semantic_composite_request *composite;
     const yvex_semantic_reference_request *references;
     unsigned long long reference_count;
@@ -384,6 +388,10 @@ int yvex_semantic_model_ir_attention_view(
     const yvex_semantic_model_ir *model, yvex_tensor_scope tensor_scope,
     const yvex_semantic_attention_layer **layers,
     unsigned long long *layer_count);
+int yvex_semantic_model_ir_decoder_view(
+    const yvex_semantic_model_ir *model,
+    const yvex_semantic_decoder_layer **layers,
+    unsigned long long *layer_count);
 int yvex_semantic_model_ir_composite_view(
     const yvex_semantic_model_ir *model,
     const yvex_semantic_component **components, unsigned long long *component_count,
@@ -391,7 +399,6 @@ int yvex_semantic_model_ir_composite_view(
 const char *yvex_semantic_model_ir_reference(
     const yvex_semantic_model_ir *model, const char *key);
 void yvex_semantic_model_ir_close(yvex_semantic_model_ir **model);
-
 #define YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1 1u
 typedef struct yvex_family_compilation_source {
     void *owner;
@@ -402,7 +409,6 @@ typedef struct yvex_family_compilation_source {
     const struct yvex_compilation_source_summary *source_summary;
     const void *lowering_context;
 } yvex_family_compilation_source;
-
 /*
  * Family callbacks project semantic facts into one generic binding-compilation lifecycle.
  * Every borrowed view remains valid until source_close; semantic_model is independently owned.

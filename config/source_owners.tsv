@@ -52,6 +52,8 @@ include/yvex/internal/engine_resource.h	runtime	runtime.engine_resource	generic	
 include/yvex/internal/runtime_prefix.h	runtime	runtime.session_prefix	generic	private	internal-abi	runtime,server,tests	interface	none
 include/yvex/internal/runtime_state_store.h	runtime	runtime.state_store	generic	private	file-serialization	runtime,server,tests	interface	none
 include/yvex/internal/sequence_mixer.h	graph	graph.sequence_mixer	generic	private	internal-abi	model.family,graph,runtime,backend,tests	interface	none
+include/yvex/internal/semantic_decoder.h	model	model.semantic_decoder	generic	private	internal-abi	model.family,compilation,graph,runtime,tests	interface	none
+src/model/semantic_decoder.c	model	model.semantic_decoder	generic	private	identity	model.family,compilation,graph,runtime,tests	implementation	none
 include/yvex/internal/tokenizer.h	tokenizer	tokenizer.family_policy	generic	private	internal-abi	compilation,runtime,server,tokenizer	interface	none
 src/runtime/private.h	runtime	runtime.private	generic	private	internal-abi	runtime	interface	none
 include/yvex/internal/source.h	source	source.internal	generic	private	internal-abi	model,compilation	interface	none

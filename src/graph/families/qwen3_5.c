@@ -6,9 +6,11 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/family_catalog.h>
 #include <yvex/internal/families/qwen3_5.h>
+#include <yvex/internal/graph.h>
 #include <yvex/internal/source_catalog.h>
 
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 
 #define QWEN_TEXT_TENSORS 851ull
@@ -343,6 +345,173 @@ static const yvex_compilation_source_projection qwen_source_projection = {
     .lower = qwen_source_lower,
     .lowering = &yvex_artifact_lowering_operations};
 
+static int qwen_semantic_identity(
+    const char *domain, const yvex_qwen3_5_architecture *architecture,
+    char output[YVEX_SHA256_HEX_BYTES])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long layer;
+
+    if (!domain || !architecture || !output) return 0;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, domain) ||
+        !yvex_sha256_update_text(&hash, architecture->architecture_identity) ||
+        !yvex_sha256_update_u64(&hash, architecture->text.layer_count) ||
+        !yvex_sha256_update_u64(&hash, architecture->text.maximum_positions) ||
+        !yvex_sha256_update_u64(&hash, architecture->text.hidden_size) ||
+        !yvex_sha256_update_u64(&hash, architecture->text.intermediate_size))
+        return 0;
+    for (layer = 0ull; layer < architecture->text.layer_count; ++layer)
+        if (!yvex_sha256_update_u64(
+                &hash, architecture->text.layers[layer])) return 0;
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
+static yvex_gated_delta_requirement qwen_delta_requirement(
+    const yvex_qwen3_5_architecture *architecture)
+{
+    yvex_gated_delta_requirement requirement = {
+        .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V1,
+        .query_heads = architecture->text.linear_key_heads,
+        .key_heads = architecture->text.linear_key_heads,
+        .value_heads = architecture->text.linear_value_heads,
+        .key_head_dimension = architecture->text.linear_key_head_dimension,
+        .value_head_dimension = architecture->text.linear_value_head_dimension,
+        .convolution_kernel = architecture->text.linear_convolution_kernel,
+        .projected_dtype = YVEX_DTYPE_F32,
+        .convolution_state_dtype = YVEX_DTYPE_F32,
+        .recurrent_state_dtype = YVEX_DTYPE_F32,
+        .accumulation_dtype = YVEX_DTYPE_F32,
+        .output_dtype = YVEX_DTYPE_F32,
+        .numeric_contract = YVEX_SEQUENCE_MIXER_NUMERIC_F32_RECURRENCE,
+        .qk_normalization_epsilon = 1.0e-6,
+        .output_normalization_epsilon = architecture->text.rms_norm_epsilon,
+        .query_scale = 1.0 / sqrt(
+            (double)architecture->text.linear_key_head_dimension),
+        .deterministic = 1};
+
+    return requirement;
+}
+
+static int qwen_decoder_layer(
+    const void *context, unsigned long long index,
+    yvex_semantic_decoder_layer *out)
+{
+    const yvex_qwen3_5_architecture *architecture = context;
+    yvex_qwen3_5_layer_kind kind;
+
+    if (!architecture || !out || index >= architecture->text.layer_count)
+        return 0;
+    kind = architecture->text.layers[index];
+    memset(out, 0, sizeof(*out));
+    out->ordinal = index;
+    out->layer_index = index;
+    out->tensor_scope = YVEX_TENSOR_SCOPE_MAIN_LAYER;
+    out->mixer = kind == YVEX_QWEN3_5_LAYER_FULL_ATTENTION
+                     ? YVEX_SEMANTIC_DECODER_MIXER_FULL_CAUSAL_ATTENTION
+                     : YVEX_SEMANTIC_DECODER_MIXER_GATED_DELTA;
+    out->feed_forward = YVEX_SEMANTIC_DECODER_FFN_DENSE_SILU_GATED;
+    out->hidden_width = architecture->text.hidden_size;
+    out->intermediate_width = architecture->text.intermediate_size;
+    out->normalization_epsilon = architecture->text.rms_norm_epsilon;
+    out->mixer_output_gate = 1;
+    if (kind == YVEX_QWEN3_5_LAYER_LINEAR_ATTENTION)
+        out->gated_delta = qwen_delta_requirement(architecture);
+    return kind == YVEX_QWEN3_5_LAYER_LINEAR_ATTENTION ||
+           kind == YVEX_QWEN3_5_LAYER_FULL_ATTENTION;
+}
+
+static int qwen_attention_layer(
+    const void *context, unsigned long long ordinal,
+    yvex_semantic_attention_layer *out)
+{
+    const yvex_qwen3_5_architecture *architecture = context;
+    unsigned long long index, found = 0ull;
+
+    if (!architecture || !out ||
+        ordinal >= architecture->text.full_attention_layers) return 0;
+    for (index = 0ull; index < architecture->text.layer_count; ++index) {
+        if (architecture->text.layers[index] !=
+            YVEX_QWEN3_5_LAYER_FULL_ATTENTION) continue;
+        if (found++ != ordinal) continue;
+        memset(out, 0, sizeof(*out));
+        out->ordinal = ordinal;
+        out->layer_index = index;
+        out->predictor_index = YVEX_ATTENTION_NO_TENSOR_INDEX;
+        out->tensor_scope = YVEX_TENSOR_SCOPE_MAIN_LAYER;
+        /* A maximum-context window selects the exact bounded full-causal H28 path. */
+        out->attention_class = YVEX_ATTENTION_CLASS_SWA;
+        out->compute_contract = YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1;
+        out->sliding_window = architecture->text.maximum_positions;
+        out->query_heads = architecture->text.attention_heads;
+        out->kv_heads = architecture->text.kv_heads;
+        out->head_dimension = architecture->text.attention_head_dimension;
+        out->rope_head_dimension = architecture->text.rotary_dimension;
+        out->hidden_dimension = architecture->text.hidden_size;
+        out->rms_norm_epsilon = architecture->text.rms_norm_epsilon;
+        out->position.rope_dimension = architecture->text.rotary_dimension;
+        out->position.theta = architecture->text.rope_theta;
+        out->position.scaling_factor = 1ull;
+        out->position.original_context = architecture->text.maximum_positions;
+        out->position.maximum_context = architecture->text.maximum_positions;
+        out->position.partial_rope = 1;
+        return 1;
+    }
+    return 0;
+}
+
+static int qwen_execution_descriptor(
+    yvex_model_execution_descriptor *out,
+    const yvex_source_verification *verification,
+    const yvex_qwen3_5_architecture *architecture, yvex_error *err)
+{
+    char schedule[YVEX_SHA256_HEX_BYTES], state[YVEX_SHA256_HEX_BYTES];
+    yvex_model_execution_descriptor_request request = {0};
+
+    if (!out || !verification || !architecture ||
+        !qwen_semantic_identity(
+            "yvex.qwen3_5.attention-schedule.v1", architecture, schedule) ||
+        !qwen_semantic_identity(
+            "yvex.qwen3_5.persistent-state.v1", architecture, state)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "qwen3_5.execution-descriptor",
+                       "Qwen execution identities could not be derived");
+        return YVEX_ERR_STATE;
+    }
+    request = (yvex_model_execution_descriptor_request){
+        .schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2,
+        .logical_model_identity = architecture->architecture_identity,
+        .source_model_identity = verification->manifest_payload_identity,
+        .attention_schedule_identity = schedule,
+        .persistent_state_identity = state,
+        .maximum_context = architecture->text.maximum_positions,
+        .original_context = architecture->text.maximum_positions,
+        .rope_scaling = YVEX_MODEL_ROPE_SCALING_NONE,
+        .rope_theta = architecture->text.rope_theta,
+        .rope_scaling_factor = 1ull,
+        .layer_count = architecture->text.layer_count,
+        .hidden_width = architecture->text.hidden_size,
+        .vocabulary_size = architecture->text.vocabulary_size,
+        .attention_heads = architecture->text.attention_heads,
+        .kv_heads = architecture->text.kv_heads,
+        .head_width = architecture->text.attention_head_dimension,
+        .swa_layers = architecture->text.full_attention_layers,
+        .sequence_mixer_layers = architecture->text.linear_attention_layers,
+        .sliding_window = architecture->text.maximum_positions,
+        .normalization_epsilon = architecture->text.rms_norm_epsilon,
+        .dense_ffn_width = architecture->text.intermediate_size,
+        .output_input_width = architecture->text.hidden_size,
+        .output_vocabulary_size = architecture->text.vocabulary_size,
+        .persistent_state_class_mask =
+            YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_SWA_RING) |
+            YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_RECURRENT_SEQUENCE),
+        .bos_token_id = architecture->text.bos_token_id,
+        .eos_token_id = architecture->text.eos_token_id};
+    return yvex_model_execution_descriptor_seal(&request, out, err);
+}
+
 static int qwen_semantic_model_build(yvex_semantic_model_ir **out,
                                      const yvex_source_verification *verification,
                                      yvex_error *err)
@@ -353,6 +522,7 @@ static int qwen_semantic_model_build(yvex_semantic_model_ir **out,
     const yvex_qwen3_5_architecture *architecture;
     yvex_semantic_reference_request references[4];
     yvex_semantic_model_ir_request request = {0};
+    yvex_model_execution_descriptor execution = {0};
     int rc;
 
     if (out) *out = NULL;
@@ -364,6 +534,9 @@ static int qwen_semantic_model_build(yvex_semantic_model_ir **out,
                        "pinned architecture and source payload identity are required");
         rc = YVEX_ERR_FORMAT;
     }
+    if (rc == YVEX_OK)
+        rc = qwen_execution_descriptor(
+            &execution, verification, architecture, err);
     if (rc == YVEX_OK) {
         references[0] = (yvex_semantic_reference_request){
             "source-revision", architecture->source_revision};
@@ -373,13 +546,20 @@ static int qwen_semantic_model_build(yvex_semantic_model_ir **out,
             "transformers-requirement", architecture->transformers_version};
         references[3] = (yvex_semantic_reference_request){
             "execution-specialization", "text-first"};
-        request.schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1;
+        request.schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2;
         request.family_adapter_id = YVEX_QWEN3_5_ADAPTER_ID;
         request.family_adapter_version = YVEX_QWEN3_5_ADAPTER_VERSION;
         request.target_id = YVEX_QWEN3_8_27B_TARGET_ID;
         request.source_model_identity = verification->manifest_payload_identity;
         request.logical_model_identity = architecture->architecture_identity;
-        request.semantic_payload_identity = architecture->architecture_identity;
+        request.semantic_payload_identity = execution.identity;
+        request.execution_descriptor = &execution;
+        request.attention_context = architecture;
+        request.attention_layer = qwen_attention_layer;
+        request.attention_layer_count = architecture->text.full_attention_layers;
+        request.decoder_context = architecture;
+        request.decoder_layer = qwen_decoder_layer;
+        request.decoder_layer_count = architecture->text.layer_count;
         request.references = references;
         request.reference_count = sizeof(references) / sizeof(references[0]);
         rc = yvex_semantic_model_ir_seal(out, &request, err);

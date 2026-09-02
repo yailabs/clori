@@ -122,10 +122,12 @@ static int model_execution_read(binding_cursor *cursor, yvex_model_execution_des
     unsigned char encoded[YVEX_MODEL_EXECUTION_WIRE_BYTES];
     unsigned long long byte_count;
     yvex_error err;
-    return cursor_u64(cursor, &byte_count) && byte_count == sizeof(encoded) &&
-           cursor_take(cursor, encoded, sizeof(encoded)) &&
+    return cursor_u64(cursor, &byte_count) &&
+           (byte_count == YVEX_MODEL_EXECUTION_WIRE_BYTES_V1 ||
+            byte_count == sizeof(encoded)) &&
+           cursor_take(cursor, encoded, (size_t)byte_count) &&
            yvex_model_execution_descriptor_decode(
-               encoded, sizeof(encoded), descriptor, &err) == YVEX_OK;
+               encoded, (size_t)byte_count, descriptor, &err) == YVEX_OK;
 }
 typedef enum {
     BINDING_FIELD_UNSIGNED = 0, BINDING_FIELD_SIGNED,
