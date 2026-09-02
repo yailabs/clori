@@ -1,12 +1,18 @@
 /* Admit the pinned Qwen3.8 source as one source-faithful Qwen3.5 text specialization. */
+#include "src/graph/private.h"
+
 #include <yvex/internal/artifact_lowering.h>
+#include <yvex/internal/artifact.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/compiler.h>
 #include <yvex/internal/compiler_source.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/deployment.h>
 #include <yvex/internal/family_catalog.h>
 #include <yvex/internal/families/qwen3_5.h>
 #include <yvex/internal/graph.h>
+#include <yvex/internal/operator_graph.h>
+#include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/source_catalog.h>
 #include <yvex/internal/tokenizer.h>
 
@@ -18,11 +24,16 @@
 #define QWEN_PINNED_NAMES 131ull
 #define QWEN_EXTENSION_NAMES 432ull
 #define QWEN_MAPPING_IDENTITY 9266396127046126464ull
+#define QWEN_SOURCE_FAITHFUL_PRESET "qwen3.8-source-faithful"
 
 typedef struct {
     yvex_compilation_source_session *source;
     yvex_semantic_model_ir *semantic;
 } qwen_source_owner;
+
+static void qwen_source_release(void *pointer);
+static int qwen_tokenizer_policy(yvex_tokenizer_family_policy *out,
+                                 yvex_error *err);
 
 static int qwen_role_project(yvex_qwen3_5_tensor_role source,
                              yvex_tensor_role *role,
@@ -371,6 +382,48 @@ static int qwen_semantic_identity(
     return 1;
 }
 
+static int qwen_numeric_contract_build(
+    const yvex_qwen3_5_architecture *architecture,
+    yvex_semantic_numeric_contract *contract, yvex_error *err)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+
+    if (!architecture || !contract) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "qwen3_5.numeric-contract",
+                       "pinned architecture and numeric contract output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.qwen3_5.text.numeric.v1") ||
+        !yvex_sha256_update_text(&hash, architecture->architecture_identity) ||
+        !yvex_sha256_update_u64(&hash, architecture->text.layer_count) ||
+        !yvex_sha256_update_u64(&hash, architecture->text.hidden_size) ||
+        !yvex_sha256_update_u64(&hash, architecture->text.intermediate_size) ||
+        !yvex_sha256_update_u64(&hash, architecture->text.attention_head_dimension) ||
+        !yvex_sha256_update_u64(&hash, architecture->text.rotary_dimension) ||
+        !yvex_sha256_update_u64(&hash, architecture->text.linear_key_head_dimension) ||
+        !yvex_sha256_update_u64(&hash, architecture->text.linear_value_head_dimension) ||
+        !yvex_sha256_update_u64(&hash, architecture->text.linear_convolution_kernel) ||
+        !yvex_sha256_update_u64(&hash, YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1) ||
+        !yvex_sha256_update_u64(&hash, YVEX_SEQUENCE_MIXER_NUMERIC_F32_RECURRENCE) ||
+        !yvex_sha256_final(&hash, digest)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "qwen3_5.numeric-contract",
+                       "Qwen numeric contract identity could not be derived");
+        return YVEX_ERR_STATE;
+    }
+    memset(contract, 0, sizeof(*contract));
+    contract->schema_version = YVEX_SEMANTIC_NUMERIC_CONTRACT_SCHEMA_V1;
+    contract->numeric_schema_version = 1u;
+    contract->compute_policy_count = 2ull;
+    contract->activation_policy_count = 2ull;
+    yvex_core_text_copy(contract->algorithm_revision,
+                        sizeof(contract->algorithm_revision),
+                        "qwen3_5-text-bf16-f32-recurrence-v1");
+    yvex_sha256_hex(digest, contract->identity);
+    return YVEX_OK;
+}
+
 static yvex_gated_delta_requirement qwen_delta_requirement(
     const yvex_qwen3_5_architecture *architecture)
 {
@@ -524,6 +577,7 @@ static int qwen_semantic_model_build(yvex_semantic_model_ir **out,
     yvex_semantic_reference_request references[4];
     yvex_semantic_model_ir_request request = {0};
     yvex_model_execution_descriptor execution = {0};
+    yvex_semantic_numeric_contract numeric = {0};
     int rc;
 
     if (out) *out = NULL;
@@ -538,6 +592,8 @@ static int qwen_semantic_model_build(yvex_semantic_model_ir **out,
     if (rc == YVEX_OK)
         rc = qwen_execution_descriptor(
             &execution, verification, architecture, err);
+    if (rc == YVEX_OK)
+        rc = qwen_numeric_contract_build(architecture, &numeric, err);
     if (rc == YVEX_OK) {
         references[0] = (yvex_semantic_reference_request){
             "source-revision", architecture->source_revision};
@@ -555,6 +611,7 @@ static int qwen_semantic_model_build(yvex_semantic_model_ir **out,
         request.logical_model_identity = architecture->architecture_identity;
         request.semantic_payload_identity = execution.identity;
         request.execution_descriptor = &execution;
+        request.numeric_contract = &numeric;
         request.attention_context = architecture;
         request.attention_layer = qwen_attention_layer;
         request.attention_layer_count = architecture->text.full_attention_layers;
@@ -567,6 +624,69 @@ static int qwen_semantic_model_build(yvex_semantic_model_ir **out,
     }
     family->close(&model);
     return rc;
+}
+
+static int qwen_compilation_source_open(
+    yvex_family_compilation_source *out,
+    const yvex_compilation_runtime_binding_request *request, yvex_error *err)
+{
+    yvex_compilation_source_options options = {0};
+    yvex_compilation_source_failure failure = {0};
+    qwen_source_owner *owner;
+    int rc;
+
+    if (out) memset(out, 0, sizeof(*out));
+    if (!out || !request || !request->source_path || !request->models_root) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "qwen3_5.compilation-source",
+                       "exact source path and models root are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    owner = calloc(1u, sizeof(*owner));
+    if (!owner) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "qwen3_5.compilation-source",
+                       "source compiler ownership allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    options.source_path = request->source_path;
+    options.models_root = request->models_root;
+    options.manifest_path = request->source_manifest_path;
+    yvex_source_payload_budget_default(&options.budget);
+    options.chunk_bytes = options.budget.chunk_bytes;
+    options.page_bytes = options.budget.page_bytes;
+    rc = yvex_compilation_source_operations.open(
+        &owner->source, &options, &qwen_source_projection, &failure, err);
+    if (rc == YVEX_OK)
+        rc = qwen_semantic_model_build(
+            &owner->semantic,
+            yvex_compilation_source_operations.verification(owner->source), err);
+    if (rc != YVEX_OK) {
+        qwen_source_release(owner);
+        return rc;
+    }
+    out->owner = owner;
+    out->verification = yvex_compilation_source_operations.verification(owner->source);
+    out->transform_ir = yvex_compilation_source_operations.transform(owner->source);
+    out->transform_binding = yvex_compilation_source_operations.binding(owner->source);
+    out->artifact_lowering = yvex_compilation_source_operations.lowering(owner->source);
+    out->source_summary = yvex_compilation_source_operations.summary(owner->source);
+    out->lowering_context = out->artifact_lowering;
+    out->tokenizer_vocabulary_size =
+        out->verification ? out->verification->tokenizer_effective_vocab_size : 0ull;
+    if (!out->verification || !out->transform_ir || !out->transform_binding ||
+        !out->artifact_lowering || !out->source_summary ||
+        !out->tokenizer_vocabulary_size) {
+        qwen_source_release(owner);
+        memset(out, 0, sizeof(*out));
+        yvex_error_set(err, YVEX_ERR_STATE, "qwen3_5.compilation-source",
+                       "Qwen source projection omitted a compiler input");
+        return YVEX_ERR_STATE;
+    }
+    return YVEX_OK;
+}
+
+static void qwen_compilation_source_close(void *owner)
+{
+    qwen_source_release(owner);
 }
 
 static void qwen_source_release(void *pointer)
@@ -583,36 +703,19 @@ static int qwen_source_compile(yvex_family_source_products *out,
                                const yvex_compilation_runtime_binding_request *request,
                                yvex_error *err)
 {
-    yvex_compilation_source_options options = {0};
-    yvex_compilation_source_failure failure = {0};
-    qwen_source_owner *owner;
+    yvex_family_compilation_source source = {0};
+    qwen_source_owner *owner = NULL;
     const yvex_semantic_model_ir_summary *semantic;
     int rc;
 
     if (out) memset(out, 0, sizeof(*out));
-    if (!out || !request || !request->source_path || !request->models_root) {
+    if (!out || !request) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "qwen3_5.source-compiler",
                        "exact source path and models root are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    owner = calloc(1u, sizeof(*owner));
-    if (!owner) {
-        yvex_error_set(err, YVEX_ERR_NOMEM, "qwen3_5.source-compiler",
-                       "source compiler ownership allocation failed");
-        return YVEX_ERR_NOMEM;
-    }
-    options.source_path = request->source_path;
-    options.models_root = request->models_root;
-    options.manifest_path = request->source_manifest_path;
-    yvex_source_payload_budget_default(&options.budget);
-    options.chunk_bytes = options.budget.chunk_bytes;
-    options.page_bytes = options.budget.page_bytes;
-    rc = yvex_compilation_source_operations.open(
-        &owner->source, &options, &qwen_source_projection, &failure, err);
-    if (rc == YVEX_OK)
-        rc = qwen_semantic_model_build(
-            &owner->semantic,
-            yvex_compilation_source_operations.verification(owner->source), err);
+    rc = qwen_compilation_source_open(&source, request, err);
+    owner = source.owner;
     semantic = rc == YVEX_OK
                    ? yvex_semantic_model_ir_summary_get(owner->semantic) : NULL;
     if (rc != YVEX_OK || !semantic) {
@@ -621,14 +724,301 @@ static int qwen_source_compile(yvex_family_source_products *out,
     }
     out->owner = owner;
     out->release = qwen_source_release;
-    out->verification = yvex_compilation_source_operations.verification(owner->source);
-    out->source_summary = yvex_compilation_source_operations.summary(owner->source);
+    out->verification = source.verification;
+    out->source_summary = source.source_summary;
     out->semantic_model = owner->semantic;
-    out->transform_ir = yvex_compilation_source_operations.transform(owner->source);
-    out->lowering = yvex_compilation_source_operations.lowering(owner->source);
+    out->transform_ir = source.transform_ir;
+    out->lowering = source.artifact_lowering;
     yvex_core_text_copy(out->derivation_identity,
                         sizeof(out->derivation_identity), semantic->identity);
     return YVEX_OK;
+}
+
+static int qwen_graph_plan_build(
+    yvex_attention_plan **out, const yvex_semantic_model_ir *semantic_model,
+    const yvex_materialization_session *session,
+    const yvex_runtime_descriptor *descriptor,
+    yvex_attention_failure *failure, yvex_error *err)
+{
+    return yvex_attention_plan_build_semantic(
+        out, semantic_model, YVEX_TENSOR_SCOPE_MAIN_LAYER,
+        session, descriptor, failure, err);
+}
+
+static const yvex_graph_compiler_api *qwen_graph_compile(void)
+{
+    static const yvex_graph_compiler_api compiler = {
+        .plan_build = qwen_graph_plan_build};
+
+    return &compiler;
+}
+
+static int qwen_execution_capabilities(yvex_runtime_capabilities *out)
+{
+    if (!out) return 0;
+    *out = (yvex_runtime_capabilities){
+        .attention_semantics_ready = 1,
+        .attention_core_ready = 1,
+        .attention_envelope_ready = 1,
+        .cpu_prefill_eager_ready = 1,
+        .cpu_decode_eager_ready = 1,
+        .cuda_eager_implemented = 1,
+        .attention_state_delta_ready = 1,
+        .attention_operator_ready = 1,
+        .attention_trace_ready = 1,
+        .attention_profile_ready = 1,
+        .attention_benchmark_ready = 1,
+        .output_head_binding_ready = 1,
+        .output_head_projection_ready = 1};
+    return yvex_runtime_capabilities_contract_valid(out);
+}
+
+static int qwen_transformer_policy(
+    const yvex_runtime_descriptor_summary *runtime,
+    yvex_transformer_family_policy *out)
+{
+    if (!runtime || !out ||
+        runtime->model_execution.schema_version !=
+            YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2)
+        return 0;
+    memset(out, 0, sizeof(*out));
+    return 1;
+}
+
+static int qwen_logits_policy(yvex_logits_family_policy *out)
+{
+    if (!out) return 0;
+    *out = (yvex_logits_family_policy){
+        .schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1,
+        .separate_output_head = 1,
+        .tied_output_head = 0,
+        .output_head_bias = 0};
+    return 1;
+}
+
+static int qwen_speculation_policy(
+    const yvex_runtime_descriptor_summary *runtime,
+    yvex_speculation_family_policy *out)
+{
+    if (!runtime || !out ||
+        runtime->model_execution.schema_version !=
+            YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2)
+        return 0;
+    memset(out, 0, sizeof(*out));
+    return 1;
+}
+
+static int qwen_artifact_admit(
+    const yvex_artifact *artifact, yvex_complete_artifact_admission *out,
+    yvex_artifact_admission_failure *failure, yvex_error *err)
+{
+    if (out) memset(out, 0, sizeof(*out));
+    if (failure) {
+        memset(failure, 0, sizeof(*failure));
+        failure->code = YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH;
+        yvex_core_text_copy(failure->field, sizeof(failure->field),
+                            "qwen-qualified-physical-catalog");
+        failure->actual = artifact ? yvex_artifact_size(artifact) : 0ull;
+    }
+    yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "qwen3_5.artifact-catalog",
+                   "Qwen source-faithful artifact has not entered the qualified physical catalog");
+    return YVEX_ERR_UNSUPPORTED;
+}
+
+static int qwen_runtime_descriptor(
+    yvex_runtime_descriptor **out,
+    const yvex_complete_artifact_admission *admission,
+    yvex_materialization_session *materialization,
+    const void *lowering_context,
+    const yvex_semantic_model_ir *semantic_model, yvex_error *err)
+{
+    const yvex_semantic_model_ir_summary *semantic =
+        yvex_semantic_model_ir_summary_get(semantic_model);
+    const yvex_model_execution_descriptor *execution =
+        semantic ? &semantic->execution_descriptor : NULL;
+    const yvex_semantic_numeric_contract *numeric =
+        semantic ? &semantic->numeric_contract : NULL;
+    yvex_runtime_descriptor_family_facts facts = {0};
+    yvex_runtime_descriptor_failure failure = {0};
+    yvex_materialization_projection projection;
+    int rc;
+
+    if (!semantic || !execution || !numeric ||
+        semantic->schema_version != YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2 ||
+        execution->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2 ||
+        numeric->schema_version != YVEX_SEMANTIC_NUMERIC_CONTRACT_SCHEMA_V1 ||
+        !yvex_sha256_hex_valid(numeric->identity)) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "qwen3_5.runtime-descriptor",
+                       "sealed hybrid execution and numeric contracts are required");
+        return YVEX_ERR_FORMAT;
+    }
+    facts.logical_model_identity = execution->logical_model_identity;
+    facts.runtime_numeric_identity = numeric->identity;
+    facts.runtime_hadamard_revision = numeric->algorithm_revision;
+    facts.runtime_numeric_schema_version = numeric->numeric_schema_version;
+    facts.runtime_compute_policy_count = numeric->compute_policy_count;
+    facts.runtime_activation_policy_count = numeric->activation_policy_count;
+    facts.runtime_sparse_topk_policy_count = numeric->sparse_topk_policy_count;
+    facts.layer_count = execution->layer_count;
+    facts.vocabulary_size = execution->vocabulary_size;
+    facts.model_execution = execution;
+    rc = yvex_materialization_project_artifact_lowering(
+        (const yvex_artifact_lowering_map *)lowering_context, &projection, err);
+    return rc == YVEX_OK
+               ? yvex_runtime_descriptor_build_projected(
+                     out, admission, materialization, &facts, &projection,
+                     &failure, err)
+               : rc;
+}
+
+static const yvex_quant_artifact_lowering_rule qwen_quant_lowering_rules[] = {
+    {YVEX_ARTIFACT_LOWERING_TRANSFORM_DIRECT,
+     YVEX_TRANSFORM_OP_IDENTITY,
+     YVEX_GGUF_QTYPE_BF16, YVEX_GGUF_QTYPE_BF16, 0}};
+
+static const yvex_quant_artifact_lowering_policy qwen_quant_lowering_policy = {
+    QWEN_SOURCE_FAITHFUL_PRESET, QWEN_SOURCE_FAITHFUL_PRESET,
+    qwen_quant_lowering_rules,
+    sizeof(qwen_quant_lowering_rules) / sizeof(qwen_quant_lowering_rules[0])};
+
+static int qwen_quant_default(
+    yvex_quant_plan **out, const yvex_transform_ir *transform,
+    const yvex_transform_binding *binding, const void *lowering_context,
+    yvex_error *err)
+{
+    yvex_quant_failure failure = {0};
+
+    return yvex_quant_plan_build_artifact_lowering_profile(
+        out, transform, binding,
+        (const yvex_artifact_lowering_map *)lowering_context,
+        &qwen_quant_lowering_policy, YVEX_QUANT_PROFILE_SOURCE_FAITHFUL,
+        NULL, &failure, err);
+}
+
+static int qwen_quant_policy(
+    yvex_quant_plan **out, const yvex_transform_ir *transform,
+    const yvex_transform_binding *binding, const void *lowering_context,
+    const yvex_quant_policy *policy, const char *imatrix_identity,
+    yvex_error *err)
+{
+    yvex_quant_failure failure = {0};
+
+    return yvex_quant_plan_build_artifact_lowering_policy(
+        out, transform, binding,
+        (const yvex_artifact_lowering_map *)lowering_context,
+        &qwen_quant_lowering_policy, policy, imatrix_identity,
+        NULL, &failure, err);
+}
+
+static void qwen_preset_rule(yvex_quant_policy_rule *rule)
+{
+    memset(rule, 0, sizeof(*rule));
+    rule->schema_version = YVEX_QUANT_POLICY_SCHEMA_VERSION;
+    rule->match_mask = YVEX_QUANT_MATCH_PHYSICAL_CLASS;
+    rule->operation = YVEX_QUANT_POLICY_OPERATION_ANY;
+    rule->scope = YVEX_TENSOR_SCOPE_GLOBAL;
+    rule->physical_class = YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE;
+    rule->qtype = YVEX_QUANT_QTYPE_SOURCE;
+    rule->requires_cpu_compute = 1;
+    rule->requires_cuda_compute = 1;
+    rule->priority = 10u;
+    rule->label = "preserve pinned Qwen BF16 source representation";
+}
+
+static unsigned long long qwen_preset_count(void)
+{
+    return 1ull;
+}
+
+static const char *qwen_preset_name(unsigned long long index)
+{
+    return index == 0ull ? QWEN_SOURCE_FAITHFUL_PRESET : NULL;
+}
+
+static int qwen_preset_open(
+    yvex_quant_policy **out, const char *name, yvex_error *err)
+{
+    yvex_quant_policy_rule rule;
+    yvex_quant_policy_definition definition;
+
+    if (!out || !name || strcmp(name, QWEN_SOURCE_FAITHFUL_PRESET) != 0) {
+        if (out) *out = NULL;
+        yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "quant_policy_preset",
+                        "unknown Qwen quantization preset: %s",
+                        name ? name : "-");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    qwen_preset_rule(&rule);
+    definition = (yvex_quant_policy_definition){
+        QWEN_SOURCE_FAITHFUL_PRESET, YVEX_QWEN3_8_27B_TARGET_ID,
+        "built-in-preset", &rule, 1ull};
+    return yvex_quant_policy_create_definition(out, &definition, err);
+}
+
+static const yvex_quant_preset_catalog *qwen_quant_presets(void)
+{
+    static const yvex_quant_preset_catalog catalog = {
+        YVEX_QUANT_PRESET_CATALOG_SCHEMA_V1,
+        YVEX_QWEN3_8_27B_TARGET_ID,
+        qwen_preset_count, qwen_preset_name, qwen_preset_open};
+
+    return &catalog;
+}
+
+static const yvex_family_binding_pipeline qwen_binding_pipeline = {
+    .schema_version = YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1,
+    .source_open = qwen_compilation_source_open,
+    .source_close = qwen_compilation_source_close,
+    .artifact_admit = qwen_artifact_admit,
+    .semantic_model_build = qwen_semantic_model_build,
+    .runtime_descriptor_build = qwen_runtime_descriptor,
+    .quant_plan_default = qwen_quant_default,
+    .quant_plan_policy = qwen_quant_policy,
+    .tokenizer_architecture = YVEX_QWEN3_5_FAMILY_KEY,
+    .tokenizer_pre = "qwen2"};
+
+static const yvex_family_compiler_adapter qwen_compiler = {
+    .schema_version = YVEX_FAMILY_COMPILER_SCHEMA_V2,
+    .adapter_id = YVEX_QWEN3_5_ADAPTER_ID,
+    .adapter_version = YVEX_QWEN3_5_ADAPTER_VERSION,
+    .target_id = YVEX_QWEN3_8_27B_TARGET_ID,
+    .family = YVEX_QWEN3_5_FAMILY_KEY,
+    .graph = qwen_graph_compile,
+    .operator_graph_build = yvex_operator_graph_ir_build_decoder,
+    .execution_capabilities = qwen_execution_capabilities,
+    .transformer_policy = qwen_transformer_policy,
+    .logits_policy = qwen_logits_policy,
+    .speculation_policy = qwen_speculation_policy,
+    .tokenizer_policy = qwen_tokenizer_policy,
+    .physical_variant = yvex_graph_physical_variant_api_get,
+    .binding_pipeline = &qwen_binding_pipeline,
+    .binding_compile = yvex_family_binding_compile};
+
+static const yvex_model_deployment_defaults qwen_deployment_defaults = {
+    .schema_version = YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_V1,
+    .logical_family = YVEX_QWEN3_5_FAMILY_KEY,
+    .logical_model = YVEX_QWEN3_8_27B_TARGET_ID,
+    .quant_preset = QWEN_SOURCE_FAITHFUL_PRESET,
+    .backend = "cuda",
+    .engine_kind = "text",
+    .execution_strategy = "target-only"};
+
+static const yvex_graph_execution_binding *qwen_execution_binding(void)
+{
+    static const yvex_graph_execution_binding execution = {
+        .schema_version = YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1,
+        .adapter_id = YVEX_QWEN3_5_ADAPTER_ID,
+        .adapter_version = YVEX_QWEN3_5_ADAPTER_VERSION,
+        .target_id = YVEX_QWEN3_8_27B_TARGET_ID,
+        .family_name = YVEX_QWEN3_5_FAMILY_KEY,
+        .operator_family_key = "qwen",
+        .operator_artifact_filename = "qwen3.8-27b-source-faithful.gguf",
+        .source_manifest_filename = "qwen3.8-27b.source-manifest.json",
+        .deployment_defaults = &qwen_deployment_defaults,
+        .compiler = &qwen_compiler,
+        .api = &yvex_attention_execution_api};
+
+    return &execution;
 }
 
 static int qwen_tokenizer_policy(yvex_tokenizer_family_policy *out,
@@ -661,4 +1051,6 @@ const yvex_family_descriptor yvex_graph_family_descriptor_qwen3_5 = {
     .family = YVEX_QWEN3_5_FAMILY_KEY,
     .tokenizer_architecture = YVEX_QWEN3_5_FAMILY_KEY,
     .tokenizer_pre = "qwen2",
+    .execution = qwen_execution_binding,
+    .quant_presets = qwen_quant_presets,
     .source = qwen_source_adapter};

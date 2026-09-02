@@ -1072,6 +1072,7 @@ typedef struct {
     const void *lowering_context;
     const yvex_source_verification *verification;
     const char *tokenizer_architecture;
+    unsigned long long tokenizer_vocabulary_size;
     const yvex_quant_plan_summary *quant;
     yvex_gguf_writer_lowering_summary mapping;
     yvex_gguf_writer_plan_options options;
@@ -1156,6 +1157,7 @@ const yvex_gguf_writer_lowering_api *yvex_gguf_writer_artifact_lowering_api(void
 
 static int writer_complete_plan_create(writer_complete_context *context) {
     yvex_gguf_tokenizer_failure tokenizer_failure;
+    char tokenizer_message[YVEX_ERROR_MESSAGE_CAP];
     int rc;
 
     context->plan = (yvex_gguf_writer_plan *)calloc(1u, sizeof(*context->plan));
@@ -1172,15 +1174,19 @@ static int writer_complete_plan_create(writer_complete_context *context) {
                            ULLONG_MAX, context->quant->terminal_count, 0u, context->err,
                            YVEX_ERR_NOMEM, "writer tensor plan allocation failed");
     rc = yvex_gguf_tokenizer_metadata_load(&context->plan->tokenizer, context->verification,
-                                           context->verification->tokenizer_effective_vocab_size,
+                                           context->tokenizer_vocabulary_size,
                                            context->tokenizer_architecture,
                                            context->options.maximum_owned_bytes / 2u,
                                            &tokenizer_failure, context->err);
-    if (rc != YVEX_OK)
+    if (rc != YVEX_OK) {
+        (void)snprintf(tokenizer_message, sizeof(tokenizer_message),
+                       "verified tokenizer material is incomplete: %.180s",
+                       yvex_error_message(context->err));
         return writer_fail(context->failure, YVEX_GGUF_WRITER_METADATA_INCOMPLETE,
                            tokenizer_failure.field, tokenizer_failure.record_index, ULLONG_MAX,
                            tokenizer_failure.expected, tokenizer_failure.actual, context->err,
-                           (yvex_status)rc, "complete verified tokenizer material is required");
+                           (yvex_status)rc, tokenizer_message);
+    }
     context->tokenizer = yvex_gguf_tokenizer_summary_get(context->plan->tokenizer);
     if (!context->tokenizer ||
         !yvex_gguf_tokenizer_raw_json(context->plan->tokenizer, &context->raw_json,
@@ -1420,6 +1426,7 @@ static int writer_plan_build_complete(
     yvex_gguf_writer_plan **out, const yvex_quant_plan *quant_plan,
     const yvex_gguf_writer_lowering_api *lowering, const void *lowering_context,
     const yvex_source_verification *verification, const char *tokenizer_architecture,
+    unsigned long long tokenizer_vocabulary_size,
     const yvex_gguf_writer_plan_options *options, yvex_gguf_writer_failure *failure,
     yvex_error *err) {
     writer_complete_context context;
@@ -1431,6 +1438,11 @@ static int writer_plan_build_complete(
     context.lowering_context = lowering_context;
     context.verification = verification;
     context.tokenizer_architecture = tokenizer_architecture;
+    context.tokenizer_vocabulary_size = tokenizer_vocabulary_size
+                                            ? tokenizer_vocabulary_size
+                                            : verification
+                                                  ? verification->tokenizer_effective_vocab_size
+                                                  : 0ull;
     context.quant = yvex_quant_plan_summary_get(quant_plan);
     context.failure = failure;
     context.err = err;
@@ -1438,6 +1450,7 @@ static int writer_plan_build_complete(
         *out = NULL;
     if (!out || !quant_plan || !lowering || !lowering_context || !verification ||
         !tokenizer_architecture || !tokenizer_architecture[0] ||
+        !context.tokenizer_vocabulary_size ||
         !lowering->summary || !lowering->tensor_at || !lowering->metadata_at ||
         !lowering->summary(lowering_context, &context.mapping) || !context.quant ||
         !context.quant->complete || !context.mapping.complete ||
@@ -1515,6 +1528,7 @@ int yvex_gguf_writer_plan_build(yvex_gguf_writer_plan **out,
             request->input.complete.lowering_context,
             request->input.complete.verification,
             request->input.complete.tokenizer_architecture,
+            request->input.complete.tokenizer_vocabulary_size,
             request->options, failure, err);
     case YVEX_GGUF_WRITER_INPUT_TENSOR_PROOF:
         return writer_plan_build_tensor_proof(

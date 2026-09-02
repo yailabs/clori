@@ -337,8 +337,11 @@ typedef struct {
 typedef struct {
     char canonical_name[YVEX_PATH_CAP];
     char revision[65];
+    char provider_identity_kind[24];
     char expected_git_blob_oid[41];
     char observed_git_blob_oid[41];
+    char expected_sha256[65];
+    char observed_sha256[65];
     unsigned long long file_bytes;
     int revision_matches;
     int identity_verified;

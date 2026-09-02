@@ -1153,6 +1153,8 @@ static int deepseek_compilation_source_open(
     out->artifact_lowering = payload->map(handoff);
     out->source_summary = payload->summary(handoff);
     out->lowering_context = payload->map(handoff);
+    out->tokenizer_vocabulary_size =
+        out->verification ? out->verification->tokenizer_effective_vocab_size : 0ull;
     if (!out->verification || !out->transform_ir || !out->transform_binding ||
         !out->artifact_lowering || !out->source_summary || !out->lowering_context) {
         payload->close(handoff);

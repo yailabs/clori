@@ -383,6 +383,7 @@ typedef struct yvex_family_compilation_source {
     const struct yvex_artifact_lowering_map *artifact_lowering;
     const struct yvex_compilation_source_summary *source_summary;
     const void *lowering_context;
+    unsigned long long tokenizer_vocabulary_size;
 } yvex_family_compilation_source;
 /*
  * Family callbacks project semantic facts into one generic binding-compilation lifecycle.

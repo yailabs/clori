@@ -6,6 +6,7 @@
 
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/gguf.h>
 #include <yvex/internal/source.h>
 #include <yvex/internal/source_payload.h>
 
@@ -598,6 +599,7 @@ static int source_verify_family_semantic_policy(void)
             result.verified && result.config_valid &&
             result.tokenizer_json_valid && result.tokenizer_config_valid &&
             result.generation_config_valid && !result.inference_config_valid &&
+            result.tokenizer_effective_vocab_size == 129280u &&
             strcmp(result.model_type, "qwen3_5") == 0 &&
             strcmp(result.architecture,
                    "Qwen3_5ForConditionalGeneration") == 0 &&
@@ -629,6 +631,86 @@ static int source_acquisition_digest(const char *text, char output[65])
         !yvex_sha256_final(&hash, digest)) return 0;
     yvex_sha256_hex(digest, output);
     return 1;
+}
+
+static int source_verify_write_metadata_sha256(const char *root,
+                                               const char *name,
+                                               const char *payload)
+{
+    char path[768];
+    char text[256];
+    char digest[65];
+    int n;
+
+    if (!source_acquisition_digest(payload, digest)) return 0;
+    n = snprintf(path, sizeof(path),
+                 "%s/.cache/huggingface/download/%s.metadata", root, name);
+    if (n < 0 || (size_t)n >= sizeof(path)) return 0;
+    n = snprintf(text, sizeof(text), "%s\n%s\n0\n",
+                 source_verify_revision, digest);
+    return n >= 0 && (size_t)n < sizeof(text) &&
+           source_verify_write_text(path, text);
+}
+
+static int source_verify_lfs_tokenizer_metadata(void)
+{
+    static const char tokenizer_json[] =
+        "{\"added_tokens\":[{\"id\":2,\"content\":\"<eos>\","
+        "\"special\":true}],\"model\":{\"type\":\"BPE\","
+        "\"vocab\":{\"a\":0,\"b\":1},\"merges\":[\"a b\"]}}";
+    static const char tokenizer_config[] =
+        "{\"add_bos_token\":false,\"add_eos_token\":null,"
+        "\"bos_token\":null,\"eos_token\":\"<eos>\","
+        "\"pad_token\":null,\"chat_template\":null}";
+    const char *root = "build/tests/source-lfs-tokenizer";
+    yvex_gguf_tokenizer_metadata *metadata = NULL;
+    const yvex_gguf_tokenizer_summary *summary;
+    yvex_gguf_tokenizer_failure failure;
+    yvex_source_verification verification;
+    yvex_error err;
+    char path[768];
+
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-lfs-tokenizer") == 0 &&
+                         source_verify_make_dir(root),
+                     "create LFS tokenizer metadata fixture");
+    snprintf(path, sizeof(path), "%s/.cache", root);
+    YVEX_TEST_ASSERT(source_verify_make_dir(path), "create tokenizer cache root");
+    snprintf(path, sizeof(path), "%s/.cache/huggingface", root);
+    YVEX_TEST_ASSERT(source_verify_make_dir(path), "create tokenizer provider cache");
+    snprintf(path, sizeof(path), "%s/.cache/huggingface/download", root);
+    YVEX_TEST_ASSERT(source_verify_make_dir(path), "create tokenizer download cache");
+    snprintf(path, sizeof(path), "%s/tokenizer.json", root);
+    YVEX_TEST_ASSERT(source_verify_write_text(path, tokenizer_json) &&
+                         source_verify_write_metadata_sha256(
+                             root, "tokenizer.json", tokenizer_json),
+                     "write SHA-256-authenticated tokenizer JSON");
+    snprintf(path, sizeof(path), "%s/tokenizer_config.json", root);
+    YVEX_TEST_ASSERT(source_verify_write_text(path, tokenizer_config) &&
+                         source_verify_write_metadata(
+                             root, "tokenizer_config.json"),
+                     "write Git-authenticated nullable tokenizer config");
+    memset(&verification, 0, sizeof(verification));
+    YVEX_TEST_ASSERT(realpath(root, verification.resolved_source_path) != NULL,
+                     "resolve tokenizer fixture root");
+    yvex_core_text_copy(verification.revision, sizeof(verification.revision),
+                        source_verify_revision);
+    verification.tokenizer_json_valid = 1;
+    verification.tokenizer_config_valid = 1;
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        yvex_gguf_tokenizer_metadata_load(
+            &metadata, &verification, 3u, "qwen2", 1024u * 1024u,
+            &failure, &err) == YVEX_OK &&
+            (summary = yvex_gguf_tokenizer_summary_get(metadata)) != NULL &&
+            summary->token_count == 3u && summary->eos_token_present &&
+            summary->eos_token_id == 2u &&
+            !summary->add_eos_token_declared &&
+            strcmp(summary->pre_tokenizer, "qwen2") == 0,
+        "LFS tokenizer identity and nullable policy seal exact metadata");
+    yvex_gguf_tokenizer_metadata_release(&metadata);
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-lfs-tokenizer") == 0,
+                     "release LFS tokenizer metadata fixture");
+    return 0;
 }
 
 static int source_acquisition_fixture_write(const char *root,
@@ -823,6 +905,8 @@ int yvex_test_source_verify(void)
     if (source_verify_family_semantic_policy() != 0)
         return 1;
     if (source_verify_payload_publication() != 0)
+        return 1;
+    if (source_verify_lfs_tokenizer_metadata() != 0)
         return 1;
     if (source_verify_acquisition() != 0)
         return 1;

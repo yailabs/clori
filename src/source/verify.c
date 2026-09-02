@@ -1136,7 +1136,8 @@ static int source_parse_sidecar(source_sidecar_kind kind,
         return 0;
     parser_index = (size_t)kind - (size_t)SOURCE_SIDECAR_TOKENIZER;
     valid = identity->config_validation ==
-                    YVEX_SOURCE_CONFIG_VALIDATION_FAMILY_SEMANTIC
+                        YVEX_SOURCE_CONFIG_VALIDATION_FAMILY_SEMANTIC &&
+                    kind != SOURCE_SIDECAR_TOKENIZER
                 ? source_parse_json_object(data, length)
                 : source_sidecar_parsers[parser_index](data, length, out);
     *(int *)(void *)((unsigned char *)out + source_sidecar_valid_offsets[parser_index]) = valid;

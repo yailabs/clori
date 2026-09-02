@@ -255,8 +255,20 @@ static int binding_compiler_writer_build(
     binding_compiler *compiler, const char *required_execution_identity,
     yvex_error *err)
 {
+    const yvex_runtime_descriptor_summary *descriptor =
+        yvex_runtime_descriptor_summary_get(compiler->descriptor);
+    unsigned long long vocabulary_size =
+        compiler->source.tokenizer_vocabulary_size
+            ? compiler->source.tokenizer_vocabulary_size
+            : descriptor ? descriptor->vocabulary_size : 0ull;
     yvex_gguf_writer_plan_options options;
     yvex_gguf_writer_plan_request writer = {0};
+
+    if (!vocabulary_size) {
+        yvex_error_set(err, YVEX_ERR_STATE, "compilation.runtime-binding",
+                       "sealed runtime vocabulary is required for artifact emission");
+        return YVEX_ERR_STATE;
+    }
 
     yvex_gguf_writer_plan_options_default(&options);
     options.required_execution_identity = required_execution_identity;
@@ -267,6 +279,7 @@ static int binding_compiler_writer_build(
     writer.input.complete.lowering_context = compiler->source.lowering_context;
     writer.input.complete.verification = compiler->source.verification;
     writer.input.complete.tokenizer_architecture = compiler->pipeline->tokenizer_pre;
+    writer.input.complete.tokenizer_vocabulary_size = vocabulary_size;
     return yvex_gguf_writer_plan_build(
         &compiler->writer, &writer, &compiler->writer_failure, err);
 }
