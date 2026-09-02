@@ -94,7 +94,7 @@ extern "C" __global__ void yvex_gated_delta_recurrence_f32(
     unsigned long long value_dimension, unsigned long long query_width,
     unsigned long long key_width, unsigned long long value_width,
     float qk_epsilon, float output_epsilon, float query_scale,
-    int initialize, int has_committed, int *status)
+    int normalization_one_plus, int initialize, int has_committed, int *status)
 {
     __shared__ float query[128], key[128], first_reduction[128];
     __shared__ float second_reduction[128], beta_value, decay_factor;
@@ -113,7 +113,9 @@ extern "C" __global__ void yvex_gated_delta_recurrence_f32(
         key_width != key_heads * key_dimension ||
         value_width != value_heads * value_dimension ||
         !(qk_epsilon > 0.0f) || !(output_epsilon > 0.0f) ||
-        !(query_scale > 0.0f) || (initialize != 0 && initialize != 1) ||
+        !(query_scale > 0.0f) ||
+        (normalization_one_plus != 0 && normalization_one_plus != 1) ||
+        (initialize != 0 && initialize != 1) ||
         (has_committed != 0 && has_committed != 1) ||
         (initialize && has_committed && !committed_state)) {
         if (blockIdx.x == 0u && lane == 0u && status)
@@ -222,6 +224,7 @@ extern "C" __global__ void yvex_gated_delta_recurrence_f32(
                 projected_output_gate[output_index], status);
             float weight = gated_delta_finite_or_zero(
                 normalization_weight[lane], status);
+            if (normalization_one_plus) weight += 1.0f;
             output[output_index] = gated_delta_finite_or_zero(
                 raw * inverse * weight * gated_delta_silu(gate), status);
         }

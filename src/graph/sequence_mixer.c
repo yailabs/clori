@@ -48,7 +48,7 @@ int yvex_gated_delta_plan_seal(
                      requirement, plan->identity))
         return mixer_refuse(err, YVEX_ERR_INVALID_ARG,
                             "one exact F32 gated-delta requirement is required");
-    plan->schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V1;
+    plan->schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V2;
     plan->requirement = *requirement;
     if (!mixer_geometry(plan)) {
         memset(plan, 0, sizeof(*plan));
@@ -64,7 +64,7 @@ int yvex_gated_delta_plan_validate(
 {
     yvex_gated_delta_plan copy;
 
-    if (!plan || plan->schema_version != YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V1 ||
+    if (!plan || plan->schema_version != YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V2 ||
         !yvex_sha256_hex_valid(plan->identity) ||
         yvex_gated_delta_plan_seal(&copy, &plan->requirement, err) != YVEX_OK)
         return mixer_refuse(err, YVEX_ERR_FORMAT,

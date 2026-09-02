@@ -66,7 +66,7 @@ int yvex_transformer_linear_requirement_validate(
         requirement->operation <= YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT;
     int compiled_dense = requirement &&
         requirement->operation >= YVEX_TRANSFORMER_LINEAR_OPERATION_MODULATION &&
-        requirement->operation <= YVEX_TRANSFORMER_LINEAR_OPERATION_DOWN;
+        requirement->operation <= YVEX_TRANSFORMER_LINEAR_OPERATION_PROJECTION;
     if (!requirement || !requirement->input_width || !requirement->output_width ||
         (output_projection &&
          (requirement->publication_contract != YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT ||

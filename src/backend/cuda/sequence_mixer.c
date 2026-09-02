@@ -252,6 +252,9 @@ static int gated_delta_launch_chunk(
     float qk_epsilon = (float)r->qk_normalization_epsilon;
     float output_epsilon = (float)r->output_normalization_epsilon;
     float query_scale = (float)r->query_scale;
+    int normalization_one_plus =
+        r->output_normalization_weight_convention ==
+        YVEX_NORMALIZATION_WEIGHT_ONE_PLUS;
     unsigned long long qkv_width = plan->qkv_width;
     unsigned long long convolution_kernel = r->convolution_kernel;
     unsigned long long query_heads = r->query_heads;
@@ -286,7 +289,8 @@ static int gated_delta_launch_chunk(
             &chunk_tokens, &query_heads, &key_heads, &value_heads,
             &key_dimension, &value_dimension, &query_width,
             &key_width, &value_width, &qk_epsilon,
-            &output_epsilon, &query_scale, &initialize, &has_committed, &status};
+            &output_epsilon, &query_scale, &normalization_one_plus,
+            &initialize, &has_committed, &status};
         rc = yvex_cuda_launch(
             backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
             state->gated_delta_recurrence_function,

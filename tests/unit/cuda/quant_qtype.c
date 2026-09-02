@@ -963,7 +963,7 @@ static int quant_cuda_compiled_dense_plan(yvex_backend *backend)
     const yvex_backend_transformer_operations *operations =
         yvex_backend_transformer_operations_get(backend);
     yvex_transformer_linear_requirement requirement = {
-        .operation = YVEX_TRANSFORMER_LINEAR_OPERATION_QKV,
+        .operation = YVEX_TRANSFORMER_LINEAR_OPERATION_PROJECTION,
         .publication_contract = YVEX_TRANSFORMER_LINEAR_NUMERIC_BF16_F32_ACCUMULATION,
         .source_dtype = YVEX_DTYPE_BF16, .input_dtype = YVEX_DTYPE_F32,
         .accumulation_dtype = YVEX_DTYPE_F32, .output_dtype = YVEX_DTYPE_F32,

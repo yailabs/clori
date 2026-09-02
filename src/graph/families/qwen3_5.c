@@ -428,7 +428,7 @@ static yvex_gated_delta_requirement qwen_delta_requirement(
     const yvex_qwen3_5_architecture *architecture)
 {
     yvex_gated_delta_requirement requirement = {
-        .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V1,
+        .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V2,
         .query_heads = architecture->text.linear_key_heads,
         .key_heads = architecture->text.linear_key_heads,
         .value_heads = architecture->text.linear_value_heads,
@@ -441,6 +441,8 @@ static yvex_gated_delta_requirement qwen_delta_requirement(
         .accumulation_dtype = YVEX_DTYPE_F32,
         .output_dtype = YVEX_DTYPE_F32,
         .numeric_contract = YVEX_SEQUENCE_MIXER_NUMERIC_F32_RECURRENCE,
+        .output_normalization_weight_convention =
+            YVEX_NORMALIZATION_WEIGHT_DIRECT,
         .qk_normalization_epsilon = 1.0e-6,
         .output_normalization_epsilon = architecture->text.rms_norm_epsilon,
         .query_scale = 1.0 / sqrt(
@@ -470,6 +472,7 @@ static int qwen_decoder_layer(
     out->feed_forward = YVEX_SEMANTIC_DECODER_FFN_DENSE_SILU_GATED;
     out->hidden_width = architecture->text.hidden_size;
     out->intermediate_width = architecture->text.intermediate_size;
+    out->normalization_weight_convention = YVEX_NORMALIZATION_WEIGHT_ONE_PLUS;
     out->normalization_epsilon = architecture->text.rms_norm_epsilon;
     out->mixer_output_gate = 1;
     if (kind == YVEX_QWEN3_5_LAYER_LINEAR_ATTENTION)

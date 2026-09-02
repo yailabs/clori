@@ -8,7 +8,9 @@
 static int sequence_state_plan(yvex_gated_delta_plan *plan, yvex_error *err)
 {
     const yvex_gated_delta_requirement requirement = {
-        .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V1,
+        .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V2,
+        .output_normalization_weight_convention =
+            YVEX_NORMALIZATION_WEIGHT_DIRECT,
         .query_heads = 1ull,
         .key_heads = 1ull,
         .value_heads = 2ull,

@@ -11,7 +11,7 @@ static int gated_delta_requirement_valid(
 {
     return requirement &&
            requirement->schema_version ==
-               YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V1 &&
+               YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V2 &&
            requirement->query_heads && requirement->key_heads &&
            requirement->value_heads &&
            requirement->value_heads % requirement->query_heads == 0ull &&
@@ -25,6 +25,10 @@ static int gated_delta_requirement_valid(
            requirement->output_dtype == YVEX_DTYPE_F32 &&
            requirement->numeric_contract ==
                YVEX_SEQUENCE_MIXER_NUMERIC_F32_RECURRENCE &&
+           (requirement->output_normalization_weight_convention ==
+                YVEX_NORMALIZATION_WEIGHT_DIRECT ||
+            requirement->output_normalization_weight_convention ==
+                YVEX_NORMALIZATION_WEIGHT_ONE_PLUS) &&
            isfinite(requirement->qk_normalization_epsilon) &&
            requirement->qk_normalization_epsilon > 0.0 &&
            isfinite(requirement->output_normalization_epsilon) &&
@@ -63,6 +67,8 @@ int yvex_semantic_gated_delta_requirement_identity(
         !yvex_sha256_update_u64(&hash, requirement->accumulation_dtype) ||
         !yvex_sha256_update_u64(&hash, requirement->output_dtype) ||
         !yvex_sha256_update_u64(&hash, requirement->numeric_contract) ||
+        !yvex_sha256_update_u64(
+            &hash, requirement->output_normalization_weight_convention) ||
         !yvex_sha256_update_u64(&hash, qk_epsilon_bits) ||
         !yvex_sha256_update_u64(&hash, output_epsilon_bits) ||
         !yvex_sha256_update_u64(&hash, scale_bits) ||

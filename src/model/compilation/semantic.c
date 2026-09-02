@@ -145,6 +145,8 @@ static int semantic_decoder_identity(
             !yvex_sha256_update_u64(hash, layer->feed_forward) ||
             !yvex_sha256_update_u64(hash, layer->hidden_width) ||
             !yvex_sha256_update_u64(hash, layer->intermediate_width) ||
+            !yvex_sha256_update_u64(
+                hash, layer->normalization_weight_convention) ||
             !semantic_hash_f64(hash, layer->normalization_epsilon) ||
             !yvex_sha256_update_u64(hash,
                                     (unsigned int)layer->mixer_output_gate) ||
@@ -361,6 +363,10 @@ static int semantic_decoder_validate(
                 YVEX_SEMANTIC_DECODER_FFN_DENSE_SILU_GATED ||
             layer->hidden_width != execution->hidden_width ||
             layer->intermediate_width != execution->dense_ffn_width ||
+            (layer->normalization_weight_convention !=
+                 YVEX_NORMALIZATION_WEIGHT_DIRECT &&
+             layer->normalization_weight_convention !=
+                 YVEX_NORMALIZATION_WEIGHT_ONE_PLUS) ||
             !isfinite(layer->normalization_epsilon) ||
             layer->normalization_epsilon <= 0.0 ||
             (layer->mixer_output_gate != 0 && layer->mixer_output_gate != 1))

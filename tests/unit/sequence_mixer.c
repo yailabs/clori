@@ -9,7 +9,9 @@
 static yvex_gated_delta_requirement tiny_requirement(void)
 {
     return (yvex_gated_delta_requirement){
-        .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V1,
+        .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V2,
+        .output_normalization_weight_convention =
+            YVEX_NORMALIZATION_WEIGHT_DIRECT,
         .query_heads = 1ull,
         .key_heads = 1ull,
         .value_heads = 2ull,
@@ -176,6 +178,45 @@ static int mixer_test_prefill_decode(void)
     return 0;
 }
 
+static int mixer_test_normalization_convention(void)
+{
+    yvex_gated_delta_requirement direct_requirement = tiny_requirement();
+    yvex_gated_delta_requirement one_plus_requirement = tiny_requirement();
+    yvex_gated_delta_plan direct, one_plus;
+    yvex_error err;
+    float qkv[24], gate[12], beta[6], decay[6], conv[16];
+    float direct_conv[8], direct_recurrent[8], direct_output[4];
+    float one_plus_conv[8], one_plus_recurrent[8], one_plus_output[4];
+    unsigned long long lane;
+
+    one_plus_requirement.output_normalization_weight_convention =
+        YVEX_NORMALIZATION_WEIGHT_ONE_PLUS;
+    YVEX_TEST_ASSERT(
+        yvex_gated_delta_plan_seal(&direct, &direct_requirement, &err) == YVEX_OK &&
+            yvex_gated_delta_plan_seal(&one_plus, &one_plus_requirement, &err) == YVEX_OK &&
+            strcmp(direct.identity, one_plus.identity) != 0,
+        "normalization convention participates in gated-delta identity");
+    mixer_fixture(qkv, gate, beta, decay, conv);
+    if (mixer_run(&direct, qkv, gate, beta, decay, conv, 1ull,
+                  (yvex_gated_delta_state_view){0}, direct_conv,
+                  direct_recurrent, direct_output) != 0 ||
+        mixer_run(&one_plus, qkv, gate, beta, decay, conv, 1ull,
+                  (yvex_gated_delta_state_view){0}, one_plus_conv,
+                  one_plus_recurrent, one_plus_output) != 0)
+        return 1;
+    YVEX_TEST_ASSERT(
+        mixer_near(direct_conv, one_plus_conv, 8ull, 0.0f) &&
+            mixer_near(direct_recurrent, one_plus_recurrent, 8ull, 0.0f),
+        "output-weight convention cannot alter recurrent state");
+    for (lane = 0ull; lane < 4ull; ++lane) {
+        float ratio = lane % 2ull ? 1.8f : 2.0f;
+        YVEX_TEST_ASSERT(fabsf(one_plus_output[lane] -
+                               direct_output[lane] * ratio) < 1e-6f,
+                         "one-plus output normalization is applied exactly");
+    }
+    return 0;
+}
+
 static int mixer_cancel(void *context)
 {
     (void)context;
@@ -235,6 +276,7 @@ int yvex_test_sequence_mixer(void)
 {
     if (mixer_test_qwen_geometry() != 0) return 1;
     if (mixer_test_prefill_decode() != 0) return 1;
+    if (mixer_test_normalization_convention() != 0) return 1;
     if (mixer_test_cancel() != 0) return 1;
     return 0;
 }

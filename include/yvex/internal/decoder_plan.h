@@ -16,8 +16,8 @@
 extern "C" {
 #endif
 
-#define YVEX_DECODER_PLAN_SCHEMA_V1 1u
-#define YVEX_DECODER_LAYER_PLAN_SCHEMA_V1 1u
+#define YVEX_DECODER_PLAN_SCHEMA_V2 2u
+#define YVEX_DECODER_LAYER_PLAN_SCHEMA_V2 2u
 #define YVEX_DECODER_NO_ATTENTION (~0ull)
 
 typedef struct {
@@ -26,6 +26,7 @@ typedef struct {
     yvex_semantic_decoder_mixer mixer;
     yvex_semantic_decoder_ffn feed_forward;
     unsigned long long hidden_width, intermediate_width;
+    yvex_normalization_weight_convention normalization_weight_convention;
     double normalization_epsilon;
     int mixer_output_gate;
     yvex_gated_delta_plan gated_delta;

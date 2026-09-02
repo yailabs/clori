@@ -422,7 +422,9 @@ static int gated_delta_parity_case(
 int yvex_cuda_test_sequence_mixer(void)
 {
     const yvex_gated_delta_requirement small = {
-        .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V1,
+        .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V2,
+        .output_normalization_weight_convention =
+            YVEX_NORMALIZATION_WEIGHT_ONE_PLUS,
         .query_heads = 2ull, .key_heads = 2ull, .value_heads = 4ull,
         .key_head_dimension = 4ull, .value_head_dimension = 3ull,
         .convolution_kernel = 3ull,
@@ -437,7 +439,9 @@ int yvex_cuda_test_sequence_mixer(void)
         .query_scale = 0.5,
         .deterministic = 1};
     const yvex_gated_delta_requirement wide = {
-        .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V1,
+        .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V2,
+        .output_normalization_weight_convention =
+            YVEX_NORMALIZATION_WEIGHT_DIRECT,
         .query_heads = 16ull, .key_heads = 16ull, .value_heads = 48ull,
         .key_head_dimension = 128ull, .value_head_dimension = 128ull,
         .convolution_kernel = 4ull,

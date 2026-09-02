@@ -455,7 +455,7 @@ static int cuda_dense_workspace_geometry(
                  : YVEX_ERR_INVALID_ARG;
     if (rc == YVEX_OK &&
         (request->requirement->operation < YVEX_TRANSFORMER_LINEAR_OPERATION_MODULATION ||
-         request->requirement->operation > YVEX_TRANSFORMER_LINEAR_OPERATION_DOWN)) {
+         request->requirement->operation > YVEX_TRANSFORMER_LINEAR_OPERATION_PROJECTION)) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.dense-plan.workspace",
                        "the CUDA compiled dense plan does not implement this linear class");
         return YVEX_ERR_UNSUPPORTED;

@@ -401,10 +401,13 @@ static int test_hybrid_decoder_semantics(void)
         .feed_forward = YVEX_SEMANTIC_DECODER_FFN_DENSE_SILU_GATED,
         .hidden_width = 4ull,
         .intermediate_width = 8ull,
+        .normalization_weight_convention = YVEX_NORMALIZATION_WEIGHT_DIRECT,
         .normalization_epsilon = 1e-6,
         .mixer_output_gate = 1,
         .gated_delta = {
-            .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V1,
+            .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V2,
+            .output_normalization_weight_convention =
+                YVEX_NORMALIZATION_WEIGHT_DIRECT,
             .query_heads = 1ull,
             .key_heads = 1ull,
             .value_heads = 1ull,
@@ -429,6 +432,7 @@ static int test_hybrid_decoder_semantics(void)
         .feed_forward = YVEX_SEMANTIC_DECODER_FFN_DENSE_SILU_GATED,
         .hidden_width = 4ull,
         .intermediate_width = 8ull,
+        .normalization_weight_convention = YVEX_NORMALIZATION_WEIGHT_DIRECT,
         .normalization_epsilon = 1e-6,
         .mixer_output_gate = 1};
     YVEX_TEST_ASSERT(

@@ -192,8 +192,11 @@ static int mixer_delta_token(const yvex_gated_delta_plan *plan,
                  ++value_lane) {
                 unsigned long long offset =
                     value_head * r->value_head_dimension + value_lane;
+                float weight = request->normalization_weight[value_lane];
+                if (r->output_normalization_weight_convention ==
+                    YVEX_NORMALIZATION_WEIGHT_ONE_PLUS) weight += 1.0f;
                 output[value_lane] = raw_output[value_lane] * rms *
-                    request->normalization_weight[value_lane] *
+                    weight *
                     mixer_silu(z_values[offset]);
                 if (!isfinite(output[value_lane])) return 0;
             }

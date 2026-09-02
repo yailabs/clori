@@ -112,7 +112,7 @@ static int decoder_layer_identity(
 
     memcpy(&epsilon, &layer->normalization_epsilon, sizeof(epsilon));
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.graph.decoder-layer.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.graph.decoder-layer.v2") ||
         !yvex_sha256_update_text(&hash, summary->semantic_model_identity) ||
         !yvex_sha256_update_text(&hash, summary->operator_graph_identity) ||
         !yvex_sha256_update_u64(&hash, layer->ordinal) ||
@@ -122,6 +122,8 @@ static int decoder_layer_identity(
         !yvex_sha256_update_u64(&hash, layer->feed_forward) ||
         !yvex_sha256_update_u64(&hash, layer->hidden_width) ||
         !yvex_sha256_update_u64(&hash, layer->intermediate_width) ||
+        !yvex_sha256_update_u64(
+            &hash, layer->normalization_weight_convention) ||
         !yvex_sha256_update_u64(&hash, epsilon) ||
         !yvex_sha256_update_u64(&hash, (unsigned int)layer->mixer_output_gate) ||
         !yvex_sha256_update_text(
@@ -141,7 +143,7 @@ static int decoder_plan_identity(yvex_decoder_plan *plan)
     unsigned long long index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.graph.decoder-plan.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.graph.decoder-plan.v2") ||
         !yvex_sha256_update_u64(&hash, summary->family_adapter_id) ||
         !yvex_sha256_update_u64(&hash, summary->family_adapter_version) ||
         !yvex_sha256_update_u64(&hash, summary->layer_count) ||
@@ -201,7 +203,7 @@ static int decoder_layers_project(
         yvex_decoder_layer_plan *layer = &plan->layers[index];
 
         *layer = (yvex_decoder_layer_plan){
-            .schema_version = YVEX_DECODER_LAYER_PLAN_SCHEMA_V1,
+            .schema_version = YVEX_DECODER_LAYER_PLAN_SCHEMA_V2,
             .ordinal = source->ordinal,
             .layer_index = source->layer_index,
             .attention_ordinal = YVEX_DECODER_NO_ATTENTION,
@@ -209,6 +211,8 @@ static int decoder_layers_project(
             .feed_forward = source->feed_forward,
             .hidden_width = source->hidden_width,
             .intermediate_width = source->intermediate_width,
+            .normalization_weight_convention =
+                source->normalization_weight_convention,
             .normalization_epsilon = source->normalization_epsilon,
             .mixer_output_gate = source->mixer_output_gate};
         if (source->mixer ==
@@ -256,7 +260,7 @@ static int decoder_plan_validate(yvex_decoder_plan *plan, yvex_error *err)
     unsigned long long index, attention = 0ull, recurrent = 0ull;
     unsigned long long convolution = 0ull, recurrence = 0ull;
 
-    if (!summary || summary->schema_version != YVEX_DECODER_PLAN_SCHEMA_V1 ||
+    if (!summary || summary->schema_version != YVEX_DECODER_PLAN_SCHEMA_V2 ||
         !summary->family_adapter_id || !summary->family_adapter_version ||
         !summary->layer_count || !summary->hidden_width ||
         !summary->intermediate_width || !summary->vocabulary_size ||
@@ -276,11 +280,15 @@ static int decoder_plan_validate(yvex_decoder_plan *plan, yvex_error *err)
         yvex_decoder_layer_plan copy = plan->layers[index];
         char layer_identity[YVEX_SHA256_HEX_BYTES];
 
-        if (copy.schema_version != YVEX_DECODER_LAYER_PLAN_SCHEMA_V1 ||
+        if (copy.schema_version != YVEX_DECODER_LAYER_PLAN_SCHEMA_V2 ||
             copy.ordinal != index || copy.layer_index != index ||
             copy.feed_forward != YVEX_SEMANTIC_DECODER_FFN_DENSE_SILU_GATED ||
             copy.hidden_width != summary->hidden_width ||
             copy.intermediate_width != summary->intermediate_width ||
+            (copy.normalization_weight_convention !=
+                 YVEX_NORMALIZATION_WEIGHT_DIRECT &&
+             copy.normalization_weight_convention !=
+                 YVEX_NORMALIZATION_WEIGHT_ONE_PLUS) ||
             !isfinite(copy.normalization_epsilon) ||
             copy.normalization_epsilon <= 0.0 ||
             (copy.mixer_output_gate != 0 && copy.mixer_output_gate != 1))
@@ -357,6 +365,7 @@ static int gated_delta_write(yvex_core_bytes *bytes,
         requirement->projected_dtype, requirement->convolution_state_dtype,
         requirement->recurrent_state_dtype, requirement->accumulation_dtype,
         requirement->output_dtype, requirement->numeric_contract,
+        requirement->output_normalization_weight_convention,
         (unsigned int)requirement->deterministic,
         plan->query_width, plan->key_width, plan->value_width, plan->qkv_width,
         plan->convolution_state_values, plan->recurrent_state_values,
@@ -375,6 +384,7 @@ static int decoder_layer_write(yvex_core_bytes *bytes,
         layer->schema_version, layer->ordinal, layer->layer_index,
         layer->attention_ordinal, layer->mixer, layer->feed_forward,
         layer->hidden_width, layer->intermediate_width,
+        layer->normalization_weight_convention,
         (unsigned int)layer->mixer_output_gate};
     return decoder_put_values(bytes, values, sizeof(values) / sizeof(values[0])) &&
            decoder_put_double(bytes, layer->normalization_epsilon) &&
@@ -390,7 +400,7 @@ int yvex_decoder_plan_encode(const yvex_decoder_plan *plan,
         yvex_decoder_plan_summary_get(plan);
     unsigned long long index;
     if (!summary || !bytes ||
-        !decoder_put_text(bytes, "yvex.graph.decoder-plan.v1") ||
+        !decoder_put_text(bytes, "yvex.graph.decoder-plan.v2") ||
         !decoder_summary_write(bytes, summary))
         return decoder_refuse(
             err, YVEX_ERR_NOMEM, "decoder plan encoding failed");
@@ -433,12 +443,13 @@ static int gated_delta_read(decoder_cursor *cursor,
                             yvex_gated_delta_plan *plan)
 {
     yvex_gated_delta_requirement *requirement;
-    unsigned long long v[23];
+    unsigned long long v[24];
     memset(plan, 0, sizeof(*plan));
     if (!decoder_get_values(cursor, v, sizeof(v) / sizeof(v[0])) ||
         v[0] > UINT_MAX || v[1] > UINT_MAX || v[8] > UINT_MAX ||
         v[9] > UINT_MAX || v[10] > UINT_MAX || v[11] > UINT_MAX ||
-        v[12] > UINT_MAX || v[13] > UINT_MAX || v[14] > 1ull) return 0;
+        v[12] > UINT_MAX || v[13] > UINT_MAX || v[14] > UINT_MAX ||
+        v[15] > 1ull) return 0;
     plan->schema_version = (unsigned int)v[0];
     requirement = &plan->requirement;
     requirement->schema_version = (unsigned int)v[1];
@@ -454,15 +465,17 @@ static int gated_delta_read(decoder_cursor *cursor,
     requirement->accumulation_dtype = (yvex_dtype)v[11];
     requirement->output_dtype = (yvex_dtype)v[12];
     requirement->numeric_contract = (yvex_sequence_mixer_numeric_contract)v[13];
-    requirement->deterministic = (int)v[14];
-    plan->query_width = v[15];
-    plan->key_width = v[16];
-    plan->value_width = v[17];
-    plan->qkv_width = v[18];
-    plan->convolution_state_values = v[19];
-    plan->recurrent_state_values = v[20];
-    plan->convolution_state_bytes = v[21];
-    plan->recurrent_state_bytes = v[22];
+    requirement->output_normalization_weight_convention =
+        (yvex_normalization_weight_convention)v[14];
+    requirement->deterministic = (int)v[15];
+    plan->query_width = v[16];
+    plan->key_width = v[17];
+    plan->value_width = v[18];
+    plan->qkv_width = v[19];
+    plan->convolution_state_values = v[20];
+    plan->recurrent_state_values = v[21];
+    plan->convolution_state_bytes = v[22];
+    plan->recurrent_state_bytes = v[23];
     return decoder_get_double(cursor, &requirement->qk_normalization_epsilon) &&
            decoder_get_double(cursor, &requirement->output_normalization_epsilon) &&
            decoder_get_double(cursor, &requirement->query_scale) &&
@@ -472,11 +485,11 @@ static int gated_delta_read(decoder_cursor *cursor,
 static int decoder_layer_read(decoder_cursor *cursor,
                               yvex_decoder_layer_plan *layer)
 {
-    unsigned long long v[9];
+    unsigned long long v[10];
     memset(layer, 0, sizeof(*layer));
     if (!decoder_get_values(cursor, v, sizeof(v) / sizeof(v[0])) ||
         v[0] > UINT_MAX || v[4] > UINT_MAX || v[5] > UINT_MAX ||
-        v[8] > 1ull) return 0;
+        v[8] > UINT_MAX || v[9] > 1ull) return 0;
     layer->schema_version = (unsigned int)v[0];
     layer->ordinal = v[1];
     layer->layer_index = v[2];
@@ -485,7 +498,9 @@ static int decoder_layer_read(decoder_cursor *cursor,
     layer->feed_forward = (yvex_semantic_decoder_ffn)v[5];
     layer->hidden_width = v[6];
     layer->intermediate_width = v[7];
-    layer->mixer_output_gate = (int)v[8];
+    layer->normalization_weight_convention =
+        (yvex_normalization_weight_convention)v[8];
+    layer->mixer_output_gate = (int)v[9];
     return decoder_get_double(cursor, &layer->normalization_epsilon) &&
            (layer->mixer != YVEX_SEMANTIC_DECODER_MIXER_GATED_DELTA ||
             gated_delta_read(cursor, &layer->gated_delta)) &&
@@ -505,7 +520,7 @@ int yvex_decoder_plan_decode(yvex_decoder_plan **out, const unsigned char *data,
     if (consumed) *consumed = 0u;
     if (!out || !data || !count || !consumed ||
         !decoder_get_text(&cursor, domain) ||
-        strcmp(domain, "yvex.graph.decoder-plan.v1") != 0 ||
+        strcmp(domain, "yvex.graph.decoder-plan.v2") != 0 ||
         !decoder_summary_read(&cursor, &summary) || !summary.layer_count ||
         summary.layer_count > SIZE_MAX / sizeof(*layers))
         return decoder_refuse(
@@ -561,7 +576,7 @@ int yvex_decoder_plan_compile(
         &plan, layer_count, execution->sequence_mixer_layers, err);
     if (rc != YVEX_OK) return rc;
     plan->summary = (yvex_decoder_plan_summary){
-        .schema_version = YVEX_DECODER_PLAN_SCHEMA_V1,
+        .schema_version = YVEX_DECODER_PLAN_SCHEMA_V2,
         .family_adapter_id = semantic->family_adapter_id,
         .family_adapter_version = semantic->family_adapter_version,
         .layer_count = layer_count,
