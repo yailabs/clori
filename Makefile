@@ -125,10 +125,11 @@ YVEX_BUILD_IDENTITY ?= $(shell printf '%s\n' \
 	'operator-registry=$(shell sha256sum config/operator/registry.json 2>/dev/null | cut -d" " -f1)' \
 	'cc=$(CC)' 'cc-version=$(shell $(CC) --version 2>/dev/null | head -1)' \
 	'cc-target=$(shell $(CC) -dumpmachine 2>/dev/null)' \
-	'cppflags=$(CPPFLAGS)' 'cflags=$(CFLAGS)' 'ldflags=$(LDFLAGS)' 'ldlibs=$(LDLIBS)' \
+	'cppflags=$(YVEX_BUILD_CPPFLAGS)' 'cflags=$(YVEX_BUILD_CFLAGS)' \
+	'ldflags=$(YVEX_BUILD_LDFLAGS)' 'ldlibs=$(YVEX_BUILD_LDLIBS)' \
 	'linker-version=$(shell $(CC) -Wl,--version 2>/dev/null | head -1)' \
 	'nvcc=$(NVCC)' 'nvcc-version=$(shell $(NVCC) --version 2>/dev/null | tail -1)' \
-	'nvccflags=$(NVCCFLAGS)' 'cuda-ldflags=$(CUDA_LDFLAGS)' \
+	'nvccflags=$(YVEX_BUILD_NVCCFLAGS)' 'cuda-ldflags=$(YVEX_BUILD_CUDA_LDFLAGS)' \
 	'cuda-arch-request=$(YVEX_CUDA_ARCH)' 'cuda-arch=$(CUDA_EFFECTIVE_ARCH)' | \
 	sha256sum | cut -d' ' -f1)
 YVEX_BUILD_SOURCE_ROOT ?= $(shell pwd -P)
@@ -262,6 +263,15 @@ CPPFLAGS += -DYVEX_HAVE_CUDA_KERNEL_CUBIN=1
 $(OBJ_DIR)/src/backend/cuda/capability.o: $(CUDA_CUBIN_INC)
 endif
 endif
+
+# Freeze invocation-wide material flags before target-specific additions can be
+# inherited by build_commit.h through whichever consumer Make visits first.
+YVEX_BUILD_CPPFLAGS := $(CPPFLAGS)
+YVEX_BUILD_CFLAGS := $(CFLAGS)
+YVEX_BUILD_LDFLAGS := $(LDFLAGS)
+YVEX_BUILD_LDLIBS := $(LDLIBS)
+YVEX_BUILD_NVCCFLAGS := $(NVCCFLAGS)
+YVEX_BUILD_CUDA_LDFLAGS := $(CUDA_LDFLAGS)
 
 $(OBJ_DIR)/src/cli/commands/graph.o: CPPFLAGS += -D_XOPEN_SOURCE=700 -I$(BUILD_DIR)/generated
 $(OBJ_DIR)/src/cli/commands/graph.o: $(BUILD_COMMIT_HEADER)

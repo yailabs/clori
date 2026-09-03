@@ -147,6 +147,22 @@ for source_state in clean dirty; do
     rg -q '^#define YVEX_BUILD_SOURCE_ROOT "/tmp/yvex-provenance-source"$' \
         "$provenance_header" || fail "generated provenance lost the source-root boundary"
 done
+
+# Target-specific flags are implementation-local and are already represented by
+# the source tree.  They must not change the invocation-wide build identity
+# according to which build_commit.h consumer Make happens to visit first.
+base_build_identity=$(make --no-print-directory -s \
+    BUILD_DIR="$provenance_root" print-build-identity)
+make --no-print-directory -s BUILD_DIR="$provenance_root" \
+    --eval='.PHONY: provenance-target-context' \
+    --eval='provenance-target-context: CPPFLAGS += -DYVEX_TARGET_LOCAL_ONLY=1' \
+    --eval="provenance-target-context: $provenance_header" \
+    provenance-target-context
+header_build_identity=$(sed -n \
+    's/^#define YVEX_BUILD_IDENTITY "\([0-9a-f]*\)"$/\1/p' \
+    "$provenance_header")
+test "$header_build_identity" = "$base_build_identity" ||
+    fail "target traversal order changes the invocation-wide build identity"
 cleanup_provenance
 trap - EXIT HUP INT TERM
 
