@@ -37,8 +37,8 @@ static void host_section(FILE *fp, const char *title,
                          const host_status_pair *pairs, size_t count)
 {
     static const yvex_cli_table_column columns[] = {
-        {"FIELD", 10u, 20u, YVEX_CLI_TABLE_LEFT, 0},
-        {"VALUE", 12u, 100u, YVEX_CLI_TABLE_LEFT, 1}
+        {"", 10u, 20u, YVEX_CLI_TABLE_LEFT, 0},
+        {"", 12u, 100u, YVEX_CLI_TABLE_LEFT, 1}
     };
     yvex_cli_table_cell cells[8][2];
     yvex_cli_table_row rows[8];

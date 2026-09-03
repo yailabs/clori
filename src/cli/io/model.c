@@ -146,8 +146,8 @@ static void model_runtime_human(const char *operation,
                                 const yvex_server_engine_summary *engine)
 {
     static const yvex_cli_table_column columns[] = {
-        {"FIELD", 10u, 18u, YVEX_CLI_TABLE_LEFT, 0},
-        {"VALUE", 16u, 90u, YVEX_CLI_TABLE_LEFT, 1}
+        {"", 10u, 18u, YVEX_CLI_TABLE_LEFT, 0},
+        {"", 16u, 90u, YVEX_CLI_TABLE_LEFT, 1}
     };
     const char *keys[] = {"Model", "Format", "Quant / precision", "Variant",
                           "Backend", "Generation", "State"};

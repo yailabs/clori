@@ -87,6 +87,7 @@ static const char *table_tone(const yvex_cli_terminal_style *style,
 static void table_elide(char out[CLI_TABLE_CELL_CAP], const char *text,
                         size_t width, int middle)
 {
+    static const char ellipsis[] = "\xe2\x80\xa6";
     size_t bytes = strlen(text ? text : "");
     size_t visible = table_text_width(text);
     size_t left, right;
@@ -96,30 +97,30 @@ static void table_elide(char out[CLI_TABLE_CELL_CAP], const char *text,
         return;
     }
     if (width < 2u) {
-        out[0] = width ? '.' : '\0';
-        out[width ? 1u : 0u] = '\0';
+        if (width) memcpy(out, ellipsis, sizeof(ellipsis));
+        else out[0] = '\0';
         return;
     }
     /* Product selectors and paths are ASCII by contract.  A non-ASCII cell that
      * needs truncation is conservatively byte-clipped at a UTF-8 boundary. */
     if (!middle) {
         size_t count = width - 1u;
-        if (count >= CLI_TABLE_CELL_CAP - 2u) count = CLI_TABLE_CELL_CAP - 2u;
+        if (count >= CLI_TABLE_CELL_CAP - sizeof(ellipsis))
+            count = CLI_TABLE_CELL_CAP - sizeof(ellipsis);
         while (count && (((unsigned char)text[count]) & 0xc0u) == 0x80u) count--;
         memcpy(out, text, count);
-        out[count++] = '~';
-        out[count] = '\0';
+        memcpy(out + count, ellipsis, sizeof(ellipsis));
         return;
     }
     left = (width - 1u) / 2u;
     right = width - 1u - left;
-    if (left + right + 2u > CLI_TABLE_CELL_CAP) {
-        right = CLI_TABLE_CELL_CAP - left - 2u;
+    if (left + right + sizeof(ellipsis) > CLI_TABLE_CELL_CAP) {
+        right = CLI_TABLE_CELL_CAP - left - sizeof(ellipsis);
     }
     memcpy(out, text, left);
-    out[left] = '~';
-    memcpy(out + left + 1u, text + bytes - right, right);
-    out[left + 1u + right] = '\0';
+    memcpy(out + left, ellipsis, sizeof(ellipsis) - 1u);
+    memcpy(out + left + sizeof(ellipsis) - 1u, text + bytes - right, right);
+    out[left + sizeof(ellipsis) - 1u + right] = '\0';
 }
 
 static void table_widths(const yvex_cli_table_column *columns,
@@ -155,6 +156,18 @@ static void table_widths(const yvex_cli_table_column *columns,
                 slack = widths[column] - minimum;
             }
         }
+        if (selected == column_count) break;
+        widths[selected]--;
+        total--;
+    }
+    while (total > available) {
+        size_t selected = column_count;
+        unsigned int widest = 0u;
+        for (column = 0u; column < column_count; ++column)
+            if (widths[column] > 1u && widths[column] > widest) {
+                selected = column;
+                widest = widths[column];
+            }
         if (selected == column_count) break;
         widths[selected]--;
         total--;
@@ -195,23 +208,32 @@ static int table_render_at_width(FILE *fp,
     unsigned int widths[CLI_TABLE_COLUMN_CAP] = {0};
     yvex_cli_terminal_style style;
     size_t column, row;
+    int headings = 0;
 
     if (!fp || !columns || !column_count || column_count > CLI_TABLE_COLUMN_CAP ||
         (row_count && !rows))
         return YVEX_ERR_INVALID_ARG;
     yvex_cli_terminal_style_get(fp, &style);
     table_widths(columns, column_count, rows, row_count, available, widths);
-    for (column = 0u; column < column_count; ++column) {
-        yvex_cli_table_cell heading = {columns[column].heading,
-                                       YVEX_CLI_TABLE_PLAIN};
-        if (style.strong[0] && yvex_cli_out_fputs(style.strong, fp) < 0) return YVEX_ERR_IO;
-        if (table_cell_write(fp, &heading, &columns[column], widths[column], &style) < 0)
-            return YVEX_ERR_IO;
-        if (style.strong[0] && yvex_cli_out_fputs(style.reset, fp) < 0) return YVEX_ERR_IO;
-        if (column + 1u < column_count && yvex_cli_out_fputs("  ", fp) < 0)
-            return YVEX_ERR_IO;
+    for (column = 0u; column < column_count; ++column)
+        headings |= columns[column].heading && columns[column].heading[0];
+    if (headings) {
+        for (column = 0u; column < column_count; ++column) {
+            yvex_cli_table_cell heading = {columns[column].heading,
+                                           YVEX_CLI_TABLE_PLAIN};
+            if (style.strong[0] && yvex_cli_out_fputs(style.strong, fp) < 0)
+                return YVEX_ERR_IO;
+            if (table_cell_write(fp, &heading, &columns[column], widths[column],
+                                 &style) < 0)
+                return YVEX_ERR_IO;
+            if (style.strong[0] && yvex_cli_out_fputs(style.reset, fp) < 0)
+                return YVEX_ERR_IO;
+            if (column + 1u < column_count &&
+                yvex_cli_out_fputs("  ", fp) < 0)
+                return YVEX_ERR_IO;
+        }
+        if (yvex_cli_out_char(fp, '\n') < 0) return YVEX_ERR_IO;
     }
-    if (yvex_cli_out_char(fp, '\n') < 0) return YVEX_ERR_IO;
     for (row = 0u; row < row_count; ++row) {
         for (column = 0u; column < column_count; ++column) {
             if (table_cell_write(fp, &rows[row].cells[column], &columns[column],
@@ -222,9 +244,16 @@ static int table_render_at_width(FILE *fp,
         }
         if (yvex_cli_out_char(fp, '\n') < 0) return YVEX_ERR_IO;
         if (rows[row].secondary && rows[row].secondary[0]) {
+            char rendered[CLI_TABLE_CELL_CAP];
+            const char *secondary = rows[row].secondary;
             const char *tone = table_tone(&style, rows[row].secondary_tone);
+            if (isatty(fileno(fp))) {
+                table_elide(rendered, secondary, available > 2u ? available - 2u : 1u,
+                            0);
+                secondary = rendered;
+            }
             if (tone[0] && yvex_cli_out_fputs(tone, fp) < 0) return YVEX_ERR_IO;
-            if (yvex_cli_out_writef(fp, "  %s", rows[row].secondary) < 0)
+            if (yvex_cli_out_writef(fp, "  %s", secondary) < 0)
                 return YVEX_ERR_IO;
             if (tone[0] && yvex_cli_out_fputs(style.reset, fp) < 0) return YVEX_ERR_IO;
             if (yvex_cli_out_char(fp, '\n') < 0) return YVEX_ERR_IO;

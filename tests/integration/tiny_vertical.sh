@@ -201,7 +201,7 @@ grep -F '"host_ready":true' "$root/status.json" >/dev/null
 grep -F '"loaded_engine_count":0' "$root/status.json" >/dev/null
 grep -F '"workers":2' "$root/status.json" >/dev/null
 grep -F '"model_open_count":0' "$root/status.json" >/dev/null
-grep -F 'YVEX host · persistent verified inference' "$root/server.out" >/dev/null
+grep -F 'YVEX HOST · verified inference runtime' "$root/server.out" >/dev/null
 grep -F 'host ready · Ctrl-C to stop' "$root/server.out" >/dev/null
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" model load tiny-executable \
@@ -527,7 +527,8 @@ server_pid=
 wait "$log_pid"
 log_pid=
 grep -E 'REQUEST[[:space:]]+persisted/' "$root/server.out" >/dev/null
-grep -E 'COMPLETE[[:space:]]+[1-9][0-9]* token' "$root/server.out" >/dev/null
+grep -E 'COMPLETE[[:space:]]+[^[:space:]]+/[^[:space:]]+ · [1-9][0-9]* token' \
+    "$root/server.out" >/dev/null
 ! grep -F '"kind":' "$root/server.out" >/dev/null
 grep -F '"kind":"generation.completed"' "$root/server.log.jsonl" >/dev/null
 grep -F '"phase":"graphs"' "$root/server.log.jsonl" >/dev/null

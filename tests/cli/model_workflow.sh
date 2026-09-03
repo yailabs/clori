@@ -207,7 +207,7 @@ contains "$ROOT/models-all-narrow.out" "$ROOT/input/tiny-external.gguf"
 
 COLUMNS=70 NO_COLOR=1 "$YVEX_BIN" model list \
     --models-root "$MODELS_ROOT" --registry "$REGISTRY" >"$ROOT/models-narrow.out"
-contains "$ROOT/models-narrow.out" '2 local source representations'
+contains "$ROOT/models-narrow.out" '2 representations'
 
 # Styling is a TTY-only projection, and NO_COLOR removes every escape byte
 # without changing the model facts being rendered.
@@ -227,7 +227,7 @@ done
 contains "$ROOT/model-show.out" "$managed_location"
 contains "$ROOT/model-show.out" 'payload-verified'
 contains "$ROOT/model-show.out" 'not launchable'
-test "$(grep -c '^managed' "$ROOT/model-show.out")" -eq 2
+test "$(grep -c ' · managed · ' "$ROOT/model-show.out")" -eq 2
 
 "$YVEX_BIN" model list --all --models-root "$MODELS_ROOT" \
     --registry "$REGISTRY" >"$ROOT/local-models-all.out"

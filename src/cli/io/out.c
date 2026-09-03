@@ -344,15 +344,17 @@ void yvex_cli_out_turn_metrics(FILE *output, const yvex_client_message *message,
         return;
     }
     fprintf(output,
-            "%sprefill%s %llu new/%llu prompt/%llu reused · %.2f s · %.2f tok/s · "
-            "%sgeneration%s %llu tokens · %.2f s · %.2f tok/s · TTFT %.2f s",
-            style->accent, style->reset, message->prefill_tokens, message->prompt_tokens,
-            message->reused_tokens, message->prefill_seconds, message->prefill_rate,
-            style->success, style->reset, message->generated_tokens, message->decode_seconds,
-            message->decode_rate, message->first_token_seconds);
+            "\n%s  generation %llu tokens · %.2f s · %.2f tok/s · TTFT %.2f s%s\n"
+            "%s  prefill %llu new/%llu prompt/%llu reused · %.2f s · %.2f tok/s",
+            style->dim, message->generated_tokens,
+            message->decode_seconds, message->decode_rate,
+            message->first_token_seconds, style->reset, style->dim,
+            message->prefill_tokens, message->prompt_tokens,
+            message->reused_tokens, message->prefill_seconds,
+            message->prefill_rate);
     if (message->execution_strategy == YVEX_SERVER_EXECUTION_SPECULATIVE)
-        fprintf(output, " · %sspeculative%s %llu proposed/%llu accepted/%llu rejected/%llu verified",
-                style->accent, style->reset, message->proposed_tokens,
+        fprintf(output, " · speculative %llu proposed/%llu accepted/%llu rejected/%llu verified",
+                message->proposed_tokens,
                 message->accepted_draft_tokens, message->rejected_draft_tokens,
                 message->target_verification_count);
     if (context_capacity)
@@ -367,6 +369,7 @@ void yvex_cli_out_turn_metrics(FILE *output, const yvex_client_message *message,
     else
         fprintf(output, " · output adaptive · envelope %llu",
                 message->resolved_maximum_new_tokens);
+    fputs(style->reset, output);
 }
 
 void yvex_cli_out_turn_complete(FILE *output,
@@ -394,21 +397,21 @@ void yvex_cli_out_turn_complete(FILE *output,
                 message->media_result.execution_identity, style->reset);
     } else {
         yvex_cli_out_turn_metrics(output, message, context_capacity, style);
-        fprintf(output, " · stop %s · %ssession %s%s\n",
-                yvex_cli_out_stop_reason(message->stop_reason), style->dim,
+        fprintf(output, "%s · stop %s · session %s%s\n", style->dim,
+                yvex_cli_out_stop_reason(message->stop_reason),
                 message->session_name, style->reset);
     }
     if (message->reasoning_tokens || message->first_reasoning_seconds > 0.0)
         fprintf(output,
-                "%sreasoning%s %llu tokens · %.2f s · %.2f tok/s · "
+                "%s  reasoning %llu tokens · %.2f s · %.2f tok/s · "
                 "TTFR %.2f s · final %llu tokens · %.2f s · %.2f tok/s · "
-                "TTFF %.2f s · total %.2f tok/s\n",
-                style->dim, style->reset, message->reasoning_tokens,
+                "TTFF %.2f s · total %.2f tok/s%s\n",
+                style->dim, message->reasoning_tokens,
                 message->reasoning_seconds, message->reasoning_rate,
                 message->first_reasoning_seconds, message->final_tokens,
                 message->final_seconds, message->final_rate,
                 message->first_final_seconds,
-                message->total_completion_rate);
+                message->total_completion_rate, style->reset);
 }
 
 static const char *server_backend_name(unsigned long long backend)
@@ -703,22 +706,9 @@ static void watch_request_id(const yvex_server_event *event)
 static void watch_request_begin(yvex_cli_watch_renderer *renderer,
                                 const yvex_server_event *event)
 {
-    if (renderer->request_open &&
-        (!event->session_id[0] || !event->request_id[0] ||
-         strcmp(renderer->session_id, event->session_id) ||
-         strcmp(renderer->request_id, event->request_id))) {
-        printf("%s          previous request has no terminal event%s\n\n",
-               renderer->style.warning, renderer->style.reset);
-        renderer->request_open = 0;
-    }
-    if (renderer->request_open) return;
     renderer->request_open = 1;
     renderer->cycles = renderer->proposed = renderer->accepted = 0ull;
     renderer->rejected = renderer->discarded = 0ull;
-    yvex_core_text_copy(renderer->session_id, sizeof(renderer->session_id),
-                        event->session_id);
-    yvex_core_text_copy(renderer->request_id, sizeof(renderer->request_id),
-                        event->request_id);
     putchar('\n');
     watch_line_begin(renderer, event, renderer->style.accent, "REQUEST");
     watch_request_id(event);
@@ -775,28 +765,71 @@ static void watch_request_end(yvex_cli_watch_renderer *renderer,
                             ? "CANCELLED"
                             : "FAILED";
     const char *color = server_event_color(event, &renderer->style);
-    if (event->speculative_cycle) {
-        renderer->cycles = event->speculative_cycle;
-        renderer->proposed = event->proposed_tokens;
-        renderer->accepted = event->accepted_tokens;
-        renderer->rejected = event->rejected_tokens;
-        renderer->discarded = event->discarded_tokens;
-    }
     watch_line_begin(renderer, event, color, label);
-    printf("%llu token%s · position %llu · %s", event->value_a,
+    watch_request_id(event);
+    printf(" · %llu token%s · position %llu · %s", event->value_a,
            event->value_a == 1ull ? "" : "s", event->value_b,
            yvex_cli_out_stop_reason(event->value_c));
     if (event->seconds > 0.0) printf(" · %.3f s", event->seconds);
     if (event->rate > 0.0) printf(" · %.2f tok/s", event->rate);
-    if (renderer->cycles)
-        printf("\n          %sspeculative %llu cycle%s · %llu/%llu accepted · "
-               "%llu rejected · %llu discarded%s",
-               renderer->style.dim, renderer->cycles,
-               renderer->cycles == 1ull ? "" : "s", renderer->accepted,
-               renderer->proposed, renderer->rejected, renderer->discarded,
-               renderer->style.reset);
+    if (event->speculative_cycle)
+        printf(" · spec %llu cycle%s · %llu/%llu accepted · %llu rejected",
+               event->speculative_cycle,
+               event->speculative_cycle == 1ull ? "" : "s",
+               event->accepted_tokens, event->proposed_tokens,
+               event->rejected_tokens);
     puts("\n");
     renderer->request_open = 0;
+}
+
+static int watch_progress_due(yvex_cli_watch_renderer *renderer,
+                              const yvex_server_event *event)
+{
+    int reasoning = !strcmp(event->phase, "reasoning");
+    int same = !strcmp(renderer->session_id, event->session_id) &&
+               !strcmp(renderer->request_id, event->request_id);
+    if (same && reasoning == renderer->progress_reasoning &&
+        event->value_a < renderer->progress_tokens + 16ull &&
+        event->seconds < renderer->progress_seconds + 1.0)
+        return 0;
+    yvex_core_text_copy(renderer->session_id, sizeof(renderer->session_id),
+                        event->session_id);
+    yvex_core_text_copy(renderer->request_id, sizeof(renderer->request_id),
+                        event->request_id);
+    renderer->progress_tokens = event->value_a;
+    renderer->progress_seconds = event->seconds;
+    renderer->progress_reasoning = reasoning;
+    return 1;
+}
+
+static void watch_live_resources(const yvex_server_summary *live)
+{
+    if (!live) return;
+    server_event_bytes("RAM RSS", live->metrics.current_rss_bytes);
+    server_event_bytes("GPU resident", live->metrics.resident_device_bytes);
+    printf(" · active %llu · queue %llu/%llu", live->metrics.active_requests,
+           live->metrics.queue_depth, live->metrics.queue_capacity);
+}
+
+static int watch_generation_progress(yvex_cli_watch_renderer *renderer,
+                                     const yvex_server_event *event,
+                                     const yvex_server_summary *live)
+{
+    if (!watch_progress_due(renderer, event)) return 0;
+    watch_line_begin(renderer, event, renderer->style.accent, "DECODE");
+    watch_request_id(event);
+    printf(" · %llu tok · pos %llu · %s", event->value_a, event->value_b,
+           event->phase[0] ? event->phase : "decode");
+    if (event->value_c && strcmp(event->phase, "reasoning"))
+        printf(" · think %llu", event->value_c);
+    if (event->seconds > 0.0) printf(" · %.1f s", event->seconds);
+    if (event->rate > 0.0) printf(" · %.2f tok/s", event->rate);
+    if (event->proposed_tokens)
+        printf(" · spec %.1f%%", 100.0 * (double)event->accepted_tokens /
+                                  (double)event->proposed_tokens);
+    watch_live_resources(live);
+    putchar('\n');
+    return 1;
 }
 
 void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer, int detailed)
@@ -808,7 +841,8 @@ void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer, int detaile
 }
 
 int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
-                                  const yvex_server_event *event)
+                                  const yvex_server_event *event,
+                                  const yvex_server_summary *live)
 {
     if (!renderer || !event) return 0;
     if (event->engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
@@ -844,6 +878,7 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
         if (event->value_b)
             printf(" · %llu/%llu", event->value_a, event->value_b);
         if (event->value_c) printf(" · value %llu", event->value_c);
+        watch_live_resources(live);
         putchar('\n');
         return 1;
     }
@@ -937,15 +972,16 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
         watch_request_begin(renderer, event);
         return 1;
     }
-    if (event->kind >= YVEX_SERVER_EVENT_TOKENIZER_COMPLETED &&
-        event->kind <= YVEX_SERVER_EVENT_GENERATION_FAILED)
-        watch_request_begin(renderer, event);
     if (event->kind == YVEX_SERVER_EVENT_TOKENIZER_COMPLETED) {
+        if (!renderer->detailed) return 0;
         watch_line_begin(renderer, event, renderer->style.strong, "INPUT");
-        printf("%llu prompt tokens · %llu reused\n", event->value_a, event->value_b);
+        watch_request_id(event);
+        printf(" · %llu prompt tokens · %llu reused\n", event->value_a,
+               event->value_b);
     } else if (event->kind == YVEX_SERVER_EVENT_PREFILL_COMPLETED) {
         watch_line_begin(renderer, event, renderer->style.success, "PREFILL");
-        printf("%llu token%s · %llu chunk%s", event->value_a,
+        watch_request_id(event);
+        printf(" · %llu token%s · %llu chunk%s", event->value_a,
                event->value_a == 1ull ? "" : "s", event->value_b,
                event->value_b == 1ull ? "" : "s");
         if (event->seconds > 0.0) printf(" · %.3f s", event->seconds);
@@ -953,24 +989,12 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
         putchar('\n');
     } else if (event->kind == YVEX_SERVER_EVENT_GENERATION_FIRST_TOKEN) {
         watch_line_begin(renderer, event, renderer->style.accent, "FIRST");
-        printf("first committed token");
+        watch_request_id(event);
+        printf(" · first committed token");
         if (event->seconds > 0.0) printf(" · TTFT %.3f s", event->seconds);
         putchar('\n');
     } else if (event->kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS) {
-        renderer->cycles = event->speculative_cycle;
-        renderer->proposed = event->proposed_tokens;
-        renderer->accepted = event->accepted_tokens;
-        renderer->rejected = event->rejected_tokens;
-        renderer->discarded = event->discarded_tokens;
-        watch_line_begin(renderer, event, renderer->style.accent, "DECODE");
-        printf("%llu committed · position %llu · %s", event->value_a,
-               event->value_b, event->phase[0] ? event->phase : "decode");
-        if (event->value_c) printf(" · %llu reasoning", event->value_c);
-        if (event->rate > 0.0) printf(" · %.2f tok/s", event->rate);
-        if (event->proposed_tokens)
-            printf(" · spec %.1f%%", 100.0 * (double)event->accepted_tokens /
-                                      (double)event->proposed_tokens);
-        putchar('\n');
+        if (!watch_generation_progress(renderer, event, live)) return 0;
     } else if (event->kind == YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED) {
         watch_cycle(renderer, event);
     } else if (event->kind >= YVEX_SERVER_EVENT_GENERATION_COMPLETED &&
@@ -997,10 +1021,7 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
 
 void yvex_cli_watch_renderer_finish(yvex_cli_watch_renderer *renderer)
 {
-    if (!renderer || !renderer->request_open) return;
-    printf("%s          request stream ended without a terminal event%s\n",
-           renderer->style.warning, renderer->style.reset);
-    renderer->request_open = 0;
+    if (renderer) renderer->request_open = 0;
 }
 
 void yvex_cli_out_repl_catalog(void)

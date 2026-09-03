@@ -192,9 +192,10 @@ while test "$attempt" -lt 100; do
     sleep 0.02
 done
 test "$ready" -eq 1 || fail 'persistent host did not become ready'
-contains "$OUT_DIR/host.out" 'YVEX host · persistent verified inference'
-contains "$OUT_DIR/host.out" 'native verified inference · YVEX'
-contains "$OUT_DIR/host.out" 'engines 0/2'
+contains "$OUT_DIR/host.out" 'YVEX HOST · verified inference runtime'
+contains "$OUT_DIR/host.out" 'protocol 18'
+contains "$OUT_DIR/host.out" '0/2 engines · 2 workers'
+contains "$OUT_DIR/host.out" 'events lifecycle · generation · RAM/GPU'
 contains "$OUT_DIR/host.out" 'host ready · Ctrl-C to stop'
 contains "$OUT_DIR/status.json" '"schema":"yvex.host.status.v1"'
 contains "$OUT_DIR/status.json" '"protocol":18'
@@ -327,15 +328,15 @@ contains "$OUT_DIR/terminal-load.err" 'deployment is not current (malformed-bind
 run_client host stop >/dev/null
 wait "$server_pid"
 server_pid=
-contains "$OUT_DIR/server-terminal.typescript" 'YVEX HOST · VERIFIED INFERENCE'
-contains "$OUT_DIR/server-terminal.typescript" '✦'
-contains "$OUT_DIR/server-terminal.typescript" '⠘⠃'
+contains "$OUT_DIR/server-terminal.typescript" 'YVEX HOST'
+contains "$OUT_DIR/server-terminal.typescript" '▀██████████████████████▀'
+contains "$OUT_DIR/server-terminal.typescript" 'Y V E X'
 contains "$OUT_DIR/server-terminal.typescript" 'STATE      ● STARTING'
-contains "$OUT_DIR/server-terminal.typescript" 'LOCAL IPC'
+contains "$OUT_DIR/server-terminal.typescript" 'NATIVE'
 not_contains "$OUT_DIR/server-terminal.typescript" 'LOAD      deepseek4-v4-flash-dspark · generation 1'
 contains "$OUT_DIR/server-terminal.typescript" 'FAILED    deepseek4-v4-flash-dspark-'
 contains "$OUT_DIR/server-terminal.typescript" 'generation 0'
-contains "$OUT_DIR/server-terminal.typescript" 'LOGS       human events · foreground'
+contains "$OUT_DIR/server-terminal.typescript" 'EVENTS     lifecycle · generation · RAM/GPU'
 contains "$OUT_DIR/server-terminal.typescript" 'host ready · Ctrl-C to stop'
 not_contains "$OUT_DIR/server-terminal.typescript" 'CONTROL'
 not_contains "$OUT_DIR/server-terminal.typescript" 'OPERATE'
@@ -368,8 +369,8 @@ test "$ready" -eq 1 || fail 'compact terminal host did not become ready'
 run_client host stop >/dev/null
 wait "$server_pid"
 server_pid=
-contains "$OUT_DIR/server-compact.typescript" '╲──────◣'
-contains "$OUT_DIR/server-compact.typescript" '◢█│█◣'
+contains "$OUT_DIR/server-compact.typescript" '▀████████████████▀'
+contains "$OUT_DIR/server-compact.typescript" '▄██▀  ██  ▀██▄'
 contains "$OUT_DIR/server-compact.typescript" 'Y V E X'
 not_contains "$OUT_DIR/server-compact.typescript" 'Interactive host console'
 test ! -e "$SOCKET_PATH"

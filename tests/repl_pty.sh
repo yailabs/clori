@@ -235,12 +235,23 @@ printf '/quit\r' >&3
 finish_console
 assert_linear_terminal "$root/envelope.typescript"
 
-# Typed channels, fragmented UTF-8 and the bounded Markdown projection remain
-# line-oriented. Reasoning stays secondary and the final transition is explicit.
+# A fragment without a newline is visible while the provider is still working;
+# rendering adds neither an artificial typewriter delay nor line buffering.
+start_console progressive 24 100 'chat --session progressive' nocolor
+printf 'PROGRESSIVE_STREAM\r' >&3
+wait_for "$root/progressive.typescript" 'Letters arrive now'
+! grep -F 'and finish later.' "$root/progressive.typescript" >/dev/null
+wait_for "$root/progressive.typescript" 'Letters arrive now and finish later.'
+printf '/quit\r' >&3
+finish_console
+assert_linear_terminal "$root/progressive.typescript"
+
+# Typed channels, fragmented UTF-8 and bounded Markdown stay readable while
+# ordinary text streams immediately. Reasoning remains visually secondary.
 start_console rendering 24 100 'chat --session rendering' nocolor
 printf 'MARKDOWN_STREAM\r' >&3
 wait_for "$root/rendering.typescript" 'deterministic transcript identity.'
-grep -F 'answer' "$root/rendering.typescript" >/dev/null
+! grep -F 'answer' "$root/rendering.typescript" >/dev/null
 grep -F 'CUDA' "$root/rendering.typescript" >/dev/null
 grep -F 'code · cuda' "$root/rendering.typescript" >/dev/null
 grep -F '  // 🌍' "$root/rendering.typescript" >/dev/null
@@ -257,7 +268,7 @@ wait_for "$root/rendering.typescript" 'The valid result is 42.'
 grep -F 'reasoning' "$root/rendering.typescript" >/dev/null
 grep -F '│ Plan' "$root/rendering.typescript" >/dev/null
 grep -F '│ • Compare constraints carefully.' "$root/rendering.typescript" >/dev/null
-grep -F 'answer' "$root/rendering.typescript" >/dev/null
+! grep -F 'answer' "$root/rendering.typescript" >/dev/null
 grep -F 'Result' "$root/rendering.typescript" >/dev/null
 printf '/quit\r' >&3
 finish_console

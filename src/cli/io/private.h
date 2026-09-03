@@ -130,7 +130,6 @@ typedef struct {
     const char *warning;
     const char *error;
 } yvex_cli_terminal_style;
-
 typedef enum {
     YVEX_CLI_STREAM_STYLE_NORMAL = 0,
     YVEX_CLI_STREAM_STYLE_DIM,
@@ -142,21 +141,22 @@ typedef struct {
     FILE *output;
     yvex_cli_terminal_style style;
     yvex_client_stream_channel channel;
-    yvex_cli_stream_style active_style;
-    unsigned char line[YVEX_CLI_STREAM_LINE_CAP];
+    yvex_cli_stream_style active_style, line_style;
+    unsigned char line[YVEX_CLI_STREAM_LINE_CAP], inline_previous;
     size_t line_count;
-    unsigned int column, prose_width;
-    int enhanced, in_fence, pending_cr, channel_announced;
+    unsigned int column, prose_width, line_indent, inline_flags;
+    int enhanced, in_fence, pending_cr, channel_announced, line_started;
     int wrote_bytes, last_newline;
 } yvex_cli_stream_renderer;
 typedef struct {
     yvex_cli_terminal_style style;
     char session_id[YVEX_SERVER_ID_CAP];
     char request_id[YVEX_SERVER_ID_CAP];
-    unsigned long long cycles, proposed, accepted, rejected, discarded;
-    int request_open, detailed;
+    unsigned long long cycles, proposed, accepted, rejected;
+    unsigned long long discarded, progress_tokens;
+    double progress_seconds;
+    int request_open, detailed, progress_reasoning;
 } yvex_cli_watch_renderer;
-
 typedef enum {
     YVEX_MODELS_OPTION_TEXT = 0,
     YVEX_MODELS_OPTION_FLAG,
@@ -583,7 +583,7 @@ void yvex_cli_out_turn_complete(FILE *, const yvex_client_message *, unsigned lo
 int yvex_cli_out_server_event(const yvex_server_event *event, int detailed);
 void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer, int detailed);
 int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
-                                  const yvex_server_event *event);
+    const yvex_server_event *event, const yvex_server_summary *live);
 void yvex_cli_watch_renderer_finish(yvex_cli_watch_renderer *renderer);
 void yvex_cli_out_repl_catalog(void);
 void yvex_cli_out_line(FILE *fp, const char *text);

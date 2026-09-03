@@ -367,6 +367,19 @@ static int send_native_reasoning(int fd, const yvex_client_request *request,
     return rc;
 }
 
+static int send_native_progressive(int fd, const yvex_client_request *request,
+                                   yvex_error *err)
+{
+    const struct timespec delay = {0, 700000000L};
+    int rc = send_fragment(fd, request, YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
+                           "Letters **arrive now", NULL, NULL, err);
+    if (rc == YVEX_OK) (void)nanosleep(&delay, NULL);
+    if (rc == YVEX_OK)
+        rc = send_fragment(fd, request, YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
+                           "** and finish later.", NULL, NULL, err);
+    return rc;
+}
+
 static int send_native_partial(int fd, const yvex_client_request *request,
                                yvex_provider_output_kind kind,
                                const char *bytes, const char *reason,
@@ -602,6 +615,10 @@ static int send_generation(int fd, const yvex_client_request *request,
         return send_native_partial_reasoning(fd, request, err);
     }
     if (rc == YVEX_OK && !provider &&
+        native_prompt_contains(request, "PROGRESSIVE_STREAM")) {
+        rc = send_native_progressive(fd, request, err);
+        message.provider_finish = YVEX_PROVIDER_FINISH_STOP;
+    } else if (rc == YVEX_OK && !provider &&
         native_prompt_contains(request, "MARKDOWN_STREAM")) {
         rc = send_native_markdown(fd, request, err);
         message.provider_finish = YVEX_PROVIDER_FINISH_STOP;

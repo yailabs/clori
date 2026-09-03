@@ -629,7 +629,7 @@ static int host_logs(int json_output, int detailed, int follow)
             break;
         }
         if (!json_output)
-            (void)yvex_cli_watch_renderer_event(&watch, &message.event);
+            (void)yvex_cli_watch_renderer_event(&watch, &message.event, NULL);
         else if (yvex_server_event_json(&message.event, json, sizeof(json), &err) == YVEX_OK) {
             fputs(json, stdout);
             fflush(stdout);
@@ -1538,7 +1538,6 @@ static int chat(const client_engine_binding *selected_engine,
     }
     render_console_status(&status, selected_model, 1);
     options.reasoning_policy = status.console.reasoning_policy;
-    yvex_cli_out_repl_catalog();
     yvex_cli_terminal_style_get(stdout, &style);
     for (;;) {
         char *line = NULL;
@@ -1775,46 +1774,31 @@ static void render_console_status(
     yvex_cli_terminal_style style;
     yvex_cli_terminal_style_get(stdout, &style);
     if (startup) {
-        printf("%sYVEX %s%s · protocol %u\n\n", style.strong, yvex_version_string(),
-               style.reset, YVEX_LOCAL_PROTOCOL_VERSION);
-        printf("  %s%-10s%s %s", style.dim, "model", style.reset, target);
-        printf("\n  %s%-10s%s %s\n", style.dim, "variant", style.reset,
-               variant);
-        printf("  %s%-10s%s %s%s%s · %s · %s%s · %s%s\n", style.dim, "runtime",
-               style.reset, status->runtime_ready ? style.success : style.warning,
+        printf("%sYVEX %s%s · %s%s%s\n", style.strong, yvex_version_string(),
+               style.reset, style.accent, target, style.reset);
+        printf("  %s%s%s · %s\n",
+               status->runtime_ready ? style.success : style.warning,
                status->runtime_ready ? "● ready" : "● not ready", style.reset,
-               status->attached ? "attached to resident runtime" : "detached from runtime",
-               style.accent, backend_name(status->backend),
+               status->attached ? "attached to resident runtime"
+                                : "detached from runtime");
+        printf("  %s · %s · %s", backend_name(status->backend),
                engine_execution_name(message->engine_kind,
-                                     message->execution_strategy), style.reset);
-        printf("  %s%-10s%s %s · position %llu · turns %llu\n", style.dim, "session",
-               style.reset, status->session_name, status->position, status->turn_count);
+                                     message->execution_strategy), variant);
+        if (message->engine_kind == YVEX_SERVER_ENGINE_MEDIA)
+            printf(" · direct media generation");
+        else
+            printf(" · context %llu/%llu", status->context_used,
+                   status->context_capacity);
+        printf("\n  session %s · position %llu · turns %llu · reasoning %s\n",
+               status->session_name, status->position, status->turn_count,
+               reasoning);
         if (message->partial_turn.available)
-            printf("  %s%-10s%s %sPARTIAL%s · %llu committed token%s · reset required\n",
-                   style.dim, "recovery", style.reset, style.warning, style.reset,
+            printf("  %sPARTIAL%s · %llu committed token%s · reset required\n",
+                   style.warning, style.reset,
                    message->partial_turn.committed_token_count,
                    message->partial_turn.committed_token_count == 1u ? "" : "s");
-        if (message->engine_kind == YVEX_SERVER_ENGINE_MEDIA)
-            printf("  %s%-10s%s direct media generation", style.dim, "context", style.reset);
-        else
-            printf("  %s%-10s%s %llu/%llu · reasoning %s", style.dim, "context", style.reset,
-                   status->context_used, status->context_capacity, reasoning);
-        if (status->kv_used_available)
-            printf(" · KV %.2f MiB", (double)status->kv_used_bytes / 1048576.0);
-        printf("\n  %s%-10s%s %.2f GiB process · %.2f GiB artifact mapped · "
-               "%.2f GiB device\n", style.dim, "memory", style.reset,
-               (double)message->runtime.metrics.current_rss_bytes / 1073741824.0,
-               (double)message->runtime.metrics.mapped_artifact_bytes / 1073741824.0,
-               (double)message->runtime.metrics.resident_device_bytes / 1073741824.0);
-        printf("  %s%-10s%s ", style.dim, "OpenAI", style.reset);
-        if (message->runtime.openai_listener_enabled)
-            printf("%s● %s%s · 127.0.0.1:%u", message->runtime.openai_listener_ready
-                                                    ? style.success : style.warning,
-                   message->runtime.openai_listener_ready ? "ready" : "starting",
-                   style.reset, (unsigned int)message->runtime.openai_port);
-        else
-            printf("%sdisabled%s", style.dim, style.reset);
-        puts("\n");
+        printf("  %s/help%s commands · Ctrl-C cancels · Ctrl-D exits\n\n",
+               style.accent, style.reset);
         return;
     }
     printf("%schat%s · ", style.strong, style.reset);

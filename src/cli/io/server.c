@@ -204,11 +204,16 @@ static void *human_log_main(void *opaque)
     yvex_cli_watch_renderer_open(&renderer, 0);
     for (;;) {
         yvex_server_event event;
+        yvex_server_summary summary;
+        const yvex_server_summary *live = NULL;
         yvex_error err;
         if (yvex_server_event_next(state->server, cursor, 1, &event, &err) != YVEX_OK)
             continue;
         cursor = event.sequence;
-        (void)yvex_cli_watch_renderer_event(&renderer, &event);
+        if (event.kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS &&
+            yvex_server_get_summary(state->server, &summary, &err) == YVEX_OK)
+            live = &summary;
+        (void)yvex_cli_watch_renderer_event(&renderer, &event, live);
         if (event.kind == YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE) break;
     }
     yvex_cli_watch_renderer_finish(&renderer);
@@ -533,27 +538,23 @@ static size_t startup_text_columns(const char *text)
 
 static const char *startup_logo_line(size_t index)
 {
-    /* Generated from the canonical traced mark at 88x64 dots, then packed into
-     * Unicode Braille cells.  The star is strengthened for terminal legibility. */
+    /* Solid half-block silhouette sampled from the canonical butterfly mark.
+     * It avoids terminal-font-dependent Braille and decorative line glyphs. */
     static const char *const logo[] = {
-        "                     ✦",
-        " ⢲⣤⣀          " "   ⡀   ⢸⡇   ⢀ " "            ⣀⣤" "⡖",
-        "  ⠙⢿⣿⣶⣤⣀      " "   ⠘⢆  ⢸⡇  ⡴⠃ " "        ⣀⣤⣶⣿⡿⠋",
-        "   ⠈⠻⣿⣿⣿⣿⣶⣄⡀  " "    ⠈⢷⡀  ⢀⡞⠁  " "    ⢀⣠⣶⣿⣿⣿⣿⠟⠁",
-        "     ⠈⢿⣿⣿⣿⣿⣿⣷⣦" "⣄     ⠻⣄⣠⠟    " " ⣠⣴⣾⣿⣿⣿⣿⣿⡿⠁",
-        "       ⠙⢿⣿⣿⣿⣿⣿" "⣿⣿⣶⣄⡀  ⣿⣿  ⢀⣠⣶" "⣿⣿⣿⣿⣿⣿⣿⡿⠋",
-        "         ⠹⣿⣿⣿⣿" "⣿⣿⣿⣟⣛⠲⢴⣿⣿⡤⠞⣛⣿⣿" "⣿⣿⣿⣿⣿⣿⠏",
-        "          ⠈⢻⣿⣿" "⣿⣿⣿⠿⢿⣻⣿⣿⣿⣿⣟⡿⠿⣿" "⣿⣿⣿⣿⡟⠁",
-        "            ⠙⠛" "⠉⢁⣤⣶⣿⣿⢻⣿⣿⡟⣿⣿⣶⣤" "⡈⠉⠛⠋",
-        "              " "⣰⣿⣿⣿⣿⠏⢀⣿⣿⡀⠹⣿⣿⣿" "⣿⣆",
-        "             ⢠" "⣿⣿⣿⣿⡟ ⠈⣿⣿⠃ ⢻⣿⣿" "⣿⣿⡄",
-        "            ⢠⣿" "⣿⣿⡿⠛⠁  ⣿⣿  ⠈⠻⢿" "⣿⣿⣿⡄",
-        "           ⢀⣾⡿" "⠛⠁     ⣿⣿     " "⠉⠛⢿⣷⡀",
-        "           ⠘⠁ " "       ⢸⡇     " "   ⠈⠃",
-        "                     ⢸⡇",
-        "                     ⠘⠃",
-        "",
-        "                Y  V  E  X",
+        " ██▄▄            ▄   ██   ▄            ▄▄██",
+        "   ▀███▄▄         █▄ ▄  ▄█         ▄▄███▀",
+        "    ▀███████▄      ▀▄▀▀▄▀      ▄███████▀",
+        "       ▀███████▄▄    ██▀   ▄▄███████▀▀",
+        "        ▀██████████▄▄██▄▄██████████▀",
+        "          ▀██████████████████████▀",
+        "            ▀▀▀██████████████▀▀▀",
+        "              ▄██ ████ ██▄",
+        "            ▄███▀  ██  ▀███▄",
+        "          ▄███▀    ██    ▀███▄",
+        "        ▄██▀       ██       ▀██▄",
+        "       ▀            ██            ▀",
+        "                    ▀▀",
+        "                 Y V E X",
     };
 
     return index < sizeof(logo) / sizeof(logo[0]) ? logo[index] : "";
@@ -561,29 +562,25 @@ static const char *startup_logo_line(size_t index)
 
 static const char *startup_logo_wide_line(size_t index)
 {
-    /* Fit the complete canonical mark into the 13-row side-by-side hero.  The
-     * former projection stopped before the lower wing tips and body. */
-    static const unsigned char rows[] = {
-        0u, 1u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 13u, 15u,
-    };
-
-    return index < sizeof(rows) ? startup_logo_line(rows[index]) : "";
+    return startup_logo_line(index);
 }
 
 static const char *startup_logo_compact_line(size_t index)
 {
-    /* Hand-reduced from the same traced mark; these are standard Unicode
-     * geometric and box-drawing characters, not font-private glyphs. */
+    /* A smaller sample of the same canonical silhouette. */
     static const char *const logo[] = {
-        "              ✦",
-        " ╲──────◣  ╱│╲  ◢──────╱",
-        "   ╲░▒▓██◣╱ │ ╲◢██▓▒░╱",
-        "     ╲───◥█◆█◤───╱",
-        "          ◢█│█◣",
-        "         ╱▓ ╲│╱ ▓╲",
-        "        ╱◤   │   ◥╲",
-        "             ▼",
-        "          Y V E X",
+        " ▄                              ▄",
+        " ▀██▄▄       ▀▄ ▀▀  ▀       ▄▄██▀",
+        "   ▀████▄▄    ▀▄  ▄▀    ▄▄████▀",
+        "     ▀█████▄▄   ██   ▄▄█████▀",
+        "      ▀████████████████████▀",
+        "        ▀████████████████▀",
+        "           ▄█ ████ █▄",
+        "         ▄██▀  ██  ▀██▄",
+        "       ▄██▀    ██    ▀██▄",
+        "      ▀        ██        ▀",
+        "               ▀▀",
+        "            Y V E X",
     };
 
     return index < sizeof(logo) / sizeof(logo[0]) ? logo[index] : "";
@@ -612,7 +609,7 @@ static void startup_logo_render(const yvex_cli_terminal_style *style)
     size_t index;
 
     fputc('\n', stdout);
-    for (index = 0u; index < 9u; ++index)
+    for (index = 0u; index < 12u; ++index)
         printf("  %s%s%s\n", style->strong,
                startup_logo_compact_line(index),
                style->reset);
@@ -624,18 +621,13 @@ static void startup_announce_wide(const yvex_server_options *options,
                                   const yvex_cli_terminal_style *style,
                                   unsigned int columns)
 {
-    char engines[96], workers[64], protocol[96];
+    char capacity[96], protocol[96];
     char local[YVEX_SERVER_SOCKET_PATH_CAP], openai[64];
-    const char *logs = options->console == YVEX_SERVER_CONSOLE_RAW
-                           ? "JSON events · foreground"
-                           : options->console == YVEX_SERVER_CONSOLE_OFF
-                                 ? "off" : "human events · foreground";
     size_t endpoint_width = columns > 64u ? columns - 64u : 24u;
 
-    (void)snprintf(engines, sizeof(engines), "0 loaded / %u capacity",
-                   (unsigned int)options->maximum_engines);
-    (void)snprintf(workers, sizeof(workers), "%llu parallel",
-                   options->worker_count);
+    (void)snprintf(capacity, sizeof(capacity), "0/%u engines · %llu worker%s",
+                   (unsigned int)options->maximum_engines, options->worker_count,
+                   options->worker_count == 1ull ? "" : "s");
     (void)snprintf(protocol, sizeof(protocol), "v%u · YVEX %s",
                    YVEX_LOCAL_PROTOCOL_VERSION, yvex_version_string());
     startup_tail_fit(local, sizeof(local), endpoint, endpoint_width);
@@ -647,52 +639,48 @@ static void startup_announce_wide(const yvex_server_options *options,
 
     fputc('\n', stdout);
     startup_hero_row(style, startup_logo_wide_line(0u), NULL,
-                     "YVEX HOST · VERIFIED INFERENCE",
-                     style->accent);
+                     "YVEX HOST", style->accent);
     startup_hero_row(style, startup_logo_wide_line(1u), NULL,
-                     "persistent native runtime",
-                     style->dim);
-    startup_hero_row(style, startup_logo_wide_line(2u), NULL, NULL, NULL);
-    startup_hero_row(style, startup_logo_wide_line(3u), "STATE", "● STARTING",
+                     "verified inference runtime", style->dim);
+    startup_hero_row(style, startup_logo_wide_line(2u), "STATE", "● STARTING",
                      style->warning);
-    startup_hero_row(style, startup_logo_wide_line(4u), "ENGINES", engines,
+    startup_hero_row(style, startup_logo_wide_line(3u), "CAPACITY", capacity,
                      style->strong);
-    startup_hero_row(style, startup_logo_wide_line(5u), "WORKERS", workers,
+    startup_hero_row(style, startup_logo_wide_line(4u), "PROTOCOL", protocol,
                      style->strong);
-    startup_hero_row(style, startup_logo_wide_line(6u), "PROTOCOL", protocol,
+    startup_hero_row(style, startup_logo_wide_line(5u), "NATIVE", local,
                      style->strong);
-    startup_hero_row(style, startup_logo_wide_line(7u), "LOGS", logs,
-                     style->strong);
-    startup_hero_row(style, startup_logo_wide_line(8u), NULL, NULL, NULL);
-    startup_hero_row(style, startup_logo_wide_line(9u), "LOCAL IPC", local,
-                     style->strong);
-    startup_hero_row(style, startup_logo_wide_line(10u), "OPENAI", openai,
+    startup_hero_row(style, startup_logo_wide_line(6u), "OPENAI", openai,
                      options->openai_enabled ? style->success : style->dim);
-    startup_hero_row(style, startup_logo_wide_line(11u), "ACCESS",
-                     "external clients enabled", style->success);
+    startup_hero_row(style, startup_logo_wide_line(7u), "EVENTS",
+                     "lifecycle · generation · RAM/GPU", style->strong);
+    startup_hero_row(style, startup_logo_wide_line(8u), NULL, NULL, NULL);
+    startup_hero_row(style, startup_logo_wide_line(9u), NULL, NULL, NULL);
+    startup_hero_row(style, startup_logo_wide_line(10u), NULL, NULL, NULL);
+    startup_hero_row(style, startup_logo_wide_line(11u), NULL, NULL, NULL);
     startup_hero_row(style, startup_logo_wide_line(12u), NULL, NULL, NULL);
+    startup_hero_row(style, startup_logo_wide_line(13u), NULL, NULL, NULL);
 }
 
 static void startup_announce_compact(const yvex_server_options *options,
                                      const char *endpoint, int human_terminal,
                                      const yvex_cli_terminal_style *style)
 {
-    printf("%sYVEX host%s · persistent verified inference\n"
-           "%snative verified inference%s · YVEX %s · protocol %u\n",
-           style->strong, style->reset, style->dim, style->reset,
-           yvex_version_string(), YVEX_LOCAL_PROTOCOL_VERSION);
-    printf("  engines 0/%llu · parallel workers=%llu\n",
-           options->maximum_engines, options->worker_count);
-    printf("  local endpoint %s", endpoint ? endpoint : "unavailable");
+    printf("%sYVEX HOST%s · verified inference runtime\n"
+           "%sYVEX %s · protocol %u%s\n",
+           style->strong, style->reset, style->dim, yvex_version_string(),
+           YVEX_LOCAL_PROTOCOL_VERSION, style->reset);
+    printf("  0/%llu engines · %llu worker%s\n", options->maximum_engines,
+           options->worker_count, options->worker_count == 1ull ? "" : "s");
+    printf("  native %s", endpoint ? endpoint : "unavailable");
     if (options->openai_enabled)
         printf(" · OpenAI 127.0.0.1:%u",
                (unsigned int)options->openai_port);
     else
         printf(" · OpenAI disabled");
-    if (human_terminal)
-        printf("\n  foreground host logs follow this report\n");
-    else
-        printf("\n  foreground host · Ctrl-C to stop\n");
+    printf("\n  events lifecycle · generation · RAM/GPU");
+    if (!human_terminal) printf(" · Ctrl-C to stop");
+    putchar('\n');
 }
 
 static void startup_announce(const yvex_server_options *options,
