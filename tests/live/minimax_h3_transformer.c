@@ -1086,6 +1086,25 @@ static int latent_fixture_read(request_fixture *fixture, const char *root,
            file_read(audio_path, fixture->audio_reference, audio_values);
 }
 
+typedef struct {
+    unsigned int requests, resumes;
+} latent_yield_fixture;
+
+static int latent_yield_requested(void *opaque)
+{
+    latent_yield_fixture *fixture = opaque;
+    fixture->requests++;
+    return fixture->requests == 1u;
+}
+
+static int latent_yield_resume(void *opaque, yvex_error *err)
+{
+    latent_yield_fixture *fixture = opaque;
+    fixture->resumes++;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int execute_latent_fixture(
     const char *artifact_path, const char *fixture_root, const char *video_output_path,
     const char *audio_output_path, unsigned long long width, unsigned long long height,
@@ -1104,6 +1123,8 @@ static int execute_latent_fixture(
     yvex_component_resource_summary resources = {0};
     const int optional_fallback =
         getenv("YVEX_TEST_JOINT_PREPARED_OPTIONAL_FAILURE") != NULL;
+    const int cooperative_yield =
+        getenv("YVEX_TEST_COOPERATIVE_YIELD") != NULL;
     yvex_minimax_h3_t2va_plan plan = {0};
     yvex_runtime_av_layout_result layout_result = {0};
     yvex_runtime_latent_result latent_result = {0};
@@ -1113,6 +1134,9 @@ static int execute_latent_fixture(
     yvex_transformer_linear_physical_plan audio_specialization = {0};
     yvex_runtime_av_layout_output layout = {0};
     request_fixture fixture = {0};
+    latent_yield_fixture yielded = {0};
+    yvex_execution_yield_control yield_control = {
+        latent_yield_requested, latent_yield_resume, &yielded};
     yvex_media_plan_request plan_request = {
         .schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1,
         .text_tokens = text_rows, .width = width, .height = height, .frames = frames,
@@ -1180,6 +1204,7 @@ static int execute_latent_fixture(
     context.timestep_capacity = plan.packed_rows;
     context.block_count = block_count;
     context.conditioning_identity = conditioning_identity;
+    context.yield_control = cooperative_yield ? &yield_control : NULL;
     context.observe = checkpoint_root && checkpoint_root[0] ? latent_checkpoint_observe : NULL;
     context.observer_context = &checkpoint;
     if (rc == YVEX_OK)
@@ -1190,6 +1215,11 @@ static int execute_latent_fixture(
         (latent_result.transaction.state != YVEX_EXECUTION_TRANSACTION_COMMITTED ||
          latent_result.transaction.completed_quanta != steps ||
          latent_result.transaction.safe_points != steps ||
+         latent_result.transaction.yields !=
+             (cooperative_yield && steps > 1u ? 1ull : 0ull) ||
+         latent_result.transaction.resumes !=
+             (cooperative_yield && steps > 1u ? 1ull : 0ull) ||
+         yielded.resumes != (cooperative_yield && steps > 1u ? 1u : 0u) ||
          latent_result.transaction.retained_resources != 1ull)) {
         yvex_error_set(&err, YVEX_ERR_STATE, "minimax-h3.latent-request.transaction",
                        "the iterative request did not retain one admitted execution resource");
@@ -1235,7 +1265,8 @@ static int execute_latent_fixture(
     if (rc == YVEX_OK)
         printf("t2va_latent_request=accepted rows=%llu blocks=%llu steps=%u seed=%llu\n"
                "kernel_launches=%llu peak_device_bytes=%llu\n"
-               "execution_quanta=%llu safe_points=%llu transaction_setup_ns=%llu "
+               "execution_quanta=%llu safe_points=%llu yields=%llu resumes=%llu "
+               "transaction_setup_ns=%llu "
                "safe_point_ns=%llu\nresource_prepare_ns=%llu arena_host_bytes=%llu "
                "arena_device_bytes=%llu resource_uses=%llu resource_reuses=%llu "
                "last_execution_allocations=%llu\nrequest_prepared_bytes=%llu "
@@ -1245,6 +1276,8 @@ static int execute_latent_fixture(
                plan.packed_rows, block_count, steps, seed, omni_result.kernel_launches,
                omni_result.peak_device_bytes, latent_result.transaction.completed_quanta,
                latent_result.transaction.safe_points,
+               latent_result.transaction.yields,
+               latent_result.transaction.resumes,
                latent_result.transaction.setup_nanoseconds,
                latent_result.transaction.safe_point_nanoseconds,
                resources.preparation_nanoseconds, resources.host_arena_bytes,

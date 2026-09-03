@@ -120,12 +120,9 @@ int yvex_runtime_private_binding_validate(
     const yvex_runtime_binding *binding, const char **field,
     yvex_runtime_binding_failure_code *code);
 
-typedef struct runtime_engine_scheduler runtime_engine_scheduler;
+typedef yvex_runtime_execution_coordinator runtime_engine_scheduler;
 typedef struct runtime_engine_work runtime_engine_work;
-typedef struct {
-    runtime_engine_scheduler *scheduler;
-    unsigned long long slot, generation;
-} runtime_engine_progress_lease;
+typedef yvex_runtime_execution_lease runtime_engine_progress_lease;
 typedef struct runtime_generation_turn_state runtime_generation_turn_state;
 typedef int (*runtime_engine_work_execute)(
     runtime_engine_work *const *tickets,
@@ -208,7 +205,8 @@ int yvex_runtime_private_engine_scheduler_close(
     runtime_engine_scheduler **scheduler, yvex_error *err);
 int yvex_runtime_private_model_scheduler_acquire(
     yvex_model_engine *model, unsigned long long sequence_capacity,
-    unsigned long long maximum_width, yvex_error *err);
+    unsigned long long runnable_capacity, unsigned long long maximum_width,
+    yvex_error *err);
 int yvex_runtime_private_model_scheduler_release(
     yvex_model_engine *model, yvex_error *err);
 int yvex_runtime_private_model_scheduler_finish(
@@ -353,7 +351,7 @@ struct yvex_model_engine {
     unsigned long long active_sessions, engine_scheduler_references;
     unsigned long long engine_scheduler_producers;
     unsigned long long next_session_ordinal;
-    unsigned long long scheduler_sequence_capacity;
+    unsigned long long scheduler_sequence_capacity, scheduler_runnable_capacity;
     unsigned long long scheduler_maximum_width;
     int lifecycle_mutex_ready, close_requested, dependent_invalidation_pending;
 };

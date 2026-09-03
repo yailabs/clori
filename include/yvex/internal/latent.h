@@ -12,6 +12,8 @@ extern "C" {
 #endif
 
 #define YVEX_RUNTIME_LATENT_SCHEMA_V1 1u
+#define YVEX_RUNTIME_LATENT_SCHEMA_V2 2u
+#define YVEX_RUNTIME_LATENT_SCHEMA_CURRENT YVEX_RUNTIME_LATENT_SCHEMA_V2
 #define YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1 1u
 #define YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V2 2u
 #define YVEX_RUNTIME_AV_PLAN_SCHEMA_V1 1u
@@ -103,6 +105,7 @@ typedef struct yvex_runtime_latent_request {
     void *execution_context;
     int (*cancel_requested)(void *context);
     void *cancel_context;
+    const yvex_execution_yield_control *yield_control;
     yvex_runtime_latent_observe_fn observe;
     void *observer_context;
     const yvex_execution_resource_lease *execution_resource;

@@ -6,7 +6,8 @@
 #include <string.h>
 
 typedef struct {
-    int cancelled, evaluations, observations, observation_mismatch, fail_observation;
+    int cancelled, cancel_after_evaluations, evaluations;
+    int observations, observation_mismatch, fail_observation;
     yvex_runtime_latent_observation_stage stages[8];
     unsigned long long completed_steps[8];
 } latent_fixture;
@@ -23,6 +24,8 @@ static int latent_evaluate(
     for (index = 0ull; index < video_values; ++index) video_velocity[index] = video[index] * 0.5f;
     for (index = 0ull; index < audio_values; ++index) audio_velocity[index] = audio[index] * -0.25f;
     fixture->evaluations++;
+    if (fixture->cancel_after_evaluations == fixture->evaluations)
+        fixture->cancelled = 1;
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -45,6 +48,31 @@ static int latent_advance(
 static int latent_cancel(void *context)
 {
     return ((latent_fixture *)context)->cancelled;
+}
+
+typedef struct {
+    unsigned int requests, resumes;
+    int fail_resume;
+} latent_yield_fixture;
+
+static int latent_yield_requested(void *opaque)
+{
+    latent_yield_fixture *fixture = opaque;
+    fixture->requests++;
+    return fixture->requests == 1u;
+}
+
+static int latent_yield_resume(void *opaque, yvex_error *err)
+{
+    latent_yield_fixture *fixture = opaque;
+    fixture->resumes++;
+    if (fixture->fail_resume) {
+        yvex_error_set(err, YVEX_ERR_STATE, "test.runtime-latent.yield",
+                       "requested cooperative resume failure");
+        return YVEX_ERR_STATE;
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 
 static int latent_observe(
@@ -80,7 +108,7 @@ static yvex_runtime_latent_request latent_request(latent_fixture *fixture)
     static const char identity[] =
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     yvex_runtime_latent_request request = {
-        .schema_version = YVEX_RUNTIME_LATENT_SCHEMA_V1,
+        .schema_version = YVEX_RUNTIME_LATENT_SCHEMA_CURRENT,
         .seed = 42ull, .video_values = 3ull, .audio_values = 2ull, .step_count = 2ull,
         .maximum_workspace_bytes = 5ull * sizeof(float) * 4ull,
         .video_sigmas = video_sigmas, .audio_sigmas = audio_sigmas,
@@ -230,8 +258,11 @@ static int test_execution_transaction(void)
         "a yielded transaction cannot execute another quantum before resumption");
     completed.yield = 0;
     YVEX_TEST_ASSERT(
-        yvex_runtime_execution_transaction_resume(transaction, &err) == YVEX_OK &&
-            yvex_runtime_execution_transaction_execute_quantum(
+        yvex_runtime_execution_transaction_resume(transaction, &err) == YVEX_OK,
+        "a yielded execution transaction resumes from its retained safe state");
+    completed.yield = 1;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_transaction_execute_quantum(
                 transaction, &action, &err) == YVEX_OK &&
             action == YVEX_EXECUTION_SAFE_POINT_COMMIT &&
             yvex_runtime_execution_transaction_commit(transaction, &err) == YVEX_OK &&
@@ -240,6 +271,7 @@ static int test_execution_transaction(void)
             summary.state == YVEX_EXECUTION_TRANSACTION_COMMITTED &&
             summary.started_quanta == 3ull && summary.completed_quanta == 3ull &&
             summary.safe_points == 3ull && summary.yields == 1ull &&
+            summary.resumes == 1ull &&
             summary.publications == 1ull && summary.discards == 0ull &&
             summary.retained_resources == 1ull && completed.executions == 3u &&
             completed.canonical == 3 &&
@@ -247,7 +279,7 @@ static int test_execution_transaction(void)
             completed.releases == 0u &&
             yvex_runtime_execution_transaction_close(&transaction, &err) == YVEX_OK &&
             !transaction && completed.releases == 1u,
-        "resumed execution publishes once and releases its retained resource after close");
+        "a final quantum commits despite a pending yield and releases its retained resource");
 
     YVEX_TEST_ASSERT(
         yvex_runtime_execution_transaction_open(
@@ -772,6 +804,8 @@ static int test_normal_vectors(void)
 int yvex_test_runtime_latent(void)
 {
     latent_fixture first_fixture = {0}, second_fixture = {0}, cancelled = {.cancelled = 1};
+    latent_fixture cancelled_after_one = {.cancel_after_evaluations = 1};
+    latent_fixture resume_failed_fixture = {0};
     latent_fixture unobserved_fixture = {0};
     latent_fixture observation_failed = {.fail_observation = 3};
     yvex_runtime_latent_request first_request = latent_request(&first_fixture);
@@ -779,6 +813,12 @@ int yvex_test_runtime_latent(void)
     yvex_runtime_latent_request refused_request = latent_request(&cancelled);
     yvex_runtime_latent_request observation_request = latent_request(&observation_failed);
     yvex_runtime_latent_request unobserved_request = latent_request(&unobserved_fixture);
+    latent_yield_fixture yielded = {0};
+    latent_yield_fixture resume_failed = {.fail_resume = 1};
+    yvex_execution_yield_control yield_control = {
+        latent_yield_requested, latent_yield_resume, &yielded};
+    yvex_execution_yield_control failed_yield_control = {
+        latent_yield_requested, latent_yield_resume, &resume_failed};
     yvex_runtime_latent_result first, second, unobserved, refused;
     yvex_execution_transaction_summary cancelled_transaction;
     float first_video[3], first_audio[2], second_video[3], second_audio[2];
@@ -788,6 +828,8 @@ int yvex_test_runtime_latent(void)
 
     unobserved_request.observe = NULL;
     unobserved_request.observer_context = NULL;
+    second_request.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_CURRENT;
+    second_request.yield_control = &yield_control;
     refused_request.transaction_summary = &cancelled_transaction;
     memset(refused_video, 0x5a, sizeof(refused_video));
     memset(refused_audio, 0x5a, sizeof(refused_audio));
@@ -804,6 +846,8 @@ int yvex_test_runtime_latent(void)
             first.transaction.safe_points == 2ull &&
             first.transaction.publications == 1ull &&
             first.transaction.retained_resources == 0ull &&
+            second.transaction.yields == 1ull && second.transaction.resumes == 1ull &&
+            yielded.requests == 1u && yielded.resumes == 1u &&
             first_fixture.evaluations == 2 && second_fixture.evaluations == 2 &&
             first_fixture.observations == 6 && second_fixture.observations == 6 &&
             !first_fixture.observation_mismatch && !second_fixture.observation_mismatch &&
@@ -831,6 +875,34 @@ int yvex_test_runtime_latent(void)
             memcmp(first_audio, unobserved_audio, sizeof(first_audio)) == 0 &&
             strcmp(first.execution_identity, unobserved.execution_identity) == 0,
         "diagnostic observation does not change latent values or execution identity");
+    refused_request = latent_request(&resume_failed_fixture);
+    refused_request.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_CURRENT;
+    refused_request.yield_control = &failed_yield_control;
+    refused_request.transaction_summary = &cancelled_transaction;
+    memset(refused_video, 0x5a, sizeof(refused_video));
+    memset(refused_audio, 0x5a, sizeof(refused_audio));
+    YVEX_TEST_ASSERT(
+        yvex_runtime_latent_execute(&refused_request, refused_video, 3ull,
+                                    refused_audio, 2ull, &refused, &err) ==
+                YVEX_ERR_STATE &&
+            cancelled_transaction.state == YVEX_EXECUTION_TRANSACTION_ABORTED &&
+            cancelled_transaction.safe_points == 1ull &&
+            cancelled_transaction.yields == 1ull &&
+            !cancelled_transaction.resumes &&
+            cancelled_transaction.discards == 1ull &&
+            resume_failed_fixture.evaluations == 1 && resume_failed.resumes == 1u &&
+            ((unsigned char *)refused_video)[0] == 0x5a &&
+            ((unsigned char *)refused_audio)[0] == 0x5a,
+        "failed cooperative resume aborts the candidate without partial publication");
+    refused_request = latent_request(&cancelled);
+    refused_request.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_V1;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_latent_execute(&refused_request, refused_video, 3ull,
+                                    refused_audio, 2ull, &refused, &err) ==
+                YVEX_ERR_BOUNDS,
+        "v1 latent request cannot read the later cooperative control field");
+    refused_request = latent_request(&cancelled);
+    refused_request.transaction_summary = &cancelled_transaction;
     YVEX_TEST_ASSERT(
         yvex_runtime_latent_execute(&refused_request, refused_video, 3ull, refused_audio, 2ull,
                                     &refused, &err) == YVEX_ERR_CANCELLED &&
@@ -842,6 +914,25 @@ int yvex_test_runtime_latent(void)
             ((unsigned char *)refused_video)[0] == 0x5a &&
             ((unsigned char *)refused_audio)[0] == 0x5a,
         "cancelled latent execution leaves both output domains unpublished");
+    refused_request = latent_request(&cancelled_after_one);
+    refused_request.transaction_summary = &cancelled_transaction;
+    memset(refused_video, 0x5a, sizeof(refused_video));
+    memset(refused_audio, 0x5a, sizeof(refused_audio));
+    YVEX_TEST_ASSERT(
+        yvex_runtime_latent_execute(&refused_request, refused_video, 3ull,
+                                    refused_audio, 2ull, &refused, &err) ==
+                YVEX_ERR_CANCELLED &&
+            cancelled_after_one.evaluations == 1 &&
+            cancelled_transaction.state == YVEX_EXECUTION_TRANSACTION_ABORTED &&
+            cancelled_transaction.started_quanta == 1ull &&
+            cancelled_transaction.completed_quanta == 1ull &&
+            cancelled_transaction.safe_points == 1ull &&
+            cancelled_transaction.cancellations == 1ull &&
+            cancelled_transaction.discards == 1ull &&
+            !cancelled_transaction.publications &&
+            ((unsigned char *)refused_video)[0] == 0x5a &&
+            ((unsigned char *)refused_audio)[0] == 0x5a,
+        "latent cancellation after one complete evaluation discards the staged trajectory");
     memset(refused_video, 0x5a, sizeof(refused_video));
     memset(refused_audio, 0x5a, sizeof(refused_audio));
     YVEX_TEST_ASSERT(

@@ -162,7 +162,10 @@ static int latent_request_validate(
     unsigned long long *total, unsigned long long *bytes, yvex_error *err)
 {
     unsigned long long index, peak;
-    if (!request || request->schema_version != YVEX_RUNTIME_LATENT_SCHEMA_V1 ||
+    if (!request ||
+        request->schema_version != YVEX_RUNTIME_LATENT_SCHEMA_CURRENT ||
+        (request->yield_control &&
+         (!request->yield_control->requested || !request->yield_control->resume)) ||
         !request->video_values || !request->audio_values || !request->step_count ||
         request->video_values > video_capacity || request->audio_values > audio_capacity ||
         !request->video_sigmas || !request->audio_sigmas ||
@@ -551,7 +554,7 @@ int yvex_runtime_av_latent_execute(
         !template || !yvex_core_u64_mul(plan->video_rows, plan->video_value_width, &video_values) ||
         !yvex_core_u64_mul(plan->audio_rows, plan->audio_value_width, &audio_values))
         return latent_refuse(err, YVEX_ERR_BOUNDS, "a complete bounded audio-video plan is required");
-    request = *template; request.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_V1;
+    request = *template; request.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_CURRENT;
     request.video_values = video_values; request.audio_values = audio_values;
     request.step_count = plan->model_evaluations; request.video_sigmas = plan->video_sigmas;
     request.audio_sigmas = plan->audio_sigmas; request.plan_identity = plan->identity;
@@ -1782,6 +1785,10 @@ int yvex_runtime_latent_execute(
     transaction_options.execution_context = &execution;
     transaction_options.cancel_requested = request->cancel_requested;
     transaction_options.cancel_context = request->cancel_context;
+    if (request->yield_control) {
+        transaction_options.yield_requested = request->yield_control->requested;
+        transaction_options.yield_context = request->yield_control->context;
+    }
     transaction_options.publish = latent_transaction_publish;
     transaction_options.discard = latent_transaction_discard;
     transaction_options.publication_context = &publication;
@@ -1803,8 +1810,13 @@ int yvex_runtime_latent_execute(
         if (rc == YVEX_OK && safe_point == YVEX_EXECUTION_SAFE_POINT_CANCEL)
             rc = latent_refuse(err, YVEX_ERR_CANCELLED,
                                "latent iteration was cancelled at a safe point");
-        if (rc == YVEX_OK && safe_point == YVEX_EXECUTION_SAFE_POINT_YIELD)
-            rc = yvex_runtime_execution_transaction_resume(transaction, err);
+        if (rc == YVEX_OK && safe_point == YVEX_EXECUTION_SAFE_POINT_YIELD) {
+            rc = request->yield_control->resume(
+                request->yield_control->context, err);
+            if (rc == YVEX_OK)
+                rc = yvex_runtime_execution_transaction_resume(transaction, err);
+            if (rc == YVEX_OK) safe_point = YVEX_EXECUTION_SAFE_POINT_CONTINUE;
+        }
         if (rc == YVEX_OK &&
             ((step + 1ull == request->step_count &&
               safe_point != YVEX_EXECUTION_SAFE_POINT_COMMIT) ||
@@ -1820,7 +1832,7 @@ int yvex_runtime_latent_execute(
     if (rc == YVEX_OK)
         rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_FINAL,
                             staged.completed_steps, execution.state, NULL, 0.0f, 0.0f, err);
-    staged.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_V1;
+    staged.schema_version = request->schema_version;
     staged.video_values = request->video_values;
     staged.audio_values = request->audio_values;
     staged.model_evaluations = staged.completed_steps;

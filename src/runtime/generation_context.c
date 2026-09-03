@@ -72,7 +72,7 @@ void yvex_runtime_private_generation_leave(yvex_runtime_generation_context *cont
 static int generation_options_valid(const yvex_runtime_generation_options *options)
 {
     return options &&
-           options->schema_version == YVEX_RUNTIME_GENERATION_SCHEMA_V5 &&
+           options->schema_version == YVEX_RUNTIME_GENERATION_SCHEMA_V6 &&
            (options->backend == YVEX_BACKEND_KIND_CPU ||
             options->backend == YVEX_BACKEND_KIND_CUDA) &&
            options->mode <= YVEX_GENERATION_MODE_SPECULATIVE &&
@@ -81,6 +81,10 @@ static int generation_options_valid(const yvex_runtime_generation_options *optio
            options->maximum_new_tokens && options->maximum_output_bytes &&
            options->trace_policy <= YVEX_RUNTIME_TRACE_FULL &&
            options->evidence_profile <= YVEX_EXECUTION_EVIDENCE_FORENSIC &&
+           options->concurrent_sequences < 64ull &&
+           options->runnable_sequences <= 64ull &&
+           (!options->runnable_sequences ||
+            options->runnable_sequences >= options->concurrent_sequences) &&
            (options->continuous_batching == 0 ||
             options->continuous_batching == 1) &&
            (!options->continuous_batching || options->concurrent_sequences > 1ull);
@@ -1087,6 +1091,8 @@ int yvex_runtime_private_generation_capacity_preflight(
     context.options = *options;
     if (!context.options.concurrent_sequences)
         context.options.concurrent_sequences = 1ull;
+    if (!context.options.runnable_sequences)
+        context.options.runnable_sequences = context.options.concurrent_sequences;
     if (context.options.prefill_chunk_tokens > context.options.context_capacity)
         context.options.prefill_chunk_tokens = context.options.context_capacity;
     rc = yvex_runtime_private_weight_placement_select(
@@ -1350,7 +1356,7 @@ static int generation_execution_owners_open(
     }
     rc = yvex_runtime_private_model_scheduler_acquire(
         context->model, options->concurrent_sequences,
-        compatible_width, err);
+        options->runnable_sequences, compatible_width, err);
     if (rc != YVEX_OK) return rc;
     context->scheduler_acquired = 1;
 
@@ -1541,6 +1547,8 @@ int yvex_runtime_generation_context_open(
     context->options = *options;
     if (!context->options.concurrent_sequences)
         context->options.concurrent_sequences = 1ull;
+    if (!context->options.runnable_sequences)
+        context->options.runnable_sequences = context->options.concurrent_sequences;
     if (context->options.prefill_chunk_tokens > context->options.context_capacity)
         context->options.prefill_chunk_tokens = context->options.context_capacity;
     atomic_init(&context->lifecycle, 0u);

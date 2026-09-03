@@ -16,6 +16,7 @@ extern "C" {
 #endif
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V3 3u
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V5 5u
+#define YVEX_RUNTIME_GENERATION_SCHEMA_V6 6u
 #define YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_V6 6u
 #define YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V5 5u
 #define YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1 1u
@@ -53,6 +54,7 @@ typedef struct yvex_runtime_generation_options {
     yvex_runtime_generation_mode mode;
     yvex_execution_workload_profile_kind workload_kind;
     unsigned long long context_capacity, prefill_chunk_tokens, maximum_new_tokens, concurrent_sequences;
+    unsigned long long runnable_sequences;
     unsigned long long maximum_output_bytes, maximum_host_bytes, maximum_device_bytes;
     yvex_runtime_trace_policy trace_policy;
     yvex_execution_evidence_profile evidence_profile;

@@ -358,6 +358,7 @@ int yvex_server_sessions_open(server_session_registry **out,
                               yvex_model_engine *model,
                               const yvex_server_engine_options *options,
                               unsigned long long engine_generation,
+                              unsigned long long runnable_sequences,
                               int continuous_batching,
                               const server_event_scope *event_scope,
                               server_telemetry *telemetry, yvex_error *err)
@@ -365,7 +366,8 @@ int yvex_server_sessions_open(server_session_registry **out,
     server_session_registry *registry;
     if (out) *out = NULL;
     if (!out || !model || !options || !event_scope || !telemetry ||
-        !engine_generation ||
+        !engine_generation || !runnable_sequences ||
+        runnable_sequences > options->maximum_sessions ||
         event_scope->engine_kind != options->engine_kind ||
         event_scope->execution_strategy != options->execution_strategy ||
         !yvex_sha256_hex_valid(event_scope->runtime_model_identity) ||
@@ -405,6 +407,7 @@ int yvex_server_sessions_open(server_session_registry **out,
     }
     registry->telemetry = telemetry;
     registry->capacity = options->maximum_sessions;
+    registry->runnable_sequences = runnable_sequences;
     registry->next_id = 1u;
     if (pthread_mutex_init(&registry->mutex, NULL) != 0) {
         free(registry->sessions);

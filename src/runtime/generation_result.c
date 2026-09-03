@@ -1304,7 +1304,7 @@ int yvex_runtime_generation_operator_execute(
                         sizeof(result->sampling_execution_kind), "common-host");
     yvex_core_text_copy(result->tokenizer_execution_kind,
                         sizeof(result->tokenizer_execution_kind), "common-host");
-    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
+    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V6;
     options.backend = request->backend;
     options.mode = request->mode;
     options.context_capacity = request->context_capacity;

@@ -302,6 +302,8 @@ static int fixture_latent(
         !yvex_sha256_hex_valid(execution->conditioning_identity) || !execution->layout ||
         !execution->layout_result || !execution->layout_result->complete ||
         !execution->timestep_indices || execution->timestep_capacity != plan->packed_rows ||
+        !execution->yield_control || !execution->yield_control->requested ||
+        !execution->yield_control->resume ||
         execution->block_count != 50ull || seed != 42ull ||
         maximum_workspace_bytes < (1ull << 20u) ||
         video_capacity != plan->video_rows * plan->video_value_width ||
@@ -322,7 +324,7 @@ static int fixture_latent(
     for (index = 0ull; index < video_capacity; ++index) video[index] = 0.0f;
     for (index = 0ull; index < audio_capacity; ++index) audio[index] = 0.0f;
     memset(latent_result, 0, sizeof(*latent_result));
-    latent_result->schema_version = YVEX_RUNTIME_LATENT_SCHEMA_V1;
+    latent_result->schema_version = YVEX_RUNTIME_LATENT_SCHEMA_CURRENT;
     latent_result->video_values = video_capacity;
     latent_result->audio_values = audio_capacity;
     latent_result->completed_steps = 1ull;

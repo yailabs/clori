@@ -30,6 +30,7 @@ typedef struct {
     unsigned long long mapped_package_bytes, prepared_bytes;
     unsigned long long model_resident_host_bytes;
     unsigned long long model_resident_device_bytes;
+    unsigned long long runnable_sequences;
     int continuous_batching, telemetry_opened;
 } server_engine;
 
@@ -156,7 +157,7 @@ static void generation_options(const server_engine *engine,
                                yvex_runtime_generation_options *options)
 {
     memset(options, 0, sizeof(*options));
-    options->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
+    options->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V6;
     options->backend = engine->options.backend;
     options->mode = engine->options.execution_strategy ==
                             YVEX_SERVER_EXECUTION_SPECULATIVE
@@ -172,6 +173,7 @@ static void generation_options(const server_engine *engine,
     options->maximum_host_bytes = engine->options.maximum_host_bytes;
     options->maximum_device_bytes = engine->options.maximum_device_bytes;
     options->concurrent_sequences = engine->options.concurrent_sequences;
+    options->runnable_sequences = engine->runnable_sequences;
     options->continuous_batching = engine->continuous_batching;
     options->trace_policy = engine->options.trace_level == YVEX_SERVER_TRACE_FULL
                                 ? YVEX_RUNTIME_TRACE_FULL
@@ -190,8 +192,11 @@ static int engine_request_queue_open(server_engine_manager *manager,
                                      server_engine *engine, yvex_error *err)
 {
     unsigned long long workers = manager->request_workers;
-    if (workers > engine->options.concurrent_sequences)
-        workers = engine->options.concurrent_sequences;
+    if (workers > engine->options.maximum_sessions)
+        workers = engine->options.maximum_sessions;
+    engine->runnable_sequences = workers > engine->options.concurrent_sequences
+                                     ? workers
+                                     : engine->options.concurrent_sequences;
     int rc = yvex_server_request_queue_open(
         &engine->request_queue, manager->request_capacity, workers,
         manager->request_execute, NULL, manager->request_context, err);
@@ -294,7 +299,8 @@ static int text_engine_open(server_engine_manager *manager,
                                    specialization_identity);
         rc = yvex_server_sessions_open(
             &engine->sessions, engine->model, &engine->options, engine->generation,
-            engine->continuous_batching, &event_scope, manager->telemetry, err);
+            engine->runnable_sequences, engine->continuous_batching,
+            &event_scope, manager->telemetry, err);
     }
     view = rc == YVEX_OK ? yvex_model_engine_view_get(engine->model) : NULL;
     if (rc != YVEX_OK || !view) return rc != YVEX_OK ? rc : YVEX_ERR_STATE;

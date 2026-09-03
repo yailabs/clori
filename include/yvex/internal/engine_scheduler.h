@@ -21,15 +21,24 @@ typedef enum {
 } yvex_engine_progress_kind;
 
 struct yvex_model_engine;
+typedef struct runtime_engine_scheduler yvex_runtime_execution_coordinator;
+typedef struct {
+    yvex_runtime_execution_coordinator *scheduler;
+    unsigned long long slot, generation;
+} yvex_runtime_execution_lease;
 
 typedef struct {
     int enabled;
     unsigned long long admitted_maximum_width, sequence_capacity;
+    unsigned long long runnable_capacity;
     unsigned long long ready_sequence_work, active_sequences;
     unsigned long long maximum_ready_sequence_work, maximum_active_sequences;
-    unsigned long long progress_submissions, progress_transitions;
+    unsigned long long cooperative_width, progress_submissions, progress_transitions;
     unsigned long long progress_completions, progress_cancellations;
     unsigned long long progress_failures;
+    unsigned long long cooperative_yields, cooperative_resumes;
+    unsigned long long scheduler_wait_nanoseconds;
+    unsigned long long maximum_quantum_nanoseconds;
     unsigned long long sequence_conflicts;
     unsigned long long progress_submissions_by_kind[
         YVEX_ENGINE_PROGRESS_KIND_COUNT];
@@ -60,6 +69,26 @@ typedef struct {
     unsigned long long executed_rows_by_phase[YVEX_EXECUTION_PHASE_COUNT];
     unsigned long long rendezvous_steps_by_phase[YVEX_EXECUTION_PHASE_COUNT];
 } yvex_engine_scheduler_summary;
+
+/* One engine-generation coordinator admits opaque work handles in FIFO order. The execution
+ * owner defines safe points; the coordinator owns only bounded runnable admission and fairness. */
+int yvex_runtime_execution_coordinator_open(
+    yvex_runtime_execution_coordinator **out, unsigned long long work_capacity,
+    unsigned long long cooperative_width, yvex_error *err);
+int yvex_runtime_execution_coordinator_summary_copy(
+    const yvex_runtime_execution_coordinator *scheduler,
+    yvex_engine_scheduler_summary *summary, yvex_error *err);
+int yvex_runtime_execution_coordinator_close(
+    yvex_runtime_execution_coordinator **scheduler, yvex_error *err);
+int yvex_runtime_execution_enter(
+    yvex_runtime_execution_coordinator *scheduler, unsigned long long engine_generation,
+    unsigned long long work_handle, yvex_engine_progress_kind kind,
+    int (*cancel_requested)(void *), void *cancel_context,
+    yvex_runtime_execution_lease *lease, yvex_error *err);
+int yvex_runtime_execution_yield_requested(void *lease);
+int yvex_runtime_execution_yield_resume(void *lease, yvex_error *err);
+int yvex_runtime_execution_leave(
+    yvex_runtime_execution_lease *lease, int status, yvex_error *err);
 
 int yvex_model_engine_scheduler_maximum_width_copy(
     const struct yvex_model_engine *model, unsigned long long *width,

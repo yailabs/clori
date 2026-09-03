@@ -121,7 +121,7 @@ struct server_session_registry {
     yvex_reasoning_policy default_reasoning_policy;
     server_telemetry *telemetry;
     server_session *sessions;
-    unsigned long long capacity, count, next_id;
+    unsigned long long capacity, count, next_id, runnable_sequences;
     int mutex_ready, closing, continuous_batching;
     unsigned long long engine_generation;
     server_event_scope event_scope;
@@ -314,6 +314,7 @@ void yvex_server_openai_close(server_openai_listener **listener);
 int yvex_server_sessions_open(server_session_registry **out, yvex_model_engine *model,
                               const yvex_server_engine_options *options,
                               unsigned long long engine_generation,
+                              unsigned long long runnable_sequences,
                               int continuous_batching,
                               const server_event_scope *event_scope,
                               server_telemetry *telemetry,

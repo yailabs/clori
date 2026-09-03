@@ -39,10 +39,17 @@ typedef struct {
 } yvex_execution_resource_lease;
 
 typedef int (*yvex_execution_control_requested_fn)(void *);
+typedef int (*yvex_execution_yield_resume_fn)(void *, yvex_error *);
 typedef int (*yvex_execution_quantum_execute_fn)(
     void *, unsigned long long, yvex_error *);
 typedef int (*yvex_execution_transaction_publish_fn)(void *, yvex_error *);
 typedef void (*yvex_execution_transaction_discard_fn)(void *);
+
+typedef struct {
+    yvex_execution_control_requested_fn requested;
+    yvex_execution_yield_resume_fn resume;
+    void *context;
+} yvex_execution_yield_control;
 
 typedef struct {
     const char *request_identity;
@@ -62,7 +69,7 @@ typedef struct {
 typedef struct {
     yvex_execution_transaction_state state;
     unsigned long long admitted_quanta, started_quanta, completed_quanta;
-    unsigned long long safe_points, yields, cancellations;
+    unsigned long long safe_points, yields, resumes, cancellations;
     unsigned long long publications, discards, retained_resources;
     unsigned long long setup_nanoseconds, quantum_wall_nanoseconds;
     unsigned long long safe_point_nanoseconds;

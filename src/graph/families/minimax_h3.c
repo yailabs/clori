@@ -1695,6 +1695,7 @@ static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
     request.evaluator_identity = execution.evidence.staged.evaluator_identity;
     request.evaluate = t2va_omni_evaluate; request.execution_context = &execution;
     request.cancel_requested = context->cancelled; request.cancel_context = context->cancellation_context;
+    request.yield_control = context->yield_control;
     request.observe = context->observe; request.observer_context = context->observer_context;
     request.execution_resource = &execution_resource;
     if (rc == YVEX_OK) rc = yvex_runtime_av_latent_execute(plan, &request, video, video_capacity,

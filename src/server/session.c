@@ -390,7 +390,7 @@ static int session_generation_open(
         return YVEX_OK;
     }
     memset(&options, 0, sizeof(options));
-    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
+    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V6;
     options.backend = registry->options.backend;
     options.mode = registry->options.execution_strategy ==
                            YVEX_SERVER_EXECUTION_SPECULATIVE
@@ -406,6 +406,7 @@ static int session_generation_open(
     options.maximum_host_bytes = registry->options.maximum_host_bytes;
     options.maximum_device_bytes = registry->options.maximum_device_bytes;
     options.concurrent_sequences = registry->options.concurrent_sequences;
+    options.runnable_sequences = registry->runnable_sequences;
     options.continuous_batching = registry->continuous_batching;
     options.trace_policy = registry->options.trace_level == YVEX_SERVER_TRACE_FULL
         ? YVEX_RUNTIME_TRACE_FULL : (registry->options.trace_level >= YVEX_SERVER_TRACE_STAGES
@@ -1436,6 +1437,18 @@ static int session_profile_publish(server_session_registry *registry,
         rc = PROFILE_EVENT("execution-batch-sources",
                            batches.maximum_source_count,
                            batches.registered_producers, 0ull, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-scheduling",
+                           batches.progress_submissions,
+                           batches.cooperative_yields,
+                           batches.cooperative_resumes,
+                           batches.scheduler_wait_nanoseconds);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-quanta",
+                           batches.progress_completions,
+                           batches.maximum_ready_sequence_work,
+                           batches.maximum_active_sequences,
+                           batches.maximum_quantum_nanoseconds);
     if (rc == YVEX_OK && batches.enabled)
         rc = PROFILE_EVENT("execution-batch-experts",
                            batches.multi_source_worklists,

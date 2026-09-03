@@ -685,7 +685,7 @@ static int tiny_generation_capacity_refusal(
         .backend = YVEX_BACKEND_KIND_CPU,
     };
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V6,
         .backend = YVEX_BACKEND_KIND_CPU,
         .mode = YVEX_GENERATION_MODE_TARGET_ONLY,
         .context_capacity = 8ull,

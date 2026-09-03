@@ -293,6 +293,7 @@ typedef struct yvex_runtime_av_latent_context {
     const char *conditioning_identity;
     int (*cancelled)(void *);
     void *cancellation_context;
+    const yvex_execution_yield_control *yield_control;
     yvex_runtime_latent_observe_fn observe;
     void *observer_context;
 } yvex_runtime_av_latent_context;

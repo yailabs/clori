@@ -187,15 +187,15 @@ static int transaction_safe_point(
         transaction_discard(transaction);
         transaction->summary.state = YVEX_EXECUTION_TRANSACTION_ABORTED;
         *action = YVEX_EXECUTION_SAFE_POINT_CANCEL;
+    } else if (transaction->summary.completed_quanta ==
+               transaction->summary.admitted_quanta) {
+        transaction->summary.state = YVEX_EXECUTION_TRANSACTION_READY_TO_COMMIT;
+        *action = YVEX_EXECUTION_SAFE_POINT_COMMIT;
     } else if (transaction->options.yield_requested &&
                transaction->options.yield_requested(transaction->options.yield_context)) {
         transaction->summary.yields++;
         transaction->summary.state = YVEX_EXECUTION_TRANSACTION_YIELDED;
         *action = YVEX_EXECUTION_SAFE_POINT_YIELD;
-    } else if (transaction->summary.completed_quanta ==
-               transaction->summary.admitted_quanta) {
-        transaction->summary.state = YVEX_EXECUTION_TRANSACTION_READY_TO_COMMIT;
-        *action = YVEX_EXECUTION_SAFE_POINT_COMMIT;
     } else {
         transaction->summary.state = YVEX_EXECUTION_TRANSACTION_SAFE;
         *action = YVEX_EXECUTION_SAFE_POINT_CONTINUE;
@@ -249,6 +249,7 @@ int yvex_runtime_execution_transaction_resume(
                                   "yielded execution was cancelled before resumption");
     }
     transaction->summary.state = YVEX_EXECUTION_TRANSACTION_SAFE;
+    transaction->summary.resumes++;
     yvex_error_clear(err);
     return YVEX_OK;
 }

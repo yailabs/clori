@@ -348,11 +348,11 @@ static int generation_test_active_scheduler_producers(void)
                      "model engine scheduler lock should initialize");
     model.lifecycle_mutex_ready = 1;
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_model_scheduler_acquire(&model, 2ull, 2ull, &err) ==
+        yvex_runtime_private_model_scheduler_acquire(&model, 2ull, 2ull, 2ull, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_model_scheduler_acquire(&model, 2ull, 2ull, &err) ==
+            yvex_runtime_private_model_scheduler_acquire(&model, 2ull, 2ull, 2ull, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_model_scheduler_acquire(&model, 2ull, 2ull, &err) ==
+            yvex_runtime_private_model_scheduler_acquire(&model, 2ull, 2ull, 2ull, &err) ==
                 YVEX_OK &&
             model.engine_scheduler_references == 3ull,
         "idle context references must not consume admitted producer width");
@@ -453,7 +453,7 @@ static int generation_test_ready_progress_scheduling(void)
     }
     YVEX_TEST_ASSERT(
         yvex_runtime_private_model_scheduler_acquire(
-            &model, 2ull, 2ull, &err) == YVEX_OK,
+            &model, 2ull, 2ull, 2ull, &err) == YVEX_OK,
         "engine ready-progress scheduler should open");
     jobs[0].session = jobs[1].session = &sessions[0];
     YVEX_TEST_ASSERT(
@@ -559,6 +559,345 @@ static int generation_test_ready_progress_scheduling(void)
     (void)pthread_cond_destroy(&gate.condition);
     (void)pthread_mutex_destroy(&gate.mutex);
     (void)pthread_mutex_destroy(&model.lifecycle_mutex);
+    return 0;
+}
+
+static int generation_test_runnable_capacity(void)
+{
+    yvex_model_engine model = {0};
+    yvex_runtime_execution_session sessions[2] = {{0}};
+    generation_progress_job job = {0};
+    generation_progress_gate gate = {0};
+    runtime_engine_progress_lease active = {0};
+    yvex_engine_scheduler_summary summary = {0};
+    pthread_t thread;
+    yvex_error err;
+    unsigned long long attempt;
+    YVEX_TEST_ASSERT(
+        pthread_mutex_init(&model.lifecycle_mutex, NULL) == 0 &&
+            pthread_mutex_init(&gate.mutex, NULL) == 0 &&
+            pthread_cond_init(&gate.condition, NULL) == 0,
+        "runnable-capacity test owners should initialize");
+    model.lifecycle_mutex_ready = 1;
+    model.summary.engine_generation = 11ull;
+    for (attempt = 0ull; attempt < 2ull; ++attempt) {
+        sessions[attempt].engine = &model;
+        sessions[attempt].summary.engine_generation = 11ull;
+        sessions[attempt].batch_source_ordinal = attempt + 1ull;
+    }
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_model_scheduler_acquire(
+            &model, 1ull, 2ull, 1ull, &err) == YVEX_OK &&
+            yvex_runtime_private_engine_progress_enter(
+                &model, &sessions[0], YVEX_ENGINE_PROGRESS_DECODE,
+                NULL, NULL, &active, &err) == YVEX_OK,
+        "one-wide engine should admit a larger runnable population");
+    job.model = &model;
+    job.session = &sessions[1];
+    job.gate = &gate;
+    YVEX_TEST_ASSERT(
+        pthread_create(&thread, NULL, generation_progress_run, &job) == 0,
+        "independent work should wait for one-wide physical execution");
+    for (attempt = 0ull; attempt < 100000ull; ++attempt) {
+        YVEX_TEST_ASSERT(
+            yvex_model_engine_scheduler_summary_copy(
+                &model, &summary, &err) == YVEX_OK,
+            "runnable scheduler pressure should remain inspectable");
+        if (summary.ready_sequence_work == 1ull) break;
+    }
+    YVEX_TEST_ASSERT(
+        attempt < 100000ull && summary.sequence_capacity == 1ull &&
+            summary.runnable_capacity == 2ull &&
+            summary.cooperative_width == 1ull &&
+            summary.maximum_active_sequences == 1ull,
+        "runnable admission must remain distinct from physical sequence width");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_engine_progress_leave(
+            &active, YVEX_OK, &err) == YVEX_OK,
+        "first physical quantum should release its lease");
+    (void)pthread_mutex_lock(&gate.mutex);
+    while (gate.entered != 1ull)
+        (void)pthread_cond_wait(&gate.condition, &gate.mutex);
+    gate.released = 1;
+    (void)pthread_cond_broadcast(&gate.condition);
+    (void)pthread_mutex_unlock(&gate.mutex);
+    (void)pthread_join(thread, NULL);
+    YVEX_TEST_ASSERT(
+        job.result == YVEX_OK &&
+            yvex_runtime_private_model_scheduler_release(&model, &err) == YVEX_OK,
+        "queued independent work should run after the admitted safe point");
+    (void)pthread_cond_destroy(&gate.condition);
+    (void)pthread_mutex_destroy(&gate.mutex);
+    (void)pthread_mutex_destroy(&model.lifecycle_mutex);
+    return 0;
+}
+
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    unsigned long long entered, chronology[32], chronology_count;
+    int run;
+} cooperative_execution_gate;
+
+typedef struct {
+    yvex_runtime_execution_coordinator *scheduler;
+    cooperative_execution_gate *gate;
+    unsigned long long handle, steps, cancel_after;
+    int cancelled, result;
+} cooperative_execution_job;
+
+static int cooperative_execution_cancelled(void *opaque)
+{
+    cooperative_execution_job *job = opaque;
+    return job && job->cancelled;
+}
+
+static void *cooperative_execution_run(void *opaque)
+{
+    cooperative_execution_job *job = opaque;
+    yvex_runtime_execution_lease lease = {0};
+    yvex_error err;
+    unsigned long long step;
+    job->result = yvex_runtime_execution_enter(
+        job->scheduler, 19ull, job->handle, YVEX_ENGINE_PROGRESS_COMPONENT,
+        cooperative_execution_cancelled, job, &lease, &err);
+    if (job->result != YVEX_OK) return NULL;
+    (void)pthread_mutex_lock(&job->gate->mutex);
+    job->gate->entered++;
+    (void)pthread_cond_broadcast(&job->gate->condition);
+    while (!job->gate->run)
+        (void)pthread_cond_wait(&job->gate->condition, &job->gate->mutex);
+    (void)pthread_mutex_unlock(&job->gate->mutex);
+    for (step = 0ull; step < job->steps; ++step) {
+        (void)pthread_mutex_lock(&job->gate->mutex);
+        job->gate->chronology[job->gate->chronology_count++] = job->handle;
+        (void)pthread_mutex_unlock(&job->gate->mutex);
+        if (job->cancel_after == step + 1ull) job->cancelled = 1;
+        if (job->cancelled) {
+            job->result = yvex_runtime_execution_leave(
+                &lease, YVEX_ERR_CANCELLED, &err);
+            return NULL;
+        }
+        if (step + 1ull < job->steps &&
+            yvex_runtime_execution_yield_requested(&lease)) {
+            job->result = yvex_runtime_execution_yield_resume(&lease, &err);
+            if (job->result != YVEX_OK) return NULL;
+        }
+    }
+    job->result = yvex_runtime_execution_leave(&lease, YVEX_OK, &err);
+    return NULL;
+}
+
+static int cooperative_execution_case(
+    unsigned long long first_steps, unsigned long long first_cancel_after,
+    unsigned long long second_steps, unsigned long long second_cancel_after,
+    yvex_engine_scheduler_summary *summary,
+    unsigned long long chronology[32], unsigned long long *chronology_count)
+{
+    yvex_runtime_execution_coordinator *scheduler = NULL;
+    cooperative_execution_gate gate = {0};
+    cooperative_execution_job jobs[2] = {{0}};
+    pthread_t threads[2];
+    yvex_error err;
+    unsigned long long attempt;
+    YVEX_TEST_ASSERT(
+        pthread_mutex_init(&gate.mutex, NULL) == 0 &&
+            pthread_cond_init(&gate.condition, NULL) == 0 &&
+            yvex_runtime_execution_coordinator_open(
+                &scheduler, 4ull, 1ull, &err) == YVEX_OK,
+        "single-width cooperative scheduler should open");
+    jobs[0] = (cooperative_execution_job){
+        scheduler, &gate, 1ull, first_steps, first_cancel_after, 0, YVEX_OK};
+    jobs[1] = (cooperative_execution_job){
+        scheduler, &gate, 2ull, second_steps, second_cancel_after, 0, YVEX_OK};
+    YVEX_TEST_ASSERT(
+        pthread_create(&threads[0], NULL, cooperative_execution_run, &jobs[0]) == 0,
+        "first long cooperative request should start");
+    (void)pthread_mutex_lock(&gate.mutex);
+    while (gate.entered != 1ull)
+        (void)pthread_cond_wait(&gate.condition, &gate.mutex);
+    (void)pthread_mutex_unlock(&gate.mutex);
+    YVEX_TEST_ASSERT(
+        pthread_create(&threads[1], NULL, cooperative_execution_run, &jobs[1]) == 0,
+        "second cooperative request should become runnable");
+    for (attempt = 0ull; attempt < 100000ull; ++attempt) {
+        YVEX_TEST_ASSERT(
+            yvex_runtime_execution_coordinator_summary_copy(
+                scheduler, summary, &err) == YVEX_OK,
+            "cooperative ready queue should remain inspectable");
+        if (summary->ready_sequence_work == 1ull) break;
+    }
+    YVEX_TEST_ASSERT(summary->ready_sequence_work == 1ull,
+                     "second request should wait behind one active quantum");
+    (void)pthread_mutex_lock(&gate.mutex);
+    gate.run = 1;
+    (void)pthread_cond_broadcast(&gate.condition);
+    (void)pthread_mutex_unlock(&gate.mutex);
+    (void)pthread_join(threads[0], NULL);
+    (void)pthread_join(threads[1], NULL);
+    YVEX_TEST_ASSERT(
+        jobs[0].result == (first_cancel_after ? YVEX_ERR_CANCELLED : YVEX_OK) &&
+            jobs[1].result == (second_cancel_after ? YVEX_ERR_CANCELLED : YVEX_OK) &&
+            yvex_runtime_execution_coordinator_summary_copy(
+                scheduler, summary, &err) == YVEX_OK,
+        "cooperative requests should reach their exact terminal states");
+    memcpy(chronology, gate.chronology,
+           (size_t)(gate.chronology_count * sizeof(*chronology)));
+    *chronology_count = gate.chronology_count;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_coordinator_close(&scheduler, &err) == YVEX_OK,
+        "cooperative scheduler should drain cleanly");
+    (void)pthread_cond_destroy(&gate.condition);
+    (void)pthread_mutex_destroy(&gate.mutex);
+    return 0;
+}
+
+static int generation_test_cooperative_fairness(void)
+{
+    yvex_engine_scheduler_summary summary = {0};
+    unsigned long long chronology[32], count = 0ull;
+    if (cooperative_execution_case(3ull, 2ull, 4ull, 0ull, &summary,
+                                   chronology, &count) != 0)
+        return 1;
+    YVEX_TEST_ASSERT(
+        count == 6ull && chronology[0] == 1ull && chronology[1] == 2ull &&
+            chronology[2] == 1ull && chronology[3] == 2ull &&
+            summary.cooperative_width == 1ull &&
+            summary.maximum_active_sequences == 1ull &&
+            summary.maximum_ready_sequence_work == 1ull &&
+            summary.cooperative_yields == 2ull &&
+            summary.cooperative_resumes == 2ull &&
+            summary.progress_cancellations == 1ull &&
+            summary.scheduler_wait_nanoseconds &&
+            summary.maximum_quantum_nanoseconds,
+        "two long requests should alternate before one cancels and the other continues");
+    memset(&summary, 0, sizeof(summary));
+    memset(chronology, 0, sizeof(chronology));
+    count = 0ull;
+    if (cooperative_execution_case(6ull, 0ull, 1ull, 0ull, &summary,
+                                   chronology, &count) != 0)
+        return 1;
+    YVEX_TEST_ASSERT(
+        count == 7ull && chronology[0] == 1ull && chronology[1] == 2ull &&
+            summary.cooperative_yields == 1ull &&
+            summary.cooperative_resumes == 1ull &&
+            !summary.progress_cancellations,
+        "one short request should run at the first safe point of a long request");
+    memset(&summary, 0, sizeof(summary));
+    memset(chronology, 0, sizeof(chronology));
+    count = 0ull;
+    if (cooperative_execution_case(4ull, 0ull, 3ull, 2ull, &summary,
+                                   chronology, &count) != 0)
+        return 1;
+    YVEX_TEST_ASSERT(
+        count == 6ull && chronology[0] == 1ull && chronology[1] == 2ull &&
+            chronology[2] == 1ull && chronology[3] == 2ull &&
+            chronology[4] == 1ull && chronology[5] == 1ull &&
+            summary.cooperative_yields == 3ull &&
+            summary.cooperative_resumes == 3ull &&
+            summary.progress_cancellations == 1ull,
+        "cancelling the second request should not stall the first request");
+    memset(&summary, 0, sizeof(summary));
+    memset(chronology, 0, sizeof(chronology));
+    count = 0ull;
+    if (cooperative_execution_case(12ull, 0ull, 12ull, 0ull, &summary,
+                                   chronology, &count) != 0)
+        return 1;
+    YVEX_TEST_ASSERT(
+        count == 24ull && summary.progress_submissions == 24ull &&
+            summary.progress_completions == 24ull &&
+            summary.cooperative_yields == 22ull &&
+            summary.cooperative_resumes == 22ull &&
+            !summary.ready_sequence_work && !summary.active_sequences,
+        "repeated yield and resume should finish without retained scheduler work");
+    return 0;
+}
+
+typedef struct {
+    yvex_runtime_execution_coordinator *scheduler;
+    yvex_runtime_execution_lease lease;
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    int entered, proceed, result;
+} cooperative_drain_job;
+
+typedef struct {
+    yvex_runtime_execution_coordinator **scheduler;
+    int result;
+} cooperative_close_job;
+
+static void *cooperative_drain_run(void *opaque)
+{
+    cooperative_drain_job *job = opaque;
+    yvex_error err;
+    job->result = yvex_runtime_execution_enter(
+        job->scheduler, 23ull, 1ull, YVEX_ENGINE_PROGRESS_COMPONENT,
+        NULL, NULL, &job->lease, &err);
+    if (job->result != YVEX_OK) return NULL;
+    (void)pthread_mutex_lock(&job->mutex);
+    job->entered = 1;
+    (void)pthread_cond_broadcast(&job->condition);
+    while (!job->proceed)
+        (void)pthread_cond_wait(&job->condition, &job->mutex);
+    (void)pthread_mutex_unlock(&job->mutex);
+    if (!yvex_runtime_execution_yield_requested(&job->lease)) {
+        job->result = yvex_runtime_execution_leave(&job->lease, YVEX_OK, &err);
+        return NULL;
+    }
+    job->result = yvex_runtime_execution_yield_resume(&job->lease, &err);
+    return NULL;
+}
+
+static void *cooperative_close_run(void *opaque)
+{
+    cooperative_close_job *job = opaque;
+    yvex_error err;
+    job->result = yvex_runtime_execution_coordinator_close(job->scheduler, &err);
+    return NULL;
+}
+
+static int generation_test_cooperative_drain(void)
+{
+    yvex_runtime_execution_coordinator *scheduler = NULL;
+    cooperative_drain_job work = {0};
+    cooperative_close_job close = {&scheduler, YVEX_ERR_STATE};
+    pthread_t worker, closer;
+    yvex_error err;
+    unsigned long long attempt;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_coordinator_open(
+            &scheduler, 2ull, 1ull, &err) == YVEX_OK &&
+            pthread_mutex_init(&work.mutex, NULL) == 0 &&
+            pthread_cond_init(&work.condition, NULL) == 0,
+        "cooperative drain fixture should open");
+    work.scheduler = scheduler;
+    YVEX_TEST_ASSERT(
+        pthread_create(&worker, NULL, cooperative_drain_run, &work) == 0,
+        "cooperative drain work should start");
+    (void)pthread_mutex_lock(&work.mutex);
+    while (!work.entered)
+        (void)pthread_cond_wait(&work.condition, &work.mutex);
+    (void)pthread_mutex_unlock(&work.mutex);
+    YVEX_TEST_ASSERT(
+        pthread_create(&closer, NULL, cooperative_close_run, &close) == 0,
+        "scheduler drain should start concurrently with active work");
+    for (attempt = 0ull; attempt < 100000ull; ++attempt)
+        if (yvex_runtime_execution_yield_requested(&work.lease)) break;
+    YVEX_TEST_ASSERT(
+        attempt < 100000ull,
+        "a draining scheduler should request the next admitted safe point");
+    (void)pthread_mutex_lock(&work.mutex);
+    work.proceed = 1;
+    (void)pthread_cond_broadcast(&work.condition);
+    (void)pthread_mutex_unlock(&work.mutex);
+    (void)pthread_join(worker, NULL);
+    (void)pthread_join(closer, NULL);
+    YVEX_TEST_ASSERT(
+        work.result == YVEX_ERR_STATE && close.result == YVEX_OK && !scheduler &&
+            !work.lease.scheduler,
+        "active work should abandon its candidate at a drain safe point");
+    (void)pthread_cond_destroy(&work.condition);
+    (void)pthread_mutex_destroy(&work.mutex);
     return 0;
 }
 
@@ -867,6 +1206,9 @@ int yvex_test_runtime_generation(void)
         return 1;
     if (generation_test_active_scheduler_producers() != 0) return 1;
     if (generation_test_ready_progress_scheduling() != 0) return 1;
+    if (generation_test_runnable_capacity() != 0) return 1;
+    if (generation_test_cooperative_fairness() != 0) return 1;
+    if (generation_test_cooperative_drain() != 0) return 1;
     if (generation_test_stop_taxonomy() != 0) return 1;
     if (generation_test_refusals() != 0) return 1;
     if (generation_test_execution_identity_excludes_measurement() != 0) return 1;

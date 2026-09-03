@@ -2143,7 +2143,7 @@ static int test_compiled_model_binding_v16(const char *root)
         !runtime_execution_profile_matches(
             &mismatched_profile, model, session),
         "runtime workload profile refuses a different engine specialization");
-    generation_options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
+    generation_options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V6;
     generation_options.backend = YVEX_BACKEND_KIND_CPU;
     generation_options.mode = YVEX_GENERATION_MODE_TARGET_ONLY;
     generation_options.context_capacity = 5ull;

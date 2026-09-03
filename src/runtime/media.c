@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <yvex/gguf.h>
+#include <yvex/internal/engine_scheduler.h>
 #include <yvex/internal/family_catalog.h>
 #include <yvex/internal/image.h>
 #include <yvex/model.h>
@@ -32,6 +33,8 @@ typedef enum {
     MEDIA_COMPONENT_COUNT
 } media_component_index;
 
+enum { MEDIA_EXECUTION_WORK_CAPACITY = 8 };
+
 static const char *const media_component_names[MEDIA_COMPONENT_COUNT] = {
     "text_encoder", "transformer", "video_vae", "audio_vae",
 };
@@ -50,6 +53,8 @@ struct yvex_runtime_media_model {
     yvex_engine_resource_catalog *resources;
     yvex_engine_resource_handle resource_handles[MEDIA_COMPONENT_COUNT];
     media_resource_release_context release_contexts[MEDIA_COMPONENT_COUNT];
+    yvex_runtime_execution_coordinator *scheduler;
+    _Atomic unsigned long long next_execution_handle;
 };
 
 static _Atomic unsigned long long media_engine_generation_counter;
@@ -829,6 +834,9 @@ static int media_model_resources_open(yvex_runtime_media_model *model,
     if (rc == YVEX_OK)
         rc = yvex_runtime_resource_snapshot(
             model->resources, &resources, NULL, 0ull, &count, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_execution_coordinator_open(
+            &model->scheduler, MEDIA_EXECUTION_WORK_CAPACITY, 1ull, err);
     if (rc != YVEX_OK) return rc;
     model->summary.resource_count = count;
     model->summary.resource_generation = resources.generation;
@@ -1078,6 +1086,9 @@ void yvex_runtime_media_model_close(yvex_runtime_media_model **model)
     yvex_error cleanup = {0};
     if (!model || !*model) return;
     owner = *model;
+    if (yvex_runtime_execution_coordinator_close(&owner->scheduler, &cleanup) !=
+        YVEX_OK)
+        return;
     if (yvex_runtime_resource_catalog_close(&owner->resources, &cleanup) !=
         YVEX_OK)
         return;
@@ -1315,7 +1326,13 @@ static int latent_execute(generation_state *state, yvex_error *err)
     yvex_runtime_component_session *session = NULL;
     yvex_component_execution component = {0};
     yvex_runtime_av_latent_context context = {0};
-    yvex_error cleanup;
+    yvex_runtime_execution_lease lease = {0};
+    yvex_execution_yield_control yield_control = {
+        yvex_runtime_execution_yield_requested,
+        yvex_runtime_execution_yield_resume,
+        &lease};
+    yvex_error primary, cleanup;
+    unsigned long long work_handle;
     int rc, cleanup_rc;
     if (!yvex_core_u64_mul(state->plan.video_rows, state->plan.video_value_width,
                            &state->video_row_values) ||
@@ -1323,7 +1340,17 @@ static int latent_execute(generation_state *state, yvex_error *err)
                            &state->audio_row_values))
         return generation_fail(err, YVEX_ERR_BOUNDS, "runtime.av-generation.latent",
                                "paired latent extent overflowed");
-    rc = host_allocate(state, state->video_row_values, sizeof(float),
+    work_handle = atomic_fetch_add_explicit(
+        &state->model->next_execution_handle, 1ull, memory_order_relaxed) + 1ull;
+    if (!work_handle)
+        return generation_fail(err, YVEX_ERR_BOUNDS, "runtime.av-generation.latent",
+                               "media execution work identity space is exhausted");
+    rc = yvex_runtime_execution_enter(
+        state->model->scheduler, state->model->summary.engine_generation,
+        work_handle, YVEX_ENGINE_PROGRESS_COMPONENT,
+        request->cancel_requested, request->cancel_context, &lease, err);
+    if (rc == YVEX_OK)
+        rc = host_allocate(state, state->video_row_values, sizeof(float),
                        (void **)&state->video_rows, "video latent rows", err);
     if (rc == YVEX_OK)
         rc = host_allocate(state, state->audio_row_values, sizeof(float),
@@ -1357,6 +1384,7 @@ static int latent_execute(generation_state *state, yvex_error *err)
     context.block_count = request->transformer_blocks;
     context.cancelled = request->cancel_requested;
     context.cancellation_context = request->cancel_context;
+    context.yield_control = &yield_control;
     context.observe = latent_progress_observe;
     context.observer_context = (void *)request;
     if (rc == YVEX_OK)
@@ -1373,6 +1401,12 @@ static int latent_execute(generation_state *state, yvex_error *err)
          !yvex_sha256_hex_valid(state->latent_result.execution_identity)))
         rc = generation_fail(err, YVEX_ERR_STATE, "runtime.av-generation.latent",
                              "paired latent execution returned incomplete evidence");
+    primary = err ? *err : (yvex_error){0};
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_execution_leave(
+        &lease, rc, rc == YVEX_OK ? err : &cleanup);
+    if (rc != YVEX_OK && err) *err = primary;
+    else if (cleanup_rc != YVEX_OK) rc = cleanup_rc;
     return rc;
 }
 
