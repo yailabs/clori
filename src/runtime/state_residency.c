@@ -784,19 +784,55 @@ static int state_residency_begin(
     const yvex_attention_history_view *view;
     state_resident_layer *layer;
     unsigned int bank;
-    int rc;
+    int extending, rc;
     if (!residency || !provider || !provider->view || !provider->summary ||
         layer_index >= residency->layer_count ||
         !residency->layers[layer_index].selected ||
         residency->layers[layer_index].begun ||
-        residency->layers[layer_index].staged ||
         residency->summary.invalidated) {
+        char reason[192];
+        const state_resident_layer *selected_layer =
+            residency && layer_index < residency->layer_count
+                ? &residency->layers[layer_index] : NULL;
+        (void)snprintf(
+            reason, sizeof(reason),
+            "persistent state layer %llu/%llu is not begin-ready "
+            "(provider=%u selected=%u begun=%u staged=%u invalidated=%u)",
+            layer_index, residency ? residency->layer_count : 0ull,
+            (unsigned int)(provider && provider->view && provider->summary),
+            (unsigned int)(selected_layer && selected_layer->selected),
+            (unsigned int)(selected_layer && selected_layer->begun),
+            (unsigned int)(selected_layer && selected_layer->staged),
+            (unsigned int)(residency && residency->summary.invalidated));
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.begin",
-                       "valid selected persistent state layer is required");
+                       reason);
         return YVEX_ERR_STATE;
     }
     layer = &residency->layers[layer_index];
     bank = 1u - layer->committed_bank;
+    rc = provider->summary(provider->context, &state, err);
+    if (rc != YVEX_OK) return rc;
+    extending = layer->staged && layer->staged_replaces_prefix &&
+                layer->staged_bank == bank && state.transaction_active &&
+                state.candidate_active && state.prefix_selected &&
+                state.extension_ready;
+    if (layer->staged && !extending) {
+        char reason[192];
+        (void)snprintf(
+            reason, sizeof(reason),
+            "persistent state layer %llu/%llu has a non-extendable staged bank "
+            "(replace=%u bank=%u/%u transaction=%u candidate=%u prefix=%u extension=%u)",
+            layer_index, residency->layer_count,
+            (unsigned int)layer->staged_replaces_prefix,
+            layer->staged_bank, bank,
+            (unsigned int)state.transaction_active,
+            (unsigned int)state.candidate_active,
+            (unsigned int)state.prefix_selected,
+            (unsigned int)state.extension_ready);
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.begin",
+                       reason);
+        return YVEX_ERR_STATE;
+    }
     if (layer->needs_upload[layer->committed_bank]) {
         view = provider->view(provider->context, layer_index,
                               YVEX_ATTENTION_STATE_VIEW_COMMITTED);
@@ -810,8 +846,7 @@ static int state_residency_begin(
     }
     view = provider->view(
         provider->context, layer_index, YVEX_ATTENTION_STATE_VIEW_CANDIDATE);
-    rc = view ? provider->summary(provider->context, &state, err)
-              : YVEX_ERR_STATE;
+    rc = view ? YVEX_OK : YVEX_ERR_STATE;
     if (rc == YVEX_OK)
         rc = state_resident_pack(layer, bank, view, &layer->recipe, 0, err);
     if (rc == YVEX_OK && !state.extension_ready && !layer->banks_synchronized &&

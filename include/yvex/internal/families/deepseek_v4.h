@@ -11,13 +11,18 @@
 #include <yvex/internal/conversation.h>
 #define YVEX_DEEPSEEK_IDENTITY_CAP 65u
 #define YVEX_DEEPSEEK_V4_ADAPTER_ID 0x44535634ull
-#define YVEX_DEEPSEEK_V4_ADAPTER_VERSION 7ull
+#define YVEX_DEEPSEEK_V4_ADAPTER_VERSION 8ull
 #define YVEX_DEEPSEEK_V4_RUNTIME_FP8_ACT_BLOCK 64ull
 #define YVEX_DEEPSEEK_V4_RUNTIME_FP4_ACT_BLOCK 32ull
 #define YVEX_DEEPSEEK_V4_RUNTIME_TOPK_POLICY_VERSION 1u
 #define YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME "deepseek-v4-flash-dspark-bootstrap-q2-v1.gguf"
 #define YVEX_SELECTED_DEEPSEEK_FILE_BYTES 108285860832ull
-#define YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY "cb857e6be90168ddde621c1352b0d45084901c683520f1eb1241d5559e01b7b5"
+#define YVEX_DEEPSEEK_CURRENT_LOGICAL_TRANSFORM_IDENTITY \
+    "f1fca7b4ec04d1b0de2a0f0707b3f78c5600e9a6486a83c6fc9f3a4bd70f88e8"
+#define YVEX_DEEPSEEK_LEGACY_ARTIFACT_TRANSFORM_IDENTITY \
+    "cb857e6be90168ddde621c1352b0d45084901c683520f1eb1241d5559e01b7b5"
+#define YVEX_DEEPSEEK_REBIND_ARTIFACT_IDENTITY \
+    "59c4649b19bb9f3eb7c01559e12ae52c3d4fbd067957e35de0a1a851759c7cc1"
 typedef struct yvex_source_verification yvex_source_verification;
 typedef struct yvex_source_tensor_snapshot yvex_source_tensor_snapshot;
 typedef struct yvex_source_payload_plan yvex_source_payload_plan;

@@ -6,9 +6,15 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/graph_state.h>
 
+#include <errno.h>
 #include <limits.h>
 #include <stddef.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#include <build_commit.h>
 
 static int runtime_profile_refuse(
     yvex_error *err, yvex_status status, const char *reason)
@@ -443,6 +449,514 @@ int yvex_runtime_operator_execution_identity_compute(
                                "runtime.attention.descriptor",
                                "execution descriptor identity finalization failed");
     yvex_sha256_hex(digest, output);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+#define QUALIFICATION_FILE_MAX (16u * 1024u)
+
+typedef enum {
+    QUALIFICATION_FIELD_TEXT = 0,
+    QUALIFICATION_FIELD_U64,
+    QUALIFICATION_FIELD_UINT,
+    QUALIFICATION_FIELD_INT
+} qualification_field_kind;
+
+typedef struct {
+    const char *name;
+    size_t offset, capacity;
+    qualification_field_kind kind;
+} qualification_field;
+
+#define QUAL_TEXT(name)                                                        \
+    {#name, offsetof(yvex_execution_qualification_record, name),               \
+     sizeof(((yvex_execution_qualification_record *)0)->name),                 \
+     QUALIFICATION_FIELD_TEXT}
+#define QUAL_U64(name)                                                         \
+    {#name, offsetof(yvex_execution_qualification_record, name),               \
+     sizeof(unsigned long long), QUALIFICATION_FIELD_U64}
+#define QUAL_UINT(name)                                                        \
+    {#name, offsetof(yvex_execution_qualification_record, name),               \
+     sizeof(unsigned int), QUALIFICATION_FIELD_UINT}
+#define QUAL_INT(name)                                                         \
+    {#name, offsetof(yvex_execution_qualification_record, name),               \
+     sizeof(int), QUALIFICATION_FIELD_INT}
+
+static const qualification_field qualification_fields[] = {
+    QUAL_UINT(schema_version), QUAL_UINT(source_relation),
+    QUAL_UINT(warm_state), QUAL_UINT(contention_state), QUAL_INT(seed_present),
+    QUAL_TEXT(build_commit), QUAL_TEXT(build_source_tree),
+    QUAL_TEXT(build_source_state), QUAL_TEXT(build_source_delta_identity),
+    QUAL_TEXT(build_identity), QUAL_TEXT(source_repository),
+    QUAL_TEXT(source_revision), QUAL_TEXT(product_model),
+    QUAL_TEXT(specialization), QUAL_TEXT(artifact_identity),
+    QUAL_TEXT(runtime_binding_identity), QUAL_TEXT(deployment_profile),
+    QUAL_TEXT(engine_kind), QUAL_TEXT(execution_strategy),
+    QUAL_TEXT(runtime_model_identity), QUAL_TEXT(runtime_descriptor_identity),
+    QUAL_TEXT(semantic_graph_identity), QUAL_TEXT(executable_graph_identity),
+    QUAL_TEXT(backend), QUAL_TEXT(device), QUAL_TEXT(hardware_profile_identity),
+    QUAL_TEXT(execution_profile_identity), QUAL_TEXT(prompt_identity),
+    QUAL_TEXT(prompt_token_identity), QUAL_TEXT(generation_plan_identity),
+    QUAL_TEXT(sampling_policy_identity), QUAL_TEXT(reasoning_policy),
+    QUAL_TEXT(generation_execution_identity), QUAL_TEXT(generated_text_digest),
+    QUAL_TEXT(measurement_identity), QUAL_TEXT(stop_reason),
+    QUAL_TEXT(execution_identity), QUAL_TEXT(environment_identity),
+    QUAL_TEXT(run_identity), QUAL_U64(context_capacity),
+    QUAL_U64(maximum_new_tokens), QUAL_U64(maximum_output_bytes),
+    QUAL_U64(seed), QUAL_U64(prompt_tokens), QUAL_U64(generated_tokens),
+    QUAL_U64(final_position), QUAL_U64(time_to_first_token_ns),
+    QUAL_U64(total_generation_ns),
+};
+
+#undef QUAL_TEXT
+#undef QUAL_U64
+#undef QUAL_UINT
+#undef QUAL_INT
+
+static int qualification_text_valid(const char *text, size_t capacity)
+{
+    size_t index, length;
+    if (!text || !text[0]) return 0;
+    length = strnlen(text, capacity);
+    if (length == capacity) return 0;
+    for (index = 0u; index < length; ++index)
+        if ((unsigned char)text[index] < 0x20u || text[index] == 0x7f)
+            return 0;
+    return 1;
+}
+
+static int qualification_hex_length(const char *text, size_t length)
+{
+    size_t index;
+    if (!text || strlen(text) != length) return 0;
+    for (index = 0u; index < length; ++index)
+        if (!((text[index] >= '0' && text[index] <= '9') ||
+              (text[index] >= 'a' && text[index] <= 'f')))
+            return 0;
+    return 1;
+}
+
+static int qualification_copy(char *out, size_t capacity, const char *input)
+{
+    if (!out || !qualification_text_valid(input, capacity)) return 0;
+    yvex_core_text_copy(out, capacity, input);
+    return 1;
+}
+
+static int qualification_execution_identity(
+    const yvex_execution_qualification_record *record,
+    char output[YVEX_SHA256_HEX_BYTES])
+{
+    yvex_sha256 hash;
+    yvex_sha256_init(&hash);
+    return yvex_sha256_update_text(&hash, "yvex.execution.qualification.execution.v1") &&
+           yvex_sha256_update_u64(&hash, record->source_relation) &&
+           yvex_sha256_update_text(&hash, record->source_repository) &&
+           yvex_sha256_update_text(&hash, record->source_revision) &&
+           yvex_sha256_update_text(&hash, record->product_model) &&
+           yvex_sha256_update_text(&hash, record->specialization) &&
+           yvex_sha256_update_text(&hash, record->artifact_identity) &&
+           yvex_sha256_update_text(&hash, record->runtime_binding_identity) &&
+           yvex_sha256_update_text(&hash, record->engine_kind) &&
+           yvex_sha256_update_text(&hash, record->execution_strategy) &&
+           yvex_sha256_update_text(&hash, record->runtime_model_identity) &&
+           yvex_sha256_update_text(&hash, record->runtime_descriptor_identity) &&
+           yvex_sha256_update_text(&hash, record->semantic_graph_identity) &&
+           yvex_sha256_update_text(&hash, record->executable_graph_identity) &&
+           yvex_sha256_update_text(&hash, record->backend) &&
+           yvex_sha256_update_u64(&hash, record->context_capacity) &&
+           evidence_hash_finish(&hash, output);
+}
+
+static int qualification_environment_identity(
+    const yvex_execution_qualification_record *record,
+    char output[YVEX_SHA256_HEX_BYTES])
+{
+    yvex_sha256 hash;
+    yvex_sha256_init(&hash);
+    return yvex_sha256_update_text(&hash, "yvex.execution.qualification.environment.v1") &&
+           yvex_sha256_update_text(&hash, record->device) &&
+           yvex_sha256_update_text(&hash, record->hardware_profile_identity) &&
+           yvex_sha256_update_u64(&hash, record->warm_state) &&
+           yvex_sha256_update_u64(&hash, record->contention_state) &&
+           evidence_hash_finish(&hash, output);
+}
+
+static int qualification_run_identity(
+    const yvex_execution_qualification_record *record,
+    char output[YVEX_SHA256_HEX_BYTES])
+{
+    yvex_sha256 hash;
+    yvex_sha256_init(&hash);
+    return yvex_sha256_update_text(&hash, "yvex.execution.qualification.run.v1") &&
+           yvex_sha256_update_text(&hash, record->build_commit) &&
+           yvex_sha256_update_text(&hash, record->build_source_tree) &&
+           yvex_sha256_update_text(&hash, record->build_source_state) &&
+           yvex_sha256_update_text(&hash, record->build_source_delta_identity) &&
+           yvex_sha256_update_text(&hash, record->build_identity) &&
+           yvex_sha256_update_text(&hash, record->execution_identity) &&
+           yvex_sha256_update_text(&hash, record->environment_identity) &&
+           yvex_sha256_update_text(&hash, record->deployment_profile) &&
+           yvex_sha256_update_text(&hash, record->execution_profile_identity) &&
+           yvex_sha256_update_text(&hash, record->prompt_identity) &&
+           yvex_sha256_update_text(&hash, record->prompt_token_identity) &&
+           yvex_sha256_update_text(&hash, record->generation_plan_identity) &&
+           yvex_sha256_update_text(&hash, record->sampling_policy_identity) &&
+           yvex_sha256_update_text(&hash, record->reasoning_policy) &&
+           yvex_sha256_update_u64(&hash, record->maximum_new_tokens) &&
+           yvex_sha256_update_u64(&hash, record->maximum_output_bytes) &&
+           yvex_sha256_update_u64(&hash, (unsigned long long)record->seed_present) &&
+           yvex_sha256_update_u64(&hash, record->seed) &&
+           yvex_sha256_update_text(&hash, record->generation_execution_identity) &&
+           yvex_sha256_update_text(&hash, record->generated_text_digest) &&
+           yvex_sha256_update_text(&hash, record->measurement_identity) &&
+           yvex_sha256_update_text(&hash, record->stop_reason) &&
+           yvex_sha256_update_u64(&hash, record->prompt_tokens) &&
+           yvex_sha256_update_u64(&hash, record->generated_tokens) &&
+           yvex_sha256_update_u64(&hash, record->final_position) &&
+           yvex_sha256_update_u64(&hash, record->time_to_first_token_ns) &&
+           yvex_sha256_update_u64(&hash, record->total_generation_ns) &&
+           evidence_hash_finish(&hash, output);
+}
+
+static int qualification_record_shape_valid(
+    const yvex_execution_qualification_record *record)
+{
+    size_t index;
+    if (!record) return 0;
+    const char *const identities[] = {
+        record->build_source_delta_identity, record->build_identity,
+        record->artifact_identity, record->runtime_binding_identity,
+        record->runtime_model_identity,
+        record->runtime_descriptor_identity, record->semantic_graph_identity,
+        record->executable_graph_identity, record->prompt_identity,
+        record->prompt_token_identity, record->generation_plan_identity,
+        record->sampling_policy_identity, record->generation_execution_identity,
+        record->generated_text_digest, record->measurement_identity,
+        record->hardware_profile_identity, record->execution_profile_identity,
+        record->execution_identity, record->environment_identity,
+        record->run_identity};
+    if (record->schema_version != YVEX_EXECUTION_QUALIFICATION_SCHEMA_V1 ||
+        record->source_relation > YVEX_EXECUTION_SOURCE_UNAVAILABLE ||
+        record->warm_state > YVEX_EXECUTION_WARM_STATE_WARM ||
+        record->contention_state > YVEX_EXECUTION_CONTENTION_UNKNOWN ||
+        (record->seed_present != 0 && record->seed_present != 1) ||
+        !qualification_hex_length(record->build_commit, 40u) ||
+        !qualification_hex_length(record->build_source_tree, 40u) ||
+        (strcmp(record->build_source_state, "clean") &&
+         strcmp(record->build_source_state, "dirty")) ||
+        !record->context_capacity || !record->maximum_new_tokens ||
+        !record->maximum_output_bytes || !record->prompt_tokens ||
+        !record->generated_tokens ||
+        record->generated_tokens > record->maximum_new_tokens ||
+        !record->final_position || !record->time_to_first_token_ns ||
+        record->time_to_first_token_ns > record->total_generation_ns)
+        return 0;
+    for (index = 0u; index < sizeof(identities) / sizeof(identities[0]); ++index)
+        if (!yvex_sha256_hex_valid(identities[index])) return 0;
+    for (index = 0u; index < sizeof(qualification_fields) /
+                                  sizeof(qualification_fields[0]); ++index)
+        if (qualification_fields[index].kind == QUALIFICATION_FIELD_TEXT &&
+            !qualification_text_valid(
+                (const char *)record + qualification_fields[index].offset,
+                qualification_fields[index].capacity))
+            return 0;
+    if (record->source_relation == YVEX_EXECUTION_SOURCE_AUTHENTICATED)
+        return strcmp(record->source_repository, "not-applicable") != 0 &&
+               (qualification_hex_length(record->source_revision, 40u) ||
+                qualification_hex_length(record->source_revision, 64u));
+    return !strcmp(record->source_repository, "not-applicable") &&
+           !strcmp(record->source_revision, "not-applicable");
+}
+
+int yvex_execution_qualification_seal(
+    const yvex_execution_qualification_request *request,
+    yvex_execution_qualification_record *record, yvex_error *err)
+{
+    const char *repository, *revision;
+    if (record) memset(record, 0, sizeof(*record));
+    if (!request || !record ||
+        request->schema_version != YVEX_EXECUTION_QUALIFICATION_SCHEMA_V1 ||
+        request->source_relation > YVEX_EXECUTION_SOURCE_UNAVAILABLE ||
+        request->warm_state > YVEX_EXECUTION_WARM_STATE_WARM ||
+        request->contention_state > YVEX_EXECUTION_CONTENTION_UNKNOWN)
+        return evidence_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "execution.qualification",
+                               "current bounded qualification request is required");
+    repository = request->source_relation == YVEX_EXECUTION_SOURCE_AUTHENTICATED
+                     ? request->source_repository : "not-applicable";
+    revision = request->source_relation == YVEX_EXECUTION_SOURCE_AUTHENTICATED
+                   ? request->source_revision : "not-applicable";
+    record->schema_version = request->schema_version;
+    record->source_relation = request->source_relation;
+    record->warm_state = request->warm_state;
+    record->contention_state = request->contention_state;
+    record->seed_present = request->seed_present;
+    record->context_capacity = request->context_capacity;
+    record->maximum_new_tokens = request->maximum_new_tokens;
+    record->maximum_output_bytes = request->maximum_output_bytes;
+    record->seed = request->seed;
+    record->prompt_tokens = request->prompt_tokens;
+    record->generated_tokens = request->generated_tokens;
+    record->final_position = request->final_position;
+    record->time_to_first_token_ns = request->time_to_first_token_ns;
+    record->total_generation_ns = request->total_generation_ns;
+#define COPY_RECORD(field, value)                                              \
+    qualification_copy(record->field, sizeof(record->field), (value))
+    if (!COPY_RECORD(build_commit, YVEX_BUILD_COMMIT) ||
+        !COPY_RECORD(build_source_tree, YVEX_BUILD_SOURCE_TREE) ||
+        !COPY_RECORD(build_source_state, YVEX_BUILD_SOURCE_STATE) ||
+        !COPY_RECORD(build_source_delta_identity, YVEX_BUILD_SOURCE_DELTA_IDENTITY) ||
+        !COPY_RECORD(build_identity, YVEX_BUILD_IDENTITY) ||
+        !COPY_RECORD(source_repository, repository) ||
+        !COPY_RECORD(source_revision, revision) ||
+        !COPY_RECORD(product_model, request->product_model) ||
+        !COPY_RECORD(specialization, request->specialization) ||
+        !COPY_RECORD(artifact_identity, request->artifact_identity) ||
+        !COPY_RECORD(runtime_binding_identity, request->runtime_binding_identity) ||
+        !COPY_RECORD(deployment_profile, request->deployment_profile) ||
+        !COPY_RECORD(engine_kind, request->engine_kind) ||
+        !COPY_RECORD(execution_strategy, request->execution_strategy) ||
+        !COPY_RECORD(runtime_model_identity, request->runtime_model_identity) ||
+        !COPY_RECORD(runtime_descriptor_identity,
+                     request->runtime_descriptor_identity) ||
+        !COPY_RECORD(semantic_graph_identity, request->semantic_graph_identity) ||
+        !COPY_RECORD(executable_graph_identity,
+                     request->executable_graph_identity) ||
+        !COPY_RECORD(backend, request->backend) ||
+        !COPY_RECORD(device, request->device) ||
+        !COPY_RECORD(hardware_profile_identity,
+                     request->hardware_profile_identity) ||
+        !COPY_RECORD(execution_profile_identity,
+                     request->execution_profile_identity) ||
+        !COPY_RECORD(prompt_identity, request->prompt_identity) ||
+        !COPY_RECORD(prompt_token_identity, request->prompt_token_identity) ||
+        !COPY_RECORD(generation_plan_identity,
+                     request->generation_plan_identity) ||
+        !COPY_RECORD(sampling_policy_identity,
+                     request->sampling_policy_identity) ||
+        !COPY_RECORD(reasoning_policy, request->reasoning_policy) ||
+        !COPY_RECORD(generation_execution_identity,
+                     request->generation_execution_identity) ||
+        !COPY_RECORD(generated_text_digest, request->generated_text_digest) ||
+        !COPY_RECORD(measurement_identity, request->measurement_identity) ||
+        !COPY_RECORD(stop_reason, request->stop_reason) ||
+        !qualification_execution_identity(record, record->execution_identity) ||
+        !qualification_environment_identity(record, record->environment_identity) ||
+        !qualification_run_identity(record, record->run_identity) ||
+        !qualification_record_shape_valid(record)) {
+        memset(record, 0, sizeof(*record));
+        return evidence_refuse(err, YVEX_ERR_FORMAT,
+                               "execution.qualification",
+                               "qualification facts are incomplete or malformed");
+    }
+#undef COPY_RECORD
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_execution_qualification_validate(
+    const yvex_execution_qualification_record *record, yvex_error *err)
+{
+    char execution[YVEX_SHA256_HEX_BYTES];
+    char environment[YVEX_SHA256_HEX_BYTES];
+    char run[YVEX_SHA256_HEX_BYTES];
+    if (!qualification_record_shape_valid(record) ||
+        !qualification_execution_identity(record, execution) ||
+        strcmp(execution, record->execution_identity) ||
+        !qualification_environment_identity(record, environment) ||
+        strcmp(environment, record->environment_identity) ||
+        !qualification_run_identity(record, run) ||
+        strcmp(run, record->run_identity))
+        return evidence_refuse(err, YVEX_ERR_FORMAT,
+                               "execution.qualification",
+                               "qualification identity chain is stale or malformed");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int qualification_bytes_format(yvex_core_bytes *bytes,
+                                      const char *format, ...)
+{
+    char buffer[512];
+    va_list arguments;
+    int count;
+    va_start(arguments, format);
+    count = vsnprintf(buffer, sizeof(buffer), format, arguments);
+    va_end(arguments);
+    return count >= 0 && count < (int)sizeof(buffer) &&
+           yvex_core_bytes_append(bytes, buffer, (size_t)count);
+}
+
+static int qualification_serialize(
+    const yvex_execution_qualification_record *record, yvex_core_bytes *bytes)
+{
+    const unsigned char *base = (const unsigned char *)record;
+    size_t index;
+    memset(bytes, 0, sizeof(*bytes));
+    bytes->maximum = QUALIFICATION_FILE_MAX;
+    bytes->initial_capacity = 2048u;
+    if (!qualification_bytes_format(bytes, "YVEX_EXECUTION_QUALIFICATION\t1\n"))
+        return 0;
+    for (index = 0u; index < sizeof(qualification_fields) /
+                                  sizeof(qualification_fields[0]); ++index) {
+        const qualification_field *field = &qualification_fields[index];
+        if (field->kind == QUALIFICATION_FIELD_TEXT) {
+            if (!qualification_bytes_format(bytes, "%s\t%s\n", field->name,
+                                             (const char *)base + field->offset))
+                return 0;
+        } else if (field->kind == QUALIFICATION_FIELD_U64) {
+            unsigned long long value;
+            memcpy(&value, base + field->offset, sizeof(value));
+            if (!qualification_bytes_format(bytes, "%s\t%llu\n", field->name,
+                                             value)) return 0;
+        } else if (field->kind == QUALIFICATION_FIELD_UINT) {
+            unsigned int value;
+            memcpy(&value, base + field->offset, sizeof(value));
+            if (!qualification_bytes_format(bytes, "%s\t%u\n", field->name,
+                                             value)) return 0;
+        } else {
+            int value;
+            memcpy(&value, base + field->offset, sizeof(value));
+            if (!qualification_bytes_format(bytes, "%s\t%d\n", field->name,
+                                             value)) return 0;
+        }
+    }
+    return 1;
+}
+
+int yvex_execution_qualification_write(
+    const char *path, const yvex_execution_qualification_record *record,
+    yvex_execution_qualification_publication *publication, yvex_error *err)
+{
+    yvex_core_bytes bytes = {0};
+    yvex_core_file_result result = {0};
+    int rc;
+    if (publication) memset(publication, 0, sizeof(*publication));
+    if (!path || path[0] != '/' || !publication)
+        return evidence_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "execution.qualification.write",
+                               "absolute path and valid qualification are required");
+    if (yvex_execution_qualification_validate(record, err) != YVEX_OK)
+        return yvex_error_code(err);
+    if (!qualification_serialize(record, &bytes)) {
+        free(bytes.data);
+        return evidence_refuse(err, YVEX_ERR_BOUNDS,
+                               "execution.qualification.write",
+                               "bounded qualification serialization failed");
+    }
+    rc = yvex_core_file_publish_noreplace(path, bytes.data, bytes.count,
+                                          NULL, NULL, NULL, &result, err);
+    if (rc == YVEX_OK) {
+        publication->published = 1;
+        publication->file_bytes = bytes.count;
+        yvex_core_text_copy(publication->path, sizeof(publication->path), path);
+        yvex_core_text_copy(publication->run_identity,
+                            sizeof(publication->run_identity),
+                            record->run_identity);
+    }
+    free(bytes.data);
+    return rc;
+}
+
+static int qualification_parse_line(char **cursor, char *end,
+                                    const char *name, char **value)
+{
+    char *line_end, *separator;
+    size_t length = strlen(name);
+    if (!cursor || !*cursor || *cursor >= end) return 0;
+    line_end = memchr(*cursor, '\n', (size_t)(end - *cursor));
+    if (!line_end) return 0;
+    separator = memchr(*cursor, '\t', (size_t)(line_end - *cursor));
+    if (!separator || (size_t)(separator - *cursor) != length ||
+        memcmp(*cursor, name, length) || separator + 1 == line_end)
+        return 0;
+    *separator = '\0';
+    *line_end = '\0';
+    *value = separator + 1;
+    *cursor = line_end + 1;
+    return 1;
+}
+
+static int qualification_parse_field(
+    yvex_execution_qualification_record *record,
+    const qualification_field *field, const char *value)
+{
+    unsigned char *base = (unsigned char *)record;
+    char *end = NULL;
+    unsigned long long parsed;
+    if (field->kind == QUALIFICATION_FIELD_TEXT)
+        return qualification_copy((char *)base + field->offset,
+                                  field->capacity, value);
+    if (!value[0] || value[0] < '0' || value[0] > '9') return 0;
+    errno = 0;
+    parsed = strtoull(value, &end, 10);
+    if (errno || !end || *end) return 0;
+    if (field->kind == QUALIFICATION_FIELD_U64) {
+        memcpy(base + field->offset, &parsed, sizeof(parsed));
+        return 1;
+    }
+    if (field->kind == QUALIFICATION_FIELD_UINT && parsed <= UINT_MAX) {
+        unsigned int narrowed = (unsigned int)parsed;
+        memcpy(base + field->offset, &narrowed, sizeof(narrowed));
+        return 1;
+    }
+    if (field->kind == QUALIFICATION_FIELD_INT && parsed <= INT_MAX) {
+        int narrowed = (int)parsed;
+        memcpy(base + field->offset, &narrowed, sizeof(narrowed));
+        return 1;
+    }
+    return 0;
+}
+
+int yvex_execution_qualification_open(
+    const char *path, yvex_execution_qualification_record *record,
+    yvex_error *err)
+{
+    static const char magic[] = "YVEX_EXECUTION_QUALIFICATION\t1\n";
+    yvex_core_file_result result = {0};
+    unsigned char *bytes = NULL;
+    size_t count = 0u, index;
+    char *cursor, *end, *value;
+    int rc;
+    if (record) memset(record, 0, sizeof(*record));
+    if (!path || path[0] != '/' || !record)
+        return evidence_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "execution.qualification.open",
+                               "absolute path and output record are required");
+    rc = yvex_core_file_read_snapshot(path, QUALIFICATION_FILE_MAX,
+                                      &bytes, &count, &result, err);
+    if (rc != YVEX_OK) return rc;
+    if (count < sizeof(magic) - 1u ||
+        memcmp(bytes, magic, sizeof(magic) - 1u)) {
+        free(bytes);
+        return evidence_refuse(err, YVEX_ERR_FORMAT,
+                               "execution.qualification.open",
+                               "qualification header is malformed");
+    }
+    cursor = (char *)bytes + sizeof(magic) - 1u;
+    end = (char *)bytes + count;
+    for (index = 0u; index < sizeof(qualification_fields) /
+                                  sizeof(qualification_fields[0]); ++index) {
+        const qualification_field *field = &qualification_fields[index];
+        if (!qualification_parse_line(&cursor, end, field->name, &value) ||
+            !qualification_parse_field(record, field, value)) {
+            free(bytes);
+            memset(record, 0, sizeof(*record));
+            return evidence_refuse(err, YVEX_ERR_FORMAT,
+                                   "execution.qualification.open",
+                                   "qualification field order or value is malformed");
+        }
+    }
+    if (cursor != end ||
+        yvex_execution_qualification_validate(record, err) != YVEX_OK) {
+        free(bytes);
+        memset(record, 0, sizeof(*record));
+        return evidence_refuse(err, YVEX_ERR_FORMAT,
+                               "execution.qualification.open",
+                               "qualification identity chain is malformed");
+    }
+    free(bytes);
     yvex_error_clear(err);
     return YVEX_OK;
 }

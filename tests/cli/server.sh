@@ -140,12 +140,9 @@ contains "$OUT_DIR/load-nontty.err" 'yvex model load [MODEL]'
 contains "$OUT_DIR/engine-load.typescript" 'engine load requires PROFILE'
 not_contains "$OUT_DIR/engine-load.typescript" 'Select model'
 contains "$OUT_DIR/model-load-nontty.err" 'model load requires MODEL when input is not a terminal'
-contains "$OUT_DIR/load-selector.typescript" 'Select model'
-contains "$OUT_DIR/load-selector.typescript" 'QUANT/PRECISION'
-contains "$OUT_DIR/load-selector.typescript" 'CHOICES'
+contains "$OUT_DIR/load-selector.typescript" 'no launchable models are known locally'
+not_contains "$OUT_DIR/load-selector.typescript" 'Select model'
 not_contains "$OUT_DIR/load-selector.typescript" 'Select representation and deployment'
-contains "$OUT_DIR/load-selector.typescript" 'start one with:'
-contains "$OUT_DIR/load-selector.typescript" 'yvex serve'
 not_contains "$OUT_DIR/load-selector.typescript" "$PROFILE"
 not_contains "$OUT_DIR/load-selector.typescript" "$LEGACY_PROFILE"
 
@@ -230,18 +227,15 @@ set -e
 test "$absent_status" -eq 1
 test "$load_status" -eq 1
 contains "$OUT_DIR/load-absent.err" 'profile is not registered: absent'
-contains "$OUT_DIR/load.err" 'runtime binding open failed'
+contains "$OUT_DIR/load.err" 'deployment is not current (malformed-binding)'
 
 run_client host status --json >"$OUT_DIR/status-after-failure.json"
 contains "$OUT_DIR/status-after-failure.json" '"host_ready":true'
-contains "$OUT_DIR/status-after-failure.json" '"engine_count":1'
+contains "$OUT_DIR/status-after-failure.json" '"engine_count":0'
 contains "$OUT_DIR/status-after-failure.json" '"loaded_engine_count":0'
 contains "$OUT_DIR/status-after-failure.json" '"model_open_count":0'
 run_client engine list --json >"$OUT_DIR/models-failed.json"
-contains "$OUT_DIR/models-failed.json" "\"alias\":\"$PROFILE\""
-contains "$OUT_DIR/models-failed.json" '"generation":1'
-contains "$OUT_DIR/models-failed.json" '"state":"failed"'
-contains "$OUT_DIR/models-failed.json" '"execution_ready":false'
+contains "$OUT_DIR/models-failed.json" '"engines":[]'
 
 set +e
 run_client engine unload "$PROFILE" >"$OUT_DIR/unload.out" 2>"$OUT_DIR/unload.err"
@@ -329,7 +323,7 @@ run_client engine load "$PROFILE" >"$OUT_DIR/terminal-load.out" \
 load_status=$?
 set -e
 test "$load_status" -eq 1
-contains "$OUT_DIR/terminal-load.err" 'runtime binding open failed'
+contains "$OUT_DIR/terminal-load.err" 'deployment is not current (malformed-binding)'
 run_client host stop >/dev/null
 wait "$server_pid"
 server_pid=
@@ -338,8 +332,9 @@ contains "$OUT_DIR/server-terminal.typescript" '✦'
 contains "$OUT_DIR/server-terminal.typescript" '⠘⠃'
 contains "$OUT_DIR/server-terminal.typescript" 'STATE      ● STARTING'
 contains "$OUT_DIR/server-terminal.typescript" 'LOCAL IPC'
-contains "$OUT_DIR/server-terminal.typescript" 'LOAD      deepseek4-v4-flash-dspark · generation 1'
-contains "$OUT_DIR/server-terminal.typescript" 'FAILED    deepseek4-v4-flash-dspark · generation 1'
+not_contains "$OUT_DIR/server-terminal.typescript" 'LOAD      deepseek4-v4-flash-dspark · generation 1'
+contains "$OUT_DIR/server-terminal.typescript" 'FAILED    deepseek4-v4-flash-dspark-'
+contains "$OUT_DIR/server-terminal.typescript" 'generation 0'
 contains "$OUT_DIR/server-terminal.typescript" 'LOGS       human events · foreground'
 contains "$OUT_DIR/server-terminal.typescript" 'host ready · Ctrl-C to stop'
 not_contains "$OUT_DIR/server-terminal.typescript" 'CONTROL'

@@ -58,17 +58,22 @@ static const yvex_family_descriptor *family_descriptor_at(size_t index)
           strcmp(execution->compiler->family, descriptor->family) != 0 ||
           !execution->deployment_defaults ||
           execution->deployment_defaults->schema_version !=
-              YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_V1 ||
+              YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_CURRENT ||
           !execution->deployment_defaults->logical_family ||
           !execution->deployment_defaults->logical_model ||
           !execution->deployment_defaults->quant_preset ||
           !execution->deployment_defaults->backend ||
           !execution->deployment_defaults->engine_kind ||
-          !execution->deployment_defaults->execution_strategy)) ||
+          !execution->deployment_defaults->execution_strategy ||
+          (execution->deployment_defaults->rebind_artifact_identity &&
+           execution->deployment_defaults->rebind_artifact_identity[0] &&
+           !yvex_sha256_hex_valid(
+               execution->deployment_defaults->rebind_artifact_identity)))) ||
         (descriptor->component &&
-         (!component || component->schema_version != YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 ||
+         (!component || component->schema_version != YVEX_COMPONENT_VARIANT_ADAPTER_SCHEMA_V2 ||
           !component->family || strcmp(component->target_id, descriptor->target_id) != 0 ||
-          strcmp(component->family, descriptor->family) != 0)) ||
+          strcmp(component->family, descriptor->family) != 0 ||
+          !component->component_contract)) ||
         (descriptor->source &&
          (!source || source->schema_version != YVEX_FAMILY_SOURCE_ADAPTER_SCHEMA_V1 ||
           !source->family || strcmp(source->target_id, descriptor->target_id) != 0 ||
@@ -356,7 +361,7 @@ const yvex_component_variant_adapter *yvex_graph_component_variant_find_family(
         const yvex_component_variant_adapter *adapter =
             descriptor && descriptor->component ? descriptor->component() : NULL;
 
-        if (adapter && adapter->schema_version == YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 &&
+        if (adapter && adapter->schema_version == YVEX_COMPONENT_VARIANT_ADAPTER_SCHEMA_V2 &&
             adapter->family && strcmp(family, adapter->family) == 0)
             return adapter;
     }

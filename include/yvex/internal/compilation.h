@@ -14,7 +14,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 /* Ir. */
 #define YVEX_TRANSFORM_IR_SCHEMA_VERSION 1u
 #define YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION 2u
@@ -574,6 +573,7 @@ typedef struct yvex_compilation_runtime_binding_request {
     unsigned long long family_adapter_id;
     unsigned long long family_adapter_version;
     unsigned int source_stream_count;
+    int rebind_existing_artifact;
 } yvex_compilation_runtime_binding_request;
 typedef struct yvex_compilation_runtime_binding_result {
     char path[YVEX_PATH_CAP];

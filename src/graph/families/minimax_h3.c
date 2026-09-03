@@ -20,11 +20,6 @@
 #include <string.h>
 extern const yvex_family_descriptor yvex_graph_family_descriptor_minimax_h3;
 #define VIDEO_COMPONENT_IDENTITY "c45d914061f4a8d71e84d70cf79f286793919bdc040f48e94b4ec83c2ee8a0e7"
-#define VIDEO_SOURCE_SNAPSHOT_IDENTITY "897ceaff08708f431132c6643bc8f1041ace8c0444a3ea248bbf727fc7da9943"
-#define VIDEO_COMPONENT_MANIFEST_IDENTITY "715f2359aaff048ccca8207976421af5f9f76b08b6f24986b3cc186d2822bc0e"
-#define VIDEO_ARCHITECTURE_IDENTITY "47a03bbac2b5346771f70ae39155920f9b1c6e6cec17f2639dd0cbedfa90b517"
-#define VIDEO_ROLE_MAP_IDENTITY "61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013"
-#define VIDEO_UNRESOLVED_IDENTITY "935ae0a2371b15131b8920a879462484ebd3f5526ff5a97ef95c4e0af7b7cc1d"
 #define VIDEO_TRANSFORM_IDENTITY "438aee784ab722b7c7cb5de1a934fa9ab3067282f30311ee2d595ad128f2d4f8"
 #define VIDEO_PROFILE_IDENTITY "2a4211fda0e32dc53e4734a57e4ddc4cd408483b2980eb1439770dabb9bea575"
 #define VIDEO_QUANT_EXECUTION_IDENTITY "87f12d8363dbd2a9a5f930a9bcfdbb06533c14db29f2139becc99b2042c76e81"
@@ -32,15 +27,11 @@ extern const yvex_family_descriptor yvex_graph_family_descriptor_minimax_h3;
 #define VIDEO_PAYLOAD_BYTE_IDENTITY "97e4e92a97cb16890346a77f9766b4ad368c22df24715144a60d008a54eef2b7"
 #define VIDEO_WRITER_PLAN_IDENTITY "f821e9c691a06f7e9b16261fc5261c160cbac5c7953e0155d6f52fea28ca00d1"
 #define VIDEO_ARTIFACT_IDENTITY "29bb1df65227fa05444c4002e18d61934d70d872d8472c4757e93971f9e474cd"
-#define VIDEO_PAYLOAD_IDENTITY YVEX_MINIMAX_H3_AUDIO_PAYLOAD_IDENTITY
-#define VIDEO_PROFILE_NAME YVEX_MINIMAX_H3_AUDIO_PROFILE_NAME
-#define VIDEO_SOURCE_SNAPSHOT_KEY 9907051661387403075ull
 #define VIDEO_MAPPING_IDENTITY 16381021892971143870ull
 #define VIDEO_TENSORS 560ull
 #define VIDEO_ELEMENTS 2603871032ull
 #define VIDEO_PAYLOAD_BYTES 10415484128ull
 #define VIDEO_FILE_BYTES 10415528096ull
-#define TEXT_COMPONENT_IDENTITY YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY
 #define TEXT_TRANSFORM_IDENTITY "4e940d589f14194ee827be627afac91ee28ee2a45f1add22753d9ed3dae3962a"
 #define TEXT_PROFILE_IDENTITY "5b534130f5114f096db93b96cce26fc6def534c95b6d338b87a668591c20b78f"
 #define TEXT_QUANT_EXECUTION_IDENTITY "50fe7545f9fa204dd636fbdf44e660fc92dd52740d2f39b04118a83d72d058ee"
@@ -804,16 +795,18 @@ static const yvex_artifact_catalog_contract audio_contract = {
 static const yvex_artifact_component_metadata text_metadata[] = {
     {"general.architecture", "minimax-h3"}, {"general.name", "text_encoder"},
     {"yvex.logical.target", YVEX_MINIMAX_H3_TARGET_ID}, {"yvex.logical.component", "text_encoder"},
-    {"yvex.source.snapshot.identity", VIDEO_SOURCE_SNAPSHOT_IDENTITY},
-    {"yvex.logical.component.identity", TEXT_COMPONENT_IDENTITY},
-    {"yvex.logical.component_manifest.identity", VIDEO_COMPONENT_MANIFEST_IDENTITY},
-    {"yvex.logical.architecture.identity", VIDEO_ARCHITECTURE_IDENTITY},
-    {"yvex.logical.role_map.identity", VIDEO_ROLE_MAP_IDENTITY},
-    {"yvex.logical.unresolved_requirements.identity", VIDEO_UNRESOLVED_IDENTITY},
+    {"yvex.source.snapshot.identity", YVEX_MINIMAX_H3_AUDIO_SNAPSHOT_IDENTITY},
+    {"yvex.logical.component.identity", YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY},
+    {"yvex.logical.component_manifest.identity", YVEX_MINIMAX_H3_AUDIO_MANIFEST_IDENTITY},
+    {"yvex.logical.architecture.identity", YVEX_MINIMAX_H3_AUDIO_ARCHITECTURE_IDENTITY},
+    {"yvex.logical.role_map.identity", YVEX_MINIMAX_H3_AUDIO_ROLE_MAP_IDENTITY},
+    {"yvex.logical.unresolved_requirements.identity", YVEX_MINIMAX_H3_AUDIO_UNRESOLVED_IDENTITY},
     {"yvex.transformation.identity", TEXT_TRANSFORM_IDENTITY},
-    {"yvex.physical.profile.name", VIDEO_PROFILE_NAME}, {"yvex.physical.profile.identity", TEXT_PROFILE_IDENTITY},
+    {"yvex.physical.profile.name", YVEX_MINIMAX_H3_AUDIO_PROFILE_NAME},
+    {"yvex.physical.profile.identity", TEXT_PROFILE_IDENTITY},
     {"yvex.physical.payload_plan.identity", TEXT_PAYLOAD_PLAN_IDENTITY},
-    {"yvex.payload.identity", VIDEO_PAYLOAD_IDENTITY}, {"yvex.evidence.stage", "component-artifact-planned"},
+    {"yvex.payload.identity", YVEX_MINIMAX_H3_AUDIO_PAYLOAD_IDENTITY},
+    {"yvex.evidence.stage", "component-artifact-planned"},
     {"yvex.physical.shape.policy", "reverse-logical-fold-outer-v1"},
     {"tokenizer.ggml.model", "gpt2"}, {"tokenizer.ggml.pre", "qwen2"},
     {"yvex.tokenizer.prompt_policy", "verbatim-no-special-v1"},
@@ -825,15 +818,15 @@ static const yvex_artifact_component_metadata text_metadata[] = {
 static const yvex_complete_artifact_admission text_catalog = {
     .artifact_class = YVEX_ARTIFACT_CLASS_COMPONENT_YVEX, .metadata_count = 34ull, .tensor_count = TEXT_TENSORS,
     .payload_bytes = TEXT_PAYLOAD_BYTES, .file_bytes = TEXT_FILE_BYTES,
-    .source_snapshot_identity = VIDEO_SOURCE_SNAPSHOT_KEY, .mapping_identity = TEXT_MAPPING_IDENTITY,
-    .payload_identity = VIDEO_PAYLOAD_IDENTITY, .transform_identity = TEXT_TRANSFORM_IDENTITY,
-    .profile_identity = TEXT_PROFILE_IDENTITY, .profile_name = VIDEO_PROFILE_NAME,
+    .source_snapshot_identity = YVEX_MINIMAX_H3_AUDIO_SOURCE_SNAPSHOT_KEY, .mapping_identity = TEXT_MAPPING_IDENTITY,
+    .payload_identity = YVEX_MINIMAX_H3_AUDIO_PAYLOAD_IDENTITY, .transform_identity = TEXT_TRANSFORM_IDENTITY,
+    .profile_identity = TEXT_PROFILE_IDENTITY, .profile_name = YVEX_MINIMAX_H3_AUDIO_PROFILE_NAME,
     .quant_execution_identity = TEXT_QUANT_EXECUTION_IDENTITY, .payload_plan_identity = TEXT_PAYLOAD_PLAN_IDENTITY,
     .payload_byte_identity = TEXT_PAYLOAD_BYTE_IDENTITY, .writer_plan_identity = TEXT_WRITER_PLAN_IDENTITY,
     .artifact_identity = TEXT_ARTIFACT_IDENTITY,
     .official_reader_revision = YVEX_GGUF_OFFICIAL_READER_REVISION,
     .logical_target = YVEX_MINIMAX_H3_TARGET_ID, .logical_component = "text_encoder",
-    .logical_component_identity = TEXT_COMPONENT_IDENTITY, .native_reader_accepted = 1,
+    .logical_component_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY, .native_reader_accepted = 1,
     .official_reader_accepted = 1,
     .payload_integrity_accepted = 1, .materialization_input_ready = 1,
 };
@@ -844,25 +837,27 @@ static const yvex_artifact_catalog_contract text_contract = {
 static const yvex_artifact_component_metadata transformer_metadata[] = {
     {"general.architecture", "minimax-h3"}, {"general.name", "transformer"},
     {"yvex.logical.target", YVEX_MINIMAX_H3_TARGET_ID}, {"yvex.logical.component", "transformer"},
-    {"yvex.source.snapshot.identity", VIDEO_SOURCE_SNAPSHOT_IDENTITY},
+    {"yvex.source.snapshot.identity", YVEX_MINIMAX_H3_AUDIO_SNAPSHOT_IDENTITY},
     {"yvex.logical.component.identity", TRANSFORMER_COMPONENT_IDENTITY},
-    {"yvex.logical.component_manifest.identity", VIDEO_COMPONENT_MANIFEST_IDENTITY},
-    {"yvex.logical.architecture.identity", VIDEO_ARCHITECTURE_IDENTITY},
-    {"yvex.logical.role_map.identity", VIDEO_ROLE_MAP_IDENTITY},
-    {"yvex.logical.unresolved_requirements.identity", VIDEO_UNRESOLVED_IDENTITY},
+    {"yvex.logical.component_manifest.identity", YVEX_MINIMAX_H3_AUDIO_MANIFEST_IDENTITY},
+    {"yvex.logical.architecture.identity", YVEX_MINIMAX_H3_AUDIO_ARCHITECTURE_IDENTITY},
+    {"yvex.logical.role_map.identity", YVEX_MINIMAX_H3_AUDIO_ROLE_MAP_IDENTITY},
+    {"yvex.logical.unresolved_requirements.identity", YVEX_MINIMAX_H3_AUDIO_UNRESOLVED_IDENTITY},
     {"yvex.transformation.identity", TRANSFORMER_TRANSFORM_IDENTITY},
-    {"yvex.physical.profile.name", VIDEO_PROFILE_NAME},
+    {"yvex.physical.profile.name", YVEX_MINIMAX_H3_AUDIO_PROFILE_NAME},
     {"yvex.physical.profile.identity", TRANSFORMER_PROFILE_IDENTITY},
     {"yvex.physical.payload_plan.identity", TRANSFORMER_PAYLOAD_PLAN_IDENTITY},
-    {"yvex.payload.identity", VIDEO_PAYLOAD_IDENTITY}, {"yvex.evidence.stage", "component-artifact-planned"},
+    {"yvex.payload.identity", YVEX_MINIMAX_H3_AUDIO_PAYLOAD_IDENTITY},
+    {"yvex.evidence.stage", "component-artifact-planned"},
 };
 static const yvex_complete_artifact_admission transformer_catalog = {
     .artifact_class = YVEX_ARTIFACT_CLASS_COMPONENT_YVEX,
     .metadata_count = 17ull, .tensor_count = TRANSFORMER_TENSORS,
     .payload_bytes = TRANSFORMER_PAYLOAD_BYTES, .file_bytes = TRANSFORMER_FILE_BYTES,
-    .source_snapshot_identity = VIDEO_SOURCE_SNAPSHOT_KEY, .mapping_identity = TRANSFORMER_MAPPING_IDENTITY,
-    .payload_identity = VIDEO_PAYLOAD_IDENTITY, .transform_identity = TRANSFORMER_TRANSFORM_IDENTITY,
-    .profile_identity = TRANSFORMER_PROFILE_IDENTITY, .profile_name = VIDEO_PROFILE_NAME,
+    .source_snapshot_identity = YVEX_MINIMAX_H3_AUDIO_SOURCE_SNAPSHOT_KEY,
+    .mapping_identity = TRANSFORMER_MAPPING_IDENTITY,
+    .payload_identity = YVEX_MINIMAX_H3_AUDIO_PAYLOAD_IDENTITY, .transform_identity = TRANSFORMER_TRANSFORM_IDENTITY,
+    .profile_identity = TRANSFORMER_PROFILE_IDENTITY, .profile_name = YVEX_MINIMAX_H3_AUDIO_PROFILE_NAME,
     .quant_execution_identity = TRANSFORMER_QUANT_EXECUTION_IDENTITY,
     .payload_plan_identity = TRANSFORMER_PAYLOAD_PLAN_IDENTITY,
     .payload_byte_identity = TRANSFORMER_PAYLOAD_BYTE_IDENTITY,
@@ -881,25 +876,26 @@ static const yvex_artifact_catalog_contract transformer_contract = {
 static const yvex_artifact_component_metadata video_metadata[] = {
     {"general.architecture", "minimax-h3"}, {"general.name", "video_vae"},
     {"yvex.logical.target", YVEX_MINIMAX_H3_TARGET_ID}, {"yvex.logical.component", "video_vae"},
-    {"yvex.source.snapshot.identity", VIDEO_SOURCE_SNAPSHOT_IDENTITY},
+    {"yvex.source.snapshot.identity", YVEX_MINIMAX_H3_AUDIO_SNAPSHOT_IDENTITY},
     {"yvex.logical.component.identity", VIDEO_COMPONENT_IDENTITY},
-    {"yvex.logical.component_manifest.identity", VIDEO_COMPONENT_MANIFEST_IDENTITY},
-    {"yvex.logical.architecture.identity", VIDEO_ARCHITECTURE_IDENTITY},
-    {"yvex.logical.role_map.identity", VIDEO_ROLE_MAP_IDENTITY},
-    {"yvex.logical.unresolved_requirements.identity", VIDEO_UNRESOLVED_IDENTITY},
+    {"yvex.logical.component_manifest.identity", YVEX_MINIMAX_H3_AUDIO_MANIFEST_IDENTITY},
+    {"yvex.logical.architecture.identity", YVEX_MINIMAX_H3_AUDIO_ARCHITECTURE_IDENTITY},
+    {"yvex.logical.role_map.identity", YVEX_MINIMAX_H3_AUDIO_ROLE_MAP_IDENTITY},
+    {"yvex.logical.unresolved_requirements.identity", YVEX_MINIMAX_H3_AUDIO_UNRESOLVED_IDENTITY},
     {"yvex.transformation.identity", VIDEO_TRANSFORM_IDENTITY},
-    {"yvex.physical.profile.name", VIDEO_PROFILE_NAME},
+    {"yvex.physical.profile.name", YVEX_MINIMAX_H3_AUDIO_PROFILE_NAME},
     {"yvex.physical.profile.identity", VIDEO_PROFILE_IDENTITY},
     {"yvex.physical.payload_plan.identity", VIDEO_PAYLOAD_PLAN_IDENTITY},
-    {"yvex.payload.identity", VIDEO_PAYLOAD_IDENTITY}, {"yvex.evidence.stage", "component-artifact-planned"},
+    {"yvex.payload.identity", YVEX_MINIMAX_H3_AUDIO_PAYLOAD_IDENTITY},
+    {"yvex.evidence.stage", "component-artifact-planned"},
     {"yvex.physical.shape.policy", "preserve-leading-three-fold-trailing-v1"},
 };
 static const yvex_complete_artifact_admission video_catalog = {
     .artifact_class = YVEX_ARTIFACT_CLASS_COMPONENT_YVEX, .metadata_count = 18ull, .tensor_count = VIDEO_TENSORS,
     .payload_bytes = VIDEO_PAYLOAD_BYTES, .file_bytes = VIDEO_FILE_BYTES,
-    .source_snapshot_identity = VIDEO_SOURCE_SNAPSHOT_KEY, .mapping_identity = VIDEO_MAPPING_IDENTITY,
-    .payload_identity = VIDEO_PAYLOAD_IDENTITY, .transform_identity = VIDEO_TRANSFORM_IDENTITY,
-    .profile_identity = VIDEO_PROFILE_IDENTITY, .profile_name = VIDEO_PROFILE_NAME,
+    .source_snapshot_identity = YVEX_MINIMAX_H3_AUDIO_SOURCE_SNAPSHOT_KEY, .mapping_identity = VIDEO_MAPPING_IDENTITY,
+    .payload_identity = YVEX_MINIMAX_H3_AUDIO_PAYLOAD_IDENTITY, .transform_identity = VIDEO_TRANSFORM_IDENTITY,
+    .profile_identity = VIDEO_PROFILE_IDENTITY, .profile_name = YVEX_MINIMAX_H3_AUDIO_PROFILE_NAME,
     .quant_execution_identity = VIDEO_QUANT_EXECUTION_IDENTITY, .payload_plan_identity = VIDEO_PAYLOAD_PLAN_IDENTITY,
     .payload_byte_identity = VIDEO_PAYLOAD_BYTE_IDENTITY, .writer_plan_identity = VIDEO_WRITER_PLAN_IDENTITY,
     .artifact_identity = VIDEO_ARTIFACT_IDENTITY,
@@ -913,18 +909,22 @@ static const yvex_artifact_component_storage video_storage[] = {{YVEX_GGUF_QTYPE
 static const yvex_artifact_catalog_contract video_contract = {
     &video_catalog, video_metadata, video_storage, sizeof(video_metadata) / sizeof(video_metadata[0]),
     1ull, VIDEO_ELEMENTS, 32ull};
+static const yvex_artifact_catalog_contract *component_contract(const char *component)
+{
+    if (component && strcmp(component, "audio_vae") == 0) return &audio_contract;
+    if (component && strcmp(component, "video_vae") == 0) return &video_contract;
+    if (component && strcmp(component, "text_encoder") == 0) return &text_contract;
+    if (component && strcmp(component, "transformer") == 0) return &transformer_contract;
+    return NULL;
+}
 static int component_admit(
     const char *component, const yvex_artifact *artifact, const yvex_gguf *gguf,
     const yvex_tensor_table *tensors, const yvex_artifact_admission_options *options,
     yvex_complete_artifact_admission *out, yvex_artifact_admission_evidence *evidence,
     yvex_artifact_admission_failure *failure, yvex_error *err)
 {
-    const yvex_artifact_catalog_contract *contract = NULL;
+    const yvex_artifact_catalog_contract *contract = component_contract(component);
     yvex_artifact_admission_evidence local_evidence;
-    if (component && strcmp(component, "audio_vae") == 0) contract = &audio_contract;
-    if (component && strcmp(component, "video_vae") == 0) contract = &video_contract;
-    if (component && strcmp(component, "text_encoder") == 0) contract = &text_contract;
-    if (component && strcmp(component, "transformer") == 0) contract = &transformer_contract;
     if (!contract) {
         if (failure) {
             memset(failure, 0, sizeof(*failure));
@@ -1837,14 +1837,14 @@ static const yvex_component_variant_adapter *minimax_component_adapter(void)
         .latent = t2va_latent_execute, .video_decode = video_vae_decode_backend,
         .audio_decode = audio_vae_decode_backend};
     static const yvex_component_variant_adapter adapter = {
-        .schema_version = YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1, .target_id = YVEX_MINIMAX_H3_TARGET_ID,
+        .schema_version = YVEX_COMPONENT_VARIANT_ADAPTER_SCHEMA_V2, .target_id = YVEX_MINIMAX_H3_TARGET_ID,
         .family = "minimax-h3", .source_revision = YVEX_SOURCE_MINIMAX_H3_REVISION,
         .profile_name = "minimax-h3-source-faithful-v1",
         .candidate_profile_name = YVEX_MINIMAX_H3_TRANSFORMER_Q8_PROFILE_NAME, .candidate_component_id = "transformer",
         .candidate_q8_semantic_role_mask = YVEX_MINIMAX_H3_TRANSFORMER_Q8_ROLE_MASK,
         .source_open = component_variant_open, .physical_variant = yvex_graph_physical_variant_api_get,
         .media_target_profile = yvex_model_minimax_h3_media_target_profile,
-        .media_execution = &media};
+        .component_contract = component_contract, .media_execution = &media};
     return &adapter;
 }
 typedef struct {

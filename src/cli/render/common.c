@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <yvex/artifact.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/deployment_compatibility.h>
 
 typedef struct {
     const char *section;
@@ -402,12 +403,15 @@ int parse_models_bound_option(const char *command, int arg_count, char **args, i
 
 void print_model_registry_entry_cli(const yvex_model_registry_entry *entry) {
     char context[32];
+    yvex_deployment_compatibility compatibility = {0};
     yvex_error err;
     int startup_ready;
     if (!entry)
         return;
     yvex_error_clear(&err);
-    startup_ready = yvex_model_registry_startup_validate(entry, &err) == YVEX_OK;
+    startup_ready = yvex_deployment_compatibility_evaluate(
+                        entry, &compatibility, &err) == YVEX_OK &&
+                    compatibility.current;
     if (entry->runtime_context)
         (void)snprintf(context, sizeof(context), "%llu", entry->runtime_context);
     else
@@ -467,11 +471,17 @@ void print_model_registry_entry_audit(const yvex_model_registry_entry *entry) {
         entry->runtime_execution_strategy ? entry->runtime_execution_strategy : "");
     yvex_cli_out_writef(stdout, "runtime_context: %llu\n", entry->runtime_context);
     {
+        yvex_deployment_compatibility compatibility = {0};
         yvex_error err;
         yvex_error_clear(&err);
         yvex_cli_out_writef(stdout, "startup_profile_ready: %s\n",
-                            yvex_model_registry_startup_validate(entry, &err) == YVEX_OK
+                            yvex_deployment_compatibility_evaluate(
+                                entry, &compatibility, &err) == YVEX_OK &&
+                                    compatibility.current
                                 ? "true" : "false");
+        yvex_cli_out_writef(
+            stdout, "deployment_compatibility: %s\n",
+            yvex_deployment_compatibility_status_name(compatibility.status));
     }
 }
 

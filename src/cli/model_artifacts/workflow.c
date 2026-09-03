@@ -477,6 +477,8 @@ static void product_fact_build(product_model_fact *fact,
         snprintf(fact->execution, sizeof(fact->execution), "%s", "not linked");
     else if (!strcmp(fact->state, "UNSUPPORTED"))
         snprintf(fact->execution, sizeof(fact->execution), "%s", "unsupported");
+    else if (fact->model->profile_count)
+        snprintf(fact->execution, sizeof(fact->execution), "%s", "not current");
     else snprintf(fact->execution, sizeof(fact->execution), "%s", "not prepared");
     variants = product_representation_count(fact->model);
     snprintf(fact->variants, sizeof(fact->variants), "%llu", variants);

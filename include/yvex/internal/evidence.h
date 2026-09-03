@@ -282,6 +282,121 @@ int yvex_runtime_operator_execution_identity_compute(
     const yvex_runtime_operator_execution_facts *facts,
     char output[YVEX_SHA256_HEX_CAP], yvex_error *err);
 
+/* One bounded, content-addressed execution qualification. Build, semantic
+ * deployment, and run identities remain independent dimensions. */
+#define YVEX_EXECUTION_QUALIFICATION_SCHEMA_V1 1u
+#define YVEX_EXECUTION_QUALIFICATION_COMMIT_CAP 41u
+#define YVEX_EXECUTION_QUALIFICATION_STATE_CAP 16u
+#define YVEX_EXECUTION_QUALIFICATION_TEXT_CAP 128u
+#define YVEX_EXECUTION_QUALIFICATION_MODE_CAP 32u
+
+typedef enum {
+    YVEX_EXECUTION_SOURCE_AUTHENTICATED = 0,
+    YVEX_EXECUTION_SOURCE_UNBOUND,
+    YVEX_EXECUTION_SOURCE_UNAVAILABLE
+} yvex_execution_source_relation;
+
+typedef enum {
+    YVEX_EXECUTION_WARM_STATE_COLD = 0,
+    YVEX_EXECUTION_WARM_STATE_WARM
+} yvex_execution_warm_state;
+
+typedef enum {
+    YVEX_EXECUTION_CONTENTION_ISOLATED = 0,
+    YVEX_EXECUTION_CONTENTION_CONTENDED,
+    YVEX_EXECUTION_CONTENTION_UNKNOWN
+} yvex_execution_contention_state;
+
+typedef struct {
+    unsigned int schema_version;
+    yvex_execution_source_relation source_relation;
+    yvex_execution_warm_state warm_state;
+    yvex_execution_contention_state contention_state;
+    const char *source_repository, *source_revision;
+    const char *product_model, *specialization;
+    const char *artifact_identity, *runtime_binding_identity;
+    const char *deployment_profile, *engine_kind, *execution_strategy;
+    const char *runtime_model_identity, *runtime_descriptor_identity;
+    const char *semantic_graph_identity, *executable_graph_identity;
+    const char *backend, *device, *hardware_profile_identity;
+    unsigned long long context_capacity;
+    const char *prompt_identity, *prompt_token_identity;
+    const char *execution_profile_identity, *generation_plan_identity;
+    const char *sampling_policy_identity;
+    const char *reasoning_policy;
+    unsigned long long maximum_new_tokens, maximum_output_bytes;
+    int seed_present;
+    unsigned long long seed;
+    const char *generation_execution_identity, *generated_text_digest;
+    const char *measurement_identity, *stop_reason;
+    unsigned long long prompt_tokens, generated_tokens, final_position;
+    unsigned long long time_to_first_token_ns, total_generation_ns;
+} yvex_execution_qualification_request;
+
+typedef struct {
+    unsigned int schema_version;
+    yvex_execution_source_relation source_relation;
+    yvex_execution_warm_state warm_state;
+    yvex_execution_contention_state contention_state;
+    int seed_present;
+    char build_commit[YVEX_EXECUTION_QUALIFICATION_COMMIT_CAP];
+    char build_source_tree[YVEX_EXECUTION_QUALIFICATION_COMMIT_CAP];
+    char build_source_state[YVEX_EXECUTION_QUALIFICATION_STATE_CAP];
+    char build_source_delta_identity[YVEX_SHA256_HEX_BYTES];
+    char build_identity[YVEX_SHA256_HEX_BYTES];
+    char source_repository[YVEX_EXECUTION_QUALIFICATION_TEXT_CAP];
+    char source_revision[YVEX_EXECUTION_QUALIFICATION_TEXT_CAP];
+    char product_model[YVEX_EXECUTION_QUALIFICATION_TEXT_CAP];
+    char specialization[YVEX_EXECUTION_QUALIFICATION_MODE_CAP];
+    char artifact_identity[YVEX_SHA256_HEX_BYTES];
+    char runtime_binding_identity[YVEX_SHA256_HEX_BYTES];
+    char deployment_profile[YVEX_EXECUTION_QUALIFICATION_TEXT_CAP];
+    char engine_kind[YVEX_EXECUTION_QUALIFICATION_MODE_CAP];
+    char execution_strategy[YVEX_EXECUTION_QUALIFICATION_MODE_CAP];
+    char runtime_model_identity[YVEX_SHA256_HEX_BYTES];
+    char runtime_descriptor_identity[YVEX_SHA256_HEX_BYTES];
+    char semantic_graph_identity[YVEX_SHA256_HEX_BYTES];
+    char executable_graph_identity[YVEX_SHA256_HEX_BYTES];
+    char backend[YVEX_EXECUTION_QUALIFICATION_MODE_CAP];
+    char device[YVEX_EXECUTION_QUALIFICATION_TEXT_CAP];
+    char hardware_profile_identity[YVEX_SHA256_HEX_BYTES];
+    char execution_profile_identity[YVEX_SHA256_HEX_BYTES];
+    char prompt_identity[YVEX_SHA256_HEX_BYTES];
+    char prompt_token_identity[YVEX_SHA256_HEX_BYTES];
+    char generation_plan_identity[YVEX_SHA256_HEX_BYTES];
+    char sampling_policy_identity[YVEX_SHA256_HEX_BYTES];
+    char reasoning_policy[YVEX_EXECUTION_QUALIFICATION_MODE_CAP];
+    char generation_execution_identity[YVEX_SHA256_HEX_BYTES];
+    char generated_text_digest[YVEX_SHA256_HEX_BYTES];
+    char measurement_identity[YVEX_SHA256_HEX_BYTES];
+    char stop_reason[YVEX_EXECUTION_QUALIFICATION_MODE_CAP];
+    char execution_identity[YVEX_SHA256_HEX_BYTES];
+    char environment_identity[YVEX_SHA256_HEX_BYTES];
+    char run_identity[YVEX_SHA256_HEX_BYTES];
+    unsigned long long context_capacity, maximum_new_tokens;
+    unsigned long long maximum_output_bytes, seed;
+    unsigned long long prompt_tokens, generated_tokens, final_position;
+    unsigned long long time_to_first_token_ns, total_generation_ns;
+} yvex_execution_qualification_record;
+
+typedef struct {
+    int published;
+    unsigned long long file_bytes;
+    char path[YVEX_PATH_CAP];
+    char run_identity[YVEX_SHA256_HEX_BYTES];
+} yvex_execution_qualification_publication;
+
+int yvex_execution_qualification_seal(
+    const yvex_execution_qualification_request *request,
+    yvex_execution_qualification_record *record, yvex_error *err);
+int yvex_execution_qualification_validate(
+    const yvex_execution_qualification_record *record, yvex_error *err);
+int yvex_execution_qualification_write(
+    const char *path, const yvex_execution_qualification_record *record,
+    yvex_execution_qualification_publication *publication, yvex_error *err);
+int yvex_execution_qualification_open(
+    const char *path, yvex_execution_qualification_record *record,
+    yvex_error *err);
 #ifdef __cplusplus
 }
 #endif

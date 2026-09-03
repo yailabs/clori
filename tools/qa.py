@@ -312,13 +312,12 @@ def evidence_invalid(value: dict[str, Any]) -> bool:
 
 
 def build_identity() -> str:
-    material = {
-        "cc": os.environ.get("CC", "cc"),
-        "python": platform.python_version(),
-        "nvcc": run_capture([tool_path("nvcc") or "nvcc", "--version"], check=False).splitlines()[-1:],
-        "cflags": os.environ.get("CFLAGS", ""),
-    }
-    return hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+    identity = run_capture(
+        ["make", "--no-print-directory", "-s", "print-build-identity"]
+    ).strip()
+    if len(identity) != 64 or any(character not in "0123456789abcdef" for character in identity):
+        fail("canonical Make build identity is unavailable")
+    return identity
 
 
 @contextlib.contextmanager

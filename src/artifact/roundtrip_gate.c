@@ -392,7 +392,7 @@ static int artifact_admit_component_catalog(
 }
 
 /* Reconcile a family catalog with the complete structural and storage inventory before trust. */
-static int artifact_admit_catalog_structure(
+int yvex_artifact_catalog_compatible(
     const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
     const yvex_artifact_catalog_contract *contract, yvex_complete_artifact_admission *out,
     yvex_artifact_admission_failure *failure, yvex_error *err)
@@ -651,7 +651,7 @@ int yvex_artifact_admit_catalog_with_options(
     yvex_artifact_admission_evidence *evidence,
     yvex_artifact_admission_failure *failure, yvex_error *err)
 {
-    int rc = artifact_admit_catalog_structure(
+    int rc = yvex_artifact_catalog_compatible(
         artifact, gguf, tensors, contract, out, failure, err);
     if (rc == YVEX_OK)
         rc = yvex_artifact_admission_authenticate(
@@ -667,7 +667,7 @@ int yvex_artifact_admit_catalog(
     yvex_artifact_admission_failure *failure, yvex_error *err)
 {
     yvex_artifact_admission_evidence evidence;
-    int rc = artifact_admit_catalog_structure(
+    int rc = yvex_artifact_catalog_compatible(
         artifact, gguf, tensors, contract, out, failure, err);
     if (rc == YVEX_OK && out->artifact_class == YVEX_ARTIFACT_CLASS_COMPONENT_YVEX)
         rc = yvex_artifact_admission_authenticate(

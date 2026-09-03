@@ -1,10 +1,6 @@
 /*
- * A runtime model owns the authenticated artifact, immutable execution plans, encoded weights,
- * and reusable model resources. Sessions borrow that model but own all mutable sequence state;
- * opening or closing one session cannot alter another.
- * Construction publishes nothing until artifact admission, materialization, backend preparation,
- * and family binding all agree. Cleanup runs in reverse dependency order and retains a failed owner
- * so callers can retry without losing the resource that still needs release.
+ * A runtime model owns authenticated artifacts, immutable plans, weights, and reusable resources;
+ * sessions own mutable state. It publishes only after full admission and cleans up in reverse.
  */
 #include "src/runtime/private.h"
 #include <yvex/internal/backend.h>
@@ -19,7 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <yvex/artifact.h>
-
 static atomic_ullong engine_generation_counter = 0;
 
 typedef struct {
@@ -29,11 +24,14 @@ typedef struct {
     const char *field, *reason;
     int preserve_cause;
 } runtime_open_failure;
-
 static const runtime_open_failure open_binding = {
     YVEX_MODEL_ENGINE_FAILURE_BINDING,
     YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
     "runtime-binding", "runtime binding open failed", 0};
+static const runtime_open_failure open_current_binding = {
+    YVEX_MODEL_ENGINE_FAILURE_BINDING, YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY,
+    YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN, "runtime-binding-current",
+    "runtime binding is stale for the current execution adapter", 0};
 static const runtime_open_failure open_artifact = {
     YVEX_MODEL_ENGINE_FAILURE_ARTIFACT,
     YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
@@ -94,7 +92,6 @@ static const runtime_open_failure open_drift = {
     YVEX_MODEL_ENGINE_FAILURE_DRIFT,
     YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY, YVEX_RUNTIME_RECOVERY_DRAIN_ENGINE,
     "artifact-snapshot", "artifact drifted before publication", 0};
-
 static int runtime_attention_state_provider_valid(const yvex_attention_state_provider *provider) {
     return provider && provider->schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V8 &&
            provider->context && provider->configure_pages && provider->prepare &&
@@ -106,7 +103,6 @@ static int runtime_attention_state_provider_valid(const yvex_attention_state_pro
            provider->reset && provider->restore && provider->prefix_capture &&
            provider->prefix_attach && provider->invalidate && provider->release;
 }
-
 static int runtime_model_once(unsigned long long *counter, const char *phase, yvex_error *err) {
     unsigned long long next;
     if (!counter || !phase || *counter != 0ull ||
@@ -118,7 +114,6 @@ static int runtime_model_once(unsigned long long *counter, const char *phase, yv
     *counter = next;
     return YVEX_OK;
 }
-
 static int runtime_model_progress(const yvex_model_engine_open_request *request,
                                   yvex_runtime_lifecycle_phase phase,
                                   unsigned long long completed, unsigned long long total,
@@ -925,8 +920,10 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
     phase_started = yvex_core_monotonic_ns();
     rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN, 0ull, 0ull, err);
     if (rc == YVEX_OK)
-        rc = yvex_runtime_binding_open(
-            &model->binding, request->runtime_binding_path, &model->binding_summary,
+        rc = yvex_runtime_binding_open_compatible(
+            &model->binding, request->runtime_binding_path, request->expected_family_adapter_id,
+            request->expected_family_adapter_version, request->expected_logical_transform_identity,
+            &model->binding_summary,
             &model->admission, &binding_failure, err);
     if (rc == YVEX_OK)
         rc = runtime_model_once(&model->summary.runtime_binding_parses,
@@ -934,8 +931,9 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
     runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN, phase_started);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, &open_binding, 1ull, 0ull, err,
-            (yvex_status)rc);
+            out, model, failure, binding_failure.code == YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY
+                ? &open_current_binding : &open_binding,
+            1ull, 0ull, err, (yvex_status)rc);
     model->graph = &yvex_attention_execution_api;
     yvex_core_text_copy(model->target_id, sizeof(model->target_id), request->target_id);
     rc = runtime_model_startup_preflight(

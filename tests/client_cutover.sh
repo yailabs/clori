@@ -251,7 +251,8 @@ test "$status" -eq 2
 grep -F 'usage: yvex serve [options]' "$root/err" >/dev/null
 
 # Registry discovery remains distinct from the model hosted by a running server. No command writes
-# an implicit startup selection.
+# an implicit startup selection, and arbitrary historical binding bytes cannot
+# create current launchability.
 artifact="$root/current.gguf"
 binding="$root/current.binding"
 printf 'artifact fixture\n' >"$artifact"
@@ -277,8 +278,9 @@ EOF
 HOME="$home_root" XDG_RUNTIME_DIR="$root/absent-runtime" \
     "$YVEX_BIN" model list >"$root/out"
 grep -F 'v4-flash-dspark' "$root/out" >/dev/null
-grep -F 'READY' "$root/out" >/dev/null
-grep -F 'cuda' "$root/out" >/dev/null
+grep -F 'BLOCKED' "$root/out" >/dev/null
+grep -F 'not current' "$root/out" >/dev/null
+! grep -F 'READY' "$root/out" >/dev/null
 HOME="$home_root" "$YVEX_BIN" profile list >"$root/profiles"
 grep -F 'current-model-runtime-profile' "$root/profiles" >/dev/null
 grep -F 'cuda/text/speculative' "$root/profiles" >/dev/null

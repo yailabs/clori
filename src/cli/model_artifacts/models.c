@@ -7,6 +7,7 @@
 #include "src/cli/model_artifacts/private.h"
 
 #include <yvex/artifact.h>
+#include <yvex/internal/deployment_compatibility.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1357,10 +1358,13 @@ static int command_models_inspect(int arg_count, char **args)
         return 2;
     }
     if (output_mode != YVEX_MODELS_OUTPUT_AUDIT) {
+        yvex_deployment_compatibility compatibility = {0};
         yvex_error startup_error;
         int startup_ready;
         yvex_error_clear(&startup_error);
-        startup_ready = yvex_model_registry_startup_validate(entry, &startup_error) == YVEX_OK;
+        startup_ready = yvex_deployment_compatibility_evaluate(
+                            entry, &compatibility, &startup_error) == YVEX_OK &&
+                        compatibility.current;
         yvex_cli_out_writef(stdout, "model: %s\n", entry->alias);
         yvex_cli_out_writef(stdout, "family: %s class=%s tensors=%llu size=%llu\n",
                entry->family ? entry->family : "",
@@ -1381,8 +1385,11 @@ static int command_models_inspect(int arg_count, char **args)
                 entry->runtime_execution_strategy,
                 entry->runtime_context);
         else
-            yvex_cli_out_writef(stdout, "runtime profile: unavailable (%s)\n",
-                                yvex_error_message(&startup_error));
+            yvex_cli_out_writef(
+                stdout, "runtime profile: unavailable (%s: %s)\n",
+                yvex_deployment_compatibility_status_name(compatibility.status),
+                compatibility.reason[0] ? compatibility.reason
+                                        : yvex_error_message(&startup_error));
         yvex_cli_out_writef(stdout, "status: models-inspect\n");
         yvex_model_registry_close(registry);
         return 0;
@@ -1392,12 +1399,18 @@ static int command_models_inspect(int arg_count, char **args)
                               sizeof(registry_inspect_fields) /
                                   sizeof(registry_inspect_fields[0]));
     {
+        yvex_deployment_compatibility compatibility = {0};
         yvex_error startup_error;
         yvex_error_clear(&startup_error);
         yvex_cli_out_writef(
             stdout, "startup_profile_status: %s\n",
-            yvex_model_registry_startup_validate(entry, &startup_error) == YVEX_OK
+            yvex_deployment_compatibility_evaluate(
+                entry, &compatibility, &startup_error) == YVEX_OK &&
+                    compatibility.current
                 ? "ready" : "unavailable");
+        yvex_cli_out_writef(
+            stdout, "deployment_compatibility: %s\n",
+            yvex_deployment_compatibility_status_name(compatibility.status));
     }
     rc = yvex_model_context_open(entry->path, &ctx, &err);
     if (rc == YVEX_OK) {

@@ -524,12 +524,13 @@ static int test_logical_model_library(void)
     logical = yvex_model_library_at(library, 0u);
     YVEX_TEST_ASSERT(yvex_model_library_count(library) == 1u && logical &&
                          logical->profile_count == 8u && logical->artifact_count == 2u &&
-                         logical->launchable_profile_count == 8u &&
-                         logical->profile_launchable,
-                     "eight profiles and two artifacts aggregate under one logical model");
+                         logical->launchable_profile_count == 0u &&
+                         !logical->profile_launchable,
+                     "historical profiles aggregate without creating false readiness");
     profile = yvex_model_library_profile_at(library, 0u, 0u);
-    YVEX_TEST_ASSERT(profile && profile->launchable,
-                     "startup validation admits v5 profiles without the legacy readiness bit");
+    YVEX_TEST_ASSERT(profile && !profile->launchable &&
+                         strstr(profile->blocker, "malformed") != NULL,
+                     "structurally present but malformed bindings remain historical only");
     YVEX_TEST_ASSERT(!strcmp(logical->family, "deepseek4") &&
                          !strcmp(logical->model, "v4-flash-dspark") &&
                          logical->identity_kind == YVEX_MODEL_IDENTITY_FAMILY_MODEL_TARGET,

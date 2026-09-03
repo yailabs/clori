@@ -261,6 +261,10 @@ static int execution_probe(server_engine *engine,
 static int text_engine_open(server_engine_manager *manager,
                             server_engine *engine, yvex_error *err)
 {
+    const yvex_graph_execution_binding *execution;
+    yvex_runtime_binding_summary binding_summary = {0};
+    yvex_runtime_binding_failure binding_failure = {0};
+    yvex_runtime_binding *binding = NULL;
     yvex_model_engine_open_request request = {0};
     yvex_model_engine_failure failure = {0};
     yvex_model_engine_summary model = {0};
@@ -276,6 +280,26 @@ static int text_engine_open(server_engine_manager *manager,
     request.artifact_path = engine->artifact_path;
     request.runtime_binding_path = engine->runtime_binding_path;
     request.target_id = engine->target_id;
+    execution = yvex_graph_execution_find(0ull, 0ull, engine->target_id);
+    if (execution) {
+        request.expected_family_adapter_id = execution->adapter_id;
+        request.expected_family_adapter_version = execution->adapter_version;
+        request.expected_logical_transform_identity =
+            execution->logical_transform_identity;
+    } else {
+        /* Portable bindings have no family compiler in this process. Reopen
+         * once to pin their sealed generic execution identity, then runtime
+         * admission reopens and compares it before any artifact/GPU work. */
+        rc = yvex_runtime_binding_open(
+            &binding, engine->runtime_binding_path, &binding_summary, NULL,
+            &binding_failure, err);
+        if (rc != YVEX_OK) return rc;
+        request.expected_family_adapter_id = binding_summary.family_adapter_id;
+        request.expected_family_adapter_version = binding_summary.family_adapter_version;
+        request.expected_logical_transform_identity =
+            binding_summary.logical_transform_identity;
+        yvex_runtime_binding_close(binding);
+    }
     request.startup_generation = &startup;
     request.residency_backend = engine->options.backend;
     request.maximum_host_bytes = engine->options.maximum_host_bytes;

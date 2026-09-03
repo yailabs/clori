@@ -16,6 +16,9 @@ extern "C" {
 #define YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1 1u
 #define YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_V1 1u
+#define YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_V2 2u
+#define YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_CURRENT \
+    YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_V2
 #define YVEX_EXECUTION_TEXT_CAP 64u
 #define YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE (8ull * 1024ull * 1024ull * 1024ull)
 
@@ -24,6 +27,9 @@ typedef struct yvex_model_deployment_defaults {
     unsigned int schema_version;
     const char *logical_family, *logical_model;
     const char *quant_preset, *backend, *engine_kind, *execution_strategy;
+    /* Optional exact local artifact choice for binding-only recovery.  This
+     * neither authenticates source lineage nor declares a recommendation. */
+    const char *rebind_artifact_identity;
 } yvex_model_deployment_defaults;
 
 typedef enum {

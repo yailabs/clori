@@ -53,6 +53,8 @@ rg -q '^YVEX_BUILD_SOURCE_STATE[[:space:]]+[?]=' Makefile ||
     fail "build source-state provenance is missing"
 rg -q '^YVEX_BUILD_SOURCE_DELTA_IDENTITY[[:space:]]+[?]=' Makefile ||
     fail "exact dirty source-delta provenance is missing"
+rg -q '^YVEX_BUILD_SOURCE_TREE[[:space:]]+[?]=' Makefile ||
+    fail "exact source-tree provenance is missing"
 rg -q '^YVEX_BUILD_IDENTITY[[:space:]]+[?]=' Makefile ||
     fail "compiler/link/CUDA build provenance is missing"
 rg -q '^YVEX_BUILD_SOURCE_ROOT[[:space:]]+[?]=' Makefile ||
@@ -68,6 +70,8 @@ for field in YVEX_BUILD_SOURCE_STATE YVEX_BUILD_SOURCE_DELTA_IDENTITY \
     rg -q "$field" src/runtime/benchmark.c ||
         fail "runtime benchmark records do not consume generated $field provenance"
 done
+rg -q 'YVEX_BUILD_SOURCE_TREE' src/runtime/evidence.c ||
+    fail "execution qualification records do not consume source-tree provenance"
 rg -q 'YVEX_BUILD_SOURCE_ROOT' src/cli/commands/graph.c ||
     fail "operator benchmark paths do not consume the generated source-root boundary"
 if rg -n 'git[[:space:]]+(status|diff|rev-parse)' src/runtime src/cli/commands/graph.c; then
@@ -124,6 +128,7 @@ trap cleanup_provenance EXIT HUP INT TERM
 for source_state in clean dirty; do
     make -s BUILD_DIR="$provenance_root" \
         YVEX_BUILD_COMMIT=0123456789abcdef0123456789abcdef01234567 \
+        YVEX_BUILD_SOURCE_TREE=cccccccccccccccccccccccccccccccccccccccc \
         YVEX_BUILD_SOURCE_STATE="$source_state" \
         YVEX_BUILD_SOURCE_DELTA_IDENTITY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
         YVEX_BUILD_IDENTITY=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
@@ -131,6 +136,8 @@ for source_state in clean dirty; do
         "$provenance_header"
     rg -q '^#define YVEX_BUILD_COMMIT "0123456789abcdef0123456789abcdef01234567"$' \
         "$provenance_header" || fail "generated build provenance lost the exact commit"
+    rg -q '^#define YVEX_BUILD_SOURCE_TREE "cccccccccccccccccccccccccccccccccccccccc"$' \
+        "$provenance_header" || fail "generated build provenance lost the exact source tree"
     rg -q "^#define YVEX_BUILD_SOURCE_STATE \"$source_state\"$" "$provenance_header" ||
         fail "generated build provenance did not retain $source_state source state"
     rg -q '^#define YVEX_BUILD_SOURCE_DELTA_IDENTITY "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"$' \
@@ -142,5 +149,15 @@ for source_state in clean dirty; do
 done
 cleanup_provenance
 trap - EXIT HUP INT TERM
+
+build_identity=$(make --no-print-directory -s print-build-identity)
+material_identity=$(make --no-print-directory -s print-build-identity \
+    YVEX_BUILD_SOURCE_DELTA_IDENTITY=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd)
+runtime_noise_identity=$(YVEX_IGNORED_RUNTIME_NOISE=changed \
+    make --no-print-directory -s print-build-identity)
+test "$build_identity" != "$material_identity" ||
+    fail "material source mutation does not change build identity"
+test "$build_identity" = "$runtime_noise_identity" ||
+    fail "irrelevant runtime environment noise changes build identity"
 
 python3 tests/c_structure.py check layout

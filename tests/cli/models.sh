@@ -618,7 +618,8 @@ import sys
 profiles = json.load(open(sys.argv[1], encoding="utf-8"))["profiles"]
 profile, = profiles
 assert profile["identity"] == "deepseek4-v4-flash-dspark-selected-embed"
-assert profile["launchable"] is True
+assert profile["launchable"] is False
+assert profile["blocker"].startswith("malformed-binding:")
 assert profile["backend"] == "cpu"
 assert profile["execution_strategy"] == "speculative"
 PY
@@ -631,7 +632,7 @@ grep 'model plumbing --output requires table|audit|json' "$ROOT/list-bad-output.
 grep 'model: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/inspect.out"
 grep 'family: deepseek4 class=embed' "$ROOT/inspect.out"
 grep 'artifact: support=selected-tensor-materialized execution=not-established-by-inspection' "$ROOT/inspect.out"
-grep 'runtime profile: ready kind=text backend=cpu strategy=speculative context=4096' \
+grep 'runtime profile: unavailable (malformed-binding:' \
   "$ROOT/inspect.out"
 grep 'status: models-inspect' "$ROOT/inspect.out"
 test "$(wc -l < "$ROOT/inspect.out")" -le 8
@@ -640,7 +641,8 @@ test "$(wc -l < "$ROOT/inspect.out")" -le 8
 grep 'alias: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/inspect-audit.out"
 grep 'artifact_support_level: selected-tensor-materialized' "$ROOT/inspect-audit.out"
 grep 'artifact_execution_ready: false' "$ROOT/inspect-audit.out"
-grep 'startup_profile_status: ready' "$ROOT/inspect-audit.out"
+grep 'startup_profile_status: unavailable' "$ROOT/inspect-audit.out"
+grep 'deployment_compatibility: malformed-binding' "$ROOT/inspect-audit.out"
 grep 'gguf:' "$ROOT/inspect-audit.out"
 grep 'tensor_count: 1' "$ROOT/inspect-audit.out"
 grep 'status: models-inspect' "$ROOT/inspect-audit.out"
@@ -658,14 +660,30 @@ JSON
 "$YVEX_BIN" profile list --models-root "$CATALOG_ROOT" --registry "$REG" \
   > "$ROOT/list-composite.out"
 grep 'minimax-h3-fl2va-runtime-media' "$ROOT/list-composite.out"
-grep 'runnable' "$ROOT/list-composite.out"
+grep 'minimax-h3-fl2va · 0/1 runnable' "$ROOT/list-composite.out"
 grep 'cuda/media/not-applicable' "$ROOT/list-composite.out"
+grep 'required composite deployment component is unavailable' \
+  "$ROOT/list-composite.out"
+
+# Presence alone is not a composite deployment binding. Four readable GGUF
+# files with the wrong family/component identities remain non-launchable.
+mkdir -p "$COMPOSITE_ROOT/physical-v3" "$COMPOSITE_ROOT/physical-v4" \
+  "$COMPOSITE_ROOT/physical"
+cp "$ARTIFACT" "$COMPOSITE_ROOT/physical-v3/text_encoder.gguf"
+cp "$ARTIFACT" "$COMPOSITE_ROOT/physical-v4/transformer.gguf"
+cp "$ARTIFACT" "$COMPOSITE_ROOT/physical/video_vae.gguf"
+cp "$ARTIFACT" "$COMPOSITE_ROOT/physical/audio_vae.gguf"
+"$YVEX_BIN" profile list --models-root "$CATALOG_ROOT" --registry "$REG" \
+  > "$ROOT/list-composite-mismatch.out"
+grep 'minimax-h3-fl2va · 0/1 runnable' "$ROOT/list-composite-mismatch.out"
+grep 'component does not match the current family execution contract' \
+  "$ROOT/list-composite-mismatch.out"
 
 "$YVEX_BIN" model list --models-root "$CATALOG_ROOT" --registry "$REG" \
   > "$ROOT/library-friendly.out"
 grep '^MODELS$' "$ROOT/library-friendly.out"
-grep 'v4-flash-dspark.*READY.*cpu' "$ROOT/library-friendly.out"
-grep 'minimax-h3-fl2va.*READY.*cuda' "$ROOT/library-friendly.out"
+grep 'v4-flash-dspark.*BLOCKED.*not current' "$ROOT/library-friendly.out"
+grep 'minimax-h3-fl2va.*BLOCKED.*not current' "$ROOT/library-friendly.out"
 ! grep 'provider:huggingface' "$ROOT/library-friendly.out"
 "$YVEX_BIN" source list --models-root "$RECON_ROOT" --registry "$REG" \
   > "$ROOT/sources-friendly.out"
@@ -695,7 +713,7 @@ assert {model["name"] for model in models} == {
     "minimax-h3-fl2va",
 }
 assert all(artifact["profile_count"] == 1 for artifact in artifacts)
-assert all(artifact["launchable_profile_count"] == 1 for artifact in artifacts)
+assert all(artifact["launchable_profile_count"] == 0 for artifact in artifacts)
 assert all(profile["deployment_class"] for profile in profiles)
 assert all("runtime_binding" in profile for profile in profiles)
 PY
@@ -705,7 +723,8 @@ grep 'runtime_profile: composite' "$ROOT/show-composite.out"
 grep "runtime_installation: $COMPOSITE_ROOT" "$ROOT/show-composite.out"
 grep 'runtime_binding: $' "$ROOT/show-composite.out"
 grep 'runtime_context: 0' "$ROOT/show-composite.out"
-grep 'startup_profile_status: ready' "$ROOT/show-composite.out"
+grep 'startup_profile_status: unavailable' "$ROOT/show-composite.out"
+grep 'deployment_compatibility: artifact-mismatch' "$ROOT/show-composite.out"
 YVEX_MODELS_REGISTRY="$REG" YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source inspect \
   MiniMaxAI/MiniMax-H3 --models-root "$RECON_ROOT" --json \
   > "$ROOT/reconciled-package.json"

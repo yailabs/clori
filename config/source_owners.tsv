@@ -20,6 +20,7 @@ include/yvex/internal/compiler_source.h	graph	graph.source_compiler	generic	priv
 include/yvex/internal/core.h	core	core.internal	generic	private	internal-abi	repository	interface	none
 include/yvex/internal/decode.h	runtime	runtime.decode	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/deployment.h	deployment	deployment.plan	generic	private	internal-abi	graph,runtime,tests	interface	none
+include/yvex/internal/deployment_compatibility.h	model.catalog	model.catalog.deployment-compatibility	generic	private	internal-abi	model.catalog,cli,server,tests	interface	none
 include/yvex/internal/device_view.h	graph	graph.device_view	generic	private	internal-abi	graph,runtime,backend,tests	interface	none
 include/yvex/internal/execution.h	graph	graph.physical_package	generic	private	internal-abi	compilation,artifact,runtime,tests	interface	none
 include/yvex/internal/execution_observation.h	graph	graph.observation	generic	private	internal-abi	graph,runtime,tests	interface	none
@@ -40,6 +41,7 @@ include/yvex/internal/decoder_plan.h	graph	graph.decoder_plan	generic	private	in
 include/yvex/internal/moe.h	graph	graph.moe	generic	private	internal-abi	graph,runtime,backend,cli,tests	interface	none
 include/yvex/internal/gguf.h	gguf	gguf.internal	generic	private	internal-abi	artifact,model,quant	interface	none
 include/yvex/internal/gguf_writer.h	gguf	gguf.writer	generic	private	internal-abi	artifact,quant	interface	none
+include/yvex/internal/physical_variant.h	gguf	gguf.physical_variant	generic	private	internal-abi	model,graph,quant,tests	interface	none
 include/yvex/internal/io.h	io	io.internal	generic	private	internal-abi	repository	interface	none
 include/yvex/internal/image.h	io	io.image	generic	private	cross-subsystem-interface	cli,model,runtime	interface	none
 include/yvex/internal/model.h	model	model.numeric_policy	generic	private	internal-abi	model.family,compilation,graph,runtime	interface	none
@@ -236,6 +238,7 @@ src/model/compilation/ir_validate.c	model.compilation	model.compilation.ir_valid
 src/model/compilation/semantic.c	model.compilation	model.compilation.semantic_ir	generic	private	immutable-planning	model.family,graph,runtime,tests	implementation	none
 src/model/compilation/private.h	model.compilation	model.compilation.ir	generic	private	private-interface	model.compilation	interface	none
 src/deployment/plan.c	deployment	deployment.plan	generic	private	reusable-algorithm	graph,runtime,tests	implementation	none
+src/model/deployment_compatibility.c	model.catalog	model.catalog.deployment-compatibility	generic	private	reusable-algorithm	model.catalog,cli,server,tests	implementation	none
 src/model/catalog.c	model.catalog	model.catalog.local	generic	private	reusable-algorithm	cli,model.remote	implementation	none
 src/model/core.c	model	model.core	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
 src/model/materialization.c	model	model.materialization	generic	private	resource-lifecycle	artifact,backend,gguf,cli,tests	implementation	none

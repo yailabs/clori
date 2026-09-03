@@ -10,6 +10,7 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/deployment_compatibility.h>
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/generation.h>
 #include <yvex/internal/graph.h>
@@ -19,6 +20,7 @@
 #include <yvex/internal/runtime_prefix.h>
 #include <yvex/internal/runtime_state_store.h>
 #include <yvex/internal/stateful_attention.h>
+#include <yvex/registry.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -2481,6 +2483,9 @@ static int runtime_progress_collect(void *opaque, yvex_runtime_lifecycle_phase p
 static int test_runtime_model_progress(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
+    static const char stale_transform[] =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const yvex_graph_execution_binding *execution = runtime_fixture_execution();
     yvex_model_engine_open_request request;
     yvex_model_engine_failure failure;
     runtime_progress_fixture progress;
@@ -2498,7 +2503,11 @@ static int test_runtime_model_progress(
     memset(&progress, 0, sizeof(progress));
     request.artifact_path = yvex_artifact_path(fixture->artifact);
     request.runtime_binding_path = prepared->path;
-    request.target_id = runtime_fixture_execution()->target_id;
+    request.target_id = execution->target_id;
+    request.expected_family_adapter_id = execution->adapter_id;
+    request.expected_family_adapter_version = execution->adapter_version;
+    request.expected_logical_transform_identity =
+        execution->logical_transform_identity;
     request.progress = runtime_progress_collect;
     request.progress_context = &progress;
     YVEX_TEST_ASSERT(yvex_model_engine_open(
@@ -2521,6 +2530,17 @@ static int test_runtime_model_progress(
                              YVEX_RUNTIME_LIFECYCLE_MATERIALIZATION_OPEN] >= 0.0,
                      "runtime model retains typed phase timing");
     yvex_model_engine_close(&model);
+    memset(&progress, 0, sizeof(progress));
+    request.expected_logical_transform_identity = stale_transform;
+    YVEX_TEST_ASSERT(
+        yvex_model_engine_open(&model, &request, &failure, &err) ==
+                YVEX_ERR_STATE &&
+            !model && failure.code == YVEX_MODEL_ENGINE_FAILURE_BINDING &&
+            !strcmp(failure.field, "runtime-binding-current") &&
+            progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull,
+        "runtime admission repeats current semantic binding compatibility");
+    request.expected_logical_transform_identity =
+        execution->logical_transform_identity;
     memset(&binding_failure, 0, sizeof(binding_failure));
     YVEX_TEST_ASSERT(
         yvex_runtime_binding_open(
@@ -2653,7 +2673,7 @@ static int test_runtime_family_neutrality(void)
     YVEX_TEST_ASSERT(
         deepseek->deployment_defaults &&
             deepseek->deployment_defaults->schema_version ==
-                YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_V1 &&
+                YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_CURRENT &&
             strcmp(deepseek->deployment_defaults->logical_family, "deepseek4") == 0 &&
             strcmp(deepseek->deployment_defaults->logical_model,
                    "v4-flash-dspark") == 0 &&
@@ -2662,7 +2682,9 @@ static int test_runtime_family_neutrality(void)
             strcmp(deepseek->deployment_defaults->backend, "cuda") == 0 &&
             strcmp(deepseek->deployment_defaults->engine_kind, "text") == 0 &&
             strcmp(deepseek->deployment_defaults->execution_strategy,
-                   "speculative") == 0,
+                   "speculative") == 0 &&
+            strcmp(deepseek->deployment_defaults->rebind_artifact_identity,
+                   YVEX_DEEPSEEK_REBIND_ARTIFACT_IDENTITY) == 0,
         "qualified family publishes one exact porcelain deployment default");
     YVEX_TEST_ASSERT(strcmp(deepseek->operator_family_key, "deepseek") == 0 &&
                          strcmp(deepseek->source_manifest_filename,
@@ -2688,6 +2710,102 @@ static int test_runtime_family_neutrality(void)
                          0ull, 0ull, "not-a-runtime-family") == NULL &&
                          yvex_graph_execution_find(deepseek->adapter_id, 0ull, NULL) == NULL,
                      "unknown target and execution version are refused");
+    return 0;
+}
+
+static int test_deployment_compatibility(
+    const binding_fixture *fixture,
+    const yvex_runtime_binding_prepare_result *prepared)
+{
+    static const char different_identity[] =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    yvex_model_registry_entry entry = {0};
+    yvex_deployment_compatibility compatibility;
+    char malformed_path[YVEX_PATH_CAP];
+    struct stat malformed_status;
+    yvex_error err;
+    int descriptor, path_count;
+
+    entry.schema_version = YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT;
+    entry.alias = "runtime-binding-current-fixture";
+    entry.family = "deepseek4";
+    entry.model = "v4-flash-dspark";
+    entry.scope = "runtime";
+    entry.artifact_class = "fixture";
+    entry.qprofile = "source-faithful";
+    entry.calibration = "none";
+    entry.producer = "yvex";
+    entry.artifact_schema = "v1";
+    entry.path = yvex_artifact_path(fixture->artifact);
+    entry.sha256 = fixture->admission.artifact_identity;
+    entry.file_size = fixture->admission.file_bytes;
+    entry.format = "gguf";
+    entry.architecture = "fixture";
+    entry.tensor_count = fixture->admission.tensor_count;
+    entry.known_tensor_bytes = fixture->admission.payload_bytes;
+    entry.primary_tensor_name = "attn_sinks.weight";
+    entry.primary_tensor_role = "attention_sinks";
+    entry.primary_tensor_dtype = "F32";
+    entry.primary_tensor_rank = 1u;
+    entry.primary_tensor_dims = "[64]";
+    entry.primary_tensor_bytes = fixture->admission.payload_bytes;
+    entry.support_level = "generation-ready";
+    entry.runtime_profile = "single-artifact";
+    entry.runtime_binding = prepared->path;
+    entry.runtime_target = "deepseek4-v4-flash-dspark";
+    entry.runtime_backend = "cuda";
+    entry.runtime_engine_kind = "text";
+    entry.runtime_execution_strategy = "speculative";
+    entry.runtime_context = 4096ull;
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        yvex_deployment_compatibility_evaluate(
+            &entry, &compatibility, &err) == YVEX_OK &&
+            compatibility.current &&
+            compatibility.status == YVEX_DEPLOYMENT_COMPATIBILITY_CURRENT &&
+            !strcmp(compatibility.artifact_identity,
+                    fixture->admission.artifact_identity),
+        "current typed binding is authoritative for deployment readiness");
+    entry.sha256 = different_identity;
+    YVEX_TEST_ASSERT(
+        yvex_deployment_compatibility_evaluate(
+            &entry, &compatibility, &err) == YVEX_OK &&
+            !compatibility.current &&
+            compatibility.status ==
+                YVEX_DEPLOYMENT_COMPATIBILITY_ARTIFACT_MISMATCH,
+        "binding for another immutable artifact cannot project READY");
+    entry.sha256 = fixture->admission.artifact_identity;
+    entry.runtime_target = "qwen3.8-27b";
+    YVEX_TEST_ASSERT(
+        yvex_deployment_compatibility_evaluate(
+            &entry, &compatibility, &err) == YVEX_OK &&
+            !compatibility.current &&
+            compatibility.status == YVEX_DEPLOYMENT_COMPATIBILITY_STALE_BINDING,
+        "binding for another current semantic adapter is stale");
+    entry.runtime_target = "deepseek4-v4-flash-dspark";
+    path_count = snprintf(malformed_path, sizeof(malformed_path), "%s.malformed",
+                          prepared->path);
+    YVEX_TEST_ASSERT(path_count > 0 && path_count < (int)sizeof(malformed_path),
+                     "malformed binding path is bounded");
+    (void)unlink(malformed_path);
+    YVEX_TEST_ASSERT(copy_regular_file(prepared->path, malformed_path),
+                     "malformed binding fixture is copied from canonical bytes");
+    descriptor = open(malformed_path, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+    YVEX_TEST_ASSERT(descriptor >= 0 && fstat(descriptor, &malformed_status) == 0 &&
+                         malformed_status.st_size > 1 &&
+                         ftruncate(descriptor, malformed_status.st_size - 1) == 0 &&
+                         close(descriptor) == 0,
+                     "malformed binding fixture loses one canonical body byte");
+    entry.runtime_binding = malformed_path;
+    YVEX_TEST_ASSERT(yvex_deployment_compatibility_evaluate(
+                         &entry, &compatibility, &err) == YVEX_OK,
+                     "malformed binding compatibility evaluation completes");
+    YVEX_TEST_ASSERT(
+        !compatibility.current &&
+            compatibility.status == YVEX_DEPLOYMENT_COMPATIBILITY_MALFORMED_BINDING,
+        "malformed binding is distinguished before engine creation");
+    YVEX_TEST_ASSERT(unlink(malformed_path) == 0,
+                     "malformed binding fixture is cleaned");
     return 0;
 }
 
@@ -4196,6 +4314,103 @@ static int runtime_state_device_token_commit(
     return rc;
 }
 
+static int runtime_state_device_prefix_extend(
+    yvex_runtime_state_residency *residency,
+    const yvex_attention_state_provider *provider,
+    const yvex_attention_layer_plan *layer, yvex_error *err)
+{
+    const yvex_attention_history_view *history = NULL;
+    yvex_graph_attention_state_summary state = {0};
+    yvex_attention_publication prefix = {0}, extension = {0};
+    yvex_attention_failure failure = {0};
+    unsigned int prefix_tokens[2] = {17u, 19u}, extension_token = 23u;
+    float prefix_values[8] = {
+        0.125f, -0.125f, 0.25f, -0.25f,
+        0.375f, -0.375f, 0.5f, -0.5f};
+    float extension_values[4] = {0.625f, -0.625f, 0.75f, -0.75f};
+    char delta[YVEX_SHA256_HEX_CAP];
+    int provider_prepared = 0, rc;
+
+    if (!residency || !provider || !layer || layer->head_dimension != 4ull)
+        return YVEX_ERR_INVALID_ARG;
+    prefix.owned = prefix.complete = prefix.prefix_addressable = 1;
+    prefix.layer_index = layer->layer_index;
+    prefix.attention_class = layer->attention_class;
+    prefix.token_count = 2ull;
+    prefix.token_ids = prefix_tokens;
+    prefix.kv_width = layer->head_dimension;
+    prefix.raw_kv = prefix_values;
+    (void)snprintf(prefix.execution_identity,
+                   sizeof(prefix.execution_identity), "%064x", 401u);
+    extension.owned = extension.complete = 1;
+    extension.layer_index = layer->layer_index;
+    extension.attention_class = layer->attention_class;
+    extension.token_position = 1ull;
+    extension.token_count = 1ull;
+    extension.token_ids = &extension_token;
+    extension.kv_width = layer->head_dimension;
+    extension.raw_kv = extension_values;
+    (void)snprintf(extension.execution_identity,
+                   sizeof(extension.execution_identity), "%064x", 402u);
+
+    rc = provider->begin(
+        provider->context, 0ull, layer, NULL, 0ull, 2ull, NULL,
+        &history, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_state_residency_transition(
+            residency, provider, NULL, 0ull, 2ull,
+            YVEX_RUNTIME_STATE_BEGIN, err);
+    if (rc == YVEX_OK)
+        rc = provider->stage(
+            provider->context, &prefix, NULL, delta, &failure, err);
+    if (rc == YVEX_OK)
+        rc = provider->select_prefix(
+            provider->context, 1ull, 1ull, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_state_residency_transition(
+            residency, provider, NULL, 0ull, 0ull,
+            YVEX_RUNTIME_STATE_STAGE, err);
+    if (rc == YVEX_OK)
+        rc = provider->begin(
+            provider->context, 0ull, layer, NULL, 1ull, 1ull, NULL,
+            &history, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_state_residency_transition(
+            residency, provider, NULL, 0ull, 1ull,
+            YVEX_RUNTIME_STATE_BEGIN, err);
+    if (rc == YVEX_OK)
+        rc = provider->stage(
+            provider->context, &extension, NULL, delta, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_state_residency_transition(
+            residency, provider, &extension, 0ull, 0ull,
+            YVEX_RUNTIME_STATE_STAGE, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_state_residency_prepare_commit(residency, err);
+    if (rc == YVEX_OK) {
+        rc = provider->prepare_commit(provider->context, &failure, err);
+        provider_prepared = rc == YVEX_OK;
+    }
+    if (rc == YVEX_OK) {
+        yvex_runtime_state_residency_publish_commit(residency);
+        provider->publish_commit(provider->context);
+        rc = provider->summary(provider->context, &state, err);
+    }
+    if (rc == YVEX_OK &&
+        (!state.position_consistent || state.committed_sequence_length != 2ull ||
+         state.next_position != 2ull)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "test.runtime.state.extension",
+                       "promoted physical prefix extension did not commit coherently");
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc != YVEX_OK) {
+        if (provider_prepared) provider->cancel_commit(provider->context);
+        yvex_runtime_state_residency_abort(residency);
+        (void)provider->abort(provider->context, &failure, err);
+    }
+    return rc;
+}
+
 static unsigned long long runtime_state_one_token_copy_bytes(
     const yvex_attention_state_recipe *recipe)
 {
@@ -4345,6 +4560,16 @@ static int test_runtime_paged_state_cuda_pack(
                             residency, &summary, &err) == YVEX_OK &&
                         summary.copy_bytes - copied == one_token,
                     "third token avoids replaying the complete committed history");
+                YVEX_TEST_ASSERT(
+                    yvex_runtime_state_residency_reset(residency, &err) ==
+                            YVEX_OK &&
+                        provider->reset(
+                            provider->context, &attention_failure, &err) ==
+                            YVEX_OK &&
+                        runtime_state_device_prefix_extend(
+                            residency, provider, attention_layer, &err) ==
+                            YVEX_OK,
+                    "selected verification prefix can extend the same physical candidate bank");
             }
         } else {
             YVEX_TEST_ASSERT(!summary.paged && summary.host_bytes == summary.device_bytes,
@@ -4908,6 +5133,7 @@ static int runtime_binding_suite(int cuda_only)
         if (test_runtime_cuda_session_cleanup_retry(&fixture, &prepared) != 0) goto done;
         if (test_runtime_cuda_workspace_transaction(&fixture, &prepared) != 0) goto done;
     } else {
+        if (test_deployment_compatibility(&fixture, &prepared) != 0) goto done;
         if (test_corruption_refusals(&prepared, root) != 0) goto done;
         if (test_canonical_refusals(&prepared, root) != 0) goto done;
         if (test_graph_identity_refusals(&prepared, root) != 0) goto done;

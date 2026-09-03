@@ -3,6 +3,7 @@
 
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/qwen3_5.h>
+#include <yvex/internal/graph.h>
 
 #include <errno.h>
 #include <stdio.h>
@@ -116,6 +117,8 @@ int yvex_test_qwen3_5_architecture(void)
 {
     const char *root = "build/tests/qwen3-5-architecture";
     const yvex_qwen3_5_api *api = yvex_model_register_qwen3_5();
+    const yvex_graph_execution_binding *execution =
+        yvex_graph_execution_find(0ull, 0ull, YVEX_QWEN3_8_27B_TARGET_ID);
     const yvex_qwen3_5_architecture *architecture;
     yvex_qwen3_5_model *model = NULL;
     yvex_qwen3_5_failure failure;
@@ -143,6 +146,13 @@ int yvex_test_qwen3_5_architecture(void)
     YVEX_TEST_ASSERT(api && api->schema_version == 3u &&
                          rc == YVEX_OK,
                      "open authenticated Qwen3.5 semantic architecture");
+    YVEX_TEST_ASSERT(
+        execution && execution->compiler &&
+            !strcmp(execution->logical_transform_identity,
+                    YVEX_QWEN3_5_LOGICAL_TRANSFORM_IDENTITY) &&
+            !strcmp(execution->compiler->logical_transform_identity,
+                    YVEX_QWEN3_5_LOGICAL_TRANSFORM_IDENTITY),
+        "Qwen deployment and compiler expose one current logical transform identity");
     architecture = api->architecture(model);
     YVEX_TEST_ASSERT(
         architecture && strcmp(architecture->product_id, "qwen3.8-27b") == 0 &&

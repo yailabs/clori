@@ -1850,3 +1850,41 @@ done:
     free(file);
     return rc;
 }
+
+/* Reopen and reconcile one binding with an independently selected execution contract. */
+int yvex_runtime_binding_open_compatible(
+    yvex_runtime_binding **out, const char *path,
+    unsigned long long family_adapter_id, unsigned long long family_adapter_version,
+    const char *logical_transform_identity, yvex_runtime_binding_summary *summary,
+    yvex_complete_artifact_admission *admission,
+    yvex_runtime_binding_failure *failure, yvex_error *err)
+{
+    const int expected = family_adapter_id || family_adapter_version ||
+                         (logical_transform_identity && logical_transform_identity[0]);
+    yvex_runtime_binding_summary local_summary = {0};
+    int rc = yvex_runtime_binding_open(
+        out, path, &local_summary, admission, failure, err);
+    if (rc != YVEX_OK || !expected) {
+        if (rc == YVEX_OK && summary) *summary = local_summary;
+        return rc;
+    }
+    if (!family_adapter_id || !family_adapter_version ||
+        !yvex_sha256_hex_is_valid(logical_transform_identity) ||
+        local_summary.family_adapter_id != family_adapter_id ||
+        local_summary.family_adapter_version != family_adapter_version ||
+        strcmp(local_summary.logical_transform_identity,
+               logical_transform_identity)) {
+        yvex_runtime_binding_close(*out);
+        *out = NULL;
+        if (summary) memset(summary, 0, sizeof(*summary));
+        if (admission) memset(admission, 0, sizeof(*admission));
+        return binding_reject(
+            failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
+            "current-execution", path, 0ull, family_adapter_version,
+            local_summary.family_adapter_version, YVEX_ERR_STATE,
+            "runtime binding does not match the expected current execution adapter",
+            err);
+    }
+    if (summary) *summary = local_summary;
+    return YVEX_OK;
+}

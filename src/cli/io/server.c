@@ -4,6 +4,7 @@
 #include <yvex/registry.h>
 #include <yvex/server.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/deployment_compatibility.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/server_media.h>
 
@@ -116,6 +117,7 @@ static int profile_resolve(const char *name, cli_server_profile *profile,
     yvex_model_registry_options options;
     yvex_model_registry *registry = NULL;
     const yvex_model_registry_entry *entry;
+    yvex_deployment_compatibility compatibility = {0};
     int rc;
     memset(&options, 0, sizeof(options));
     memset(profile, 0, sizeof(*profile));
@@ -128,7 +130,15 @@ static int profile_resolve(const char *name, cli_server_profile *profile,
         yvex_model_registry_close(registry);
         return YVEX_ERR_STATE;
     }
-    rc = yvex_model_registry_startup_validate(entry, err);
+    rc = yvex_deployment_compatibility_evaluate(entry, &compatibility, err);
+    if (rc == YVEX_OK && !compatibility.current) {
+        yvex_error_setf(err, YVEX_ERR_STATE, "server.model-loader",
+                        "deployment is not current (%s): %s",
+                        yvex_deployment_compatibility_status_name(
+                            compatibility.status),
+                        compatibility.reason);
+        rc = YVEX_ERR_STATE;
+    }
     if (rc != YVEX_OK) {
         yvex_model_registry_close(registry);
         return rc;

@@ -41,9 +41,10 @@ static int test_family_catalog(void)
 
     YVEX_TEST_ASSERT(resolved &&
                          resolved->schema_version ==
-                             YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 &&
+                             YVEX_COMPONENT_VARIANT_ADAPTER_SCHEMA_V2 &&
                          strcmp(resolved->target_id, YVEX_MINIMAX_H3_TARGET_ID) == 0 &&
-                         resolved->source_open && resolved->candidate_profile_name &&
+                         resolved->source_open && resolved->component_contract &&
+                         resolved->candidate_profile_name &&
                          resolved->candidate_q8_semantic_role_mask ==
                              YVEX_MINIMAX_H3_TRANSFORMER_Q8_ROLE_MASK &&
                          !(resolved->candidate_q8_semantic_role_mask &

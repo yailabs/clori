@@ -38,7 +38,7 @@
 
 .DEFAULT_GOAL := all
 
-.PHONY: all info lib client package generate-source-manifest \
+.PHONY: all info lib client package print-build-identity generate-source-manifest \
 	check-source-manifest generate-operator-registry \
 	generate-qa-registry check-qa-registry qa qa-fast qa-structural qa-cuda qa-ci qa-doctor \
 	check-operator-registry test-operator-registry cuda-info cuda-kernels cuda test-cuda test-cuda-graph \
@@ -105,6 +105,7 @@ YVEX_PROTOCOL_VERSION := $(shell sed -n \
 
 CPPFLAGS ?= -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L -Iinclude -I.
 YVEX_BUILD_COMMIT ?= $(shell git rev-parse --verify HEAD 2>/dev/null || printf unknown)
+YVEX_BUILD_SOURCE_TREE ?= $(shell git rev-parse --verify 'HEAD^{tree}' 2>/dev/null || printf unknown)
 YVEX_BUILD_SOURCE_DELTA_IDENTITY ?= $(shell { \
 	git diff --binary --no-ext-diff HEAD -- . 2>/dev/null; \
 	git ls-files --others --exclude-standard 2>/dev/null | LC_ALL=C sort | \
@@ -118,6 +119,10 @@ YVEX_BUILD_SOURCE_STATE ?= $(if $(filter \
 	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855,\
 	$(YVEX_BUILD_SOURCE_DELTA_IDENTITY)),clean,dirty)
 YVEX_BUILD_IDENTITY ?= $(shell printf '%s\n' \
+	'source-tree=$(YVEX_BUILD_SOURCE_TREE)' \
+	'source-delta=$(YVEX_BUILD_SOURCE_DELTA_IDENTITY)' \
+	'source-owners=$(shell sha256sum config/source_owners.tsv 2>/dev/null | cut -d" " -f1)' \
+	'operator-registry=$(shell sha256sum config/operator/registry.json 2>/dev/null | cut -d" " -f1)' \
 	'cc=$(CC)' 'cc-version=$(shell $(CC) --version 2>/dev/null | head -1)' \
 	'cc-target=$(shell $(CC) -dumpmachine 2>/dev/null)' \
 	'cppflags=$(CPPFLAGS)' 'cflags=$(CFLAGS)' 'ldflags=$(LDFLAGS)' 'ldlibs=$(LDLIBS)' \
@@ -262,6 +267,7 @@ $(OBJ_DIR)/src/cli/commands/graph.o: CPPFLAGS += -D_XOPEN_SOURCE=700 -I$(BUILD_D
 $(OBJ_DIR)/src/cli/commands/graph.o: $(BUILD_COMMIT_HEADER)
 $(OBJ_DIR)/src/runtime/benchmark.o: CPPFLAGS += -I$(BUILD_DIR)/generated
 $(OBJ_DIR)/src/runtime/benchmark.o: $(BUILD_COMMIT_HEADER)
+$(OBJ_DIR)/src/runtime/evidence.o: $(BUILD_COMMIT_HEADER)
 $(OBJ_DIR)/src/runtime/generation_context.o: CPPFLAGS += -I$(BUILD_DIR)/generated
 $(OBJ_DIR)/src/runtime/generation_context.o: $(BUILD_COMMIT_HEADER)
 OPERATOR_REGISTRY_CONSUMER_OBJS := $(OBJ_DIR)/src/cli/main.o \
@@ -1539,6 +1545,9 @@ $(OPERATOR_REGISTRY_OBJ): $(OPERATOR_REGISTRY_C) $(OPERATOR_REGISTRY_HEADER)
 .PHONY: FORCE
 FORCE:
 
+print-build-identity:
+	@printf '%s\n' '$(YVEX_BUILD_IDENTITY)'
+
 # CUDA objects and embedded images follow resolved hardware and toolchain facts even when a caller
 # reuses one build directory after changing an explicit or automatically detected architecture.
 $(CUDA_BUILD_CONFIG): FORCE
@@ -1556,8 +1565,8 @@ $(CUDA_BUILD_CONFIG): FORCE
 $(BUILD_COMMIT_HEADER): FORCE
 	@mkdir -p $(@D)
 	@tmp="$@.tmp"; \
-	printf '#ifndef YVEX_BUILD_PROVENANCE_INCLUDED\n#define YVEX_BUILD_PROVENANCE_INCLUDED\n#define YVEX_BUILD_COMMIT "%s"\n#define YVEX_BUILD_SOURCE_STATE "%s"\n#define YVEX_BUILD_SOURCE_DELTA_IDENTITY "%s"\n#define YVEX_BUILD_IDENTITY "%s"\n#define YVEX_BUILD_SOURCE_ROOT "%s"\n#endif\n' \
-		'$(YVEX_BUILD_COMMIT)' '$(YVEX_BUILD_SOURCE_STATE)' \
+	printf '#ifndef YVEX_BUILD_PROVENANCE_INCLUDED\n#define YVEX_BUILD_PROVENANCE_INCLUDED\n#define YVEX_BUILD_COMMIT "%s"\n#define YVEX_BUILD_SOURCE_TREE "%s"\n#define YVEX_BUILD_SOURCE_STATE "%s"\n#define YVEX_BUILD_SOURCE_DELTA_IDENTITY "%s"\n#define YVEX_BUILD_IDENTITY "%s"\n#define YVEX_BUILD_SOURCE_ROOT "%s"\n#endif\n' \
+		'$(YVEX_BUILD_COMMIT)' '$(YVEX_BUILD_SOURCE_TREE)' '$(YVEX_BUILD_SOURCE_STATE)' \
 		'$(YVEX_BUILD_SOURCE_DELTA_IDENTITY)' '$(YVEX_BUILD_IDENTITY)' \
 		'$(YVEX_BUILD_SOURCE_ROOT)' >"$$tmp"; \
 	if test -r "$@" && cmp -s "$$tmp" "$@"; then rm -f "$$tmp"; \

@@ -4,7 +4,6 @@
  */
 #ifndef INCLUDE_YVEX_INTERNAL_ARTIFACT_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_ARTIFACT_H_INCLUDED
-
 #include <stddef.h>
 #include <yvex/artifact.h>
 #include <yvex/gguf.h>
@@ -118,7 +117,6 @@ typedef struct yvex_complete_artifact_admission {
     unsigned long long artifact_bytes_hashed;
     int artifact_identity_verified, complete;
 } yvex_complete_artifact_admission;
-
 /* Physical compatibility. */
 #define YVEX_ARTIFACT_PHYSICAL_COMPATIBILITY_SCHEMA_VERSION 1u
 typedef enum {
@@ -164,7 +162,6 @@ typedef struct yvex_artifact_physical_compatibility {
     int materialization_rebuild_required, tensor_inventory_equal;
     int qtype_equal, layout_equal, offset_equal, payload_digest_equal;
 } yvex_artifact_physical_compatibility;
-
 int yvex_artifact_physical_compatibility_validate(
     const yvex_gguf_writer_plan *writer_plan, const yvex_complete_artifact_admission *admission,
     const yvex_artifact *artifact, const yvex_gguf *gguf, yvex_artifact_physical_compatibility *out,
@@ -189,12 +186,17 @@ int yvex_complete_artifact_admit(const yvex_artifact_admission_request *request,
                                  yvex_artifact_admission_failure *failure, yvex_error *err);
 typedef struct { const char *key, *value; } yvex_artifact_component_metadata;
 typedef struct { unsigned int qtype; unsigned long long tensors; } yvex_artifact_component_storage;
-typedef struct {
+typedef struct yvex_artifact_catalog_contract {
     const yvex_complete_artifact_admission *catalog;
     const yvex_artifact_component_metadata *metadata;
     const yvex_artifact_component_storage *storage;
     unsigned long long metadata_count, storage_count, elements, alignment;
 } yvex_artifact_catalog_contract;
+/* Prove current structural execution compatibility without claiming payload authentication. */
+int yvex_artifact_catalog_compatible(
+    const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
+    const yvex_artifact_catalog_contract *, yvex_complete_artifact_admission *,
+    yvex_artifact_admission_failure *, yvex_error *);
 /* Reconcile a family-provided exact catalog row with one unchanged opened artifact. */
 int yvex_artifact_admit_catalog(
     const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
@@ -210,7 +212,6 @@ typedef struct {
     yvex_artifact_snapshot snapshot;
     char lease_identity[YVEX_SHA256_HEX_CAP], path[YVEX_ARTIFACT_PATH_CAP];
 } yvex_artifact_reopen_lease;
-
 #define YVEX_ARTIFACT_ADMISSION_OPTIONS_SCHEMA_V1 1u
 typedef enum {
     YVEX_ARTIFACT_VERIFICATION_FULL_HASH = 0, YVEX_ARTIFACT_VERIFICATION_VERIFIED_REOPEN,
@@ -596,5 +597,4 @@ int yvex_materialization_session_expert_subview(const yvex_materialization_sessi
 #ifdef __cplusplus
 }
 #endif
-
 #endif /* INCLUDE_YVEX_INTERNAL_ARTIFACT_H_INCLUDED */

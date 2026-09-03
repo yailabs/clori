@@ -2,17 +2,25 @@
 #define _POSIX_C_SOURCE 200809L
 #include "src/cli/model_artifacts/private.h"
 
+#include <yvex/artifact.h>
+#include <yvex/gguf.h>
+#include <yvex/internal/artifact.h>
 #include <yvex/internal/compilation.h>
+#include <yvex/internal/compiler.h>
 #include <yvex/internal/deployment.h>
+#include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/source_catalog.h>
 #include <yvex/internal/source_payload.h>
 #include <yvex/quant.h>
 
 #include <ctype.h>
+#include <dirent.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 typedef struct {
@@ -28,13 +36,17 @@ typedef struct {
     const yvex_graph_execution_binding *execution;
     const yvex_model_deployment_defaults *deployment;
     const char *preset;
+    yvex_local_source_record recovered_source;
+    yvex_quant_plan_file_summary sealed_plan;
     char registry_path[YVEX_PATH_CAP];
     char manifest_path[YVEX_PATH_CAP];
     char plan_path[YVEX_PATH_CAP];
+    char quant_policy_path[YVEX_PATH_CAP];
     char artifact_path[YVEX_PATH_CAP];
     char binding_dir[YVEX_PATH_CAP];
     char binding_path[YVEX_PATH_CAP];
     char profile_alias[YVEX_MODEL_LIBRARY_NAME_CAP];
+    int rebind_existing_artifact;
 } model_prepare_plan;
 
 #define MODEL_PREPARE_DEFAULT_CONTEXT_CAPACITY 4096ull
@@ -172,6 +184,166 @@ static int prepare_alias(char out[YVEX_MODEL_LIBRARY_NAME_CAP],
     return output != 0u && source[input] == '\0';
 }
 
+static int prepare_parent_path(const char *path, char out[YVEX_PATH_CAP])
+{
+    const char *slash;
+    size_t count;
+
+    if (!path || !path[0] || !(slash = strrchr(path, '/'))) return 0;
+    count = slash == path ? 1u : (size_t)(slash - path);
+    if (count >= YVEX_PATH_CAP) return 0;
+    memcpy(out, path, count);
+    out[count] = '\0';
+    return 1;
+}
+
+static int prepare_regular_path(char out[YVEX_PATH_CAP], const char *directory,
+                                const char *leaf)
+{
+    struct stat status;
+    yvex_error ignored;
+
+    yvex_error_clear(&ignored);
+    return leaf && leaf[0] && strcmp(leaf, ".") && strcmp(leaf, "..") &&
+           path_join2(out, YVEX_PATH_CAP, directory, leaf, &ignored,
+                      "model.prepare.rebind") == YVEX_OK &&
+           lstat(out, &status) == 0 && S_ISREG(status.st_mode) &&
+           !S_ISLNK(status.st_mode) && access(out, R_OK) == 0;
+}
+
+static int prepare_plan_matches_artifact(
+    const yvex_quant_plan_file_summary *plan,
+    const yvex_complete_artifact_admission *admission)
+{
+    return plan && plan->complete && admission && admission->complete &&
+           !strcmp(plan->profile_identity, admission->profile_identity) &&
+           !strcmp(plan->physical_variant_identity, admission->profile_identity) &&
+           !strcmp(plan->payload_plan_identity, admission->payload_plan_identity) &&
+           !strcmp(plan->required_payload_identity, admission->payload_identity) &&
+           !strcmp(plan->transform_identity, admission->transform_identity) &&
+           plan->source_snapshot_identity == admission->source_snapshot_identity &&
+           plan->mapping_identity == admission->mapping_identity &&
+           plan->encoded_bytes == admission->payload_bytes;
+}
+
+static int prepare_plan_discover(
+    const char *directory, const yvex_complete_artifact_admission *admission,
+    yvex_quant_plan_file_summary *selected, char out[YVEX_PATH_CAP])
+{
+    DIR *stream = opendir(directory);
+    struct dirent *entry;
+    int found = 0;
+
+    if (!stream) return 0;
+    while ((entry = readdir(stream)) != NULL) {
+        char candidate[YVEX_PATH_CAP];
+        yvex_quant_plan_file_summary summary;
+        yvex_error ignored;
+
+        if (!prepare_regular_path(candidate, directory, entry->d_name)) continue;
+        yvex_error_clear(&ignored);
+        if (yvex_quant_plan_file_probe(candidate, &summary, &ignored) != YVEX_OK ||
+            !prepare_plan_matches_artifact(&summary, admission))
+            continue;
+        if (!found || strcmp(candidate, out) < 0) {
+            *selected = summary;
+            (void)snprintf(out, YVEX_PATH_CAP, "%s", candidate);
+        }
+        found = 1;
+    }
+    (void)closedir(stream);
+    return found;
+}
+
+static int prepare_policy_discover(const char *directory,
+                                   const char *required_identity,
+                                   char out[YVEX_PATH_CAP])
+{
+    DIR *stream = opendir(directory);
+    struct dirent *entry;
+    int found = 0;
+
+    if (!stream || !yvex_sha256_hex_is_valid(required_identity)) {
+        if (stream) (void)closedir(stream);
+        return 0;
+    }
+    while ((entry = readdir(stream)) != NULL) {
+        char candidate[YVEX_PATH_CAP];
+        yvex_quant_policy *policy = NULL;
+        yvex_quant_policy_summary summary = {0};
+        yvex_error ignored;
+        int rc;
+
+        if (!prepare_regular_path(candidate, directory, entry->d_name)) continue;
+        yvex_error_clear(&ignored);
+        rc = yvex_quant_policy_open(&policy, candidate, &ignored);
+        if (rc == YVEX_OK)
+            rc = yvex_quant_policy_get_summary(policy, &summary, &ignored);
+        if (rc == YVEX_OK && !strcmp(summary.policy_identity, required_identity) &&
+            (!found || strcmp(candidate, out) < 0)) {
+            (void)snprintf(out, YVEX_PATH_CAP, "%s", candidate);
+            found = 1;
+        }
+        yvex_quant_policy_close(policy);
+    }
+    (void)closedir(stream);
+    return found;
+}
+
+static int prepare_artifact_imatrix_matches(
+    const yvex_gguf *gguf, const yvex_quant_plan_file_summary *plan)
+{
+    const yvex_gguf_value *value;
+    const char *text = NULL;
+    unsigned long long count = 0ull;
+    size_t expected;
+
+    if (!gguf || !plan) return 0;
+    value = yvex_gguf_metadata_find(gguf, "yvex.quant.imatrix.identity");
+    if (!strcmp(plan->imatrix_identity, "none")) return value == NULL;
+    expected = strlen(plan->imatrix_identity);
+    return value && yvex_gguf_value_as_string(value, &text, &count) == YVEX_OK &&
+           count == expected && memcmp(text, plan->imatrix_identity, expected) == 0;
+}
+
+static int prepare_rebind_candidate(
+    const yvex_model_artifact_fact *fact,
+    const yvex_graph_execution_binding *execution,
+    yvex_quant_plan_file_summary *sealed_plan,
+    char plan_path[YVEX_PATH_CAP], char policy_path[YVEX_PATH_CAP])
+{
+    yvex_artifact_options options = {0};
+    yvex_complete_artifact_admission admission = {0};
+    yvex_artifact_admission_failure failure = {0};
+    yvex_artifact *artifact = NULL;
+    yvex_gguf *gguf = NULL;
+    char directory[YVEX_PATH_CAP];
+    yvex_error ignored;
+    int rc, accepted = 0;
+
+    if (!fact || strcasecmp(fact->format, "gguf") || !execution ||
+        !execution->compiler || !execution->compiler->binding_pipeline ||
+        !prepare_parent_path(fact->path, directory))
+        return 0;
+    options.path = fact->path;
+    options.readonly = 1;
+    yvex_error_clear(&ignored);
+    rc = yvex_artifact_open(&artifact, &options, &ignored);
+    if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &ignored);
+    if (rc == YVEX_OK)
+        rc = execution->compiler->binding_pipeline->artifact_admit(
+            artifact, &admission, &failure, &ignored);
+    if (rc == YVEX_OK && !strcmp(admission.artifact_identity, fact->identity) &&
+        prepare_plan_discover(directory, &admission, sealed_plan, plan_path) &&
+        prepare_artifact_imatrix_matches(gguf, sealed_plan) &&
+        prepare_policy_discover(directory, sealed_plan->policy_identity,
+                                policy_path))
+        accepted = 1;
+    yvex_gguf_close(gguf);
+    yvex_artifact_close(artifact);
+    return accepted;
+}
+
 static int prepare_plan_paths(const model_prepare_options *options,
                               model_prepare_plan *plan, yvex_error *err)
 {
@@ -226,6 +398,171 @@ static int prepare_plan_paths(const model_prepare_options *options,
     return rc;
 }
 
+static int prepare_rebind_source(const model_prepare_options *options,
+                                 model_prepare_plan *plan, yvex_error *err)
+{
+    yvex_paths paths = {0};
+    char family_root[YVEX_PATH_CAP];
+    int rc;
+
+    plan->source_identity = yvex_source_target_identity_find(
+        plan->execution->target_id);
+    if (!plan->source_identity || !plan->execution->source_manifest_filename ||
+        !plan->execution->source_manifest_filename[0]) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "model.prepare.rebind",
+                       "target has no exact source identity for binding recovery");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    rc = yvex_operator_paths_resolve(&paths, options->models_root,
+                                     &plan->operator_paths, err);
+    if (rc == YVEX_OK &&
+        !yvex_source_target_path(plan->recovered_source.path,
+                                 sizeof(plan->recovered_source.path),
+                                 plan->operator_paths.models_root,
+                                 plan->source_identity)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "model.prepare.rebind",
+                       "exact source path exceeds the bounded operator contract");
+        rc = YVEX_ERR_BOUNDS;
+    }
+    if (rc == YVEX_OK)
+        rc = prepare_text_path(family_root, plan->operator_paths.gguf_root,
+                               plan->execution->operator_family_key,
+                               "model.prepare.rebind", err);
+    if (rc == YVEX_OK)
+        rc = prepare_text_path(plan->manifest_path, family_root,
+                               plan->execution->source_manifest_filename,
+                               "model.prepare.rebind", err);
+    if (rc != YVEX_OK) return rc;
+    if (access(plan->recovered_source.path, R_OK | X_OK) != 0 ||
+        access(plan->manifest_path, R_OK) != 0) {
+        yvex_error_set(err, YVEX_ERR_IO, "model.prepare.rebind",
+                       "exact source or authenticated source manifest is unavailable");
+        return YVEX_ERR_IO;
+    }
+    (void)snprintf(plan->recovered_source.name,
+                   sizeof(plan->recovered_source.name), "%s",
+                   plan->source_identity->model_name);
+    (void)snprintf(plan->recovered_source.family,
+                   sizeof(plan->recovered_source.family), "%s",
+                   plan->source_identity->family_key);
+    (void)snprintf(plan->recovered_source.provider,
+                   sizeof(plan->recovered_source.provider), "%s", "huggingface");
+    (void)snprintf(plan->recovered_source.repository,
+                   sizeof(plan->recovered_source.repository), "%s",
+                   plan->source_identity->upstream_repo_id);
+    (void)snprintf(plan->recovered_source.revision,
+                   sizeof(plan->recovered_source.revision), "%s",
+                   plan->source_identity->upstream_revision);
+    (void)snprintf(plan->recovered_source.acquisition_state,
+                   sizeof(plan->recovered_source.acquisition_state), "%s",
+                   "source-acquired");
+    (void)snprintf(plan->recovered_source.verification_state,
+                   sizeof(plan->recovered_source.verification_state), "%s",
+                   "manifest-bound");
+    (void)snprintf(plan->recovered_source.format,
+                   sizeof(plan->recovered_source.format), "%s", "safetensors");
+    plan->source = &plan->recovered_source;
+    return YVEX_OK;
+}
+
+static int prepare_rebind_profile_alias(
+    const yvex_model_library *library, unsigned long long model_index,
+    model_prepare_plan *plan)
+{
+    unsigned long long index;
+
+    for (index = 0ull;
+         index < yvex_model_library_profile_count(library, model_index); ++index) {
+        const yvex_model_runtime_profile_fact *profile =
+            yvex_model_library_profile_at(library, model_index, index);
+        if (profile && !strcmp(profile->artifact_path, plan->artifact_path) &&
+            !strcmp(profile->runtime_target, plan->execution->target_id) &&
+            !strcmp(profile->backend, plan->deployment->backend) &&
+            !strcmp(profile->execution_strategy,
+                    plan->deployment->execution_strategy))
+            (void)snprintf(plan->profile_alias, sizeof(plan->profile_alias),
+                           "%s", profile->alias);
+    }
+    return plan->profile_alias[0] ||
+           prepare_alias(plan->profile_alias, plan->execution->target_id,
+                         plan->sealed_plan.profile_name,
+                         plan->deployment->backend);
+}
+
+static int prepare_rebind_plan_build(
+    const model_prepare_options *options, const yvex_model_library *library,
+    unsigned long long model_index, model_prepare_plan *plan, yvex_error *err)
+{
+    char registry_family[YVEX_PATH_CAP];
+    char binding_leaf[YVEX_MODEL_LIBRARY_NAME_CAP + 16u];
+    const char *selected_identity =
+        plan->deployment->rebind_artifact_identity;
+    unsigned long long index, candidate_count = 0ull;
+    int rc = prepare_rebind_source(options, plan, err);
+
+    for (index = 0ull; rc == YVEX_OK &&
+                        index < yvex_model_library_artifact_count(library, model_index);
+         ++index) {
+        const yvex_model_artifact_fact *artifact =
+            yvex_model_library_artifact_at(library, model_index, index);
+        yvex_quant_plan_file_summary candidate_plan = {0};
+        char candidate_plan_path[YVEX_PATH_CAP] = {0};
+        char candidate_policy_path[YVEX_PATH_CAP] = {0};
+
+        if (!prepare_rebind_candidate(artifact, plan->execution, &candidate_plan,
+                                      candidate_plan_path,
+                                      candidate_policy_path))
+            continue;
+        if (selected_identity && selected_identity[0] &&
+            strcmp(artifact->identity, selected_identity))
+            continue;
+        candidate_count++;
+        plan->sealed_plan = candidate_plan;
+        (void)snprintf(plan->artifact_path, sizeof(plan->artifact_path), "%s",
+                       artifact->path);
+        (void)snprintf(plan->plan_path, sizeof(plan->plan_path), "%s",
+                       candidate_plan_path);
+        (void)snprintf(plan->quant_policy_path,
+                       sizeof(plan->quant_policy_path), "%s",
+                       candidate_policy_path);
+    }
+    if (rc != YVEX_OK) return rc;
+    if (candidate_count != 1ull) {
+        yvex_error_set(
+            err, candidate_count ? YVEX_ERR_STATE : YVEX_ERR_UNSUPPORTED,
+            "model.prepare.rebind",
+            candidate_count
+                ? "multiple immutable artifacts have sealed binding-recovery evidence"
+                : selected_identity && selected_identity[0]
+                      ? "selected immutable artifact lacks sealed binding-recovery evidence"
+                      : "no immutable artifact has sealed binding-recovery evidence");
+        return candidate_count ? YVEX_ERR_STATE : YVEX_ERR_UNSUPPORTED;
+    }
+    plan->preset = plan->sealed_plan.profile_name;
+    plan->rebind_existing_artifact = 1;
+    if (!prepare_rebind_profile_alias(library, model_index, plan)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "model.prepare.rebind",
+                       "recovered deployment alias exceeds capacity");
+        return YVEX_ERR_BOUNDS;
+    }
+    rc = prepare_text_path(registry_family, plan->operator_paths.registry_root,
+                           plan->execution->operator_family_key,
+                           "model.prepare.rebind", err);
+    (void)snprintf(binding_leaf, sizeof(binding_leaf), "%s-bindings",
+                   plan->execution->target_id);
+    if (rc == YVEX_OK)
+        rc = prepare_text_path(plan->binding_dir, registry_family, binding_leaf,
+                               "model.prepare.rebind", err);
+    if (rc == YVEX_OK && options->registry_path)
+        rc = expand_operator_path(options->registry_path, plan->registry_path,
+                                  sizeof(plan->registry_path), err,
+                                  "model.prepare.rebind");
+    else if (rc == YVEX_OK)
+        rc = yvex_model_registry_default_path(plan->registry_path,
+                                              sizeof(plan->registry_path), err);
+    return rc;
+}
+
 static int prepare_plan_build(const model_prepare_options *options,
                               const yvex_model_library *library,
                               unsigned long long model_index,
@@ -244,11 +581,19 @@ static int prepare_plan_build(const model_prepare_options *options,
                  : plan->source_identity ? plan->source_identity->target_id : NULL;
     plan->execution = target ? yvex_graph_execution_find(0u, 0u, target) : NULL;
     plan->deployment = plan->execution ? plan->execution->deployment_defaults : NULL;
-    if (!plan->source || !plan->source_identity || !plan->execution ||
-        !plan->execution->compiler || !plan->deployment) {
+    if (!plan->execution || !plan->execution->compiler || !plan->deployment) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "model.prepare",
                        "model has no exact acquired source-to-ready compiler binding");
         return YVEX_ERR_UNSUPPORTED;
+    }
+    if (!plan->source || !plan->source_identity) {
+        if (options->quant || options->imatrix) {
+            yvex_error_set(
+                err, YVEX_ERR_UNSUPPORTED, "model.prepare",
+                "historical artifact recovery does not accept quantization overrides");
+            return YVEX_ERR_UNSUPPORTED;
+        }
+        return prepare_rebind_plan_build(options, library, model_index, plan, err);
     }
     plan->preset = options->quant ? options->quant : plan->deployment->quant_preset;
     memset(&summary, 0, sizeof(summary));
@@ -286,12 +631,20 @@ static void prepare_render_plan(const model_prepare_options *options,
         yvex_cli_out_json_string(stdout, plan->artifact_path);
         yvex_cli_out_fputs(",\"profile\":", stdout);
         yvex_cli_out_json_string(stdout, plan->profile_alias);
+        yvex_cli_out_fputs(",\"action\":", stdout);
+        yvex_cli_out_json_string(stdout, plan->rebind_existing_artifact
+                                             ? "rebind"
+                                             : "materialize");
+        yvex_cli_out_fputs(",\"creation_reproducible\":", stdout);
+        yvex_cli_out_fputs(plan->rebind_existing_artifact ? "false" : "true",
+                           stdout);
         yvex_cli_out_fputs("}\n", stdout);
         return;
     }
     yvex_cli_out_writef(stdout,
                         "PREPARE PLAN\n"
                         "  Model      %s\n"
+                        "  Action     %s\n"
                         "  Source     %s\n"
                         "  Revision   %s\n"
                         "  Target     %s\n"
@@ -299,11 +652,20 @@ static void prepare_render_plan(const model_prepare_options *options,
                         "  Backend    %s\n"
                         "  Artifact   %s\n"
                         "  Profile    %s\n",
-                        selector, plan->source->path,
+                        selector,
+                        plan->rebind_existing_artifact
+                            ? "recompile current binding; preserve artifact"
+                            : "materialize artifact and binding",
+                        plan->source->path,
                         plan->source_identity->upstream_revision,
                         plan->execution->target_id, plan->preset,
                         plan->deployment->backend, plan->artifact_path,
                         plan->profile_alias);
+    if (plan->rebind_existing_artifact)
+        yvex_cli_out_fputs(
+            "  Provenance historical calibration identity authenticated; "
+            "calibration bytes unavailable\n",
+            stdout);
 }
 
 static int prepare_parents(const model_prepare_plan *plan, yvex_error *err)
@@ -336,6 +698,11 @@ static int prepare_source_verify(const model_prepare_plan *plan,
     int rc;
 
     if (access(plan->manifest_path, F_OK) != 0) {
+        if (plan->rebind_existing_artifact) {
+            yvex_error_set(err, YVEX_ERR_IO, "model.prepare.rebind",
+                           "authenticated historical source manifest is unavailable");
+            return YVEX_ERR_IO;
+        }
         manifest.repo = plan->source_identity->upstream_repo_id;
         manifest.revision = plan->source_identity->upstream_revision;
         manifest.local_path = plan->source->path;
@@ -354,7 +721,18 @@ static int prepare_source_verify(const model_prepare_plan *plan,
     yvex_source_payload_budget_default(&budget);
     budget.allow_local_snapshot_seal = 0;
     memset(result, 0, sizeof(*result));
-    return yvex_source_payload_verify_snapshot(&verification, &budget, result, &failure, err);
+    rc = yvex_source_payload_verify_snapshot(&verification, &budget, result,
+                                             &failure, err);
+    if (rc == YVEX_OK && plan->rebind_existing_artifact &&
+        (result->payload.source_snapshot_identity !=
+             plan->sealed_plan.source_snapshot_identity ||
+         strcmp(result->payload.payload_identity,
+                plan->sealed_plan.required_payload_identity))) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "model.prepare.rebind",
+                       "source manifest does not match sealed artifact creation identity");
+        rc = YVEX_ERR_FORMAT;
+    }
+    return rc;
 }
 
 static int prepare_quant_plan(const model_prepare_options *options,
@@ -421,11 +799,15 @@ static int prepare_binding(model_prepare_plan *plan,
     request.source_manifest_path = plan->manifest_path;
     request.artifact_path = plan->artifact_path;
     request.directory = plan->binding_dir;
-    request.quant_preset_name = plan->preset;
-    request.imatrix_path = options->imatrix;
+    request.quant_policy_path = plan->rebind_existing_artifact
+                                    ? plan->quant_policy_path : NULL;
+    request.quant_preset_name = plan->rebind_existing_artifact
+                                    ? NULL : plan->preset;
+    request.imatrix_path = plan->rebind_existing_artifact ? NULL : options->imatrix;
     request.physical_variant_plan_path = plan->plan_path;
     request.family_adapter_id = plan->execution->adapter_id;
     request.family_adapter_version = plan->execution->adapter_version;
+    request.rebind_existing_artifact = plan->rebind_existing_artifact;
     return yvex_runtime_binding_compile_publish(plan->execution->compiler, &request,
                                                 plan->binding_path, published, err);
 }
@@ -446,7 +828,10 @@ static int prepare_profile(const model_prepare_options *options,
     argv[argc++] = "--scope"; argv[argc++] = "runtime";
     argv[argc++] = "--class"; argv[argc++] = "prepared";
     argv[argc++] = "--qprofile"; argv[argc++] = (char *)plan->preset;
-    argv[argc++] = "--calibration"; argv[argc++] = options->imatrix ? "imatrix" : "none";
+    argv[argc++] = "--calibration";
+    argv[argc++] = plan->rebind_existing_artifact
+                       ? "historical-imatrix-identity"
+                       : options->imatrix ? "imatrix" : "none";
     argv[argc++] = "--support-level"; argv[argc++] = "generation-ready";
     argv[argc++] = "--startup-profile"; argv[argc++] = "single-artifact";
     argv[argc++] = "--runtime-binding"; argv[argc++] = (char *)plan->binding_path;
@@ -482,6 +867,13 @@ static void prepare_render_ready(const model_prepare_options *options,
         yvex_cli_out_json_string(stdout, plan->binding_path);
         yvex_cli_out_fputs(",\"profile\":", stdout);
         yvex_cli_out_json_string(stdout, plan->profile_alias);
+        yvex_cli_out_fputs(",\"action\":", stdout);
+        yvex_cli_out_json_string(stdout, plan->rebind_existing_artifact
+                                             ? "rebound"
+                                             : "prepared");
+        yvex_cli_out_fputs(",\"creation_reproducible\":", stdout);
+        yvex_cli_out_fputs(plan->rebind_existing_artifact ? "false" : "true",
+                           stdout);
         yvex_cli_out_fputs("}\n", stdout);
     } else {
         yvex_cli_out_writef(stdout,
@@ -515,47 +907,6 @@ static int prepare_already_ready(const model_prepare_options *options,
     return 0;
 }
 
-static int prepare_profile_is_current(
-    const yvex_model_library *library, unsigned long long model_index,
-    const model_prepare_plan *plan)
-{
-    unsigned long long index;
-    for (index = 0u;
-         index < yvex_model_library_profile_count(library, model_index);
-         ++index) {
-        const yvex_model_runtime_profile_fact *profile =
-            yvex_model_library_profile_at(library, model_index, index);
-        yvex_runtime_binding *binding = NULL;
-        yvex_runtime_binding_summary summary = {0};
-        yvex_runtime_binding_failure failure = {0};
-        yvex_error err;
-        int rc, current;
-
-        if (!profile || !profile->launchable ||
-            strcmp(profile->alias, plan->profile_alias) ||
-            strcmp(profile->artifact_path, plan->artifact_path) ||
-            strcmp(profile->runtime_target, plan->execution->target_id) ||
-            strcmp(profile->backend, plan->deployment->backend) ||
-            strcmp(profile->execution_strategy,
-                   plan->deployment->execution_strategy) ||
-            !profile->runtime_binding[0])
-            continue;
-        yvex_error_clear(&err);
-        rc = yvex_runtime_binding_open(
-            &binding, profile->runtime_binding, &summary, NULL, &failure,
-            &err);
-        current = rc == YVEX_OK &&
-                  !strcmp(summary.artifact_identity,
-                          profile->artifact_identity) &&
-                  summary.family_adapter_id == plan->execution->adapter_id &&
-                  summary.family_adapter_version ==
-                      plan->execution->adapter_version;
-        yvex_runtime_binding_close(binding);
-        if (current) return 1;
-    }
-    return 0;
-}
-
 int yvex_model_prepare_command(int arg_count, char **args)
 {
     model_prepare_options options;
@@ -564,7 +915,7 @@ int yvex_model_prepare_command(int arg_count, char **args)
     yvex_source_payload_verification_result verification;
     yvex_error err;
     unsigned long long model_index = 0u;
-    int binding_published = 0, changed = 0, plan_built = 0, rc;
+    int binding_published = 0, changed = 0, rc;
 
     rc = prepare_options_parse(arg_count, args, &options);
     if (rc) return rc;
@@ -572,23 +923,13 @@ int yvex_model_prepare_command(int arg_count, char **args)
     if (rc) return rc;
     if (yvex_model_library_at(library, model_index)->profile_launchable &&
         !options.quant && !options.imatrix) {
-        yvex_error_clear(&err);
-        rc = prepare_plan_build(
-            &options, library, model_index, &plan, &err);
-        if (rc != YVEX_OK ||
-            prepare_profile_is_current(library, model_index, &plan)) {
-            rc = prepare_already_ready(
-                &options, yvex_model_library_at(library, model_index));
-            yvex_model_library_close(library);
-            return rc;
-        }
-        plan_built = 1;
+        rc = prepare_already_ready(
+            &options, yvex_model_library_at(library, model_index));
+        yvex_model_library_close(library);
+        return rc;
     }
     yvex_error_clear(&err);
-    rc = plan_built
-             ? YVEX_OK
-             : prepare_plan_build(
-                   &options, library, model_index, &plan, &err);
+    rc = prepare_plan_build(&options, library, model_index, &plan, &err);
     if (rc != YVEX_OK) {
         const yvex_model_library_entry *model = yvex_model_library_at(library, model_index);
         const yvex_local_source_record *source =
@@ -614,18 +955,23 @@ int yvex_model_prepare_command(int arg_count, char **args)
         if (!options.json) yvex_cli_out_fputs("\n[verify] authenticating source payload\n", stdout);
         rc = prepare_source_verify(&plan, &verification, &err);
     }
-    if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && !plan.rebind_existing_artifact) {
         if (!options.json) yvex_cli_out_fputs("[plan] compiling physical representation\n", stdout);
         changed |= access(plan.plan_path, F_OK) != 0;
         rc = prepare_quant_plan(&options, &plan, &err);
     }
-    if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && !plan.rebind_existing_artifact) {
         if (!options.json) yvex_cli_out_fputs("[materialize] emitting admitted artifact\n", stdout);
         changed |= access(plan.artifact_path, F_OK) != 0;
         rc = prepare_quant_emit(&options, &plan, &err);
     }
     if (rc == YVEX_OK) {
-        if (!options.json) yvex_cli_out_fputs("[profile] compiling runtime binding\n", stdout);
+        if (!options.json)
+            yvex_cli_out_fputs(
+                plan.rebind_existing_artifact
+                    ? "[rebind] validating immutable artifact and compiling current binding\n"
+                    : "[profile] compiling runtime binding\n",
+                stdout);
         rc = prepare_binding(&plan, &options, &binding_published, &err);
         changed |= binding_published;
     }

@@ -229,7 +229,7 @@ static int test_arch_ir_golden_topology(void)
         "compiled execution and logical architecture identities are available");
     YVEX_TEST_ASSERT_STREQ(
         graph_execution->logical_transform_identity,
-        YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
+        YVEX_DEEPSEEK_CURRENT_LOGICAL_TRANSFORM_IDENTITY,
         "execution binding is bound to the admitted DSpark Transformation IR");
     YVEX_TEST_ASSERT(
         strcmp(logical_identity, graph_execution->logical_transform_identity) != 0,

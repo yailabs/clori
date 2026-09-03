@@ -203,6 +203,7 @@ typedef struct yvex_operator_graph_ir yvex_operator_graph_ir;
 typedef struct yvex_compiled_model_plan yvex_compiled_model_plan;
 
 #define YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 1u
+#define YVEX_COMPONENT_VARIANT_ADAPTER_SCHEMA_V2 2u
 typedef enum {
     YVEX_PHYSICAL_VARIANT_COMPLETE_MODEL = 1,
     YVEX_PHYSICAL_VARIANT_COMPONENT
@@ -248,6 +249,7 @@ typedef struct {
                        yvex_error *err);
     const struct yvex_physical_variant_api *(*physical_variant)(void);
     int (*media_target_profile)(yvex_media_target_profile *, yvex_error *);
+    yvex_media_component_contract_fn component_contract;
     const yvex_media_execution_recipe *media_execution;
 } yvex_component_variant_adapter;
 #define YVEX_QUANT_PRESET_CATALOG_SCHEMA_V1 1u

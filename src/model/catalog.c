@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include <yvex/internal/core.h>
+#include <yvex/internal/deployment_compatibility.h>
 #include <yvex/internal/source_catalog.h>
 #include <yvex/registry.h>
 
@@ -44,6 +45,29 @@ static void local_copy(char *out, size_t capacity, const char *value)
 {
     if (!out || !capacity) return;
     snprintf(out, capacity, "%s", value ? value : "");
+}
+
+static void local_compatibility_blocker(
+    char *out, size_t capacity,
+    const yvex_deployment_compatibility *compatibility,
+    const yvex_error *admission)
+{
+    const char *reason;
+    size_t length;
+
+    if (!out || !capacity || !compatibility) return;
+    local_copy(out, capacity,
+               yvex_deployment_compatibility_status_name(compatibility->status));
+    length = strlen(out);
+    if (length + 2u < capacity) {
+        out[length++] = ':';
+        out[length++] = ' ';
+        out[length] = '\0';
+    }
+    reason = compatibility->reason[0]
+                 ? compatibility->reason
+                 : yvex_error_message(admission);
+    local_copy(out + length, capacity - length, reason);
 }
 
 static int local_source_reserve(yvex_local_catalog *catalog,
@@ -503,12 +527,15 @@ static void local_package_record_add(yvex_local_catalog *catalog,
                               const yvex_model_registry_entry *registered)
 {
     yvex_local_package_record *entry = local_package_add(catalog);
-    yvex_error startup_error;
-    int startup_ready;
+    yvex_deployment_compatibility compatibility = {0};
+    yvex_error admission;
+    int current;
 
     if (!entry) return;
-    yvex_error_clear(&startup_error);
-    startup_ready = yvex_model_registry_startup_validate(registered, &startup_error) == YVEX_OK;
+    yvex_error_clear(&admission);
+    current = yvex_deployment_compatibility_evaluate(
+                  registered, &compatibility, &admission) == YVEX_OK &&
+              compatibility.current;
     local_copy(entry->name, sizeof(entry->name), registered->alias);
     local_copy(entry->family, sizeof(entry->family), registered->family);
     local_copy(entry->path, sizeof(entry->path),
@@ -521,16 +548,17 @@ static void local_package_record_add(yvex_local_catalog *catalog,
         local_copy(entry->representation, sizeof(entry->representation), registered->artifact_class);
     local_copy(entry->backend, sizeof(entry->backend), registered->runtime_backend);
     local_copy(entry->package_state, sizeof(entry->package_state),
-               startup_ready ? "package-ready" : "artifact-registered");
+               current ? "package-ready" : "artifact-registered");
     local_copy(entry->verification_state, sizeof(entry->verification_state),
                registered->sha256 && registered->sha256[0]
                    ? "identity-recorded"
                    : "identity-missing");
-    if (!startup_ready)
-        local_copy(entry->blocker, sizeof(entry->blocker), yvex_error_message(&startup_error));
+    if (!current)
+        local_compatibility_blocker(entry->blocker, sizeof(entry->blocker),
+                                    &compatibility, &admission);
     entry->size_bytes = registered->file_size;
     entry->size_known = registered->file_size != 0u;
-    entry->ready = startup_ready;
+    entry->ready = current;
     local_package_provenance(entry, registered);
 }
 
@@ -818,6 +846,7 @@ static int library_profile_add(library_model *model,
 {
     yvex_model_runtime_profile_fact *profiles, *fact;
     unsigned long long capacity;
+    yvex_deployment_compatibility compatibility = {0};
     yvex_error admission;
 
     if (!library_profile_present(entry)) return YVEX_OK;
@@ -847,14 +876,14 @@ static int library_profile_add(library_model *model,
                entry->runtime_execution_strategy);
     fact->context_capacity = entry->runtime_context;
     yvex_error_clear(&admission);
-    /* Startup readiness belongs to the canonical profile validator.  The legacy
-     * execution_ready bit describes an older artifact capability and is false in
-     * valid v5 launch records that the server host accepts. */
-    fact->launchable =
-        yvex_model_registry_startup_validate(entry, &admission) == YVEX_OK;
+    /* READY is current execution compatibility, not merely readable historical
+     * registry paths. Runtime load repeats this inert preflight before admission. */
+    fact->launchable = yvex_deployment_compatibility_evaluate(
+                           entry, &compatibility, &admission) == YVEX_OK &&
+                       compatibility.current;
     if (!fact->launchable)
-        local_copy(fact->blocker, sizeof(fact->blocker),
-                   yvex_error_message(&admission));
+        local_compatibility_blocker(fact->blocker, sizeof(fact->blocker),
+                                    &compatibility, &admission);
     model->summary.profile_count = model->profile_count;
     if (fact->launchable) {
         model->summary.launchable_profile_count++;

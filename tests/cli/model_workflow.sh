@@ -430,8 +430,8 @@ assert item["artifact"].startswith(sys.argv[2] + "/gguf/deepseek/")
 assert not os.path.exists(item["artifact"])
 PY
 
-# Runtime porcelain never requires a profile alias.  Non-TTY ambiguity is
-# explicit and advanced exact-profile loading remains a separate operation.
+# Historical variants remain inspectable, but arbitrary files named as runtime
+# bindings cannot create launchable porcelain candidates.
 printf 'runtime binding fixture\n' >"$ROOT/runtime.binding"
 for qtype in F16 F32; do
     lower=$(printf '%s' "$qtype" | tr '[:upper:]' '[:lower:]')
@@ -462,66 +462,63 @@ matches = [item for item in models if item["selector"] == "workflow-demo"]
 assert len(matches) == 1
 assert len(matches[0]["representations"]) == 2
 assert len(matches[0]["profiles"]) == 3
-assert matches[0]["state"] == "READY"
-assert matches[0]["format"] == "gguf"
-assert matches[0]["quant_precision"] == "FP32"
+assert matches[0]["state"] == "BLOCKED"
+assert matches[0]["format"] == "multiple"
+assert matches[0]["quant_precision"] == "select variant"
+assert matches[0]["selected_profile"] is None
+assert all(not profile["launchable"] for profile in matches[0]["profiles"])
 assert matches[0]["representation_count"] == 2
 PY
 "$YVEX_BIN" model list --all --models-root "$MODELS_ROOT" --registry "$REGISTRY" \
     >"$ROOT/models-all.out"
 test "$(grep -c '^workflow-demo' "$ROOT/models-all.out")" -eq 1
-test "$(grep -Ec '(selected|alternate).*gguf' "$ROOT/models-all.out")" -eq 2
+test "$(grep -Ec 'alternate.*gguf' "$ROOT/models-all.out")" -eq 2
+test "$(grep -Ec 'BLOCKED +not current' "$ROOT/models-all.out")" -eq 2
 "$YVEX_BIN" model show workflow-demo --models-root "$MODELS_ROOT" \
     --registry "$REGISTRY" >"$ROOT/workflow-show.out"
-contains "$ROOT/workflow-show.out" 'f16@'
-contains "$ROOT/workflow-show.out" 'f32@'
-contains "$ROOT/workflow-show.out" 'DEPLOYS'
-contains "$ROOT/workflow-show.out" 'selected'
-contains "$ROOT/workflow-show.out" 'alternate'
-test "$(grep -Ec '^(selected|alternate) +f32@' "$ROOT/workflow-show.out")" -eq 1
-! grep -F 'deepseek4-workflow-demo-selected-f32 ·' \
-    "$ROOT/workflow-show.out" >/dev/null
+contains "$ROOT/workflow-show.out" 'State           BLOCKED'
+contains "$ROOT/workflow-show.out" 'Execution       not current'
+contains "$ROOT/workflow-show.out" 'FP16'
+contains "$ROOT/workflow-show.out" 'FP32'
+contains "$ROOT/workflow-show.out" 'not launchable; run `yvex model prepare MODEL`'
+! grep -F 'DEPLOYS' "$ROOT/workflow-show.out" >/dev/null
 
-"$YVEX_BIN" model prepare workflow-demo --models-root "$MODELS_ROOT" \
-    --registry "$REGISTRY" >"$ROOT/prepare-ready.out"
-contains "$ROOT/prepare-ready.out" 'READY'
-contains "$ROOT/prepare-ready.out" 'Action     none'
-"$YVEX_BIN" model prepare workflow-demo --models-root "$MODELS_ROOT" \
-    --registry "$REGISTRY" --json >"$ROOT/prepare-ready.json"
-python3 - "$ROOT/prepare-ready.json" <<'PY'
+expect_rc 3 "$YVEX_BIN" model prepare workflow-demo --models-root "$MODELS_ROOT" \
+    --registry "$REGISTRY" >"$ROOT/prepare-blocked-history.out" \
+    2>"$ROOT/prepare-blocked-history.err"
+contains "$ROOT/prepare-blocked-history.err" \
+    'model has no exact acquired source-to-ready compiler binding'
+expect_rc 3 "$YVEX_BIN" model prepare workflow-demo --models-root "$MODELS_ROOT" \
+    --registry "$REGISTRY" --json >"$ROOT/prepare-blocked-history.json"
+python3 - "$ROOT/prepare-blocked-history.json" <<'PY'
 import json, sys
 item = json.load(open(sys.argv[1], encoding="utf-8"))
-assert item == {"schema": "yvex.model.prepare.v1", "model": "workflow-demo",
-                "state": "READY", "changed": False}
+assert item["schema"] == "yvex.model.prepare.v1"
+assert item["model"] == "workflow-demo"
+assert item["state"] == "BLOCKED" and not item["changed"]
+assert item["blocker"] == \
+    "model has no exact acquired source-to-ready compiler binding"
 PY
 expect_rc 1 "$YVEX_BIN" model load workflow-demo \
     >"$ROOT/load-selected.out" 2>"$ROOT/load-selected.err"
-contains "$ROOT/load-selected.err" 'start one with:'
-! grep -F 'multiple launchable variants' "$ROOT/load-selected.err" >/dev/null
-expect_rc 2 "$YVEX_BIN" model load workflow-demo \
+contains "$ROOT/load-selected.err" 'model is not launchable: workflow-demo'
+expect_rc 1 "$YVEX_BIN" model load workflow-demo \
     --variant deepseek4-workflow-demo-selected-f32-current \
     >"$ROOT/load-profile-alias.out" 2>"$ROOT/load-profile-alias.err"
-contains "$ROOT/load-profile-alias.err" 'variant is unknown or ambiguous'
+contains "$ROOT/load-profile-alias.err" 'model is not launchable: workflow-demo'
 set +e
 printf '1\nq\n' | NO_COLOR=1 TERM=xterm-256color script -q -e -c \
     "$YVEX_BIN model load" \
     "$ROOT/load-variant-selector.typescript" >/dev/null 2>&1
 selector_status=$?
 set -e
-test "$selector_status" -eq 2
-contains "$ROOT/load-variant-selector.typescript" 'Select representation and deployment'
-contains "$ROOT/load-variant-selector.typescript" 'QUANT/PRECISION'
-contains "$ROOT/load-variant-selector.typescript" 'workflow-demo'
-contains "$ROOT/load-variant-selector.typescript" 'f16@'
-contains "$ROOT/load-variant-selector.typescript" 'f32@'
-contains "$ROOT/load-variant-selector.typescript" 'selected'
-contains "$ROOT/load-variant-selector.typescript" 'alternate'
-! grep -E '^3  ' "$ROOT/load-variant-selector.typescript" >/dev/null
-! grep -F 'deepseek4-workflow-demo-selected-f32-current' \
+test "$selector_status" -eq 1
+contains "$ROOT/load-variant-selector.typescript" \
+    'no launchable models are known locally'
+! grep -F 'Select representation and deployment' \
     "$ROOT/load-variant-selector.typescript" >/dev/null
 expect_rc 1 "$YVEX_BIN" model load workflow-demo --variant f16 \
     >"$ROOT/load-no-host.out" 2>"$ROOT/load-no-host.err"
-contains "$ROOT/load-no-host.err" 'start one with:'
-contains "$ROOT/load-no-host.err" 'yvex serve'
+contains "$ROOT/load-no-host.err" 'model is not launchable: workflow-demo'
 
 printf 'model workflow porcelain: ok\n'

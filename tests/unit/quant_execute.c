@@ -1081,11 +1081,19 @@ static int quant_test_executor_success(void)
 
 static int quant_test_variant_file(void)
 {
+    static const char creation_profile[] =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    static const char creation_transform[] =
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     quant_execute_fixture fixture;
+    yvex_quant_plan_file_summary file_summary, creation_summary;
+    const yvex_quant_plan_summary *plan_summary;
     char path[640];
     char link_path[640];
+    char line[512];
     FILE *file;
-    int byte;
+    long line_offset;
+    int byte, probe_rc, rewritten = 0;
     yvex_error err;
 
     yvex_error_clear(&err);
@@ -1097,13 +1105,85 @@ static int quant_test_variant_file(void)
                          yvex_quant_plan_file_validate(path, fixture.plan, &err) == YVEX_OK &&
                          yvex_quant_plan_file_write(path, fixture.plan, &err) != YVEX_OK,
                      "canonical physical plan must publish once and revalidate exactly");
+    plan_summary = yvex_quant_plan_summary_get(fixture.plan);
+    YVEX_TEST_ASSERT(plan_summary,
+                     "physical-plan fixture exposes its sealed summary");
+    probe_rc = yvex_quant_plan_file_probe(path, &file_summary, &err);
+    if (probe_rc != YVEX_OK)
+        (void)fprintf(stderr, "physical-plan probe detail: %s\n", err.message);
+    YVEX_TEST_ASSERT(probe_rc == YVEX_OK,
+                     "physical-plan probe accepts canonical bytes");
+    YVEX_TEST_ASSERT(file_summary.complete &&
+                         file_summary.decision_count == plan_summary->decision_count,
+                     "physical-plan probe accounts for all decisions");
+    YVEX_TEST_ASSERT(!strcmp(file_summary.profile_identity,
+                             plan_summary->profile_identity) &&
+                         !strcmp(file_summary.transform_identity,
+                                 plan_summary->transform_identity) &&
+                         !strcmp(file_summary.required_payload_identity,
+                                 plan_summary->required_payload_identity),
+                     "physical-plan probe exposes bounded canonical identity facts");
+    file = fopen(path, "r+b");
+    while (file && (line_offset = ftell(file)) >= 0L &&
+           fgets(line, sizeof(line), file)) {
+        const char *identity = NULL;
+        size_t prefix = 0u;
+        if (!strncmp(line, "profile_identity=", sizeof("profile_identity=") - 1u) ||
+            !strncmp(line, "physical_variant_identity=",
+                     sizeof("physical_variant_identity=") - 1u)) {
+            identity = creation_profile;
+            prefix = line[0] == 'p' && line[1] == 'r'
+                         ? sizeof("profile_identity=") - 1u
+                         : sizeof("physical_variant_identity=") - 1u;
+        } else if (!strncmp(line, "transform_identity=",
+                            sizeof("transform_identity=") - 1u)) {
+            identity = creation_transform;
+            prefix = sizeof("transform_identity=") - 1u;
+        }
+        if (identity) {
+            YVEX_TEST_ASSERT(fseek(file, line_offset + (long)prefix, SEEK_SET) == 0 &&
+                                 fwrite(identity, 1u, sizeof(creation_profile) - 1u,
+                                        file) == sizeof(creation_profile) - 1u,
+                             "creation identity header mutation must remain bounded");
+            rewritten++;
+            YVEX_TEST_ASSERT(fseek(file, line_offset + (long)strlen(line), SEEK_SET) == 0,
+                             "creation identity rewrite must resume at the next header");
+        }
+    }
+    YVEX_TEST_ASSERT(file && rewritten == 3 && fclose(file) == 0 &&
+                         yvex_quant_plan_file_validate(path, fixture.plan, &err) != YVEX_OK &&
+                         yvex_quant_plan_file_validate_physical_equivalence(
+                             path, fixture.plan, &creation_summary, &err) == YVEX_OK &&
+                         !strcmp(creation_summary.profile_identity, creation_profile) &&
+                         !strcmp(creation_summary.transform_identity, creation_transform),
+                     "binding recovery admits distinct authenticated creation identities only "
+                     "when current physical decisions remain exact");
     YVEX_TEST_ASSERT(symlink("physical.plan", link_path) == 0 &&
-                         yvex_quant_plan_file_validate(link_path, fixture.plan, &err) != YVEX_OK,
+                         yvex_quant_plan_file_validate_physical_equivalence(
+                             link_path, fixture.plan, &creation_summary, &err) != YVEX_OK,
                      "physical plan symlink admission must refuse");
+    file = fopen(path, "r+b");
+    while (file && (line_offset = ftell(file)) >= 0L &&
+           fgets(line, sizeof(line), file))
+        if (!strncmp(line, "decision=", sizeof("decision=") - 1u)) {
+            size_t count = strlen(line);
+            YVEX_TEST_ASSERT(count > 2u &&
+                                 fseek(file, line_offset + (long)count - 2L, SEEK_SET) == 0 &&
+                                 (byte = fgetc(file)) != EOF &&
+                                 fseek(file, -1L, SEEK_CUR) == 0 &&
+                                 fputc(byte == 'x' ? 'y' : 'x', file) != EOF,
+                             "one physical decision mutation must remain structurally bounded");
+            break;
+        }
+    YVEX_TEST_ASSERT(file && fclose(file) == 0 &&
+                         yvex_quant_plan_file_validate_physical_equivalence(
+                             path, fixture.plan, &creation_summary, &err) != YVEX_OK,
+                     "one changed physical decision refuses binding recovery");
     file = fopen(path, "r+b");
     YVEX_TEST_ASSERT(file && (byte = fgetc(file)) != EOF && fseek(file, 0L, SEEK_SET) == 0 &&
                          fputc(byte ^ 1, file) != EOF && fclose(file) == 0 &&
-                         yvex_quant_plan_file_validate(path, fixture.plan, &err) != YVEX_OK,
+                         yvex_quant_plan_file_validate(path, fixture.plan, &err) != YVEX_OK &&
+                         yvex_quant_plan_file_probe(path, &file_summary, &err) != YVEX_OK,
                      "one external physical-plan mutation must refuse admission");
     (void)unlink(link_path);
     (void)unlink(path);

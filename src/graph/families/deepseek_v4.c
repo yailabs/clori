@@ -276,19 +276,20 @@ static int deepseek_tokenizer_policy(yvex_tokenizer_family_policy *out, yvex_err
 }
 static const yvex_family_compiler_adapter deepseek_compiler;
 static const yvex_model_deployment_defaults deepseek_deployment_defaults = {
-    .schema_version = YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_V1,
+    .schema_version = YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_CURRENT,
     .logical_family = "deepseek4",
     .logical_model = "v4-flash-dspark",
     .quant_preset = YVEX_DEEPSEEK_QUANT_RELEASE_PROFILE_NAME,
     .backend = "cuda",
     .engine_kind = "text",
-    .execution_strategy = "speculative"};
+    .execution_strategy = "speculative",
+    .rebind_artifact_identity = YVEX_DEEPSEEK_REBIND_ARTIFACT_IDENTITY};
 static const yvex_graph_execution_binding deepseek_execution = {
     .schema_version = YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1,
     .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
     .adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
     .target_id = "deepseek4-v4-flash-dspark", .family_name = "deepseek-v4-flash-dspark",
-    .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
+    .logical_transform_identity = YVEX_DEEPSEEK_CURRENT_LOGICAL_TRANSFORM_IDENTITY,
     .operator_family_key = "deepseek",
     .operator_artifact_filename = YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME,
     .source_manifest_filename = YVEX_SOURCE_RELEASE_MANIFEST_LEAF,
@@ -336,7 +337,7 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
     .adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
     .target_id = "deepseek4-v4-flash-dspark",
     .family = "deepseek-v4",
-    .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
+    .logical_transform_identity = YVEX_DEEPSEEK_CURRENT_LOGICAL_TRANSFORM_IDENTITY,
     .graph = deepseek_graph_compile,
     .operator_graph_build = yvex_operator_graph_ir_build_transformer,
     .execution_capabilities = deepseek_execution_capabilities,
@@ -1610,7 +1611,6 @@ const yvex_family_descriptor yvex_graph_family_descriptor_deepseek_v4 = {
     .tokenizer_architecture = "deepseek-v3", .tokenizer_pre = "deepseek-v3",
     .execution = deepseek_execution_binding,
     .quant_presets = deepseek_quant_presets};
-
 typedef struct {
     unsigned long long payload_bytes, file_bytes;
     const char *transform, *profile, *name, *quant, *payload_plan;
@@ -1619,7 +1619,7 @@ typedef struct {
 
 static const deepseek_artifact_variant deepseek_artifact_catalog[] = {
     {108274154488ull, YVEX_SELECTED_DEEPSEEK_FILE_BYTES,
-     YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
+     YVEX_DEEPSEEK_LEGACY_ARTIFACT_TRANSFORM_IDENTITY,
      "a48d43c8594999a1af3a5b1f572b34a5823042cb767832d558642bb804b036c5",
      "deepseek-v4-flash-dspark-bootstrap-q2-v1",
      "777559149e4e8421c34299da78f63f6b0d296a91005d7670196164c3c72b62af",
@@ -1627,7 +1627,7 @@ static const deepseek_artifact_variant deepseek_artifact_catalog[] = {
      "6dce1edb82810715687d40c6d62273e992cfe9e0aa610cb9598447e06fb7099f",
      "1ba1ceaa709862145b1a145e938cf03327cd58da27bca42ade2f884e2b2fc635",
      "bf80bd7372e9ff754cd61d8f6e849ca8eff2177fad40840a2dad8e840b35690a"},
-    {98006498296ull, 98018204640ull, YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
+    {98006498296ull, 98018204640ull, YVEX_DEEPSEEK_LEGACY_ARTIFACT_TRANSFORM_IDENTITY,
      "6a99e9f7c374e3f718cce705002bf2b799db9cc1b86f65091631857f52c1c587",
      "deepseek-v4-flash-dspark-native-drafter-candidate",
      "35002244d5854a2d51b877ea31614cd985c9795d11c7e0904ed3475fec7fcb77",
@@ -1636,7 +1636,7 @@ static const deepseek_artifact_variant deepseek_artifact_catalog[] = {
      "2d4694925c02c04811ea846f389a94dbf524d26809a292c93f2c46ca8f05a025",
      "59c4649b19bb9f3eb7c01559e12ae52c3d4fbd067957e35de0a1a851759c7cc1"},
     {95038503928ull, 95050210304ull,
-     "f1fca7b4ec04d1b0de2a0f0707b3f78c5600e9a6486a83c6fc9f3a4bd70f88e8",
+     YVEX_DEEPSEEK_CURRENT_LOGICAL_TRANSFORM_IDENTITY,
      "b9825a070028a66af28cdb25614f7a86c6ad1ec396eed6ae961039db1507ce0e",
      "deepseek-v4-flash-dspark-compact-selective-mxfp4-candidate",
      "ca591438ac7296fa9b3d1ad74415508d57d92835ab783d01b7da9bfec561e8d7",

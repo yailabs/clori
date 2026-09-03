@@ -782,19 +782,53 @@ static int engine_list_send(yvex_server *server, int fd,
     return yvex_server_protocol_send(fd, &complete, err);
 }
 
+static unsigned long long engine_alias_generation(
+    const yvex_server_engine_summary *engines, unsigned long long count,
+    const char *alias)
+{
+    unsigned long long index;
+    for (index = 0ull; index < count; ++index)
+        if (!strcmp(engines[index].alias, alias)) return engines[index].generation;
+    return 0ull;
+}
+
 static int engine_load_control(yvex_server *server, int fd,
                                const yvex_client_request *request,
                                yvex_error *err)
 {
     yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
-    unsigned long long count = 0ull, index;
+    unsigned long long count = 0ull, index, previous_generation = 0ull;
     int rc;
     if (!request->model_alias[0] || !server->options.model_loader)
         return server_refuse(err, YVEX_ERR_UNSUPPORTED,
                              "host has no registry-backed model loader");
+    if (yvex_server_engine_snapshot(
+            server, engines, YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES,
+            &count, NULL) == YVEX_OK)
+        previous_generation = engine_alias_generation(
+            engines, count, request->model_alias);
     rc = server->options.model_loader(
         server->options.model_loader_context, server,
         request->model_alias, err);
+    if (rc != YVEX_OK) {
+        yvex_error ignored;
+        unsigned long long current_generation = 0ull;
+        count = 0ull;
+        if (yvex_server_engine_snapshot(
+                server, engines, YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES,
+                &count, NULL) == YVEX_OK)
+            current_generation = engine_alias_generation(
+                engines, count, request->model_alias);
+        if (!current_generation || current_generation == previous_generation) {
+            yvex_error_clear(&ignored);
+            (void)yvex_server_telemetry_emit(
+                server->telemetry, NULL, YVEX_SERVER_EVENT_ENGINE_LOAD_FAILED,
+                YVEX_SERVER_SEVERITY_ERROR, NULL, NULL, NULL,
+                request->model_alias, 0ull, (unsigned long long)rc, 0ull,
+                0.0, 0.0, &ignored);
+        }
+        return rc;
+    }
     if (rc == YVEX_OK)
         rc = yvex_server_engine_snapshot(
             server, engines, YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES, &count, err);

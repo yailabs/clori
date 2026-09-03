@@ -177,6 +177,12 @@ int yvex_runtime_binding_compile_publish(
 int yvex_runtime_binding_open(yvex_runtime_binding **out, const char *path,
     yvex_runtime_binding_summary *summary, yvex_complete_artifact_admission *admission,
     yvex_runtime_binding_failure *failure, yvex_error *err);
+int yvex_runtime_binding_open_compatible(
+    yvex_runtime_binding **out, const char *path,
+    unsigned long long family_adapter_id, unsigned long long family_adapter_version,
+    const char *logical_transform_identity, yvex_runtime_binding_summary *summary,
+    yvex_complete_artifact_admission *admission,
+    yvex_runtime_binding_failure *failure, yvex_error *err);
 void yvex_runtime_binding_close(yvex_runtime_binding *binding);
 int yvex_runtime_binding_import_materialization(
     const yvex_runtime_binding *binding, const yvex_artifact *artifact,
@@ -238,6 +244,8 @@ typedef struct yvex_model_engine_failure {
 struct yvex_runtime_generation_options;
 typedef struct {
     const char *artifact_path, *runtime_binding_path, *target_id, *artifact_reopen_cache_root;
+    const char *expected_logical_transform_identity;
+    unsigned long long expected_family_adapter_id, expected_family_adapter_version;
     const struct yvex_runtime_generation_options *startup_generation;
     yvex_backend_kind residency_backend;
     unsigned long long maximum_host_bytes, maximum_device_bytes;

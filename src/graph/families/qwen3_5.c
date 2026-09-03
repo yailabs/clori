@@ -841,8 +841,7 @@ static int qwen_artifact_admit(
         .mapping_identity = 0x8098da2e9ca3cb80ull,
         .payload_identity =
             "e7ebb46fc5c820ff11c02ed47f42ca930da67067b4addaa0e0ff8056ed38fa9e",
-        .transform_identity =
-            "696effbc4ff0ef46962ca566cf00502c14ec2dd502c0650db725b76bd51111ce",
+        .transform_identity = YVEX_QWEN3_5_LOGICAL_TRANSFORM_IDENTITY,
         .profile_identity =
             "a699007af97b96ad6fe85969d9825bc2036b58f3e621bcf2be5187215918b902",
         .profile_name = QWEN_SOURCE_FAITHFUL_PRESET,
@@ -1039,6 +1038,7 @@ static const yvex_family_compiler_adapter qwen_compiler = {
     .adapter_version = YVEX_QWEN3_5_ADAPTER_VERSION,
     .target_id = YVEX_QWEN3_8_27B_TARGET_ID,
     .family = YVEX_QWEN3_5_FAMILY_KEY,
+    .logical_transform_identity = YVEX_QWEN3_5_LOGICAL_TRANSFORM_IDENTITY,
     .graph = qwen_graph_compile,
     .operator_graph_build = yvex_operator_graph_ir_build_decoder,
     .execution_capabilities = qwen_execution_capabilities,
@@ -1051,7 +1051,7 @@ static const yvex_family_compiler_adapter qwen_compiler = {
     .binding_compile = yvex_family_binding_compile};
 
 static const yvex_model_deployment_defaults qwen_deployment_defaults = {
-    .schema_version = YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_V1,
+    .schema_version = YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_CURRENT,
     .logical_family = YVEX_QWEN3_5_FAMILY_KEY,
     .logical_model = YVEX_QWEN3_8_27B_TARGET_ID,
     .quant_preset = QWEN_SOURCE_FAITHFUL_PRESET,
@@ -1067,6 +1067,7 @@ static const yvex_graph_execution_binding *qwen_execution_binding(void)
         .adapter_version = YVEX_QWEN3_5_ADAPTER_VERSION,
         .target_id = YVEX_QWEN3_8_27B_TARGET_ID,
         .family_name = YVEX_QWEN3_5_FAMILY_KEY,
+        .logical_transform_identity = YVEX_QWEN3_5_LOGICAL_TRANSFORM_IDENTITY,
         .operator_family_key = "qwen",
         .operator_artifact_filename = "qwen3.8-27b-source-faithful.gguf",
         .source_manifest_filename = "qwen3.8-27b.source-manifest.json",

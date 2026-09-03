@@ -20,6 +20,7 @@ typedef struct yvex_complete_artifact_admission yvex_complete_artifact_admission
 typedef struct yvex_artifact_admission_failure yvex_artifact_admission_failure;
 typedef struct yvex_artifact_admission_options yvex_artifact_admission_options;
 typedef struct yvex_artifact_admission_evidence yvex_artifact_admission_evidence;
+typedef struct yvex_artifact_catalog_contract yvex_artifact_catalog_contract;
 typedef struct yvex_runtime_av_plan yvex_runtime_av_plan;
 typedef struct yvex_runtime_av_layout_output yvex_runtime_av_layout_output;
 typedef struct yvex_runtime_av_layout_result yvex_runtime_av_layout_result;
@@ -162,6 +163,8 @@ typedef int (*yvex_media_component_admit_fn)(
     const char *, const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
     const yvex_artifact_admission_options *, yvex_complete_artifact_admission *,
     yvex_artifact_admission_evidence *, yvex_artifact_admission_failure *, yvex_error *);
+typedef const yvex_artifact_catalog_contract *
+(*yvex_media_component_contract_fn)(const char *);
 typedef int (*yvex_media_condition_fn)(
     const yvex_media_conditioning_request *, yvex_runtime_av_conditioning_result *, yvex_error *);
 typedef int (*yvex_media_keyframe_fn)(

@@ -171,6 +171,17 @@ static writer_metadata *writer_metadata_new(writer_metadata *entries, unsigned i
     return entry;
 }
 
+static const writer_metadata *writer_metadata_find(
+    const writer_metadata *entries, unsigned int count, const char *key)
+{
+    unsigned int index;
+
+    if (!entries || !key) return NULL;
+    for (index = 0u; index < count; ++index)
+        if (strcmp(entries[index].key, key) == 0) return &entries[index];
+    return NULL;
+}
+
 static int writer_meta_string(writer_metadata *entries, unsigned int *count, const char *key,
                               const unsigned char *bytes, size_t byte_count) {
     writer_metadata *entry = writer_metadata_new(entries, count, key);
@@ -209,6 +220,43 @@ static int writer_meta_bool(writer_metadata *entries, unsigned int *count, const
     entry->type = YVEX_GGUF_VALUE_BOOL;
     entry->boolean = value != 0;
     return 1;
+}
+
+/* A family lowering may carry legacy scalar tokenizer metadata as part of its
+ * authenticated mapping identity.  The tokenizer owner may adopt that row
+ * only when type and value are exact; conflicting duplicate authority still
+ * fails closed. */
+static int writer_meta_text_reconcile(writer_metadata *entries, unsigned int *count,
+                                      const char *key, const char *text)
+{
+    const writer_metadata *entry = writer_metadata_find(entries, count ? *count : 0u, key);
+
+    if (!entry) return writer_meta_text(entries, count, key, text);
+    return text && entry->type == YVEX_GGUF_VALUE_STRING &&
+           entry->source == WRITER_META_SCALAR &&
+           entry->string_length == strlen(text) &&
+           memcmp(entry->string_bytes, text, entry->string_length) == 0;
+}
+
+static int writer_meta_u32_reconcile(writer_metadata *entries, unsigned int *count,
+                                     const char *key, unsigned long long value)
+{
+    const writer_metadata *entry = writer_metadata_find(entries, count ? *count : 0u, key);
+
+    if (!entry) return writer_meta_u32(entries, count, key, value);
+    return value <= UINT_MAX && entry->type == YVEX_GGUF_VALUE_UINT32 &&
+           entry->source == WRITER_META_SCALAR && entry->u64 == value;
+}
+
+static int writer_meta_bool_reconcile(writer_metadata *entries, unsigned int *count,
+                                      const char *key, int value)
+{
+    const writer_metadata *entry = writer_metadata_find(entries, count ? *count : 0u, key);
+
+    if (!entry) return writer_meta_bool(entries, count, key, value);
+    return entry->type == YVEX_GGUF_VALUE_BOOL &&
+           entry->source == WRITER_META_SCALAR &&
+           entry->boolean == (value != 0);
 }
 
 static int writer_meta_map(writer_metadata *entries, unsigned int *count,
@@ -280,8 +328,9 @@ static int writer_tokenizer_metadata_add(
     size_t raw_json_bytes, const unsigned char *raw_config, size_t raw_config_bytes,
     const char *prompt_policy, int standalone)
 {
-    int ok = writer_meta_text(metadata, count, "tokenizer.ggml.model", "gpt2") &&
-        writer_meta_text(metadata, count, "tokenizer.ggml.pre", tokenizer->pre_tokenizer) &&
+    int ok = writer_meta_text_reconcile(metadata, count, "tokenizer.ggml.model", "gpt2") &&
+        writer_meta_text_reconcile(metadata, count, "tokenizer.ggml.pre",
+                                   tokenizer->pre_tokenizer) &&
         writer_meta_dynamic_array(metadata, count, "tokenizer.ggml.tokens",
                                   WRITER_META_TOKEN_ARRAY, YVEX_GGUF_VALUE_STRING,
                                   tokenizer->token_count) &&
@@ -292,18 +341,18 @@ static int writer_tokenizer_metadata_add(
                                   WRITER_META_MERGE_ARRAY, YVEX_GGUF_VALUE_STRING,
                                   tokenizer->merge_count);
     if (ok && tokenizer->bos_token_present)
-        ok = writer_meta_u32(metadata, count, "tokenizer.ggml.bos_token_id",
-                             tokenizer->bos_token_id);
+        ok = writer_meta_u32_reconcile(metadata, count, "tokenizer.ggml.bos_token_id",
+                                       tokenizer->bos_token_id);
     if (ok && tokenizer->eos_token_present)
-        ok = writer_meta_u32(metadata, count, "tokenizer.ggml.eos_token_id",
-                             tokenizer->eos_token_id);
+        ok = writer_meta_u32_reconcile(metadata, count, "tokenizer.ggml.eos_token_id",
+                                       tokenizer->eos_token_id);
     if (ok && tokenizer->pad_token_present)
-        ok = writer_meta_u32(metadata, count, "tokenizer.ggml.padding_token_id",
-                             tokenizer->pad_token_id);
-    return ok && writer_meta_bool(metadata, count, "tokenizer.ggml.add_bos_token",
-                                  tokenizer->add_bos_token) &&
-           writer_meta_bool(metadata, count, "tokenizer.ggml.add_eos_token",
-                            tokenizer->add_eos_token) &&
+        ok = writer_meta_u32_reconcile(metadata, count, "tokenizer.ggml.padding_token_id",
+                                       tokenizer->pad_token_id);
+    return ok && writer_meta_bool_reconcile(metadata, count, "tokenizer.ggml.add_bos_token",
+                                            tokenizer->add_bos_token) &&
+           writer_meta_bool_reconcile(metadata, count, "tokenizer.ggml.add_eos_token",
+                                      tokenizer->add_eos_token) &&
            (!standalone || writer_meta_text(metadata, count, "yvex.tokenizer.prompt_policy",
                                              prompt_policy)) &&
            writer_meta_string(metadata, count, "tokenizer.huggingface.json", raw_json,
