@@ -1001,17 +1001,25 @@ void yvex_server_media_registry_cancel_all(server_media_registry *registry)
     (void)pthread_mutex_unlock(&registry->mutex);
 }
 
-int yvex_server_media_registry_count(server_media_registry *registry,
-                                     unsigned long long *count, yvex_error *err)
+int yvex_server_media_registry_occupancy(
+    server_media_registry *registry, unsigned long long *count,
+    unsigned long long *attached, yvex_error *err)
 {
-    unsigned long long index, total = 0ull;
-    if (!registry || !count || pthread_mutex_lock(&registry->mutex) != 0)
-        return media_refuse(err, YVEX_ERR_INVALID_ARG, "media session count is required");
-    for (index = 0ull; index < MEDIA_SESSION_CAP; ++index)
+    unsigned long long index, clients = 0u, sessions = 0u;
+    if (!registry || !count || !attached ||
+        pthread_mutex_lock(&registry->mutex) != 0) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.media.occupancy",
+                       "registry and occupancy outputs are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    for (index = 0u; index < MEDIA_SESSION_CAP; ++index) {
+        clients += registry->sessions[index].attached_clients;
         if (registry->sessions[index].name[0] &&
             registry->sessions[index].state != YVEX_SERVER_SESSION_CLOSED)
-            total++;
-    *count = total;
+            sessions++;
+    }
+    *count = sessions;
+    *attached = clients;
     (void)pthread_mutex_unlock(&registry->mutex);
     yvex_error_clear(err);
     return YVEX_OK;

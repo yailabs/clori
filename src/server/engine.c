@@ -13,10 +13,11 @@
 
 #define ENGINE_INTERACTIVE_PREFILL_CHUNK 64u
 #define ENGINE_BATCHED_PREFILL_FLOOR 4u
+#define ENGINE_MODEL_LEASE_CAPACITY 256u
 
 typedef struct {
     yvex_server_engine_state state;
-    unsigned long long generation, active_work;
+    unsigned long long generation, active_work, model_lease_count;
     yvex_server_engine_options options;
     char alias[YVEX_SERVER_MODEL_ALIAS_CAP];
     char artifact_path[YVEX_PATH_CAP];
@@ -38,6 +39,12 @@ typedef struct {
 } server_engine;
 
 typedef struct {
+    char identity[YVEX_SERVER_ID_CAP];
+    server_engine *engine;
+    unsigned long long generation;
+} server_model_lease;
+
+typedef struct {
     server_engine_manager *manager;
     server_engine *engine;
     yvex_runtime_lifecycle_phase phase;
@@ -49,7 +56,9 @@ struct server_engine_manager {
     pthread_mutex_t mutex;
     pthread_cond_t condition;
     server_engine *engines;
+    server_model_lease *model_leases;
     unsigned long long capacity, next_generation;
+    unsigned long long model_lease_capacity, next_model_lease;
     unsigned long long request_capacity, request_workers;
     server_request_queue_execute request_execute;
     void *request_context;
@@ -79,6 +88,16 @@ static int alias_valid(const char *alias)
             return 0;
     }
     return 1;
+}
+
+static void engine_capability_default(
+    yvex_server_engine_kind kind, yvex_model_capability_summary *capability)
+{
+    yvex_model_capability_profile profile =
+        kind == YVEX_SERVER_ENGINE_TEXT
+            ? YVEX_MODEL_CAPABILITY_PROFILE_TEXT_GENERATION
+            : YVEX_MODEL_CAPABILITY_PROFILE_CONDITIONED_AUDIOVISUAL_GENERATION;
+    (void)yvex_model_capability_profile_describe(profile, capability, NULL);
 }
 
 static void options_rebind(server_engine *engine)
@@ -249,6 +268,12 @@ static int options_admit(server_engine *engine,
                              "engine package path exceeds its bound");
     memset(engine, 0, sizeof(*engine));
     engine->options = *options;
+    if (!engine->options.capabilities.schema_version)
+        engine_capability_default(engine->options.engine_kind,
+                                  &engine->options.capabilities);
+    if (yvex_model_capability_validate(&engine->options.capabilities, err) !=
+        YVEX_OK)
+        return yvex_error_code(err);
     if (text && !engine->options.prefill_chunk_tokens)
         engine->options.prefill_chunk_tokens = adaptive_prefill_chunk(
             engine->options.context_capacity,
@@ -576,6 +601,7 @@ int yvex_server_engine_summary_valid(const yvex_server_engine_summary *engine)
         (engine->continuous_batching_ready != 0 &&
          engine->continuous_batching_ready != 1) ||
         !yvex_server_execution_capacity_valid(&engine->capacity) ||
+        yvex_model_capability_validate(&engine->capabilities, NULL) != YVEX_OK ||
         !yvex_server_execution_resource_valid(&engine->resources) ||
         engine->continuous_batching_ready !=
             engine->capacity.continuous_batching_ready ||
@@ -600,6 +626,7 @@ static void summary_base(server_engine *engine)
     engine->summary.execution_strategy = engine->options.execution_strategy;
     engine->summary.generation = engine->generation;
     engine->summary.active_work = engine->active_work;
+    engine->summary.model_lease_count = engine->model_lease_count;
     engine->summary.context_capacity = engine->options.context_capacity;
     engine->summary.prefill_chunk_tokens = engine->options.prefill_chunk_tokens;
     engine->summary.maximum_new_tokens = engine->options.maximum_new_tokens;
@@ -608,6 +635,7 @@ static void summary_base(server_engine *engine)
     engine->summary.concurrent_sequences = engine->options.concurrent_sequences;
     engine->summary.execution_ready = engine->state == YVEX_SERVER_ENGINE_LOADED;
     engine->summary.continuous_batching_ready = 0;
+    engine->summary.capabilities = engine->options.capabilities;
     memset(capacity, 0, sizeof(*capacity));
     capacity->schema_version = YVEX_EXECUTION_CAPACITY_SCHEMA_V1;
     capacity->session_capacity = engine->options.maximum_sessions;
@@ -850,9 +878,13 @@ int yvex_server_engine_manager_open(
         return engine_refuse(err, YVEX_ERR_INVALID_ARG,
                              "bounded engine manager inputs are required");
     manager = calloc(1u, sizeof(*manager));
-    if (manager)
+    if (manager) {
         manager->engines = calloc((size_t)capacity, sizeof(*manager->engines));
-    if (!manager || !manager->engines) {
+        manager->model_leases = calloc(ENGINE_MODEL_LEASE_CAPACITY,
+                                       sizeof(*manager->model_leases));
+    }
+    if (!manager || !manager->engines || !manager->model_leases) {
+        free(manager ? manager->model_leases : NULL);
         free(manager ? manager->engines : NULL);
         free(manager);
         return engine_refuse(err, YVEX_ERR_NOMEM,
@@ -860,6 +892,8 @@ int yvex_server_engine_manager_open(
     }
     manager->capacity = capacity;
     manager->next_generation = 1ull;
+    manager->model_lease_capacity = ENGINE_MODEL_LEASE_CAPACITY;
+    manager->next_model_lease = 1ull;
     manager->request_capacity = request_capacity;
     manager->request_workers = request_workers;
     manager->request_execute = request_execute;
@@ -869,6 +903,7 @@ int yvex_server_engine_manager_open(
         (manager->mutex_ready = 1,
          pthread_cond_init(&manager->condition, NULL) != 0)) {
         if (manager->mutex_ready) (void)pthread_mutex_destroy(&manager->mutex);
+        free(manager->model_leases);
         free(manager->engines);
         free(manager);
         return engine_refuse(err, YVEX_ERR_STATE,
@@ -1005,6 +1040,95 @@ void yvex_server_engine_manager_release(server_engine_manager *manager,
     (void)pthread_mutex_unlock(&manager->mutex);
 }
 
+static server_model_lease *model_lease_find(server_engine_manager *manager,
+                                            const char *identity)
+{
+    unsigned long long index;
+    for (index = 0u; index < manager->model_lease_capacity; ++index)
+        if (manager->model_leases[index].identity[0] &&
+            !strcmp(manager->model_leases[index].identity, identity))
+            return manager->model_leases + index;
+    return NULL;
+}
+
+static int model_lease_identity(server_engine_manager *manager,
+                                const server_engine *engine,
+                                char identity[YVEX_SERVER_ID_CAP])
+{
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    yvex_sha256 hash;
+    yvex_sha256_init(&hash);
+    return yvex_sha256_update_text(&hash, "yvex.server.model-lease.v1") &&
+           yvex_sha256_update_text(&hash, engine->alias) &&
+           yvex_sha256_update_u64_be(&hash, engine->generation) &&
+           yvex_sha256_update_u64_be(&hash, manager->next_model_lease++) &&
+           yvex_sha256_final(&hash, digest) &&
+           (yvex_sha256_hex(digest, identity), 1);
+}
+
+int yvex_server_engine_manager_model_lease_acquire(
+    server_engine_manager *manager, const char *alias,
+    char identity[YVEX_SERVER_ID_CAP],
+    yvex_server_engine_summary *summary, yvex_error *err)
+{
+    server_engine *engine;
+    server_model_lease *lease = NULL;
+    unsigned long long index;
+    if (identity) identity[0] = '\0';
+    if (!manager || !alias_valid(alias) || !identity || !summary ||
+        pthread_mutex_lock(&manager->mutex) != 0)
+        return engine_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "model lease inputs are required");
+    engine = engine_find(manager, alias);
+    for (index = 0u; index < manager->model_lease_capacity && !lease; ++index)
+        if (!manager->model_leases[index].identity[0])
+            lease = manager->model_leases + index;
+    if (!engine || engine->state != YVEX_SERVER_ENGINE_LOADED || !lease ||
+        !model_lease_identity(manager, engine, lease->identity)) {
+        (void)pthread_mutex_unlock(&manager->mutex);
+        return engine_refuse(err, !lease ? YVEX_ERR_BOUNDS : YVEX_ERR_STATE,
+                             !lease ? "model lease capacity is exhausted"
+                                    : "loaded model is required for a lease");
+    }
+    lease->engine = engine;
+    lease->generation = engine->generation;
+    engine->model_lease_count++;
+    summary_base(engine);
+    *summary = engine->summary;
+    yvex_core_text_copy(identity, YVEX_SERVER_ID_CAP, lease->identity);
+    (void)pthread_mutex_unlock(&manager->mutex);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_server_engine_manager_model_lease_release(
+    server_engine_manager *manager, const char *identity,
+    yvex_server_engine_summary *summary, yvex_error *err)
+{
+    server_model_lease *lease;
+    server_engine *engine;
+    if (!manager || !yvex_sha256_hex_valid(identity) || !summary ||
+        pthread_mutex_lock(&manager->mutex) != 0)
+        return engine_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "exact model lease identity is required");
+    lease = model_lease_find(manager, identity);
+    engine = lease ? lease->engine : NULL;
+    if (!lease || !engine || engine->generation != lease->generation ||
+        !engine->model_lease_count) {
+        (void)pthread_mutex_unlock(&manager->mutex);
+        return engine_refuse(err, YVEX_ERR_STATE,
+                             "live model lease is required");
+    }
+    engine->model_lease_count--;
+    memset(lease, 0, sizeof(*lease));
+    summary_base(engine);
+    *summary = engine->summary;
+    (void)pthread_cond_broadcast(&manager->condition);
+    (void)pthread_mutex_unlock(&manager->mutex);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 int yvex_server_engine_lease_submit(
     server_engine_lease *lease, void *work, const char *serialization_scope,
     unsigned long long *queued, yvex_error *err)
@@ -1041,6 +1165,21 @@ int yvex_server_engine_manager_unload(
         (void)pthread_mutex_unlock(&manager->mutex);
         return engine_refuse(err, YVEX_ERR_STATE,
                              "exact loaded engine generation is required");
+    }
+    if (engine->sessions)
+        (void)yvex_server_sessions_occupancy(
+            engine->sessions, &engine->summary.session_count,
+            &engine->summary.attached_client_count, NULL);
+    else if (engine->media)
+        (void)yvex_server_media_registry_occupancy(
+            engine->media, &engine->summary.session_count,
+            &engine->summary.attached_client_count, NULL);
+    if (engine->model_lease_count || engine->summary.session_count) {
+        summary_base(engine);
+        *summary = engine->summary;
+        (void)pthread_mutex_unlock(&manager->mutex);
+        return engine_refuse(err, YVEX_ERR_STATE,
+                             "live sessions or model leases prevent unload");
     }
     engine->state = YVEX_SERVER_ENGINE_DRAINING;
     summary_base(engine);
@@ -1090,11 +1229,13 @@ int yvex_server_engine_manager_snapshot(
                                  "engine snapshot capacity is insufficient");
         }
         if (engine->sessions)
-            (void)yvex_server_sessions_count(
-                engine->sessions, &engine->summary.session_count, NULL);
+            (void)yvex_server_sessions_occupancy(
+                engine->sessions, &engine->summary.session_count,
+                &engine->summary.attached_client_count, NULL);
         else if (engine->media)
-            (void)yvex_server_media_registry_count(
-                engine->media, &engine->summary.session_count, NULL);
+            (void)yvex_server_media_registry_occupancy(
+                engine->media, &engine->summary.session_count,
+                &engine->summary.attached_client_count, NULL);
         if (summary_resources(engine, err) != YVEX_OK) {
             (void)pthread_mutex_unlock(&manager->mutex);
             return yvex_error_code(err);
@@ -1238,6 +1379,7 @@ int yvex_server_engine_manager_close(server_engine_manager **manager,
     if (owner->condition_ready) (void)pthread_cond_destroy(&owner->condition);
     if (owner->mutex_ready) (void)pthread_mutex_destroy(&owner->mutex);
     free(owner->engines);
+    free(owner->model_leases);
     free(owner);
     *manager = NULL;
     if (rc == YVEX_OK) yvex_error_clear(err);

@@ -32,6 +32,7 @@ typedef struct server_work_item {
     server_event_scope event_scope;
     char request_id[YVEX_SERVER_ID_CAP];
     unsigned char *prompt;
+    yvex_content_part *content;
     yvex_provider_request *provider;
     unsigned long long enqueued_ns;
     int fd, done, response_sent, status;
@@ -445,9 +446,60 @@ static int protocol_error(int fd, const yvex_client_request *request,
     if (request)
         yvex_core_text_copy(message.session_name, sizeof(message.session_name),
                             request->session_name);
+    if (request && request->content_part_count) {
+        message.content_part_count = request->content_part_count;
+        (void)yvex_content_parts_identity(
+            request->content_parts, request->content_part_count,
+            message.input_content_identity, NULL);
+    }
     yvex_core_text_copy(message.reason, sizeof(message.reason),
                         reason ? reason : "request failed");
     return yvex_server_protocol_send(fd, &message, err);
+}
+
+static int request_content_prepare(server_work_item *item, yvex_error *err)
+{
+    unsigned char *prompt;
+    unsigned long long index, total = 0u, offset = 0u;
+    int rc;
+    if (!item->request.content_part_count) return YVEX_OK;
+    rc = yvex_model_capability_admit(
+        &item->engine_summary.capabilities, item->request.content_parts,
+        item->request.content_part_count, err);
+    for (index = 0u; rc == YVEX_OK &&
+                         index < item->request.content_part_count; ++index) {
+        const yvex_content_part *part = item->request.content_parts + index;
+        if (part->storage == YVEX_CONTENT_LOCAL_FILE)
+            rc = yvex_content_part_local_verify(part, err);
+        if (rc == YVEX_OK &&
+            (part->kind != YVEX_CONTENT_TEXT ||
+             part->storage != YVEX_CONTENT_INLINE))
+            rc = server_refuse(
+                err, YVEX_ERR_UNSUPPORTED,
+                "active specialization has no typed media preprocessor");
+        if (rc == YVEX_OK &&
+            !yvex_core_u64_add(total, part->byte_count, &total))
+            rc = server_refuse(err, YVEX_ERR_BOUNDS,
+                               "ordered text content exceeds its bound");
+    }
+    if (rc != YVEX_OK) return rc;
+    if (!total || total >= SESSION_TRANSCRIPT_BYTES || total > SIZE_MAX)
+        return server_refuse(err, YVEX_ERR_BOUNDS,
+                             "ordered text content exceeds session capacity");
+    prompt = malloc((size_t)total);
+    if (!prompt)
+        return server_refuse(err, YVEX_ERR_NOMEM,
+                             "ordered text prompt allocation failed");
+    for (index = 0u; index < item->request.content_part_count; ++index) {
+        const yvex_content_part *part = item->request.content_parts + index;
+        memcpy(prompt + offset, part->bytes, (size_t)part->byte_count);
+        offset += part->byte_count;
+    }
+    free(item->prompt);
+    item->prompt = prompt;
+    item->request.prompt = prompt;
+    item->request.prompt_bytes = total;
+    return YVEX_OK;
 }
 
 static void model_work_execute(void *context, void *work)
@@ -608,6 +660,15 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
     if (rc != YVEX_OK) {
         item->failure_class = YVEX_CLIENT_FAILURE_MODEL_NOT_FOUND;
         return rc;
+    }
+    rc = request_content_prepare(item, err);
+    if (rc != YVEX_OK) {
+        item->failure_class = rc == YVEX_ERR_UNSUPPORTED
+                                  ? YVEX_CLIENT_FAILURE_UNSUPPORTED_PARAMETER
+                              : rc == YVEX_ERR_BOUNDS
+                                  ? YVEX_CLIENT_FAILURE_REQUEST_TOO_LARGE
+                                  : YVEX_CLIENT_FAILURE_INVALID_REQUEST;
+        goto failed;
     }
     server_event_scope_from_engine(&item->event_scope, &item->engine_summary);
     if (pthread_mutex_lock(&server->state_mutex) != 0) {
@@ -799,6 +860,7 @@ static int client_wait_work(server_work_item *item, int fd, yvex_error *err)
 
 static int engine_message_send(int fd, unsigned long long request_number,
                                const yvex_server_engine_summary *engine,
+                               const char *model_lease_identity,
                                yvex_error *err)
 {
     yvex_client_message message;
@@ -808,6 +870,10 @@ static int engine_message_send(int fd, unsigned long long request_number,
     message.status = YVEX_OK;
     message.request_number = request_number;
     message.engine = *engine;
+    if (model_lease_identity)
+        yvex_core_text_copy(message.model_lease_identity,
+                            sizeof(message.model_lease_identity),
+                            model_lease_identity);
     return yvex_server_protocol_send(fd, &message, err);
 }
 
@@ -822,7 +888,7 @@ static int engine_list_send(yvex_server *server, int fd,
         server, engines, YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES, &count, err);
     for (index = 0ull; index < count && rc == YVEX_OK; ++index)
         rc = engine_message_send(fd, request->request_number,
-                                 &engines[index], err);
+                                 &engines[index], NULL, err);
     if (rc != YVEX_OK) return rc;
     memset(&complete, 0, sizeof(complete));
     complete.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
@@ -885,11 +951,47 @@ static int engine_load_control(yvex_server *server, int fd,
     for (index = 0ull; index < count && rc == YVEX_OK; ++index)
         if (!strcmp(engines[index].alias, request->model_alias))
             return engine_message_send(fd, request->request_number,
-                                       &engines[index], err);
+                                       &engines[index], NULL, err);
     return rc != YVEX_OK
                ? rc
                : server_refuse(err, YVEX_ERR_STATE,
                                "model loader did not publish the requested engine");
+}
+
+static int engine_model_lease_control(yvex_server *server, int fd,
+                                      const yvex_client_request *request,
+                                      yvex_error *err)
+{
+    yvex_server_engine_summary engine;
+    char identity[YVEX_SERVER_ID_CAP] = {0};
+    int acquire = request->operation == YVEX_CLIENT_OP_ENGINE_ENSURE_ACTIVE;
+    int rc;
+    if (acquire) {
+        if (!request->model_alias[0])
+            return server_refuse(err, YVEX_ERR_INVALID_ARG,
+                                 "model alias is required for demand activation");
+        rc = yvex_server_engine_manager_model_lease_acquire(
+            server->engines, request->model_alias, identity, &engine, err);
+        if (rc == YVEX_ERR_STATE && server->options.model_loader) {
+            rc = server->options.model_loader(
+                server->options.model_loader_context, server,
+                request->model_alias, err);
+            if (rc == YVEX_OK)
+                rc = yvex_server_engine_manager_model_lease_acquire(
+                    server->engines, request->model_alias, identity,
+                    &engine, err);
+        }
+    } else {
+        rc = yvex_server_engine_manager_model_lease_release(
+            server->engines, request->model_lease_identity, &engine, err);
+        if (rc == YVEX_OK)
+            yvex_core_text_copy(identity, sizeof(identity),
+                                request->model_lease_identity);
+    }
+    return rc == YVEX_OK
+               ? engine_message_send(fd, request->request_number, &engine,
+                                     identity, err)
+               : rc;
 }
 
 static void *client_main(void *opaque)
@@ -901,12 +1003,13 @@ static void *client_main(void *opaque)
            !atomic_load_explicit(&server->stopping, memory_order_acquire)) {
         yvex_client_request request;
         unsigned char *prompt = NULL;
+        yvex_content_part *content = NULL;
         yvex_provider_request *provider = NULL;
         yvex_error err;
         int response_sent = 0;
         yvex_client_failure_class failure_class = YVEX_CLIENT_FAILURE_NONE;
         int rc = yvex_server_protocol_receive(
-            fd, &request, &prompt, &provider, &err);
+            fd, &request, &prompt, &content, &provider, &err);
         if (rc != YVEX_OK) break;
         if (request.operation == YVEX_CLIENT_OP_RUNTIME_STATUS) {
             yvex_client_message message;
@@ -924,7 +1027,10 @@ static void *client_main(void *opaque)
                 &engine, &err);
             if (rc == YVEX_OK)
                 rc = engine_message_send(fd, request.request_number,
-                                         &engine, &err);
+                                         &engine, NULL, &err);
+        } else if (request.operation == YVEX_CLIENT_OP_ENGINE_ENSURE_ACTIVE ||
+                   request.operation == YVEX_CLIENT_OP_ENGINE_LEASE_RELEASE) {
+            rc = engine_model_lease_control(server, fd, &request, &err);
         } else if (request.operation == YVEX_CLIENT_OP_CONSOLE_STATUS) {
             yvex_client_message message;
             rc = console_status_message(server, &request, &message, &err);
@@ -981,11 +1087,14 @@ static void *client_main(void *opaque)
             memset(&item, 0, sizeof(item));
             item.request = request;
             item.prompt = prompt;
+            item.content = content;
             item.provider = provider;
             item.request.prompt = prompt;
+            item.request.content_parts = content;
             item.request.provider_request = provider;
             item.fd = fd;
             prompt = NULL;
+            content = NULL;
             provider = NULL;
             {
                 int mutex_ready = 0, condition_ready = 0;
@@ -1005,7 +1114,15 @@ static void *client_main(void *opaque)
                 if (condition_ready) (void)pthread_cond_destroy(&item.condition);
                 if (mutex_ready) (void)pthread_mutex_destroy(&item.mutex);
             }
+            if (rc != YVEX_OK && !done && !item.response_sent) {
+                yvex_error send_error;
+                (void)protocol_error(fd, &item.request, rc, item.failure_class,
+                                     yvex_error_message(&err), &send_error);
+                item.response_sent = 1;
+            }
             free(item.prompt);
+            yvex_content_parts_close(&item.content,
+                                     item.request.content_part_count);
             yvex_provider_request_close(&item.provider);
             response_sent = item.response_sent;
             failure_class = item.failure_class;
@@ -1016,6 +1133,7 @@ static void *client_main(void *opaque)
                                  yvex_error_message(&err), &send_error);
         }
         free(prompt);
+        yvex_content_parts_close(&content, request.content_part_count);
         yvex_provider_request_close(&provider);
     }
     (void)yvex_server_telemetry_emit(

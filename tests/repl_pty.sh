@@ -214,6 +214,10 @@ test "$run_status" -eq 2
 grep -F 'removed command: run' "$root/run.err" >/dev/null
 
 start_host
+image="$root/attachment.png"
+audio="$root/attachment.wav"
+printf '\211PNG\r\n\032\nfixture' >"$image"
+printf 'RIFF\004\000\000\000WAVE' >"$audio"
 
 # Explicit chat preserves scrollback, streams output, and restores bracketed paste mode.
 start_console explicit 24 100 'chat --session linear' nocolor
@@ -223,12 +227,23 @@ wait_for "$root/explicit.typescript" '/status'
 wait_for "$root/explicit.typescript" '/context'
 wait_for "$root/explicit.typescript" '/cancel'
 wait_for "$root/explicit.typescript" '/sessions'
+wait_for "$root/explicit.typescript" '/attach'
+wait_for "$root/explicit.typescript" '/attachments'
+wait_for "$root/explicit.typescript" '/use'
 wait_for "$root/explicit.typescript" '/reset'
 wait_for "$root/explicit.typescript" '/quit'
+printf '/attach %s\r' "$image" >&3
+wait_for "$root/explicit.typescript" 'attached · image'
+printf '/attach %s\r' "$audio" >&3
+wait_for "$root/explicit.typescript" 'next turn 2/31'
+printf '/attachments\r' >&3
+wait_for "$root/explicit.typescript" 'attachments · 2 staged for next turn'
 printf 'hello\r' >&3
 wait_for "$root/explicit.typescript" 'hello from yvex'
 wait_for "$root/explicit.typescript" 'output adaptive · envelope 256'
 wait_for "$root/explicit.typescript" 'stop EOS'
+printf '/attachments\r' >&3
+wait_for "$root/explicit.typescript" 'attachments · none staged'
 printf '/quit\r' >&3
 finish_console
 assert_linear_terminal "$root/explicit.typescript"

@@ -99,6 +99,45 @@ static const char *engine_backend_name(yvex_backend_kind backend)
     return backend == YVEX_BACKEND_KIND_CUDA ? "CUDA" : "CPU";
 }
 
+static const char *content_kind_name(unsigned int kind)
+{
+    static const char *const names[] = {
+        "text", "image", "audio", "video", "file", "tensor"
+    };
+    return kind < YVEX_CONTENT_KIND_COUNT ? names[kind] : "unknown";
+}
+
+static void capability_kinds_json(FILE *fp, unsigned long long mask)
+{
+    unsigned int kind;
+    int wrote = 0;
+    yvex_cli_out_char(fp, '[');
+    for (kind = 0u; kind < YVEX_CONTENT_KIND_COUNT; ++kind) {
+        if (!(mask & YVEX_CONTENT_KIND_MASK(kind))) continue;
+        if (wrote) yvex_cli_out_char(fp, ',');
+        yvex_cli_out_json_string(fp, content_kind_name(kind));
+        wrote = 1;
+    }
+    yvex_cli_out_char(fp, ']');
+}
+
+static void capability_kinds_text(char *output, size_t capacity,
+                                  unsigned long long mask)
+{
+    unsigned int kind;
+    size_t used = 0u;
+    if (!output || !capacity) return;
+    output[0] = '\0';
+    for (kind = 0u; kind < YVEX_CONTENT_KIND_COUNT; ++kind) {
+        int wrote;
+        if (!(mask & YVEX_CONTENT_KIND_MASK(kind))) continue;
+        wrote = snprintf(output + used, capacity - used, "%s%s",
+                         used ? "," : "", content_kind_name(kind));
+        if (wrote < 0 || (size_t)wrote >= capacity - used) break;
+        used += (size_t)wrote;
+    }
+}
+
 static const char *resource_placement_name(
     yvex_execution_resource_placement placement)
 {
@@ -183,9 +222,10 @@ void yvex_cli_engine_render(FILE *fp,
     const yvex_execution_capacity_summary *capacity = &engine->capacity;
     const yvex_execution_resource_summary *resource = &engine->resources;
     char mapped[32], prepared[32], addressable[32], explicit_device[32];
-    char state[32], workspace[32];
+    char state[32], workspace[32], input_kinds[64], output_kinds[64];
     if (!fp || !engine) return;
     if (json) {
+        const yvex_model_capability_summary *cap = &engine->capabilities;
         yvex_cli_out_fputs("{\"alias\":", fp);
         yvex_cli_out_json_string(fp, engine->alias);
         yvex_cli_out_writef(fp, ",\"generation\":%llu,\"state\":",
@@ -203,7 +243,9 @@ void yvex_cli_engine_render(FILE *fp,
             "\"context_capacity\":%llu,\"prefill_chunk_tokens\":%llu,"
             "\"maximum_new_tokens\":%llu,\"maximum_sessions\":%llu,"
             "\"configured_physical_sequence_width\":%llu,\"active_work\":%llu,"
-            "\"sessions\":%llu,\"mapped_package_bytes\":%llu,"
+            "\"sessions\":%llu,\"attached_clients\":%llu,"
+            "\"model_leases\":%llu,\"activity\":\"%s\","
+            "\"mapped_package_bytes\":%llu,"
             "\"resident_host_bytes\":%llu,\"resident_device_bytes\":%llu,"
             "\"prepared_bytes\":%llu,\"capacity\":{"
             "\"sessions\":%llu,\"runnable_work\":%llu,"
@@ -216,7 +258,11 @@ void yvex_cli_engine_render(FILE *fp,
             engine->context_capacity, engine->prefill_chunk_tokens,
             engine->maximum_new_tokens, engine->maximum_sessions,
             engine->concurrent_sequences, engine->active_work,
-            engine->session_count, engine->mapped_package_bytes,
+            engine->session_count, engine->attached_client_count,
+            engine->model_lease_count,
+            (engine->active_work || engine->session_count ||
+             engine->model_lease_count) ? "active" : "idle",
+            engine->mapped_package_bytes,
             engine->resident_host_bytes, engine->resident_device_bytes,
             engine->prepared_bytes, capacity->session_capacity,
             capacity->runnable_work_capacity,
@@ -225,6 +271,17 @@ void yvex_cli_engine_render(FILE *fp,
             capacity->compatible_operation_batching_ready ? "true" : "false",
             capacity->continuous_batching_ready ? "true" : "false");
         resource_json(fp, resource);
+        yvex_cli_out_writef(
+            fp, ",\"capabilities\":{\"input_mask\":%llu,"
+                "\"output_mask\":%llu,\"inputs\":",
+            cap->input_kinds, cap->output_kinds);
+        capability_kinds_json(fp, cap->input_kinds);
+        yvex_cli_out_fputs(",\"outputs\":", fp);
+        capability_kinds_json(fp, cap->output_kinds);
+        yvex_cli_out_writef(fp, ",\"properties\":%llu,"
+                           "\"maximum_input_parts\":%llu}",
+                           cap->execution_properties,
+                           cap->maximum_input_parts);
         yvex_cli_out_fputs(",\"target\":", fp);
         yvex_cli_out_json_string(fp, engine->target_id);
         yvex_cli_out_fputs(",\"model_identity\":", fp);
@@ -251,6 +308,10 @@ void yvex_cli_engine_render(FILE *fp,
     host_resource_bytes(workspace, resource,
                         YVEX_EXECUTION_RESOURCE_WORKSPACE_AVAILABLE,
                         resource->workspace_current_bytes);
+    capability_kinds_text(input_kinds, sizeof(input_kinds),
+                          engine->capabilities.input_kinds);
+    capability_kinds_text(output_kinds, sizeof(output_kinds),
+                          engine->capabilities.output_kinds);
     yvex_cli_out_writef(
         fp, "%s  generation %llu  %s  %s/%s/%s\n",
         engine->alias, engine->generation, engine_state_name(engine->state),
@@ -266,6 +327,16 @@ void yvex_cli_engine_render(FILE *fp,
         truth_name(capacity->cooperative_scheduling_ready),
         truth_name(capacity->compatible_operation_batching_ready),
         truth_name(capacity->continuous_batching_ready));
+    yvex_cli_out_writef(
+        fp, "  active    %s · clients %llu · leases %llu · work %llu\n",
+        (engine->active_work || engine->session_count || engine->model_lease_count)
+            ? "active" : "idle",
+        engine->attached_client_count, engine->model_lease_count,
+        engine->active_work);
+    yvex_cli_out_writef(
+        fp, "  capability input %s · output %s · max parts %llu\n",
+        input_kinds, output_kinds,
+        engine->capabilities.maximum_input_parts);
     yvex_cli_out_writef(
         fp,
         "  model     mapped %s · prepared %s · device-addressable %s · "
@@ -635,6 +706,8 @@ static void session_json_fact(FILE *fp,
 {
     yvex_cli_out_fputs("{\"name\":", fp);
     yvex_cli_out_json_string(fp, fact->name);
+    yvex_cli_out_fputs(",\"identity\":", fp);
+    yvex_cli_out_json_string(fp, fact->identity);
     yvex_cli_out_fputs(",\"state\":", fp);
     yvex_cli_out_json_string(fp, fact->state);
     yvex_cli_out_writef(fp, ",\"position\":%llu,\"turns\":%llu}",
@@ -669,6 +742,8 @@ void yvex_cli_session_table_fact_set(yvex_cli_session_table_fact *fact,
     if (!fact || !message) return;
     memset(fact, 0, sizeof(*fact));
     snprintf(fact->name, sizeof(fact->name), "%s", message->session_name);
+    snprintf(fact->identity, sizeof(fact->identity), "%s",
+             message->session_identity);
     snprintf(fact->state, sizeof(fact->state), "%s",
              yvex_server_session_state_name(message->session_state));
     fact->position = message->final_position;

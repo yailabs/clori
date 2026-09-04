@@ -40,7 +40,7 @@ yvex chat [--model MODEL]
 yvex host status|logs|stop
 yvex inspect ...
 
-yvex model search|pull|prepare|load|unload|list|show|push
+yvex model search|pull|prepare|load|unload|list|show|active|push
 yvex model status|stop
 ```
 
@@ -111,7 +111,8 @@ session use:
 
 ```text
 /help /status /context
-/new /sessions /session /attach /detach /reset /cancel /close
+/new /sessions /session /use /detach /reset /cancel /close
+/attach /attachments /attachments-clear
 /think-low /think /think-max /nothink
 /quit
 ```
@@ -119,6 +120,12 @@ session use:
 Reasoning policy persists for the attached session until changed. The client
 does not describe it as a next-turn-only setting. Load, unload, compile,
 acquire, and host-stop operations are deliberately absent from the REPL.
+`/attach PATH` seals one local media object for the next turn; repeated calls
+stage multiple ordered parts. `/attachments` lists that bounded stage and
+`/attachments-clear` discards it. Submission appends the typed text part,
+clears the stage after server acceptance, and retains the same session identity
+for later multipart turns. `/use NAME` selects an existing session; attachment
+staging never creates or replaces one.
 
 ### Hosted model use and exact administration
 
@@ -130,6 +137,9 @@ variant selector. Numeric rows are temporary conveniences. Before the native
 request, the CLI has resolved one exact profile identity; the host then creates
 an immutable process-local engine generation. Non-TTY ambiguity fails and
 requires `MODEL` and `--variant` rather than guessing.
+Each launchable profile also carries the same directional input/output
+capability summary later published by its engine, so an orchestrator can select
+a READY deployment before demand activation without inferring from its name.
 
 `model unload MODEL` resolves the resident exact generation and drains it
 without stopping the host. Advanced `engine load PROFILE` and `engine unload
@@ -137,6 +147,12 @@ ENGINE` remain deterministic plumbing for qualification and exact lifecycle
 inspection, but ordinary users never need a profile alias. Session commands
 address server-owned mutable state and cross the same private protocol. None of
 these clients opens a package directly.
+
+`model active` projects loaded engine generations from the same typed engine
+catalog used by `engine list`: backend, execution mode, active/idle state,
+attached sessions/clients, model leases, directional capabilities, and H12
+resource/placement facts. Its JSON schema is `yvex.model.active.v1`; consumers
+never parse the human table.
 
 ### Offline work
 
@@ -158,9 +174,10 @@ host.
 
 ## Protocol planes
 
-Native commands and chat use private local protocol v19 over a UID-owned Unix
+Native commands and chat use private local protocol v20 over a UID-owned Unix
 socket. That protocol carries YVEX engine generations, sessions, KV identity,
-lifecycle, typed progress, cancellation, resource facts, and telemetry.
+lifecycle, ordered typed content/provenance, model leases and directional
+capabilities, typed progress, cancellation, resource facts, and telemetry.
 
 External compatibility consumers use the separate loopback HTTP OpenAI
 profile. The adapter owns no model, engine, session, KV, scheduler, or backend

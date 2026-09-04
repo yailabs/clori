@@ -18,9 +18,15 @@ ROOT = Path(__file__).resolve().parents[1]
 # schema decision. Updating an entry is therefore a reviewable ABI migration,
 # not a mechanical consequence of editing an installed header.
 RECORDS = {
+    "yvex_content_part": (
+        "include/yvex/content.h", "YVEX_CONTENT_PART_SCHEMA_V1", 1, 1312,
+        "fa96b37a668d01ad150ff54287e53d0f750e0eaede5710e08e5cfc84db7837c8"),
+    "yvex_model_capability_summary": (
+        "include/yvex/content.h", "YVEX_MODEL_CAPABILITY_SCHEMA_V1", 1, 40,
+        "5fa40648f26a80705e537cabb1e5aab46f9313628985ad45f58875a69ed5f4f6"),
     "yvex_model_runtime_profile_fact": (
-        "include/yvex/catalog.h", "YVEX_MODEL_RUNTIME_PROFILE_SCHEMA_CURRENT", 1, 13112,
-        "fb3b820b05b924de5824d3b6f59debc3570a083b330a02195d94742638cfaeef"),
+        "include/yvex/catalog.h", "YVEX_MODEL_RUNTIME_PROFILE_SCHEMA_CURRENT", 2, 13152,
+        "1e143b2978d7b53afede41832f76f8f18ddb574909c9f638a5c10abfc1d0172a"),
     "yvex_model_registry_entry": (
         "include/yvex/registry.h", "YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT", 1, 304,
         "5e137d2540df9dfcfb8d6ec7402cf0a0480b8aa00495f2b93869fc7fa869263f"),
@@ -58,11 +64,11 @@ RECORDS = {
         "include/yvex/server.h", "YVEX_SERVER_OPTIONS_SCHEMA_CURRENT", 4, 88,
         "8073cc5ab362027b9e7696e4dc66012adb523204bfc7c306c66ac398a2ab05ab"),
     "yvex_server_engine_options": (
-        "include/yvex/server.h", "YVEX_SERVER_ENGINE_SCHEMA_CURRENT", 3, 136,
-        "6741157212a73013a0dfb0c3113fd23994bb5dccbb7146a7d3a0dbf1e80f5f86"),
+        "include/yvex/server.h", "YVEX_SERVER_ENGINE_SCHEMA_CURRENT", 4, 176,
+        "14f6e87cc077653fc85e9d6f612ed7491b0b1a17e63469363a9fc8317d1c8cb0"),
     "yvex_server_engine_summary": (
-        "include/yvex/server.h", "YVEX_SERVER_ENGINE_SCHEMA_CURRENT", 3, 992,
-        "67ac89685b5c760ca91dcec7e4d6895d0c26d88e3a31164f448f75e7f93ca6e8"),
+        "include/yvex/server.h", "YVEX_SERVER_ENGINE_SCHEMA_CURRENT", 4, 1048,
+        "56e75a18b6e9e08574c5e537d2edd0c28e7d3642454ad41535f76402331dd911"),
     "yvex_server_summary": (
         "include/yvex/server.h", "YVEX_SERVER_SUMMARY_SCHEMA_V2", 2, 1048,
         "187bd214ba857f775c22be5165f40471de9805f5017e515afe8892950e95eae6"),
@@ -85,11 +91,11 @@ RECORDS = {
         "include/yvex/server.h", "YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1", 1, 524,
         "15b251a93051e0f0cf0c70e1a14c2cdcb019b54d7e27851b6c36b02bcac9802b"),
     "yvex_client_request": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 19, 2024,
-        "eda70b9000088f58c57b639c0eb14a15d4893bf1c128d2b7f5f477b20a0a8c84"),
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 20, 2112,
+        "824d78fe45c3c871a151937d368e7d652873f3265b6f2edac2f11ce6d4dca87e"),
     "yvex_client_message": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 19, 10952,
-        "9f1f8b76ed642a46921ee9d02432a499977a13b4b3b5f10c71126cc38c7a6caf"),
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 20, 11152,
+        "a3a95424c67bd0b8559e8aeb96569fa916dd5ce7379e635b9d865b7726e0b5c0"),
     "yvex_tokenizer_plan_summary": (
         "include/yvex/tokenizer.h", "YVEX_TOKENIZER_PLAN_SCHEMA_CURRENT", 5, 872,
         "93fbfdefccd98e3add82e774a6ae9d3aa50384dd991e9bdc0cd90a01d5cdcb6e"),
@@ -153,6 +159,7 @@ def compiler_source() -> str:
         "#include <limits.h>",
         "#include <stddef.h>",
         "#include <yvex/catalog.h>",
+        "#include <yvex/content.h>",
         "#include <yvex/execution.h>",
         "#include <yvex/provider.h>",
         "#include <yvex/quant.h>",
@@ -174,12 +181,17 @@ def compiler_source() -> str:
         'ABI_ASSERT(YVEX_SERVER_ENGINE_SCHEMA_V1 == 1u, "legacy engine v1 identity changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_SCHEMA_V2 == 2u, "engine v2 identity changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_SCHEMA_V3 == 3u, "engine v3 identity changed");',
+        'ABI_ASSERT(YVEX_SERVER_ENGINE_SCHEMA_V4 == 4u, "engine v4 identity changed");',
         'ABI_ASSERT(YVEX_SERVER_SUMMARY_SCHEMA_V1 == 1u, "legacy summary v1 changed");',
         'ABI_ASSERT(YVEX_SERVER_SUMMARY_SCHEMA_V2 == 2u, "summary v2 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V3 == 3u, "legacy event v3 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V4 == 4u, "event v4 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V5 == 5u, "event v5 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V6 == 6u, "event v6 identity changed");',
+        'ABI_ASSERT(YVEX_MODEL_RUNTIME_PROFILE_SCHEMA_V1 == 1u, '
+        '"legacy runtime profile v1 identity changed");',
+        'ABI_ASSERT(YVEX_MODEL_RUNTIME_PROFILE_SCHEMA_V2 == 2u, '
+        '"runtime profile v2 identity changed");',
         'ABI_ASSERT(YVEX_TOKENIZER_PLAN_SCHEMA_V3 == 3u, '
         '"legacy tokenizer plan v3 identity changed");',
         'ABI_ASSERT(YVEX_TOKENIZER_PLAN_SCHEMA_V4 == 4u, '
@@ -193,7 +205,7 @@ def compiler_source() -> str:
         '"prompt conversation value changed");',
         'ABI_ASSERT(YVEX_TOKENIZER_PROMPT_VERBATIM == 2, '
         '"prompt verbatim value changed");',
-        'ABI_ASSERT(YVEX_LOCAL_PROTOCOL_VERSION == 19u, "local protocol identity changed");',
+        'ABI_ASSERT(YVEX_LOCAL_PROTOCOL_VERSION == 20u, "local protocol identity changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_NONE == 0, "engine-kind none value changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_TEXT == 1, "engine-kind text value changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_MEDIA == 2, "engine-kind media value changed");',

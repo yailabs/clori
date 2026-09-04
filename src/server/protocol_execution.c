@@ -1,4 +1,4 @@
-/* Encode and validate the fixed execution-truth subrecords carried by protocol v19. */
+/* Encode and validate the fixed execution-truth subrecords carried by protocol v20. */
 #include "src/server/private.h"
 
 #include <math.h>

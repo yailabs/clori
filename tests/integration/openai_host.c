@@ -69,6 +69,12 @@ static void message_base(yvex_client_message *message,
             strcpy(message->external_correlation_id,
                    request->provider_request->external_correlation_id);
         }
+        if (request->content_part_count) {
+            message->content_part_count = request->content_part_count;
+            (void)yvex_content_parts_identity(
+                request->content_parts, request->content_part_count,
+                message->input_content_identity, NULL);
+        }
     }
 }
 
@@ -128,6 +134,17 @@ static void fixture_engine(yvex_server_engine_summary *engine)
     engine->capacity.session_capacity = engine->maximum_sessions;
     engine->capacity.runnable_work_capacity = 1ull;
     engine->capacity.physical_sequence_width = 1ull;
+    engine->capabilities.schema_version = YVEX_MODEL_CAPABILITY_SCHEMA_V1;
+    engine->capabilities.input_kinds =
+        YVEX_CONTENT_KIND_MASK(YVEX_CONTENT_TEXT);
+    engine->capabilities.output_kinds =
+        YVEX_CONTENT_KIND_MASK(YVEX_CONTENT_TEXT);
+    engine->capabilities.execution_properties =
+        YVEX_MODEL_CAPABILITY_ORDERED_INPUT_PARTS |
+        YVEX_MODEL_CAPABILITY_STATEFUL_SESSION |
+        YVEX_MODEL_CAPABILITY_STREAMING_OUTPUT |
+        YVEX_MODEL_CAPABILITY_DEMAND_ACTIVATION;
+    engine->capabilities.maximum_input_parts = YVEX_CONTENT_MAX_PARTS;
     engine->resources.schema_version = YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
     engine->resources.placement = YVEX_EXECUTION_PLACEMENT_EXPLICIT_HOST;
     engine->resources.available =
@@ -749,18 +766,22 @@ static int serve_connection(int fd, yvex_error *err)
 {
     yvex_client_request request;
     unsigned char *prompt = NULL;
+    yvex_content_part *content = NULL;
     yvex_provider_request *provider = NULL;
     yvex_client_message message;
-    int rc = yvex_server_protocol_receive(fd, &request, &prompt, &provider,
-                                          err);
+    int rc = yvex_server_protocol_receive(fd, &request, &prompt, &content,
+                                          &provider, err);
     if (rc != YVEX_OK || request.operation != YVEX_CLIENT_OP_HANDSHAKE)
         goto done;
     rc = send_ack(fd, &request, err);
     if (rc != YVEX_OK) goto done;
     free(prompt);
     prompt = NULL;
+    yvex_content_parts_close(
+        &content, content ? request.content_part_count : 0u);
     yvex_provider_request_close(&provider);
-    rc = yvex_server_protocol_receive(fd, &request, &prompt, &provider, err);
+    rc = yvex_server_protocol_receive(fd, &request, &prompt, &content,
+                                      &provider, err);
     if (rc != YVEX_OK) goto done;
     request.provider_request = provider;
     if (request.operation == YVEX_CLIENT_OP_RUNTIME_STATUS)
@@ -799,6 +820,8 @@ static int serve_connection(int fd, yvex_error *err)
     }
 done:
     free(prompt);
+    yvex_content_parts_close(
+        &content, content ? request.content_part_count : 0u);
     yvex_provider_request_close(&provider);
     return rc;
 }

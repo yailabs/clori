@@ -4,6 +4,7 @@ include/yvex/artifact.h	abi	abi.artifact	generic	public	public-abi	repository	in
 include/yvex/backend.h	abi	abi.backend	generic	public	public-abi	repository	interface	none
 include/yvex/catalog.h	abi	abi.catalog	generic	public	public-abi	repository	interface	none
 include/yvex/core.h	abi	abi.core	generic	public	public-abi	repository	interface	none
+include/yvex/content.h	abi	abi.content	generic	public	public-abi	provider,server,applications	interface	none
 include/yvex/execution.h	abi	abi.execution	generic	public	public-abi	runtime,server,cli,tests	interface	none
 include/yvex/gguf.h	abi	abi.gguf	generic	public	public-abi	repository	interface	none
 include/yvex/graph.h	abi	abi.graph	generic	public	public-abi	repository	interface	none
@@ -145,6 +146,7 @@ src/cli/io/stream.c	cli.io	cli.io.stream	generic	private	reusable-algorithm	cli.
 src/cli/io/private.h	cli.io	cli.io.private	generic	private	private-interface	cli,render	interface	none
 src/cli/main.c	client	client.yvex	entrypoint	private	entrypoint	operator	entrypoint	none
 src/cli/io/client.c	client	client.runtime_lane	generic	private	protocol-client	client.yvex	implementation	none
+src/cli/io/content.c	client	client.content_stage	generic	private	resource-lifecycle	client.runtime_lane	implementation	none
 src/cli/io/model.c	client	client.model_runtime	generic	private	protocol-client	client.runtime_lane,model.catalog	implementation	none
 src/cli/io/server.c	client	client.server_process	entrypoint	private	foreground-server	operator	entrypoint	none
 src/cli/private.h	client	client.dispatch	generic	private	source-local-interface	client.yvex,client.runtime_lane,client.server_process	interface	none
@@ -177,6 +179,7 @@ src/core/sha256.c	core	core.sha256	generic	private	reusable-algorithm	repository
 src/core/shard_index.c	core	core.shard_index	generic	private	reusable-algorithm	repository	implementation	none
 src/core/status.c	core	core.status	generic	private	reusable-algorithm	repository	implementation	none
 src/provider/core.c	provider	provider.core	generic	private	resource-lifecycle	server.openai,server,applications	implementation	none
+src/provider/content.c	provider	provider.content	generic	private	reusable-algorithm	server,applications	implementation	none
 src/gguf/conversion.c	gguf	gguf.conversion	generic	private	file-serialization	artifact,model,quant	implementation	none
 src/gguf/core.c	gguf	gguf.core	generic	private	resource-lifecycle	artifact,model,quant	implementation	none
 src/gguf/descriptor.c	gguf	gguf.descriptor	generic	private	reusable-algorithm	artifact,model,quant	implementation	none

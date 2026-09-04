@@ -273,8 +273,8 @@ int yvex_client_send(yvex_client *client, const yvex_client_request *request,
     if (!client || client->fd < 0 || !request)
         return transport_refuse(err, YVEX_ERR_INVALID_ARG,
                                 "connected client and request are required");
-    capacity = request->provider_request ? YVEX_SERVER_FRAME_MAX_BYTES
-                                         : request->prompt_bytes + 512u;
+    capacity = (request->provider_request || request->content_part_count)
+                   ? YVEX_SERVER_FRAME_MAX_BYTES : request->prompt_bytes + 512u;
     if (capacity > YVEX_SERVER_FRAME_MAX_BYTES)
         return transport_refuse(err, YVEX_ERR_BOUNDS,
                                 "client request exceeds frame capacity");
@@ -316,6 +316,7 @@ void yvex_client_close(yvex_client **client)
 
 int yvex_server_protocol_receive(int fd, yvex_client_request *request,
                                  unsigned char **owned_prompt,
+                                 yvex_content_part **owned_content,
                                  yvex_provider_request **owned_provider,
                                  yvex_error *err)
 {
@@ -324,7 +325,8 @@ int yvex_server_protocol_receive(int fd, yvex_client_request *request,
     int rc = frame_receive(fd, FRAME_KIND_REQUEST, &payload, &count, err);
     if (rc == YVEX_OK)
         rc = yvex_protocol_request_decode(payload, count, request,
-                                          owned_prompt, owned_provider, err);
+                                          owned_prompt, owned_content,
+                                          owned_provider, err);
     free(payload);
     return rc;
 }

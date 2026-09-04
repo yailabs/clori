@@ -858,10 +858,14 @@ static void profile_render(const yvex_model_library_entry *model,
         yvex_cli_out_writef(
             stdout,
             "  %s\n    deployment=%s · artifact=%.16s · binding=%s\n"
-            "    %s/%s/%s · context=%llu · %s\n",
+            "    %s/%s/%s · context=%llu · %s\n"
+            "    capability input=0x%llx · output=0x%llx · max-parts=%llu\n",
             profile->alias, deployment, profile->artifact_identity, binding,
             profile->backend, profile->engine_kind, profile->execution_strategy,
-            profile->context_capacity, profile->launchable ? "runnable" : "blocked");
+            profile->context_capacity, profile->launchable ? "runnable" : "blocked",
+            profile->capabilities.input_kinds,
+            profile->capabilities.output_kinds,
+            profile->capabilities.maximum_input_parts);
         if (!profile->launchable)
             yvex_cli_out_writef(stdout, "  blocker: %s\n", profile->blocker);
         return;
@@ -871,11 +875,16 @@ static void profile_render(const yvex_model_library_entry *model,
             stdout,
             "%s\n  model: %s\n  deployment: %s\n  artifact: %s\n"
             "  binding label: %s\n  binding: %s\n  backend: %s\n  engine: %s\n"
-            "  strategy: %s\n  context: %llu\n  status: %s\n",
+            "  strategy: %s\n  context: %llu\n  status: %s\n"
+            "  capability input: 0x%llx\n  capability output: 0x%llx\n"
+            "  maximum input parts: %llu\n",
             profile->alias, model->identity, deployment, profile->artifact_identity,
             binding, profile->runtime_binding, profile->backend, profile->engine_kind,
             profile->execution_strategy, profile->context_capacity,
-            profile->launchable ? "runnable" : "blocked");
+            profile->launchable ? "runnable" : "blocked",
+            profile->capabilities.input_kinds,
+            profile->capabilities.output_kinds,
+            profile->capabilities.maximum_input_parts);
         if (!profile->launchable)
             yvex_cli_out_writef(stdout, "  blocker: %s\n", profile->blocker);
         return;
@@ -904,9 +913,17 @@ static void profile_render(const yvex_model_library_entry *model,
     yvex_cli_out_json_string(stdout, profile->execution_strategy);
     yvex_cli_out_fputs(",\"blocker\":", stdout);
     yvex_cli_out_json_string(stdout, profile->blocker);
-    yvex_cli_out_writef(stdout, ",\"context_capacity\":%llu,\"launchable\":%s}",
+    yvex_cli_out_writef(
+        stdout,
+        ",\"context_capacity\":%llu,\"launchable\":%s,\"capabilities\":{"
+        "\"input_mask\":%llu,\"output_mask\":%llu,\"properties\":%llu,"
+        "\"maximum_input_parts\":%llu}}",
                         profile->context_capacity,
-                        profile->launchable ? "true" : "false");
+                        profile->launchable ? "true" : "false",
+                        profile->capabilities.input_kinds,
+                        profile->capabilities.output_kinds,
+                        profile->capabilities.execution_properties,
+                        profile->capabilities.maximum_input_parts);
 }
 
 static int command_library_list(int arg_count, char **args)

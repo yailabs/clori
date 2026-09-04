@@ -104,6 +104,15 @@ static void turn_decode_timestamp_record(turn_sink *sink,
     }
     sink->decode_commit_ns[sink->decode_commit_count++] = now;
 }
+static void session_content_project(yvex_client_message *message,
+                                    const yvex_client_request *request)
+{
+    if (!message || !request || !request->content_part_count) return;
+    message->content_part_count = request->content_part_count;
+    (void)yvex_content_parts_identity(
+        request->content_parts, request->content_part_count,
+        message->input_content_identity, NULL);
+}
 
 static void turn_first_decode_measurement(
     const turn_sink *sink, unsigned long long now,
@@ -1365,6 +1374,7 @@ static int session_turn_publish(server_session_registry *registry, server_sessio
                                 provider_result.tool_calls[0].name);
         }
     }
+    session_content_project(&completed, request);
     session_turn_measurement_project(&completed, sink, now, decode_end);
     yvex_core_text_copy(completed.session_name, sizeof(completed.session_name),
                         session->name);
@@ -1608,6 +1618,7 @@ static int session_turn(server_session_registry *registry,
         registry, request, session->committed_count);
     started.output_limit_explicit =
         started.requested_maximum_new_tokens != 0u;
+    session_content_project(&started, request);
     yvex_core_text_copy(started.session_name, sizeof(started.session_name),
                         session->name);
     rc = emit(emit_context, &started, err);

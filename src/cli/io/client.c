@@ -473,7 +473,7 @@ static int engine_control(yvex_client_operation operation, const char *alias)
     yvex_client_close(&client);
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
-static int engine_catalog(const char *filter, int json)
+static int engine_catalog(const char *filter, int json, int active_only)
 {
     yvex_client_request request;
     yvex_client_message message;
@@ -484,7 +484,10 @@ static int engine_catalog(const char *filter, int json)
     request_init(&request, YVEX_CLIENT_OP_ENGINE_LIST);
     rc = request_open(&client, &request, &err);
     if (json && !filter)
-        fputs("{\"schema\":\"yvex.engine.list.v1\",\"engines\":[", stdout);
+        fputs(active_only
+                  ? "{\"schema\":\"yvex.model.active.v1\",\"engines\":["
+                  : "{\"schema\":\"yvex.engine.list.v1\",\"engines\":[",
+              stdout);
     while (rc == YVEX_OK) {
         rc = yvex_client_receive(client, &message, &err);
         if (rc != YVEX_OK) break;
@@ -501,6 +504,11 @@ static int engine_catalog(const char *filter, int json)
             rc = YVEX_ERR_FORMAT;
             break;
         }
+        if (active_only &&
+            message.engine.state != YVEX_SERVER_ENGINE_LOADED &&
+            message.engine.state != YVEX_SERVER_ENGINE_DRAINING &&
+            message.engine.state != YVEX_SERVER_ENGINE_UNLOADING)
+            continue;
         if (filter && strcmp(filter, message.engine.alias)) continue;
         if (filter && count) continue;
         if (json && filter)
@@ -511,7 +519,8 @@ static int engine_catalog(const char *filter, int json)
         count++;
     }
     if (json && (!filter || count)) fputs(filter ? "}\n" : "]}\n", stdout);
-    else if (rc == YVEX_OK && !count && !filter) puts("no engines known to this host");
+    else if (rc == YVEX_OK && !count && !filter)
+        puts(active_only ? "no active model engines" : "no engines known to this host");
     if (rc == YVEX_OK && filter && !count) {
         yvex_error_set(&err, YVEX_ERR_STATE, "client.engine",
                        "requested engine is not known to the host");
@@ -579,7 +588,6 @@ static int host_logs(int json_output, int detailed, int follow)
     yvex_client_close(&client);
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
-
 static int administration_request(yvex_client_request *request,
                                   int render_mode)
 {
@@ -740,6 +748,8 @@ static int generation_turn(const client_engine_binding *engine,
                            const char *session_name,
                            const unsigned char *prompt,
                            unsigned long long prompt_bytes,
+                           const yvex_content_part *content_parts,
+                           unsigned long long content_part_count,
                            const client_turn_options *options, int conversation,
                            yvex_server_engine_kind engine_kind,
                            unsigned long long context_capacity,
@@ -768,8 +778,13 @@ static int generation_turn(const client_engine_binding *engine,
     request_engine_bind(&request, engine);
     snprintf(request.session_name, sizeof(request.session_name), "%s",
              session_name);
-    request.prompt = prompt;
-    request.prompt_bytes = prompt_bytes;
+    if (content_part_count) {
+        request.content_parts = content_parts;
+        request.content_part_count = content_part_count;
+    } else {
+        request.prompt = prompt;
+        request.prompt_bytes = prompt_bytes;
+    }
     {
         const char *paths[] = {options->first_image, options->last_image};
         const yvex_client_media_condition_role roles[] = {
@@ -1293,10 +1308,38 @@ static void repl_reasoning_policy(
     printf("%sreasoning%s · %s until changed\n", style.accent,
            style.reset, name);
 }
+static const char *content_kind_name(yvex_content_kind kind)
+{
+    switch (kind) {
+    case YVEX_CONTENT_TEXT: return "text";
+    case YVEX_CONTENT_IMAGE: return "image";
+    case YVEX_CONTENT_AUDIO: return "audio";
+    case YVEX_CONTENT_VIDEO: return "video";
+    case YVEX_CONTENT_FILE: return "file";
+    case YVEX_CONTENT_TENSOR: return "tensor";
+    case YVEX_CONTENT_KIND_COUNT: break;
+    }
+    return "unknown";
+}
+static void repl_attachment_list(const yvex_cli_content_stage *stage)
+{
+    const yvex_content_part *parts = yvex_cli_content_stage_parts(stage);
+    unsigned long long count = yvex_cli_content_stage_count(stage), index;
+    if (!count) {
+        puts("attachments · none staged");
+        return;
+    }
+    printf("attachments · %llu staged for next turn\n", count);
+    for (index = 0u; index < count; ++index)
+        printf("  %llu · %s · %s · %llu bytes · %.12s…\n", index + 1u,
+               content_kind_name(parts[index].kind), parts[index].reference,
+               parts[index].byte_count, parts[index].content_identity);
+}
 static int repl_command(const char *line, const client_engine_binding *engine,
                         char current[YVEX_SERVER_SESSION_NAME_CAP],
                         unsigned long long *generated_session,
-                        client_turn_options *options)
+                        client_turn_options *options,
+                        yvex_cli_content_stage *attachments)
 {
     const yvex_operator_descriptor *descriptor;
     yvex_cli_operator_invocation invocation;
@@ -1324,7 +1367,27 @@ static int repl_command(const char *line, const client_engine_binding *engine,
     }
     argument = invocation.argument_count ? invocation.arguments[0] : NULL;
     if (descriptor->lane == YVEX_OPERATOR_LANE_REPL_LOCAL) {
-        result = descriptor->repl_adapter == YVEX_OPERATOR_REPL_QUIT ? 2 : 1;
+        if (descriptor->repl_adapter == YVEX_OPERATOR_REPL_QUIT) result = 2;
+        else if (!strcmp(descriptor->operation_id, "repl.attachment.attach")) {
+            yvex_content_part attached;
+            yvex_error err;
+            if (yvex_cli_content_stage_attach(attachments, argument,
+                                              &attached, &err) != YVEX_OK)
+                (void)client_error(&err);
+            else
+                printf("attached · %s · %llu bytes · %.12s… · next turn %llu/%u\n",
+                       content_kind_name(attached.kind), attached.byte_count,
+                       attached.content_identity,
+                       yvex_cli_content_stage_count(attachments),
+                       YVEX_CONTENT_MAX_PARTS - 1u);
+        } else if (!strcmp(descriptor->operation_id,
+                           "repl.attachment.list"))
+            repl_attachment_list(attachments);
+        else if (!strcmp(descriptor->operation_id,
+                           "repl.attachment.clear")) {
+            yvex_cli_content_stage_clear(attachments);
+            puts("attachments · cleared");
+        }
         yvex_cli_operator_invocation_close(&invocation);
         return result;
     }
@@ -1425,6 +1488,7 @@ static int chat(const client_engine_binding *selected_engine,
     client_engine_binding engine = {0};
     client_turn_options options;
     client_repl_history history;
+    yvex_cli_content_stage *attachments = NULL;
     yvex_client_message status;
     yvex_error err;
     yvex_cli_terminal_style style;
@@ -1446,6 +1510,10 @@ static int chat(const client_engine_binding *selected_engine,
     }
     options = *initial_options;
     options.maximum_new_tokens = maximum_new_tokens;
+    if (yvex_cli_content_stage_open(&attachments, &err) != YVEX_OK) {
+        result = client_error(&err);
+        goto cleanup;
+    }
     if (selected_engine) engine = *selected_engine;
     (void)snprintf(current, sizeof(current), "%s", session_name);
     if (session_ensure(&engine, current) != 0) {
@@ -1518,7 +1586,7 @@ static int chat(const client_engine_binding *selected_engine,
             }
             if (!connected && descriptor && !local) connected = 1;
             int command = repl_command(line, &engine, current, &generated_session,
-                                       &options);
+                                       &options, attachments);
             turn_terminal_close(&terminal);
             free(line);
             if (command == 3) {
@@ -1542,13 +1610,27 @@ static int chat(const client_engine_binding *selected_engine,
         connected = 1;
         repl_history_push(&history, line);
         {
+            yvex_content_part content_parts[YVEX_CONTENT_MAX_PARTS];
+            unsigned long long content_part_count = 0u;
             int connection_lost = 0;
+            if (yvex_cli_content_stage_count(attachments) &&
+                yvex_cli_content_stage_turn(
+                    attachments, (const unsigned char *)line,
+                    (unsigned long long)count, content_parts,
+                    &content_part_count, &err) != YVEX_OK) {
+                (void)client_error(&err);
+                free(line);
+                continue;
+            }
             int turn = generation_turn(
                 &engine, current, (const unsigned char *)line,
-                (unsigned long long)count, &options, 1,
+                (unsigned long long)count, content_parts, content_part_count,
+                &options, 1,
                 status.engine_kind,
                 status.console.context_capacity, &connection_lost);
             if (connection_lost) connected = 0;
+            else if (content_part_count)
+                yvex_cli_content_stage_clear(attachments);
             if (turn == 131) {
                 free(line);
                 break;
@@ -1558,6 +1640,7 @@ static int chat(const client_engine_binding *selected_engine,
     }
 cleanup:
     free(draft);
+    yvex_cli_content_stage_close(&attachments);
     repl_history_close(&history);
     if (attached && !closed && connected)
         (void)administration_bound(YVEX_CLIENT_OP_SESSION_DETACH, &engine,
@@ -1810,7 +1893,9 @@ int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
                                  ? name : NULL;
         for (index = (int)consumed + 1; index < argc; ++index)
             json |= !strcmp(argv[index], "--json");
-        return engine_catalog(filter, json);
+        return engine_catalog(filter, json,
+                              !strcmp(operation->operation_id,
+                                      "model.active"));
     }
     case YVEX_OPERATOR_RUNTIME_HOST_MEMORY: {
         int json = 0, index;

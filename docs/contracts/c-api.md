@@ -249,7 +249,7 @@ engine kind from text execution strategy while retaining alias, package,
 backend, capacity, memory, and generation facts. Engine schema v1 is refused
 before the added fields are read.
 The source-authored conversation boundary admits provider request/wire schema
-v4, tokenizer plan v5, tokenizer provider result v2, and local protocol v19.
+v4, tokenizer plan v5, tokenizer provider result v2, and local protocol v20.
 Runtime event schema v6, generation plan schema v7, and generation result
 schema v5 are current. Generation plan ABI v5 added the workload-profile identity
 required to bind phase evidence to the compiled workload. Generation result
@@ -618,7 +618,7 @@ unknown enums, inconsistent availability, impossible rate denominators, invalid
 current/peak relations, and UMA claims that confuse device addressability with
 measured physical page residency.
 
-## Application Provider And Local Protocol v19
+## Application Provider And Local Protocol v20
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
 result ABI. Provider schema v3 represents an omitted completion
@@ -633,13 +633,13 @@ reasoning, at most one assistant tool call, and its original field semantics.
 Clone and wire-decode publish only a complete owned request graph. The provider
 owner neither parses HTTP nor renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v19 carries the sealed provider request through the
+`<yvex/server.h>` protocol v20 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 explicit reasoning, function calls, usage, terminal completion, and failure.
 Typed events bind the provider adapter, provider-request identity, and external
 correlation ID while excluding prompt and output content.
 
-Protocol v19 carries host status/stop, engine load/list/unload, exact
+Protocol v20 carries host status/stop, engine load/list/unload, exact
 alias/generation routing, separate engine kind and semantic execution strategy,
 speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn
@@ -658,7 +658,7 @@ typed digest/identity evidence. Version 9 adds the startup capacity-plan
 identity, required and unreserved bytes, admitted concurrent sequences, and
 separate independent-session-scheduling and continuous-batching readiness.
 Provider v4's source-default reasoning/history semantics and generation-bound
-routing are not executable by an older peer, so every non-v19 frame refuses during the handshake;
+routing are not executable by an older peer, so every non-v20 frame refuses during the handshake;
 there is no private pre-v0.1 compatibility decoder.
 
 Version 12 added the typed terminal media result. Version 13 separates host
@@ -693,6 +693,15 @@ session, arena, workspace, transient, process, placement, and availability
 without treating UMA addressability as measured physical device residency.
 Event, engine, metric, and host-summary schemas advance with those incompatible
 facts; v18 frames fail closed.
+
+Version 20 adds ordered typed content with stable per-part identity and
+derived-from provenance, local-file media references that avoid JSON/base64
+expansion, directional input/output capability facts, attached-client and
+model-lease counts, and explicit ensure-active/release lease operations. Engine
+schema v4 carries those capabilities and occupancy facts. V19 peers fail closed
+rather than interpreting the new request and engine layouts.
+The runtime-profile catalog record advances to schema v2 so a launchable READY
+deployment and its later active engine expose one capability shape.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map
 queue capacity, timeout, incompatible state and unsupported input without

@@ -301,7 +301,8 @@ def test_product_surface(registry: dict[str, object]) -> None:
     slash = {row.get("slash_projection") for row in active
              if row.get("slash_projection") != "none"}
     require(slash == {"/help", "/status", "/context", "/sessions", "/session",
-                      "/new", "/attach", "/detach",
+                      "/new", "/use", "/detach", "/attach", "/attachments",
+                      "/attachments-clear",
                       "/reset", "/close", "/cancel", "/quit", "/nothink", "/think",
                       "/think-low", "/think-max"},
             f"unexpected slash catalog: {sorted(slash)}")

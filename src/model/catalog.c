@@ -875,6 +875,14 @@ static int library_profile_add(library_model *model,
     local_copy(fact->execution_strategy, sizeof(fact->execution_strategy),
                entry->runtime_execution_strategy);
     fact->context_capacity = entry->runtime_context;
+    if (!strcmp(fact->engine_kind, "text"))
+        (void)yvex_model_capability_profile_describe(
+            YVEX_MODEL_CAPABILITY_PROFILE_TEXT_GENERATION,
+            &fact->capabilities, NULL);
+    else if (!strcmp(fact->engine_kind, "media"))
+        (void)yvex_model_capability_profile_describe(
+            YVEX_MODEL_CAPABILITY_PROFILE_CONDITIONED_AUDIOVISUAL_GENERATION,
+            &fact->capabilities, NULL);
     yvex_error_clear(&admission);
     /* READY is current execution compatibility, not merely readable historical
      * registry paths. Runtime load repeats this inert preflight before admission. */

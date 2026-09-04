@@ -423,15 +423,22 @@ int yvex_server_sessions_open(server_session_registry **out,
     return YVEX_OK;
 }
 
-int yvex_server_sessions_count(server_session_registry *registry,
-                               unsigned long long *count, yvex_error *err)
+int yvex_server_sessions_occupancy(server_session_registry *registry,
+                                   unsigned long long *count,
+                                   unsigned long long *attached,
+                                   yvex_error *err)
 {
-    if (!registry || !count || pthread_mutex_lock(&registry->mutex) != 0) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.count",
-                       "registry and count output are required");
+    unsigned long long index, clients = 0u;
+    if (!registry || !count || !attached ||
+        pthread_mutex_lock(&registry->mutex) != 0) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.occupancy",
+                       "registry and occupancy outputs are required");
         return YVEX_ERR_INVALID_ARG;
     }
+    for (index = 0u; index < registry->capacity; ++index)
+        clients += registry->sessions[index].attached_clients;
     *count = registry->count;
+    *attached = clients;
     (void)pthread_mutex_unlock(&registry->mutex);
     yvex_error_clear(err);
     return YVEX_OK;

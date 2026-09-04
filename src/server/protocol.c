@@ -250,7 +250,14 @@ enum {
     TAG_ENGINE_RESOURCE,
     TAG_RUNTIME_RESOURCE,
     TAG_EVENT_MEASUREMENT,
-    TAG_MESSAGE_MEASUREMENT
+    TAG_MESSAGE_MEASUREMENT,
+    TAG_REQUEST_CONTENT,
+    TAG_MODEL_LEASE_ID,
+    TAG_MESSAGE_CONTENT_COUNT,
+    TAG_MESSAGE_CONTENT_ID,
+    TAG_ENGINE_ATTACHED_CLIENTS,
+    TAG_ENGINE_MODEL_LEASES,
+    TAG_ENGINE_CAPABILITIES
 };
 typedef struct {
     unsigned char *data;
@@ -272,7 +279,7 @@ typedef struct {
     size_t offset, extent;
 } wire_member;
 _Static_assert(sizeof(double) == 8u, "local protocol requires binary64 double");
-_Static_assert(TAG_MESSAGE_MEASUREMENT < 512u,
+_Static_assert(TAG_ENGINE_CAPABILITIES < 512u,
                "known protocol tags must fit the duplicate-field set");
 static int protocol_refuse(yvex_error *err, yvex_status status,
                            const char *reason)
@@ -495,78 +502,6 @@ static int reader_member(void *object, const wire_member *members,
     }
     return 0;
 }
-static int request_state_fields_valid(const yvex_client_request *request)
-{
-    int state_operation =
-        request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE ||
-        request->operation == YVEX_CLIENT_OP_SESSION_STATE_RESTORE;
-    if (!memchr(request->state_path, '\0', sizeof(request->state_path)))
-        return 0;
-    if (!state_operation)
-        return !request->state_path[0] && !request->maximum_state_file_bytes;
-    if (!request->state_path[0]) return 0;
-    return request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE
-               ? !request->maximum_state_file_bytes
-               : request->maximum_state_file_bytes != 0u;
-}
-static int request_fork_fields_valid(const yvex_client_request *request)
-{
-    if (!memchr(request->fork_session_name, '\0',
-                sizeof(request->fork_session_name)))
-        return 0;
-    if (request->operation != YVEX_CLIENT_OP_SESSION_FORK)
-        return !request->fork_session_name[0] && !request->maximum_prefix_bytes;
-    return request->fork_session_name[0] && request->maximum_prefix_bytes;
-}
-static int request_media_conditions_valid(const yvex_client_request *request)
-{
-    unsigned long long index; int first = 0, last = 0;
-    if (!request || request->media_condition_count > YVEX_CLIENT_MEDIA_CONDITION_CAP) return 0;
-    if (request->operation != YVEX_CLIENT_OP_GENERATION_TURN)
-        return request->media_condition_count == 0ull;
-    for (index = 0ull; index < request->media_condition_count; ++index) {
-        const yvex_client_media_condition *condition = request->media_conditions + index;
-        if (condition->schema_version != YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1 ||
-            condition->kind != YVEX_CLIENT_MEDIA_CONDITION_IMAGE ||
-            !condition->source_path[0] ||
-            !memchr(condition->source_path, '\0', sizeof(condition->source_path)))
-            return 0;
-        if (condition->role == YVEX_CLIENT_MEDIA_CONDITION_FIRST && !first)
-            first = 1;
-        else if (condition->role == YVEX_CLIENT_MEDIA_CONDITION_LAST && !last)
-            last = 1;
-        else return 0;
-    }
-    return 1;
-}
-static int request_media_execution_valid(const yvex_client_request *request)
-{
-    const yvex_client_media_execution *execution;
-    unsigned int allowed = YVEX_CLIENT_MEDIA_EXECUTION_WIDTH |
-                           YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT |
-                           YVEX_CLIENT_MEDIA_EXECUTION_DURATION |
-                           YVEX_CLIENT_MEDIA_EXECUTION_SEED;
-    if (!request) return 0;
-    execution = &request->media_execution;
-    if (!execution->schema_version)
-        return !execution->trajectory && !execution->present &&
-               !execution->width && !execution->height &&
-               !execution->duration_milliseconds && !execution->seed;
-    return request->operation == YVEX_CLIENT_OP_GENERATION_TURN &&
-           execution->schema_version == YVEX_CLIENT_MEDIA_EXECUTION_SCHEMA_V1 &&
-           execution->trajectory <= YVEX_CLIENT_MEDIA_TRAJECTORY_RELEASED &&
-           !(execution->present & ~allowed) &&
-           (!!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_WIDTH) ==
-            !!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT)) &&
-           (!!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_WIDTH) ==
-            !!execution->width) &&
-           (!!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT) ==
-            !!execution->height) &&
-           (!!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_DURATION) ==
-            !!execution->duration_milliseconds) &&
-           ((execution->present & YVEX_CLIENT_MEDIA_EXECUTION_SEED) ||
-            !execution->seed);
-}
 static int request_media_execution_write(
     wire_writer *writer, const yvex_client_media_execution *execution)
 {
@@ -597,21 +532,20 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
 {
     wire_writer writer = {output, capacity, 0u};
     unsigned char *provider_bytes = NULL;
+    unsigned char *content_bytes = NULL;
     unsigned long long provider_count = 0u;
+    unsigned long long content_count = 0u;
     unsigned long long flags;
     int provider_rc = YVEX_OK;
     if (byte_count) *byte_count = 0u;
     if (!request || !output || !byte_count ||
         request->schema_version != YVEX_LOCAL_PROTOCOL_VERSION ||
         (int)request->operation < (int)YVEX_CLIENT_OP_HANDSHAKE ||
-        request->operation > YVEX_CLIENT_OP_ENGINE_UNLOAD ||
+        request->operation > YVEX_CLIENT_OP_ENGINE_LEASE_RELEASE ||
         (int)request->trace_level < (int)YVEX_SERVER_TRACE_SUMMARY ||
         request->trace_level > YVEX_SERVER_TRACE_FULL ||
         !yvex_reasoning_request_policy_valid(request->reasoning_policy) ||
-        !request_state_fields_valid(request) ||
-        !request_fork_fields_valid(request) ||
-        !request_media_conditions_valid(request) ||
-        !request_media_execution_valid(request) ||
+        !yvex_server_protocol_request_fields_valid(request) ||
         (request->stochastic != 0 && request->stochastic != 1) ||
         (request->seed_present != 0 && request->seed_present != 1) ||
         (request->trace_content != 0 && request->trace_content != 1) ||
@@ -619,7 +553,8 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         !isfinite(request->min_p) || !isfinite(request->typical_p) ||
         request->prompt_bytes > YVEX_SERVER_FRAME_MAX_BYTES ||
         (!request->prompt && request->prompt_bytes) ||
-        (request->prompt_bytes && request->provider_request) ||
+        ((request->prompt_bytes != 0u) + (request->provider_request != NULL) +
+         (request->content_part_count != 0u) > 1) ||
         !memchr(request->model_alias, '\0', sizeof(request->model_alias)))
         return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
                                "complete bounded client request is required");
@@ -632,6 +567,22 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
             request->provider_request, provider_bytes,
             YVEX_PROVIDER_WIRE_MAX_BYTES, &provider_count, err);
         if (provider_rc != YVEX_OK) {
+            free(provider_bytes);
+            return provider_rc;
+        }
+    }
+    if (request->content_part_count) {
+        content_bytes = malloc(YVEX_CONTENT_WIRE_MAX_BYTES);
+        if (!content_bytes) {
+            free(provider_bytes);
+            return protocol_refuse(err, YVEX_ERR_NOMEM,
+                                   "content request wire allocation failed");
+        }
+        provider_rc = yvex_content_parts_wire_encode(
+            request->content_parts, request->content_part_count,
+            content_bytes, YVEX_CONTENT_WIRE_MAX_BYTES, &content_count, err);
+        if (provider_rc != YVEX_OK) {
+            free(content_bytes);
             free(provider_bytes);
             return provider_rc;
         }
@@ -675,11 +626,18 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
                          request, YVEX_CLIENT_MEDIA_CONDITION_LAST)) ||
         !request_media_execution_write(&writer, &request->media_execution) ||
         !writer_field(&writer, TAG_PROVIDER_REQUEST, provider_bytes,
-                      provider_count)) {
+                      provider_count) ||
+        (content_count &&
+         !writer_field(&writer, TAG_REQUEST_CONTENT, content_bytes,
+                       content_count)) ||
+        !writer_text(&writer, TAG_MODEL_LEASE_ID,
+                     request->model_lease_identity)) {
+        free(content_bytes);
         free(provider_bytes);
         return protocol_refuse(err, YVEX_ERR_BOUNDS,
                                "request does not fit the admitted frame");
     }
+    free(content_bytes);
     free(provider_bytes);
     *byte_count = writer.count;
     yvex_error_clear(err);
@@ -689,20 +647,24 @@ int yvex_protocol_request_decode(const unsigned char *input,
                                  unsigned long long byte_count,
                                  yvex_client_request *request,
                                  unsigned char **owned_prompt,
+                                 yvex_content_part **owned_content,
                                  yvex_provider_request **owned_provider,
                                  yvex_error *err)
 {
     wire_reader reader = {input, byte_count, 0u, {0u, 0u}};
     yvex_client_request candidate;
     yvex_provider_request *provider = NULL;
+    yvex_content_part *content = NULL;
+    unsigned long long content_count = 0u;
     unsigned char *prompt = NULL;
     const unsigned char *bytes;
     unsigned long long count, value = 0ull;
     unsigned int tag;
     int next, valid = 1, have_operation = 0;
     if (owned_prompt) *owned_prompt = NULL;
+    if (owned_content) *owned_content = NULL;
     if (owned_provider) *owned_provider = NULL;
-    if (!input || !request || !owned_prompt || !owned_provider ||
+    if (!input || !request || !owned_prompt || !owned_content || !owned_provider ||
         byte_count > YVEX_SERVER_FRAME_MAX_BYTES)
         return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
                                "bounded request bytes and outputs are required");
@@ -712,7 +674,7 @@ int yvex_protocol_request_decode(const unsigned char *input,
         switch (tag) {
         case TAG_OPERATION:
             valid = reader_u64(bytes, count, &value) &&
-                    value <= YVEX_CLIENT_OP_ENGINE_UNLOAD;
+                    value <= YVEX_CLIENT_OP_ENGINE_LEASE_RELEASE;
             candidate.operation = (yvex_client_operation)value;
             have_operation = valid;
             break;
@@ -764,6 +726,17 @@ int yvex_protocol_request_decode(const unsigned char *input,
                     (!count || yvex_provider_request_wire_decode(
                         bytes, count, &provider, err) == YVEX_OK);
             candidate.provider_request = provider;
+            break;
+        case TAG_REQUEST_CONTENT:
+            valid = !content && count &&
+                    yvex_content_parts_wire_decode(
+                        bytes, count, &content, &content_count, err) == YVEX_OK;
+            candidate.content_parts = content;
+            candidate.content_part_count = content_count;
+            break;
+        case TAG_MODEL_LEASE_ID:
+            valid = reader_text(bytes, count, candidate.model_lease_identity,
+                                sizeof(candidate.model_lease_identity));
             break;
         case TAG_REASONING_POLICY:
             valid = reader_u64(bytes, count, &value) &&
@@ -831,18 +804,19 @@ int yvex_protocol_request_decode(const unsigned char *input,
         }
     }
     if (next < 0 || !valid || !have_operation ||
-        !request_state_fields_valid(&candidate) ||
-        !request_fork_fields_valid(&candidate) ||
-        !request_media_conditions_valid(&candidate) ||
-        !request_media_execution_valid(&candidate) ||
-        (candidate.prompt_bytes && candidate.provider_request)) {
+        !yvex_server_protocol_request_fields_valid(&candidate) ||
+        ((candidate.prompt_bytes != 0u) +
+         (candidate.provider_request != NULL) +
+         (candidate.content_part_count != 0u) > 1)) {
         free(prompt);
+        yvex_content_parts_close(&content, content_count);
         yvex_provider_request_close(&provider);
         return protocol_refuse(err, YVEX_ERR_FORMAT,
                                "request frame contains malformed or duplicate fields");
     }
     *request = candidate;
     *owned_prompt = prompt;
+    *owned_content = content;
     *owned_provider = provider;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -1085,6 +1059,12 @@ static int protocol_message_core_write(wire_writer *writer,
                     message->external_correlation_id) &&
         writer_text(writer, TAG_TOOL_CALL_ID, message->tool_call_id) &&
         writer_text(writer, TAG_TOOL_NAME, message->tool_name) &&
+        MESSAGE_U64(TAG_MESSAGE_CONTENT_COUNT,
+                    message->content_part_count) &&
+        writer_text(writer, TAG_MESSAGE_CONTENT_ID,
+                    message->input_content_identity) &&
+        writer_text(writer, TAG_MODEL_LEASE_ID,
+                    message->model_lease_identity) &&
         writer_measurement(writer, TAG_MESSAGE_MEASUREMENT,
                            &message->measurement);
 #undef MESSAGE_U64
@@ -1189,6 +1169,8 @@ static const wire_member engine_members[] = {
     WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_GENERATION, generation),
     WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_ACTIVE_WORK, active_work),
     WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_SESSION_COUNT, session_count),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_ATTACHED_CLIENTS, attached_client_count),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_MODEL_LEASES, model_lease_count),
     WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_CONTEXT_CAPACITY, context_capacity),
     WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_PREFILL_CHUNK, prefill_chunk_tokens),
     WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_MAXIMUM_NEW_TOKENS, maximum_new_tokens),
@@ -1313,8 +1295,13 @@ static int protocol_engine_write(wire_writer *writer,
                                  const yvex_client_message *message)
 {
     const yvex_server_engine_summary *engine = &message->engine;
+    unsigned char capability[40];
+    yvex_error ignored;
     unsigned long long flags;
     if (message->kind != YVEX_CLIENT_MESSAGE_ENGINE) return 1;
+    if (yvex_model_capability_wire_encode(&engine->capabilities,
+                                          capability, &ignored) != YVEX_OK)
+        return 0;
     flags = (engine->execution_ready ? 1u : 0u) |
             (engine->explicit_reasoning_channel_supported ? 2u : 0u) |
             (engine->continuous_batching_ready ? 4u : 0u);
@@ -1326,6 +1313,8 @@ static int protocol_engine_write(wire_writer *writer,
            writer_members(writer, engine, engine_members,
                           sizeof(engine_members) / sizeof(engine_members[0])) &&
            writer_u64(writer, TAG_ENGINE_FLAGS, flags) &&
+           writer_field(writer, TAG_ENGINE_CAPABILITIES,
+                        capability, sizeof(capability)) &&
            writer_capacity(writer, TAG_ENGINE_CAPACITY, &engine->capacity) &&
            writer_resource(writer, TAG_ENGINE_RESOURCE, &engine->resources);
 }
@@ -1594,6 +1583,17 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
         valid = reader_text(bytes, count, candidate->tool_name,
                             sizeof(candidate->tool_name));
         break;
+    case TAG_MESSAGE_CONTENT_COUNT:
+        valid = BASE_U64(candidate->content_part_count);
+        break;
+    case TAG_MESSAGE_CONTENT_ID:
+        valid = reader_text(bytes, count, candidate->input_content_identity,
+                            sizeof(candidate->input_content_identity));
+        break;
+    case TAG_MODEL_LEASE_ID:
+        valid = reader_text(bytes, count, candidate->model_lease_identity,
+                            sizeof(candidate->model_lease_identity));
+        break;
     default: return 0;
     }
 #undef BASE_U64
@@ -1796,6 +1796,10 @@ static int message_engine_field(yvex_client_message *candidate,
     case TAG_ENGINE_RESOURCE:
         valid = yvex_server_protocol_resource_decode(bytes, count,
                                                      &engine->resources);
+        break;
+    case TAG_ENGINE_CAPABILITIES:
+        valid = yvex_model_capability_wire_decode(
+                    bytes, count, &engine->capabilities, NULL) == YVEX_OK;
         break;
     default: return 0;
     }

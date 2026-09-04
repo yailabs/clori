@@ -111,6 +111,113 @@ static int media_result_fields_valid(const yvex_client_media_result *result)
            yvex_sha256_hex_valid(result->publication_identity);
 }
 
+static int request_state_fields_valid(const yvex_client_request *request)
+{
+    int state_operation =
+        request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE ||
+        request->operation == YVEX_CLIENT_OP_SESSION_STATE_RESTORE;
+    if (!memchr(request->state_path, '\0', sizeof(request->state_path)))
+        return 0;
+    if (!state_operation)
+        return !request->state_path[0] && !request->maximum_state_file_bytes;
+    if (!request->state_path[0]) return 0;
+    return request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE
+               ? !request->maximum_state_file_bytes
+               : request->maximum_state_file_bytes != 0u;
+}
+
+static int request_fork_fields_valid(const yvex_client_request *request)
+{
+    if (!memchr(request->fork_session_name, '\0',
+                sizeof(request->fork_session_name)))
+        return 0;
+    if (request->operation != YVEX_CLIENT_OP_SESSION_FORK)
+        return !request->fork_session_name[0] && !request->maximum_prefix_bytes;
+    return request->fork_session_name[0] && request->maximum_prefix_bytes;
+}
+
+static int request_content_fields_valid(const yvex_client_request *request)
+{
+    if (!request->content_part_count)
+        return request->content_parts == NULL;
+    return request->operation == YVEX_CLIENT_OP_GENERATION_TURN &&
+           !request->prompt_bytes && !request->provider_request &&
+           yvex_content_parts_validate(request->content_parts,
+                                       request->content_part_count, NULL) ==
+               YVEX_OK;
+}
+
+static int request_lease_fields_valid(const yvex_client_request *request)
+{
+    int release = request->operation == YVEX_CLIENT_OP_ENGINE_LEASE_RELEASE;
+    if (!memchr(request->model_lease_identity, '\0',
+                sizeof(request->model_lease_identity))) return 0;
+    return release ? yvex_sha256_hex_valid(request->model_lease_identity)
+                   : !request->model_lease_identity[0];
+}
+
+static int request_media_conditions_valid(const yvex_client_request *request)
+{
+    unsigned long long index; int first = 0, last = 0;
+    if (!request || request->media_condition_count > YVEX_CLIENT_MEDIA_CONDITION_CAP) return 0;
+    if (request->operation != YVEX_CLIENT_OP_GENERATION_TURN)
+        return request->media_condition_count == 0ull;
+    for (index = 0ull; index < request->media_condition_count; ++index) {
+        const yvex_client_media_condition *condition = request->media_conditions + index;
+        if (condition->schema_version != YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1 ||
+            condition->kind != YVEX_CLIENT_MEDIA_CONDITION_IMAGE ||
+            !condition->source_path[0] ||
+            !memchr(condition->source_path, '\0', sizeof(condition->source_path)))
+            return 0;
+        if (condition->role == YVEX_CLIENT_MEDIA_CONDITION_FIRST && !first)
+            first = 1;
+        else if (condition->role == YVEX_CLIENT_MEDIA_CONDITION_LAST && !last)
+            last = 1;
+        else return 0;
+    }
+    return 1;
+}
+
+static int request_media_execution_valid(const yvex_client_request *request)
+{
+    const yvex_client_media_execution *execution;
+    unsigned int allowed = YVEX_CLIENT_MEDIA_EXECUTION_WIDTH |
+                           YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT |
+                           YVEX_CLIENT_MEDIA_EXECUTION_DURATION |
+                           YVEX_CLIENT_MEDIA_EXECUTION_SEED;
+    if (!request) return 0;
+    execution = &request->media_execution;
+    if (!execution->schema_version)
+        return !execution->trajectory && !execution->present &&
+               !execution->width && !execution->height &&
+               !execution->duration_milliseconds && !execution->seed;
+    return request->operation == YVEX_CLIENT_OP_GENERATION_TURN &&
+           execution->schema_version == YVEX_CLIENT_MEDIA_EXECUTION_SCHEMA_V1 &&
+           execution->trajectory <= YVEX_CLIENT_MEDIA_TRAJECTORY_RELEASED &&
+           !(execution->present & ~allowed) &&
+           (!!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_WIDTH) ==
+            !!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT)) &&
+           (!!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_WIDTH) ==
+            !!execution->width) &&
+           (!!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT) ==
+            !!execution->height) &&
+           (!!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_DURATION) ==
+            !!execution->duration_milliseconds) &&
+           ((execution->present & YVEX_CLIENT_MEDIA_EXECUTION_SEED) ||
+            !execution->seed);
+}
+
+int yvex_server_protocol_request_fields_valid(
+    const yvex_client_request *request)
+{
+    return request && request_state_fields_valid(request) &&
+           request_fork_fields_valid(request) &&
+           request_content_fields_valid(request) &&
+           request_lease_fields_valid(request) &&
+           request_media_conditions_valid(request) &&
+           request_media_execution_valid(request);
+}
+
 int yvex_server_protocol_message_valid(const yvex_client_message *message)
 {
     const yvex_server_summary *runtime = &message->runtime;
@@ -190,6 +297,13 @@ int yvex_server_protocol_message_valid(const yvex_client_message *message)
            BOOL_VALID(console->progress_available) &&
            BOOL_VALID(console->selected_model_available) &&
            BOOL_VALID(console->explicit_reasoning_channel_supported) &&
+           (message->content_part_count
+                ? (message->content_part_count <= YVEX_CONTENT_MAX_PARTS &&
+                   yvex_sha256_hex_valid(message->input_content_identity))
+                : !message->input_content_identity[0]) &&
+           (!message->model_lease_identity[0] ||
+            (message->kind == YVEX_CLIENT_MESSAGE_ENGINE &&
+             yvex_sha256_hex_valid(message->model_lease_identity))) &&
            yvex_reasoning_policy_valid(console->reasoning_policy) &&
            partial_turn_fields_valid(&message->partial_turn) &&
            checkpoint_fields_valid(&message->state_checkpoint) &&

@@ -57,10 +57,12 @@ execution capability are ready.
 
 `model unload MODEL` resolves the resident generation and moves it to draining;
 advanced `engine unload ENGINE` addresses the generation directly. Unload
-refuses new leases, requests cancellation of active work, waits for its bounded
-work count, closes sessions and model resources, and leaves the host and other
-engines alive. Reloading the same deployment creates another generation. A session or
-response state from the old generation cannot attach to the replacement.
+refuses while any session or model lease owns the generation. Once ownership is
+zero it refuses new leases, requests cancellation of active work, waits for its
+bounded work count, closes model resources, and leaves the host and other
+engines alive. Reloading the same deployment creates another generation. A
+session or response state from the old generation cannot attach to the
+replacement.
 
 The host can own several engines when their admitted resources fit. Current
 large-family operation may admit only one at a time on GB10; that is a resource
@@ -68,9 +70,22 @@ result, not a server-topology restriction. The CPU tiny vertical proves two
 simultaneously loaded engines, explicit routing, ambiguous-routing refusal,
 unload/reload, and host survival.
 
+An explicit provider ensure-active request reuses this engine manager and the
+configured model loader. It acquires an identity-bound lease on the resulting
+generation without changing any conversational model or session. Multiple
+leases may coexist; unload refuses while a session or lease still owns the
+generation. Release addresses the exact lease. YVEX does not infer that an
+auxiliary model is needed and does not evict another engine implicitly.
+
 An implementation safety ceiling bounds allocation, the `--max-engines`
 deployment option selects the host's visible slot capacity, and live resource
 admission remains a third independent decision.
+
+`model active` is the human and JSON projection of loaded, draining, or
+unloading engine summaries. The summary owns generation, backend/device,
+execution strategy, activity/work, attached sessions/clients, lease count,
+directional content capabilities, and the existing H12 resource placement. It
+does not infer residency from an allocator zero.
 
 ## Model engine
 
@@ -114,6 +129,16 @@ prepare commit, publish commit, abort, reset, invalidate, capture, attach, and
 close. Transaction coordination uses a bounded participant collection; target
 state, draft state, token ledger, decoder, RNG, and publication remain distinct
 participants rather than one homogeneous KV object.
+
+A conversation turn is an ordered collection of typed content parts, not one
+attachment and not one session. Parts distinguish text, image, audio, video,
+file, and tensor kinds; each has a content digest and may link a derived form to
+its original with `derived_from_content_identity`. Modality changes do not
+replace the session. Capability admission compares the exact part kinds with
+the loaded specialization before numerical work. The current reference CLI
+stages multiple local attachments for the next turn and appends text on submit;
+future architecture verticals may consume the same contract without adding a
+modality-specific session type.
 
 Speculative candidate rows are never publication authority. Target verification
 selects one prefix-addressable checkpoint; all participants either prepare and

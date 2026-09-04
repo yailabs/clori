@@ -298,6 +298,8 @@ The relevant commands have different responsibilities:
   profile, then publishes one engine generation;
 - `yvex model unload MODEL` drains and closes that model's resident generation
   without stopping the host;
+- `yvex model active` projects loaded generations, exact activity, clients,
+  sessions, leases, directional capabilities, and resource placement;
 - advanced `yvex engine list|show|load|unload` retains exact profile and
   generation control for engineering and qualification;
 - `yvex host memory` reports current process, mapped, host-resident, and
@@ -446,7 +448,7 @@ view and a prompt labelled with the product model name, not the deployment
 profile alias:
 
 ```text
-YVEX 0.1.0 · protocol 19
+YVEX 0.1.0 · protocol 20
 
   model      DeepSeek V4 Flash
   variant    IQ2_XXS/Q2_K/MXFP4
@@ -493,9 +495,13 @@ colors.
 Slash commands are discovered from the canonical registry and their complete
 current catalog is visible at startup. `/help` adds one-line descriptions;
 `/status`, `/runtime`, `/model`, `/memory`, and `/context` inspect state;
-`/session`, `/sessions`, `/new`, `/attach`, `/detach`, `/reset`, and `/close`
-manage the session; `/cancel` cancels active generation; and `/quit` exits
-locally. `/exit` is a registry-owned alias for `/quit`; bare `exit` remains
+`/session`, `/sessions`, `/new`, `/use`, `/detach`, `/reset`, and `/close`
+manage the session; `/attach PATH` stages one local media object for the next
+turn, `/attachments` lists the bounded ordered stage, and
+`/attachments-clear` discards it. Repeated attachments belong to the same next
+turn; after accepted submission the stage clears while the exact session stays
+attached. `/cancel` cancels active generation; and `/quit` exits locally.
+`/exit` is a registry-owned alias for `/quit`; bare `exit` remains
 ordinary model input. Tab completes an unambiguous slash command. Commands for an unsupported
 explicit reasoning channel refuse rather than simulate support. The current
 DSpark profile admits `/think`, `/think-max`, and `/nothink`; a family with an
@@ -605,7 +611,7 @@ state, and persistent KV while sharing immutable model resources:
 
 Client disconnect and detach do not close the engine. A partial or cancelled
 turn can retain model-committed state and is never silently marked complete.
-Protocol v19 reports the exact engine generation, committed position,
+Protocol v20 reports the exact engine generation, committed position,
 token/text counts, state generations, failure class, and reset requirement.
 Reset clears the session KV, tokens, transcript, decoder, and RNG policy without
 closing the engine or host.

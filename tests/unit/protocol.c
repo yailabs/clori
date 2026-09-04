@@ -21,6 +21,7 @@ static int test_request_roundtrip(void)
     static const unsigned char prompt[] = {'a', 0u, 'b', 0xf0u, 0x9fu, 0x98u, 0x80u};
     unsigned char frame[2048];
     unsigned char *owned_prompt = NULL;
+    yvex_content_part *owned_content = NULL;
     yvex_provider_request *owned_provider = NULL;
     yvex_client_request source, decoded;
     unsigned long long count = 0u;
@@ -69,7 +70,7 @@ static int test_request_roundtrip(void)
     YVEX_TEST_ASSERT(rc == YVEX_OK && count > 0u, "request encode");
     memset(&decoded, 0, sizeof(decoded));
     rc = yvex_protocol_request_decode(frame, count, &decoded, &owned_prompt,
-                                      &owned_provider, &err);
+                                      &owned_content, &owned_provider, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "request decode");
     YVEX_TEST_ASSERT(decoded.operation == source.operation, "request operation");
     YVEX_TEST_ASSERT(decoded.request_number == 42u, "request number");
@@ -98,6 +99,7 @@ static int test_request_roundtrip(void)
             decoded.media_execution.seed == 42ull,
         "typed released media execution roundtrip");
     free(owned_prompt);
+    yvex_content_parts_close(&owned_content, decoded.content_part_count);
     yvex_provider_request_close(&owned_provider);
 
     source.schema_version++;
@@ -112,8 +114,87 @@ static int test_request_roundtrip(void)
                                      &err) == YVEX_ERR_INVALID_ARG,
         "media execution refuses an unpaired canvas axis");
     rc = yvex_protocol_request_decode(frame, 3u, &decoded, &owned_prompt,
-                                      &owned_provider, &err);
+                                      &owned_content, &owned_provider, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT, "truncated request refuses");
+    return 0;
+}
+
+static int test_content_request_roundtrip(void)
+{
+    static const unsigned char transcript[] = "heard text";
+    yvex_content_part source_parts[2] = {0}, *owned_content = NULL;
+    yvex_client_request source = {0}, decoded;
+    yvex_provider_request *owned_provider = NULL;
+    unsigned char *owned_prompt = NULL;
+    unsigned char frame[4096];
+    unsigned long long count = 0u;
+    char source_identity[YVEX_CONTENT_ID_CAP];
+    yvex_error err;
+    source_parts[0].schema_version = YVEX_CONTENT_PART_SCHEMA_V1;
+    source_parts[0].kind = YVEX_CONTENT_AUDIO;
+    source_parts[0].storage = YVEX_CONTENT_LOCAL_FILE;
+    source_parts[0].byte_count = 7000000u;
+    strcpy(source_parts[0].media_type, "audio/wav");
+    strcpy(source_parts[0].reference, "/var/tmp/yvex-audio.wav");
+    memset(source_parts[0].content_identity, 'a',
+           sizeof(source_parts[0].content_identity) - 1u);
+    source_parts[1].schema_version = YVEX_CONTENT_PART_SCHEMA_V1;
+    source_parts[1].kind = YVEX_CONTENT_TEXT;
+    source_parts[1].storage = YVEX_CONTENT_INLINE;
+    source_parts[1].bytes = transcript;
+    source_parts[1].byte_count = sizeof(transcript) - 1u;
+    strcpy(source_parts[1].media_type, "text/plain;charset=utf-8");
+    strcpy(source_parts[1].derived_from_content_identity,
+           source_parts[0].content_identity);
+    YVEX_TEST_ASSERT(
+        yvex_content_part_seal(source_parts + 1u, &err) == YVEX_OK &&
+            yvex_content_parts_identity(source_parts, 2u, source_identity,
+                                        &err) == YVEX_OK,
+        "multipart request fixture seals");
+    source.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    source.operation = YVEX_CLIENT_OP_GENERATION_TURN;
+    source.request_number = 91u;
+    strcpy(source.session_name, "multipart-session");
+    source.content_parts = source_parts;
+    source.content_part_count = 2u;
+    source.temperature = 1.0;
+    source.top_p = 1.0;
+    source.typical_p = 1.0;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_request_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_OK &&
+            count < sizeof(frame),
+        "multipart request uses bounded reference transport");
+    YVEX_TEST_ASSERT(
+        yvex_protocol_request_decode(frame, count, &decoded, &owned_prompt,
+                                     &owned_content, &owned_provider,
+                                     &err) == YVEX_OK &&
+            owned_prompt == NULL && owned_provider == NULL &&
+            decoded.content_part_count == 2u &&
+            decoded.content_parts == owned_content &&
+            decoded.content_parts[0].byte_count == 7000000u &&
+            decoded.content_parts[0].bytes == NULL &&
+            !strcmp(decoded.content_parts[1].derived_from_content_identity,
+                    source_parts[0].content_identity) &&
+            !memcmp(decoded.content_parts[1].bytes, transcript,
+                    sizeof(transcript) - 1u),
+        "multipart request preserves order, payload, and provenance");
+    {
+        char decoded_identity[YVEX_CONTENT_ID_CAP];
+        YVEX_TEST_ASSERT(
+            yvex_content_parts_identity(decoded.content_parts,
+                                        decoded.content_part_count,
+                                        decoded_identity, &err) == YVEX_OK &&
+                !strcmp(decoded_identity, source_identity),
+            "multipart request identity survives protocol boundary");
+    }
+    yvex_content_parts_close(&owned_content, decoded.content_part_count);
+    source.prompt = transcript;
+    source.prompt_bytes = sizeof(transcript) - 1u;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_request_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "legacy prompt and typed content are mutually exclusive");
     return 0;
 }
 
@@ -122,12 +203,13 @@ static int test_all_operation_roundtrips(void)
     unsigned char frame[2048];
     yvex_client_request source, decoded;
     yvex_provider_request *provider = NULL;
+    yvex_content_part *content = NULL;
     unsigned char *prompt = NULL;
     unsigned long long count;
     yvex_error err;
     unsigned int value;
     for (value = YVEX_CLIENT_OP_HANDSHAKE;
-         value <= YVEX_CLIENT_OP_ENGINE_UNLOAD; ++value) {
+         value <= YVEX_CLIENT_OP_ENGINE_LEASE_RELEASE; ++value) {
         memset(&source, 0, sizeof(source));
         source.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
         source.operation = (yvex_client_operation)value;
@@ -144,6 +226,9 @@ static int test_all_operation_roundtrips(void)
             strcpy(source.fork_session_name, "child");
             source.maximum_prefix_bytes = 8192u;
         }
+        if (source.operation == YVEX_CLIENT_OP_ENGINE_LEASE_RELEASE)
+            memset(source.model_lease_identity, 'a',
+                   sizeof(source.model_lease_identity) - 1u);
         count = 0u;
         YVEX_TEST_ASSERT(
             yvex_protocol_request_encode(&source, frame, sizeof(frame), &count,
@@ -151,7 +236,7 @@ static int test_all_operation_roundtrips(void)
             "all current protocol operations encode");
         YVEX_TEST_ASSERT(
             yvex_protocol_request_decode(frame, count, &decoded, &prompt,
-                                         &provider, &err) == YVEX_OK &&
+                                         &content, &provider, &err) == YVEX_OK &&
                 decoded.operation == (yvex_client_operation)value,
             "all current protocol operations decode");
         if (source.operation == YVEX_CLIENT_OP_SESSION_FORK)
@@ -161,6 +246,7 @@ static int test_all_operation_roundtrips(void)
                 "session fork fields roundtrip");
         free(prompt);
         prompt = NULL;
+        yvex_content_parts_close(&content, decoded.content_part_count);
         yvex_provider_request_close(&provider);
     }
     return 0;
@@ -170,6 +256,7 @@ static int test_schema_refusals(void)
 {
     unsigned char frame[4096], malformed[4096];
     unsigned char *prompt = NULL;
+    yvex_content_part *content = NULL;
     yvex_provider_request *provider = NULL;
     yvex_client_request request, decoded_request;
     yvex_client_message message, decoded_message;
@@ -186,13 +273,15 @@ static int test_schema_refusals(void)
     malformed[15] = 0xffu;
     YVEX_TEST_ASSERT(
         yvex_protocol_request_decode(malformed, count, &decoded_request,
-                                     &prompt, &provider, &err) == YVEX_ERR_FORMAT,
+                                     &prompt, &content, &provider,
+                                     &err) == YVEX_ERR_FORMAT,
         "unknown request operation refuses on decode");
     memcpy(malformed, frame, (size_t)count);
     malformed[2] = 1u;
     YVEX_TEST_ASSERT(
         yvex_protocol_request_decode(malformed, count, &decoded_request,
-                                     &prompt, &provider, &err) == YVEX_ERR_FORMAT,
+                                     &prompt, &content, &provider,
+                                     &err) == YVEX_ERR_FORMAT,
         "nonzero TLV reserved field refuses");
     memcpy(malformed, frame, (size_t)count);
     malformed[count] = 0u;
@@ -200,7 +289,8 @@ static int test_schema_refusals(void)
     memset(malformed + count + 2u, 0, 6u);
     YVEX_TEST_ASSERT(
         yvex_protocol_request_decode(malformed, count + 8u, &decoded_request,
-                                     &prompt, &provider, &err) == YVEX_ERR_FORMAT,
+                                     &prompt, &content, &provider,
+                                     &err) == YVEX_ERR_FORMAT,
         "unknown request field refuses");
     request.operation = (yvex_client_operation)-1;
     YVEX_TEST_ASSERT(
@@ -533,6 +623,9 @@ static int test_message_roundtrip(void)
     source.requested_maximum_new_tokens = 17u;
     source.resolved_maximum_new_tokens = 9u;
     source.output_limit_explicit = 1;
+    source.content_part_count = 3u;
+    memset(source.input_content_identity, 'c',
+           sizeof(source.input_content_identity) - 1u);
     rc = yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
                                       &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "turn envelope message encode");
@@ -541,7 +634,10 @@ static int test_message_roundtrip(void)
         rc == YVEX_OK && decoded.initial_position == 41u &&
             decoded.requested_maximum_new_tokens == 17u &&
             decoded.resolved_maximum_new_tokens == 9u &&
-            decoded.output_limit_explicit,
+            decoded.output_limit_explicit &&
+            decoded.content_part_count == 3u &&
+            !strcmp(decoded.input_content_identity,
+                    source.input_content_identity),
         "turn envelope ownership roundtrip");
     memset(&source, 0, sizeof(source));
     source.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
@@ -782,7 +878,7 @@ typedef struct {
 static void *stale_peer_main(void *opaque)
 {
     static const unsigned char response[12] = {
-        'Y', 'V', 'X', 'P', 0u, 18u, 0u, 2u, 0u, 0u, 0u, 0u};
+        'Y', 'V', 'X', 'P', 0u, 19u, 0u, 2u, 0u, 0u, 0u, 0u};
     stale_peer *peer = opaque;
     unsigned char header[12], discard[4096];
     unsigned int length;
@@ -831,8 +927,8 @@ static int test_stale_frame_refusal(void)
                      "stale peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 19") != NULL,
-                     "immediately prior v18 frame explicitly refuses");
+                         strstr(yvex_error_message(&err), "version 20") != NULL,
+                     "immediately prior v19 frame explicitly refuses");
     YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "stale peer join");
     (void)close(peer.listener);
     (void)unlink(path);
@@ -867,6 +963,17 @@ static int test_capability_aware_readiness(void)
     message.engine.capacity.runnable_work_capacity = 2ull;
     message.engine.capacity.physical_sequence_width = 1ull;
     message.engine.capacity.cooperative_scheduling_ready = 1;
+    message.engine.capabilities.schema_version =
+        YVEX_MODEL_CAPABILITY_SCHEMA_V1;
+    message.engine.capabilities.input_kinds =
+        YVEX_CONTENT_KIND_MASK(YVEX_CONTENT_TEXT) |
+        YVEX_CONTENT_KIND_MASK(YVEX_CONTENT_IMAGE);
+    message.engine.capabilities.output_kinds =
+        YVEX_CONTENT_KIND_MASK(YVEX_CONTENT_AUDIO) |
+        YVEX_CONTENT_KIND_MASK(YVEX_CONTENT_VIDEO);
+    message.engine.capabilities.execution_properties =
+        YVEX_MODEL_CAPABILITY_DEMAND_ACTIVATION;
+    message.engine.capabilities.maximum_input_parts = 3u;
     message.engine.resources.schema_version =
         YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
     message.engine.resources.placement =
@@ -890,7 +997,12 @@ static int test_capability_aware_readiness(void)
             decoded.engine.capacity.runnable_work_capacity == 2ull &&
             decoded.engine.capacity.physical_sequence_width == 1ull &&
             !decoded.engine.capacity.continuous_batching_ready &&
-            decoded.engine.resources.component_count == 4ull,
+            decoded.engine.resources.component_count == 4ull &&
+            decoded.engine.capabilities.input_kinds ==
+                message.engine.capabilities.input_kinds &&
+            decoded.engine.capabilities.output_kinds ==
+                message.engine.capabilities.output_kinds &&
+            decoded.engine.capabilities.maximum_input_parts == 3u,
         "media engine readiness roundtrip requires only admitted engine identities");
     message.engine.concurrent_sequences = 0ull;
     YVEX_TEST_ASSERT(
@@ -1058,6 +1170,7 @@ static int test_bounded_parser_mutation(void)
         yvex_client_request request;
         yvex_client_message message;
         unsigned char *prompt = NULL;
+        yvex_content_part *content = NULL;
         yvex_provider_request *provider = NULL;
         yvex_error err;
         unsigned long long count = (iteration * 37u) % sizeof(bytes);
@@ -1069,10 +1182,12 @@ static int test_bounded_parser_mutation(void)
             bytes[index] = (unsigned char)state;
         }
         request_rc = yvex_protocol_request_decode(
-            bytes, count, &request, &prompt, &provider, &err);
+            bytes, count, &request, &prompt, &content, &provider, &err);
         YVEX_TEST_ASSERT(request_rc == YVEX_OK || request_rc < YVEX_OK,
                          "request mutation returns typed status");
         free(prompt);
+        yvex_content_parts_close(
+            &content, request_rc == YVEX_OK ? request.content_part_count : 0u);
         yvex_provider_request_close(&provider);
         message_rc = yvex_protocol_message_decode(bytes, count, &message, &err);
         YVEX_TEST_ASSERT(message_rc == YVEX_OK || message_rc < YVEX_OK,
@@ -1162,6 +1277,7 @@ static int test_media_result_roundtrip(void)
 int yvex_test_protocol(void)
 {
     if (test_request_roundtrip() != 0) return 1;
+    if (test_content_request_roundtrip() != 0) return 1;
     if (test_all_operation_roundtrips() != 0) return 1;
     if (test_schema_refusals() != 0) return 1;
     if (test_message_roundtrip() != 0) return 1;

@@ -2,6 +2,7 @@
   "catalogs": {
     "adapters": {
       "REPL-local": [
+        "attachment",
         "quit"
       ],
       "daemon-entrypoint": [
@@ -1974,6 +1975,57 @@
       "summary": "Negotiate the exact private local protocol.",
       "test_owner": "tests/integration/openai.sh",
       "visibility": "API-only"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_id": "attachment",
+      "architectural_plane": "Run",
+      "command_path": [],
+      "documentation_owner": "docs/operator-runbook.md",
+      "lane": "REPL-local",
+      "operation_id": "repl.attachment.attach",
+      "side_effects": "stages one local content reference for the next turn",
+      "slash_arguments": [
+        {
+          "completion_provider": "filesystem",
+          "multiplicity": "one",
+          "name": "path",
+          "required": true,
+          "validator": "syntax.path",
+          "value_type": "path"
+        }
+      ],
+      "slash_projection": "/attach",
+      "summary": "Stage one local media or file reference for the next turn.",
+      "test_owner": "tests/repl_pty.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_id": "attachment",
+      "architectural_plane": "Inspect",
+      "command_path": [],
+      "documentation_owner": "docs/operator-runbook.md",
+      "lane": "REPL-local",
+      "operation_id": "repl.attachment.list",
+      "slash_projection": "/attachments",
+      "summary": "List local content staged for the next turn.",
+      "test_owner": "tests/repl_pty.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_id": "attachment",
+      "architectural_plane": "Run",
+      "command_path": [],
+      "documentation_owner": "docs/operator-runbook.md",
+      "lane": "REPL-local",
+      "operation_id": "repl.attachment.clear",
+      "side_effects": "clears next-turn local content staging",
+      "slash_projection": "/attachments-clear",
+      "summary": "Clear local content staged for the next turn.",
+      "test_owner": "tests/repl_pty.sh",
+      "visibility": "product-default"
     },
     {
       "CLI_projection": false,
@@ -4249,6 +4301,25 @@
       "visibility": "product-default"
     },
     {
+      "adapter_id": "engine_catalog",
+      "architectural_plane": "Run",
+      "command_path": [
+        "model",
+        "active"
+      ],
+      "daemon_requirement": "required",
+      "flag_sets": [
+        "cli_json"
+      ],
+      "lane": "runtime-client",
+      "operation_id": "model.active",
+      "protocol_operation": "engine.list",
+      "renderer_id": "human-or-json",
+      "result_schema": "yvex.model.active.v1",
+      "summary": "List the model engines currently active in the host.",
+      "visibility": "product-default"
+    },
+    {
       "adapter_argv": [
         "graph",
         "attention",
@@ -4563,7 +4634,7 @@
       "operation_id": "session.attach",
       "protocol_operation": "session.attach",
       "side_effects": "attachment",
-      "slash_projection": "/attach",
+      "slash_projection": "/use",
       "summary": "Attach the client to one session.",
       "visibility": "product-advanced"
     },

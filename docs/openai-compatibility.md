@@ -9,7 +9,7 @@ adapter follows the hosted runtime lifecycle and owns no model, session, KV,
 worker, or telemetry authority.
 
 `yvex.openai.compat.v2` is a bounded, local application-provider profile. It
-adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v19 and
+adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v20 and
 the persistent foreground host. It is not a claim of full OpenAI API or OpenAI
 service equivalence.
 
@@ -26,7 +26,7 @@ Those moving interfaces do not expand this explicitly versioned YVEX subset.
 application or SDK
   -> loopback HTTP/1.1
   -> YVEX server OpenAI adapter
-  -> provider-neutral request over YVEX protocol v19
+  -> provider-neutral request over YVEX protocol v20
   -> engine-manager routing by model alias and generation
   -> engine session and generation owners
 ```

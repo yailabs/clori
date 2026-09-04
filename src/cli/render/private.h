@@ -46,6 +46,7 @@ typedef struct {
 
 typedef struct {
     char name[YVEX_SERVER_SESSION_NAME_CAP];
+    char identity[YVEX_SERVER_ID_CAP];
     char state[24];
     unsigned long long position;
     unsigned long long turns;

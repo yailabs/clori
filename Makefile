@@ -239,6 +239,7 @@ CLIENT_PROTOCOL_OBJS := \
 	$(OBJ_DIR)/src/core/sha256.o \
 	$(OBJ_DIR)/src/core/json.o \
 	$(OBJ_DIR)/src/provider/core.o \
+	$(OBJ_DIR)/src/provider/content.o \
 	$(OBJ_DIR)/src/server/protocol.o \
 	$(OBJ_DIR)/src/server/telemetry.o
 OPENAI_ADAPTER_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(OPENAI_ADAPTER_SRCS))

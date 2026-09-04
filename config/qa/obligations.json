@@ -137,6 +137,7 @@
         "include/yvex/artifact.h",
         "include/yvex/backend.h",
         "include/yvex/catalog.h",
+        "include/yvex/content.h",
         "include/yvex/core.h",
         "include/yvex/gguf.h",
         "include/yvex/graph.h",
@@ -157,7 +158,7 @@
     },
     {
       "id": "protocol-provider-api",
-      "patterns": ["src/provider/**", "src/server/protocol.c", "include/yvex/provider.h", "include/yvex/protocol.h", "include/yvex/api.h"],
+      "patterns": ["src/provider/**", "src/server/protocol.c", "include/yvex/content.h", "include/yvex/provider.h", "include/yvex/protocol.h", "include/yvex/api.h"],
       "lanes": ["fast", "runtime", "sanitizer"],
       "tests": ["integration.openai", "integration.tiny-vertical"],
       "reason": "protocol and API changes require codec refusal and client/server composition"

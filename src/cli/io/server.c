@@ -33,6 +33,7 @@ typedef struct {
     char engine_kind[16];
     char execution_strategy[32];
     unsigned long long context_capacity;
+    yvex_model_capability_summary capabilities;
 } cli_server_profile;
 
 typedef struct {
@@ -67,6 +68,7 @@ static int parse_u64(const char *text, unsigned long long *value)
 static int profile_copy(cli_server_profile *profile,
                         const yvex_model_registry_entry *entry)
 {
+    yvex_model_capability_profile capability_profile;
     const char *profile_kind;
     const char *installation;
     const char *artifact;
@@ -92,7 +94,7 @@ static int profile_copy(cli_server_profile *profile,
         strlen(artifact) >= sizeof(profile->artifact) ||
         strlen(binding) >= sizeof(profile->binding))
         return 0;
-    return snprintf(profile->name, sizeof(profile->name), "%s", entry->alias) > 0 &&
+    if (!(snprintf(profile->name, sizeof(profile->name), "%s", entry->alias) > 0 &&
            snprintf(profile->family, sizeof(profile->family), "%s", entry->family) >= 0 &&
            snprintf(profile->profile_kind, sizeof(profile->profile_kind), "%s",
                     profile_kind) > 0 &&
@@ -108,7 +110,17 @@ static int profile_copy(cli_server_profile *profile,
                     entry->runtime_engine_kind) >= 0 &&
            snprintf(profile->execution_strategy,
                     sizeof(profile->execution_strategy), "%s",
-                    entry->runtime_execution_strategy) >= 0;
+                    entry->runtime_execution_strategy) >= 0))
+        return 0;
+    if (!strcmp(profile->engine_kind, "media"))
+        capability_profile =
+            YVEX_MODEL_CAPABILITY_PROFILE_CONDITIONED_AUDIOVISUAL_GENERATION;
+    else if (!strcmp(profile->engine_kind, "text"))
+        capability_profile = YVEX_MODEL_CAPABILITY_PROFILE_TEXT_GENERATION;
+    else
+        return 0;
+    return yvex_model_capability_profile_describe(
+               capability_profile, &profile->capabilities, NULL) == YVEX_OK;
 }
 
 static int profile_resolve(const char *name, cli_server_profile *profile,
@@ -247,6 +259,7 @@ static void engine_profile_defaults(yvex_server_engine_options *options,
     options->maximum_sessions = 8u;
     options->concurrent_sequences = 1u;
     options->trace_level = YVEX_SERVER_TRACE_STAGES;
+    options->capabilities = profile->capabilities;
 }
 
 static int option_parse(yvex_server_options *host, const char *flag,

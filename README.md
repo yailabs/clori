@@ -106,6 +106,8 @@ script uses `model load MODEL` and adds `--variant VARIANT` only when several
 valid representations exist. Internally YVEX still resolves the exact artifact
 and deployment profile and creates one process-local engine generation.
 Advanced operators can inspect that generation with `engine list --json`.
+`./yvex model active` shows only the current active engine set, including exact
+generations, clients, leases, directional capabilities, and resource facts.
 
 ### 5. Use the engine
 
@@ -125,6 +127,9 @@ boundary; a bounded Markdown projection and 112-column prose measure change
 presentation only. Omitting `--max-new-tokens` leaves completion-envelope
 selection to the host, while an explicit value remains a hard user bound and
 the terminal summary names the resulting stop reason.
+Use `/attach PATH` repeatedly to stage local media for the next ordered
+multipart turn; `/attachments` inspects the stage and `/attachments-clear`
+drops it. Attachments never create a session or select another model.
 
 Unload the model without stopping the host, or stop the host separately:
 
@@ -151,7 +156,7 @@ session, observation, memory, and recovery procedures.
 | `yvex` | Persistent host, native/OpenAI clients, REPL, model lifecycle controls, and bounded offline compilation/inspection/execution operations |
 | `libyvex` | Reusable source, compilation, package, engine, runtime, graph, backend, tokenizer, generation, and media implementation |
 
-Runtime-facing native clients cross private local protocol v19. The `serve`
+Runtime-facing native clients cross private local protocol v20. The `serve`
 entrypoint owns host lifetime in the same executable; engine commands own
 loaded-generation lifecycle through that protocol, and client handlers do not
 open weights or initialize CUDA. Finite offline operations close their engine

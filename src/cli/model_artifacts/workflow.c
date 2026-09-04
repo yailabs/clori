@@ -833,6 +833,14 @@ static void product_json_profile(const yvex_model_runtime_profile_fact *profile)
     yvex_cli_out_writef(stdout, ",\"context\":%llu,\"launchable\":%s,\"blocker\":",
                         profile->context_capacity, profile->launchable ? "true" : "false");
     yvex_cli_out_json_string(stdout, profile->blocker);
+    yvex_cli_out_writef(
+        stdout,
+        ",\"capabilities\":{\"input_mask\":%llu,\"output_mask\":%llu,"
+        "\"properties\":%llu,\"maximum_input_parts\":%llu}",
+        profile->capabilities.input_kinds,
+        profile->capabilities.output_kinds,
+        profile->capabilities.execution_properties,
+        profile->capabilities.maximum_input_parts);
     yvex_cli_out_char(stdout, '}');
 }
 

@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -35,6 +36,7 @@ typedef struct {
     unsigned long long prompt_bytes;
     unsigned long long maximum_new_tokens;
     yvex_reasoning_policy reasoning;
+    const char *attachment;
 } test_options;
 
 static unsigned long long next_request = 1ull;
@@ -83,6 +85,38 @@ static int message_error(const yvex_client_message *message, yvex_error *err,
 {
     yvex_error_set(err, (yvex_status)message->status, where, message->reason);
     return message->status;
+}
+
+static int model_lease_action(yvex_client_operation operation,
+                              const char *value, yvex_error *err)
+{
+    yvex_client_request request;
+    yvex_client_message message;
+    yvex_client *client = NULL;
+    int rc;
+    request_init(&request, operation);
+    if (operation == YVEX_CLIENT_OP_ENGINE_ENSURE_ACTIVE)
+        (void)snprintf(request.model_alias, sizeof(request.model_alias), "%s",
+                       value);
+    else
+        (void)snprintf(request.model_lease_identity,
+                       sizeof(request.model_lease_identity), "%s", value);
+    rc = request_open(&client, &request, err);
+    if (rc == YVEX_OK) rc = yvex_client_receive(client, &message, err);
+    if (rc == YVEX_OK && message.kind == YVEX_CLIENT_MESSAGE_ERROR)
+        rc = message_error(&message, err, "test.native-turn.model-lease");
+    else if (rc == YVEX_OK &&
+             (message.kind != YVEX_CLIENT_MESSAGE_ENGINE ||
+              !message.model_lease_identity[0])) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "test.native-turn.model-lease",
+                       "host returned an invalid model lease response");
+        rc = YVEX_ERR_FORMAT;
+    }
+    if (rc == YVEX_OK)
+        printf("%s %llu %s\n", message.engine.alias,
+               message.engine.generation, message.model_lease_identity);
+    yvex_client_close(&client);
+    return rc;
 }
 
 static int engine_resolve(const char *requested, test_engine *engine,
@@ -268,6 +302,7 @@ static void metrics_print(const yvex_client_message *message)
 static int turn_execute(const test_engine *engine, const char *session,
                         const test_options *options, yvex_error *err)
 {
+    yvex_content_part content[2] = {0};
     yvex_client_request request;
     yvex_client_message message;
     yvex_client *client = NULL;
@@ -277,8 +312,40 @@ static int turn_execute(const test_engine *engine, const char *session,
     request_bind(&request, engine);
     (void)snprintf(request.session_name, sizeof(request.session_name), "%s",
                    session);
-    request.prompt = options->prompt;
-    request.prompt_bytes = options->prompt_bytes;
+    if (options->attachment) {
+        struct stat facts;
+        if (stat(options->attachment, &facts) != 0 ||
+            !S_ISREG(facts.st_mode) || facts.st_size <= 0) {
+            yvex_error_set(err, YVEX_ERR_INVALID_ARG,
+                           "test.native-turn.content",
+                           "regular attachment file is required");
+            return YVEX_ERR_INVALID_ARG;
+        }
+        content[0].schema_version = YVEX_CONTENT_PART_SCHEMA_V1;
+        content[0].kind = YVEX_CONTENT_AUDIO;
+        content[0].storage = YVEX_CONTENT_LOCAL_FILE;
+        content[0].byte_count = (unsigned long long)facts.st_size;
+        (void)snprintf(content[0].media_type, sizeof(content[0].media_type),
+                       "audio/wav");
+        (void)snprintf(content[0].reference, sizeof(content[0].reference),
+                       "%s", options->attachment);
+        if (yvex_content_part_seal(content, err) != YVEX_OK)
+            return yvex_error_code(err);
+        content[1].schema_version = YVEX_CONTENT_PART_SCHEMA_V1;
+        content[1].kind = YVEX_CONTENT_TEXT;
+        content[1].storage = YVEX_CONTENT_INLINE;
+        content[1].bytes = options->prompt;
+        content[1].byte_count = options->prompt_bytes;
+        (void)snprintf(content[1].media_type, sizeof(content[1].media_type),
+                       "text/plain;charset=utf-8");
+        if (yvex_content_part_seal(content + 1u, err) != YVEX_OK)
+            return yvex_error_code(err);
+        request.content_parts = content;
+        request.content_part_count = 2u;
+    } else {
+        request.prompt = options->prompt;
+        request.prompt_bytes = options->prompt_bytes;
+    }
     request.maximum_new_tokens = options->maximum_new_tokens;
     request.stochastic = 0;
     request.seed_present = 0;
@@ -312,6 +379,10 @@ static int turn_execute(const test_engine *engine, const char *session,
             metrics_print(&message);
             complete = 1;
         } else if (message.kind == YVEX_CLIENT_MESSAGE_ERROR) {
+            if (message.content_part_count)
+                fprintf(stderr, "content %llu identity %s\n",
+                        message.content_part_count,
+                        message.input_content_identity);
             if (message.partial_turn.available)
                 fprintf(stderr,
                         "partial · %llu committed token%s · position %llu · %s\n",
@@ -357,12 +428,13 @@ static int options_parse(int argc, char **argv, test_options *options)
         const char *arg = argv[index];
         if (!strcmp(arg, "--model") || !strcmp(arg, "--session") ||
             !strcmp(arg, "--max-new-tokens") || !strcmp(arg, "--strategy") ||
-            !strcmp(arg, "--reasoning")) {
+            !strcmp(arg, "--reasoning") || !strcmp(arg, "--attach")) {
             const char *value;
             if (++index == argc) return 0;
             value = argv[index];
             if (!strcmp(arg, "--model")) options->model = value;
             else if (!strcmp(arg, "--session")) options->session = value;
+            else if (!strcmp(arg, "--attach")) options->attachment = value;
             else if (!strcmp(arg, "--max-new-tokens")) {
                 if (!u64_parse(value, &options->maximum_new_tokens)) return 0;
             } else if (!strcmp(arg, "--strategy")) {
@@ -391,10 +463,22 @@ int main(int argc, char **argv)
     const char *session;
     yvex_error err;
     int rc, created = 0;
+    if (argc == 3 &&
+        (!strcmp(argv[1], "--ensure-active") ||
+         !strcmp(argv[1], "--release-lease"))) {
+        yvex_client_operation operation = !strcmp(argv[1], "--ensure-active")
+            ? YVEX_CLIENT_OP_ENGINE_ENSURE_ACTIVE
+            : YVEX_CLIENT_OP_ENGINE_LEASE_RELEASE;
+        rc = model_lease_action(operation, argv[2], &err);
+        if (rc == YVEX_OK) return 0;
+        goto failed;
+    }
     if (!options_parse(argc, argv, &options)) {
         fputs("usage: native_turn [--model ENGINE] [--session SESSION] "
               "[--max-new-tokens N] [--strategy greedy] "
-              "[--reasoning none|high|max] TEXT\n", stderr);
+              "[--reasoning none|high|max] [--attach ABSOLUTE-PATH] TEXT\n"
+              "       native_turn --ensure-active MODEL\n"
+              "       native_turn --release-lease LEASE-ID\n", stderr);
         return 2;
     }
     rc = engine_resolve(options.model, &engine, &err);
