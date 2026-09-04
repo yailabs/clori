@@ -647,6 +647,67 @@ static int test_telemetry_observability_economics(void)
     return 0;
 }
 
+static int test_decode_rate_scopes(void)
+{
+    unsigned long long commits[YVEX_SERVER_DECODE_RATE_WINDOW_TOKENS + 1ull];
+    yvex_execution_measurement measurement;
+    unsigned int index;
+    commits[0] = 1800000000ull;
+    for (index = 1u;
+         index < YVEX_SERVER_DECODE_RATE_WINDOW_TOKENS + 1ull; ++index)
+        commits[index] = commits[index - 1u] + 1000000000ull;
+    yvex_server_decode_measurement(
+        1000000000ull, 41ull, commits,
+        YVEX_SERVER_DECODE_RATE_WINDOW_TOKENS + 1u,
+        commits[YVEX_SERVER_DECODE_RATE_WINDOW_TOKENS], &measurement);
+    YVEX_TEST_ASSERT(
+        yvex_server_execution_measurement_valid(&measurement) &&
+            measurement.scope == YVEX_EXECUTION_SCOPE_SUBSEQUENT_DECODE &&
+            measurement.completed_units == 40ull &&
+            measurement.duration_ns == 32800000000ull &&
+            measurement.rolling_units == 32ull &&
+            measurement.rolling_duration_ns == 32000000000ull &&
+            measurement.rolling_window_units == 32ull &&
+            measurement.cumulative_rate > 1.21 &&
+            measurement.cumulative_rate < 1.23 &&
+            measurement.rolling_rate == 1.0 &&
+            measurement.cumulative_rate > measurement.rolling_rate,
+        "bounded rolling decode reveals a local slowdown hidden by the cumulative rate");
+    return 0;
+}
+
+static int test_profile_wall_reconciliation(void)
+{
+    yvex_runtime_profile_record profile = {0};
+    unsigned long long attributed = 0ull, unattributed = 0ull;
+    profile.phase_ns[YVEX_RUNTIME_PROFILE_TOKENIZER] = 100ull;
+    profile.phase_ns[YVEX_RUNTIME_PROFILE_TOTAL_PREFILL] = 200ull;
+    profile.phase_ns[YVEX_RUNTIME_PROFILE_FIRST_DECODE] = 300ull;
+    profile.phase_ns[YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE] = 300ull;
+    profile.phase_ns[YVEX_RUNTIME_PROFILE_OUTPUT_HEAD] = 50ull;
+    profile.phase_ns[YVEX_RUNTIME_PROFILE_PROVIDER_PUBLICATION] = 20ull;
+    profile.phase_ns[YVEX_RUNTIME_PROFILE_TOTAL_GENERATION] = 1000ull;
+    YVEX_TEST_ASSERT(
+        yvex_server_profile_reconcile(
+            &profile, YVEX_GENERATION_MODE_TARGET_ONLY,
+            &attributed, &unattributed) &&
+            attributed == 970ull && unattributed == 30ull,
+        "ordinary decode wall adds disjoint output and publication children");
+    YVEX_TEST_ASSERT(
+        yvex_server_profile_reconcile(
+            &profile, YVEX_GENERATION_MODE_SPECULATIVE,
+            &attributed, &unattributed) &&
+            attributed == 900ull && unattributed == 100ull,
+        "speculative enclosing decode does not double-count nested children");
+    profile.phase_ns[YVEX_RUNTIME_PROFILE_TOTAL_GENERATION] = 800ull;
+    YVEX_TEST_ASSERT(
+        !yvex_server_profile_reconcile(
+            &profile, YVEX_GENERATION_MODE_SPECULATIVE,
+            &attributed, &unattributed) && !attributed && !unattributed,
+        "overlapping wall presented as disjoint fails reconciliation honestly");
+    return 0;
+}
+
 static int loopback_reserve(unsigned short *port)
 {
     struct sockaddr_in address;
@@ -760,7 +821,6 @@ static int media_fixture_admit(
     yvex_complete_artifact_admission *out, yvex_artifact_admission_evidence *evidence,
     yvex_artifact_admission_failure *failure, yvex_error *err)
 {
-    (void)options;
     if (failure) memset(failure, 0, sizeof(*failure));
     if (!component || (strcmp(component, "text_encoder") != 0 &&
                        strcmp(component, "transformer") != 0 &&
@@ -770,6 +830,16 @@ static int media_fixture_admit(
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "test.server.media-admit",
                        "four exact fixture component views are required");
         return YVEX_ERR_INVALID_ARG;
+    }
+    if (options && options->progress &&
+        (!options->progress(options->progress_context, 0ull,
+                            yvex_artifact_size(artifact)) ||
+         !options->progress(options->progress_context,
+                            yvex_artifact_size(artifact),
+                            yvex_artifact_size(artifact)))) {
+        yvex_error_set(err, YVEX_ERR_CANCELLED, "test.server.media-admit",
+                       "fixture component admission was cancelled");
+        return YVEX_ERR_CANCELLED;
     }
     memset(out, 0, sizeof(*out));
     out->artifact_class = YVEX_ARTIFACT_CLASS_COMPLETE_YVEX;
@@ -1030,7 +1100,7 @@ static int test_media_engine_lifecycle(void)
     unsigned long long event_cursor = 0ull;
     yvex_server *server = NULL;
     yvex_error err;
-    int rc, saw_load_requested = 0, saw_ready = 0;
+    int rc, saw_load_requested = 0, saw_load_progress = 0, saw_ready = 0;
     int saw_unload_started = 0, saw_unloaded = 0;
     YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "media host output root");
     YVEX_TEST_ASSERT(snprintf(socket_path, sizeof(socket_path), "%s/yvexd.sock", root) > 0,
@@ -1038,6 +1108,7 @@ static int test_media_engine_lifecycle(void)
     test_options(&options);
     options.socket_path = socket_path;
     options.maximum_engines = 2ull;
+    options.worker_count = 2ull;
     YVEX_TEST_ASSERT(media_options(&media, root), "media host options");
     media.request_template.text_artifact_path = fixture;
     media.request_template.transformer_artifact_path = fixture;
@@ -1079,7 +1150,16 @@ static int test_media_engine_lifecycle(void)
                          first.execution_ready && first.generation != 0ull &&
                          first.engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
                          first.execution_strategy ==
-                             YVEX_SERVER_EXECUTION_NOT_APPLICABLE,
+                             YVEX_SERVER_EXECUTION_NOT_APPLICABLE &&
+                         first.capacity.runnable_work_capacity == 2ull &&
+                         first.capacity.physical_sequence_width == 1ull &&
+                         first.capacity.cooperative_scheduling_ready &&
+                         !first.capacity.continuous_batching_ready &&
+                         first.resources.placement ==
+                             YVEX_EXECUTION_PLACEMENT_COMPOSITE &&
+                         first.resources.component_count == 4ull &&
+                         !(first.resources.available &
+                           YVEX_EXECUTION_RESOURCE_PHYSICAL_RESIDENCY_AVAILABLE),
                      "first composite engine loads into the running host");
     engine_options.alias = "minimax-b";
     memset(&second, 0, sizeof(second));
@@ -1112,6 +1192,9 @@ static int test_media_engine_lifecycle(void)
                          summary.metrics.materialization_count == 0ull &&
                          summary.metrics.residency_build_count == 0ull &&
                          summary.metrics.resident_device_bytes == 0ull &&
+                         summary.metrics.resources.component_count == 8ull &&
+                         !(summary.metrics.resources.available &
+                           YVEX_EXECUTION_RESOURCE_PHYSICAL_RESIDENCY_AVAILABLE) &&
                          !first.runtime_binding_identity[0] &&
                          !first.artifact_identity[0],
                      "each engine owns a distinct bounded request_queue without false payload residency");
@@ -1163,13 +1246,28 @@ static int test_media_engine_lifecycle(void)
         event_cursor = lifecycle_event.sequence;
         saw_load_requested |= lifecycle_event.kind ==
                               YVEX_SERVER_EVENT_ENGINE_LOAD_REQUESTED;
+        if (lifecycle_event.kind == YVEX_SERVER_EVENT_ENGINE_LOAD_PROGRESS) {
+            YVEX_TEST_ASSERT(
+                lifecycle_event.engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
+                    lifecycle_event.measurement.scope ==
+                        YVEX_EXECUTION_SCOPE_MODEL_LIFECYCLE &&
+                    lifecycle_event.measurement.work_unit ==
+                        YVEX_EXECUTION_WORK_BYTES &&
+                    (lifecycle_event.measurement.available &
+                     YVEX_EXECUTION_MEASUREMENT_DENOMINATOR_AVAILABLE) &&
+                    lifecycle_event.measurement.total_units > 0ull &&
+                    lifecycle_event.measurement.completed_units <=
+                        lifecycle_event.measurement.total_units,
+                "composite load progress carries real byte denominator");
+            saw_load_progress = 1;
+        }
         saw_ready |= lifecycle_event.kind == YVEX_SERVER_EVENT_ENGINE_READY;
         saw_unload_started |= lifecycle_event.kind ==
                               YVEX_SERVER_EVENT_ENGINE_UNLOAD_STARTED;
         saw_unloaded |= lifecycle_event.kind == YVEX_SERVER_EVENT_ENGINE_UNLOADED;
     }
-    YVEX_TEST_ASSERT(saw_load_requested && saw_ready && saw_unload_started &&
-                         saw_unloaded,
+    YVEX_TEST_ASSERT(saw_load_requested && saw_load_progress && saw_ready &&
+                         saw_unload_started && saw_unloaded,
                      "engine load and unload chronology is retained");
     YVEX_TEST_ASSERT(yvex_server_finish(server, &err) == YVEX_OK,
                      "empty persistent host finishes separately");
@@ -1341,7 +1439,7 @@ static int test_provider_telemetry(void)
     rc = yvex_server_telemetry_emit_provider(
         telemetry, &scope, YVEX_SERVER_EVENT_REQUEST_STARTED,
         YVEX_SERVER_SEVERITY_INFO, "session", "r1", "t1", "turn",
-        1u, 0u, 4u, 0.0, 0.0, NULL, &request, &emitted, &err);
+        1u, 0u, 4u, 0.0, 0.0, NULL, &request, NULL, &emitted, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry emit");
     rc = yvex_server_telemetry_next(telemetry, 0u, 0, &event, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry read");
@@ -1397,7 +1495,7 @@ static int test_provider_telemetry(void)
     rc = yvex_server_telemetry_emit_provider(
         telemetry, &scope, YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED,
         YVEX_SERVER_SEVERITY_INFO, "session", "r1", "t1", "speculation",
-        0u, 0u, 0u, progress.seconds, 0.0, &progress, &request, &emitted,
+        0u, 0u, 0u, progress.seconds, 0.0, &progress, &request, NULL, &emitted,
         &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "typed speculation telemetry emit");
     rc = yvex_server_telemetry_next(telemetry, event.sequence, 0, &event, &err);
@@ -1426,7 +1524,7 @@ static int test_provider_telemetry(void)
     rc = yvex_server_telemetry_emit_provider(
         telemetry, &scope, YVEX_SERVER_EVENT_REQUEST_STARTED,
         YVEX_SERVER_SEVERITY_INFO, "session", "r2", "t2", "turn",
-        0u, 0u, 0u, 0.0, 0.0, NULL, &request, NULL, &err);
+        0u, 0u, 0u, 0.0, 0.0, NULL, &request, NULL, NULL, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG,
                      "invalid engine event lineage refuses before publication");
     yvex_server_telemetry_close(&telemetry);
@@ -1443,6 +1541,8 @@ int yvex_test_server(void)
     if (test_model_open_refusal() != 0) return 1;
     if (test_bounded_telemetry_overflow() != 0) return 1;
     if (test_telemetry_observability_economics() != 0) return 1;
+    if (test_decode_rate_scopes() != 0) return 1;
+    if (test_profile_wall_reconciliation() != 0) return 1;
     if (test_provider_telemetry() != 0) return 1;
     if (test_openai_listener_admission() != 0) return 1;
     if (test_media_direct_prompt_routing() != 0) return 1;

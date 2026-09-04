@@ -173,7 +173,7 @@ int yvex_server_protocol_message_valid(const yvex_client_message *message)
                       YVEX_CLIENT_CANCELLATION_NONE,
                       YVEX_CLIENT_CANCELLATION_FAILED) &&
            ENUM_VALID(message->event.kind, YVEX_SERVER_EVENT_PROCESS_START,
-                      YVEX_SERVER_EVENT_ENGINE_UNLOAD_FAILED) &&
+                      YVEX_SERVER_EVENT_ENGINE_LOAD_PROGRESS) &&
            ENUM_VALID(message->event.severity, YVEX_SERVER_SEVERITY_DEBUG,
                       YVEX_SERVER_SEVERITY_FATAL) &&
            BOOL_VALID(message->kv_used_available) &&
@@ -263,6 +263,17 @@ int yvex_server_protocol_message_valid(const yvex_client_message *message)
              !message->confidence_logit_mean)) &&
            isfinite(message->event.seconds) &&
            isfinite(message->event.rate) &&
+           yvex_server_execution_measurement_valid(&message->measurement) &&
+           yvex_server_execution_measurement_valid(
+               &message->event.measurement) &&
+           yvex_server_execution_resource_valid(&runtime->metrics.resources) &&
+           ((message->kind != YVEX_CLIENT_MESSAGE_STATUS &&
+             message->kind != YVEX_CLIENT_MESSAGE_CONSOLE_STATUS) ||
+            (runtime->schema_version == YVEX_SERVER_SUMMARY_SCHEMA_V2 &&
+             runtime->metrics.schema_version ==
+                 YVEX_RUNTIME_METRICS_SCHEMA_VERSION &&
+             runtime->metrics.resources.schema_version ==
+                 YVEX_EXECUTION_RESOURCE_SCHEMA_V1)) &&
            (message->kv_used_available || message->kv_used_bytes == 0u) &&
            (message->publication_timing_available ||
             message->publication_seconds == 0.0) &&

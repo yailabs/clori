@@ -116,6 +116,56 @@ static unsigned long long server_monotonic_ns(void)
            (unsigned long long)value.tv_nsec;
 }
 
+static int server_resource_add(unsigned long long *total,
+                               unsigned long long value, yvex_error *err)
+{
+    if (!yvex_core_u64_add(*total, value, total))
+        return server_refuse(err, YVEX_ERR_BOUNDS,
+                             "host execution resource total overflowed");
+    return YVEX_OK;
+}
+
+static int server_resource_accumulate(
+    yvex_execution_resource_summary *total,
+    const yvex_execution_resource_summary *value, yvex_error *err)
+{
+#define RESOURCE_ADD(field)                                                     \
+    do {                                                                        \
+        if (server_resource_add(&total->field, value->field, err) != YVEX_OK)   \
+            return yvex_error_code(err);                                        \
+    } while (0)
+    if (!yvex_server_execution_resource_valid(value))
+        return server_refuse(err, YVEX_ERR_FORMAT,
+                             "engine execution resource summary is invalid");
+    total->available |= value->available &
+                        ~YVEX_EXECUTION_RESOURCE_PHYSICAL_RESIDENCY_AVAILABLE;
+    RESOURCE_ADD(component_count);
+    RESOURCE_ADD(model_artifact_bytes);
+    RESOURCE_ADD(model_mapped_bytes);
+    RESOURCE_ADD(model_prepared_bytes);
+    RESOURCE_ADD(model_explicit_host_bytes);
+    RESOURCE_ADD(model_explicit_device_bytes);
+    RESOURCE_ADD(model_device_addressable_bytes);
+    RESOURCE_ADD(session_attention_allocated_bytes);
+    RESOURCE_ADD(session_attention_resident_bytes);
+    RESOURCE_ADD(session_attention_virtual_bytes);
+    RESOURCE_ADD(session_attention_page_table_bytes);
+    RESOURCE_ADD(session_recurrent_state_bytes);
+    RESOURCE_ADD(session_convolution_state_bytes);
+    RESOURCE_ADD(session_candidate_state_bytes);
+    RESOURCE_ADD(session_physical_state_bytes);
+    RESOURCE_ADD(activation_arena_current_bytes);
+    RESOURCE_ADD(activation_arena_peak_bytes);
+    RESOURCE_ADD(workspace_current_bytes);
+    RESOURCE_ADD(workspace_peak_bytes);
+    RESOURCE_ADD(transient_current_bytes);
+    RESOURCE_ADD(transient_peak_bytes);
+    RESOURCE_ADD(logical_upload_bytes);
+    RESOURCE_ADD(logical_download_bytes);
+#undef RESOURCE_ADD
+    return YVEX_OK;
+}
+
 static int server_options_admit(yvex_server *server,
                                 const yvex_server_options *options,
                                 yvex_error *err)
@@ -235,7 +285,7 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
         return rc;
     }
     memset(&server->summary, 0, sizeof(server->summary));
-    server->summary.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V1;
+    server->summary.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V2;
     server->summary.status = YVEX_SERVER_STATUS_CONFIGURED;
     server->summary.request_queue_capacity = admitted->request_queue_capacity;
     server->summary.maximum_engines = admitted->maximum_engines;
@@ -574,7 +624,7 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
             YVEX_SERVER_EVENT_REQUEST_RECEIVED,
             YVEX_SERVER_SEVERITY_INFO, item->request.session_name,
             item->request_id, NULL, "queue", item->request.prompt_bytes,
-            0u, 0u, 0.0, 0.0, NULL, item->request.provider_request, NULL,
+            0u, 0u, 0.0, 0.0, NULL, item->request.provider_request, NULL, NULL,
             err) != YVEX_OK)
         goto failed;
     item->enqueued_ns = server_monotonic_ns();
@@ -593,7 +643,7 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
         item->request_id, NULL, "queue", depth,
         server->options.request_queue_capacity,
         0ull, 0.0, 0.0,
-        NULL, item->request.provider_request, NULL, err);
+        NULL, item->request.provider_request, NULL, NULL, err);
     return YVEX_OK;
 failed:
     yvex_server_engine_manager_release(server->engines, &item->engine);
@@ -1178,7 +1228,8 @@ int yvex_server_get_summary(const yvex_server *server,
     yvex_server *mutable = (yvex_server *)server;
     yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
     server_request_queue_summary request_queue = {0};
-    unsigned long long count = 0u, index;
+    unsigned long long count = 0u, index, model_resource_owners = 0u;
+    int physical_residency_known = 1;
     if (!server || !out || pthread_mutex_lock(&mutable->state_mutex) != 0)
         return server_refuse(err, YVEX_ERR_INVALID_ARG,
                              "host and summary output are required");
@@ -1207,6 +1258,18 @@ int yvex_server_get_summary(const yvex_server *server,
     out->metrics.mapped_artifact_bytes = 0ull;
     out->metrics.resident_host_bytes = 0ull;
     out->metrics.resident_device_bytes = 0ull;
+    {
+        unsigned long long rss_current =
+            out->metrics.resources.process_rss_current_bytes;
+        unsigned long long rss_peak = out->metrics.resources.process_rss_peak_bytes;
+        memset(&out->metrics.resources, 0, sizeof(out->metrics.resources));
+        out->metrics.resources.schema_version =
+            YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
+        out->metrics.resources.available =
+            YVEX_EXECUTION_RESOURCE_PROCESS_AVAILABLE;
+        out->metrics.resources.process_rss_current_bytes = rss_current;
+        out->metrics.resources.process_rss_peak_bytes = rss_peak;
+    }
     for (index = 0ull; index < count; ++index) {
         if (!yvex_core_u64_add(out->metrics.mapped_artifact_bytes,
                                engines[index].mapped_package_bytes,
@@ -1219,6 +1282,22 @@ int yvex_server_get_summary(const yvex_server *server,
                                &out->metrics.resident_device_bytes))
             return server_refuse(err, YVEX_ERR_BOUNDS,
                                  "host engine resource total overflowed");
+        if (server_resource_accumulate(&out->metrics.resources,
+                                       &engines[index].resources, err) != YVEX_OK)
+            return yvex_error_code(err);
+        if (engines[index].resources.available &
+            YVEX_EXECUTION_RESOURCE_MODEL_AVAILABLE) {
+            if (!model_resource_owners)
+                out->metrics.resources.placement =
+                    engines[index].resources.placement;
+            else
+                out->metrics.resources.placement =
+                    YVEX_EXECUTION_PLACEMENT_COMPOSITE;
+            model_resource_owners++;
+            if (!(engines[index].resources.available &
+                  YVEX_EXECUTION_RESOURCE_PHYSICAL_RESIDENCY_AVAILABLE))
+                physical_residency_known = 0;
+        }
         out->session_count += engines[index].session_count;
         out->loaded_engine_count +=
             engines[index].state == YVEX_SERVER_ENGINE_LOADED;
@@ -1226,6 +1305,9 @@ int yvex_server_get_summary(const yvex_server *server,
             engines[index].state == YVEX_SERVER_ENGINE_DRAINING ||
             engines[index].state == YVEX_SERVER_ENGINE_UNLOADING;
     }
+    if (model_resource_owners && physical_residency_known)
+        out->metrics.resources.available |=
+            YVEX_EXECUTION_RESOURCE_PHYSICAL_RESIDENCY_AVAILABLE;
     out->request_count = out->metrics.completed_requests +
                          out->metrics.failed_requests +
                          out->metrics.cancelled_requests;

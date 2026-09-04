@@ -101,11 +101,39 @@ acceptance facts. One terminal event carries the same final cumulative
 speculative view. Default human logs render the rolling event; per-token
 fragments and individual speculative phases require explicit detailed trace.
 
+The rate record names its denominator. Cumulative decode is committed decode
+work divided by complete decode wall; rolling decode is recent committed work
+divided by its own recent duration, with a current maximum window of 32 tokens.
+The compact server projection labels these `avg` and `r32`; canonical JSON keeps
+the complete scope, clock, composition, unit, work, duration, and rates. Human
+abbreviations never replace the typed authority.
+
+A completed stage profile also publishes an `unattributed` remainder. Its
+`value_a` is the sum of disjoint measured host phases, `value_b` is total
+generation wall, and `value_c` is the remainder. Attention, model-component,
+and synchronization measurements are explicitly overlapping children and are
+not subtracted again. If the disjoint clocks cannot be reconciled, the
+remainder duration stays unavailable instead of manufacturing a negative or
+double-counted wall.
+
+Target-only first/subsequent decode timings own only the model step and remain
+disjoint from output/state children. Speculative first/subsequent decode
+timings enclose a complete draft/verify/commit iteration; nested output,
+sampling, state, detokenization, and publication facts stay inspectable but
+are excluded from the disjoint wall sum. The event composition field carries
+that distinction explicitly.
+
 Media progress is likewise server-authored. The interactive client may project
 bounded completed/total iteration facts but does not fabricate percentages or
 assistant prose. Component-open events distinguish full hash, verified reopen,
 fallback hash, receipt state, bytes actually hashed, file extent, and elapsed
 time. These authentication facts do not imply materialization or residency.
+
+Engine load progress is authored by each lifecycle owner. Verification bytes
+and residency tensors expose percentages only when a real denominator exists.
+Binding, open, admission, materialization, seal, backend, or workspace phases
+with no owned denominator expose activity and elapsed time only. Progress is
+coalesced; terminal lifecycle and failure evidence is retained.
 
 Speculative events carry availability-bearing named generation mode, cycle,
 candidate extent, selected-verification, accepted, rejected, stop-discarded,
@@ -145,6 +173,21 @@ population histogram. These are publication facts rather than values inferred
 from tensor sizes. A measured
 zero synchronization duration is never interpreted as zero synchronization
 cost.
+
+## Observability cost
+
+Correctness-required execution, normal operational telemetry, and detailed
+profiling are distinct modes. The minimal mode exists for controlled
+qualification; the product default uses bounded summary/stage events; detailed
+profiling may publish materially more attribution and must disclose its cost.
+Changing observability does not change semantic generation-plan identity.
+
+Normal telemetry performs no measurement-only device or stream synchronization,
+keeps ring/event volume bounded, and is qualified with paired whole-model runs
+against a predeclared variance/overhead limit. Detailed profiling is not a
+release benchmark mode. Output identity, execution identity, warm/cold state,
+device, contention, and workload remain fixed in a paired comparison; the run
+manifest records the intentionally different observability condition.
 
 ## Side effects and failure
 

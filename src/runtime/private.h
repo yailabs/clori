@@ -572,6 +572,11 @@ int yvex_runtime_generation_profile_graph_delta(
     yvex_runtime_profile_record *profile,
     const yvex_backend_cuda_attention_graph_summary *before,
     const yvex_backend_cuda_attention_graph_summary *after, yvex_error *err);
+int yvex_runtime_generation_logits_publish(
+    yvex_runtime_profile_record *profile, const yvex_runtime_sampling_context *sampling,
+    yvex_runtime_sampling_source *source, const float *host_logits,
+    unsigned long long host_logits_count,
+    const yvex_runtime_logits_row_result *logits, yvex_error *err);
 int yvex_runtime_generation_sampling_account(
     yvex_runtime_profile_record *profile,
     const yvex_runtime_sampling_result *sampling,

@@ -436,8 +436,12 @@ static int test_message_roundtrip(void)
     source.status = YVEX_OK;
     source.request_number = 9u;
     strcpy(source.session_name, "session-a");
-    source.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V1;
+    source.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V2;
     source.runtime.metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
+    source.runtime.metrics.resources.schema_version =
+        YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
+    source.runtime.metrics.resources.available =
+        YVEX_EXECUTION_RESOURCE_PROCESS_AVAILABLE;
     source.runtime.status = YVEX_SERVER_STATUS_READY;
     strcpy(source.runtime.socket_path, "/tmp/yvex.sock");
     source.runtime.host_ready = 1;
@@ -645,8 +649,12 @@ static int test_message_roundtrip(void)
     source.console.selected_model_available = 1;
     source.console.explicit_reasoning_channel_supported = 1;
     source.console.reasoning_policy = YVEX_REASONING_MAXIMUM;
-    source.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V1;
+    source.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V2;
     source.runtime.metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
+    source.runtime.metrics.resources.schema_version =
+        YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
+    source.runtime.metrics.resources.available =
+        YVEX_EXECUTION_RESOURCE_PROCESS_AVAILABLE;
     source.runtime.status = YVEX_SERVER_STATUS_READY;
     source.runtime.host_ready = 1;
     source.runtime.maximum_engines = 4u;
@@ -774,7 +782,7 @@ typedef struct {
 static void *stale_peer_main(void *opaque)
 {
     static const unsigned char response[12] = {
-        'Y', 'V', 'X', 'P', 0u, 16u, 0u, 2u, 0u, 0u, 0u, 0u};
+        'Y', 'V', 'X', 'P', 0u, 18u, 0u, 2u, 0u, 0u, 0u, 0u};
     stale_peer *peer = opaque;
     unsigned char header[12], discard[4096];
     unsigned int length;
@@ -823,8 +831,8 @@ static int test_stale_frame_refusal(void)
                      "stale peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 18") != NULL,
-                     "immediately prior v17 frame explicitly refuses");
+                         strstr(yvex_error_message(&err), "version 19") != NULL,
+                     "immediately prior v18 frame explicitly refuses");
     YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "stale peer join");
     (void)close(peer.listener);
     (void)unlink(path);
@@ -853,6 +861,20 @@ static int test_capability_aware_readiness(void)
     message.engine.maximum_sessions = 2ull;
     message.engine.concurrent_sequences = 1ull;
     message.engine.execution_ready = 1;
+    message.engine.capacity.schema_version =
+        YVEX_EXECUTION_CAPACITY_SCHEMA_V1;
+    message.engine.capacity.session_capacity = 2ull;
+    message.engine.capacity.runnable_work_capacity = 2ull;
+    message.engine.capacity.physical_sequence_width = 1ull;
+    message.engine.capacity.cooperative_scheduling_ready = 1;
+    message.engine.resources.schema_version =
+        YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
+    message.engine.resources.placement =
+        YVEX_EXECUTION_PLACEMENT_COMPOSITE;
+    message.engine.resources.available =
+        YVEX_EXECUTION_RESOURCE_MODEL_AVAILABLE |
+        YVEX_EXECUTION_RESOURCE_PHYSICAL_RESIDENCY_AVAILABLE;
+    message.engine.resources.component_count = 4ull;
     memset(message.engine.runtime_model_identity, 'a', 64u);
     memset(message.engine.specialization_identity, 'b', 64u);
     YVEX_TEST_ASSERT(
@@ -864,7 +886,11 @@ static int test_capability_aware_readiness(void)
             !strcmp(decoded.engine.alias, "minimax") &&
             !decoded.engine.runtime_binding_identity[0] &&
             !decoded.engine.artifact_identity[0] &&
-            !decoded.engine.capacity_plan_identity[0],
+            !decoded.engine.capacity_plan_identity[0] &&
+            decoded.engine.capacity.runnable_work_capacity == 2ull &&
+            decoded.engine.capacity.physical_sequence_width == 1ull &&
+            !decoded.engine.capacity.continuous_batching_ready &&
+            decoded.engine.resources.component_count == 4ull,
         "media engine readiness roundtrip requires only admitted engine identities");
     message.engine.concurrent_sequences = 0ull;
     YVEX_TEST_ASSERT(
@@ -872,6 +898,14 @@ static int test_capability_aware_readiness(void)
                                      &err) == YVEX_ERR_INVALID_ARG,
         "engine readiness refuses zero executable concurrency");
     message.engine.concurrent_sequences = 1ull;
+    message.engine.continuous_batching_ready = 1;
+    message.engine.capacity.continuous_batching_ready = 1;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "physical width one cannot claim continuous batching");
+    message.engine.continuous_batching_ready = 0;
+    message.engine.capacity.continuous_batching_ready = 0;
     message.engine.specialization_identity[0] = '\0';
     YVEX_TEST_ASSERT(
         yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
@@ -883,6 +917,135 @@ static int test_capability_aware_readiness(void)
         yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
                                      &err) == YVEX_ERR_INVALID_ARG,
         "loaded engine readiness refuses without a runtime model identity");
+    return 0;
+}
+
+static int test_execution_truth_roundtrip(void)
+{
+    yvex_client_message source = {0}, decoded;
+    yvex_execution_measurement *measurement = &source.measurement;
+    yvex_execution_resource_summary *resource = &source.runtime.metrics.resources;
+    unsigned char frame[16384];
+    unsigned long long count = 0ull;
+    yvex_error err;
+    source.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    source.kind = YVEX_CLIENT_MESSAGE_ACK;
+    measurement->schema_version = YVEX_EXECUTION_MEASUREMENT_SCHEMA_V1;
+    measurement->scope = YVEX_EXECUTION_SCOPE_SUBSEQUENT_DECODE;
+    measurement->clock = YVEX_EXECUTION_CLOCK_HOST_WALL;
+    measurement->composition = YVEX_EXECUTION_COMPOSITION_NESTED;
+    measurement->work_unit = YVEX_EXECUTION_WORK_TOKENS;
+    measurement->available =
+        YVEX_EXECUTION_MEASUREMENT_DURATION_AVAILABLE |
+        YVEX_EXECUTION_MEASUREMENT_CUMULATIVE_RATE_AVAILABLE |
+        YVEX_EXECUTION_MEASUREMENT_ROLLING_RATE_AVAILABLE;
+    measurement->completed_units = 96ull;
+    measurement->duration_ns = 48000000000ull;
+    measurement->rolling_units = 32ull;
+    measurement->rolling_duration_ns = 32000000000ull;
+    measurement->rolling_window_units = 32ull;
+    measurement->cumulative_rate = 2.0;
+    measurement->rolling_rate = 1.0;
+    resource->schema_version = YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
+    resource->placement =
+        YVEX_EXECUTION_PLACEMENT_ARTIFACT_MAPPED_DEVICE_ADDRESSABLE;
+    resource->available = YVEX_EXECUTION_RESOURCE_MODEL_AVAILABLE |
+                          YVEX_EXECUTION_RESOURCE_PROCESS_AVAILABLE |
+                          YVEX_EXECUTION_RESOURCE_UNIFIED_MEMORY;
+    resource->component_count = 1ull;
+    resource->model_artifact_bytes = 64ull << 30u;
+    resource->model_mapped_bytes = 64ull << 30u;
+    resource->model_device_addressable_bytes = 64ull << 30u;
+    resource->process_rss_current_bytes = 48ull << 30u;
+    resource->process_rss_peak_bytes = 52ull << 30u;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_OK &&
+            yvex_protocol_message_decode(frame, count, &decoded, &err) ==
+                YVEX_OK &&
+            decoded.measurement.scope ==
+                YVEX_EXECUTION_SCOPE_SUBSEQUENT_DECODE &&
+            decoded.measurement.rolling_window_units == 32ull &&
+            decoded.measurement.cumulative_rate == 2.0 &&
+            decoded.measurement.rolling_rate == 1.0 &&
+            decoded.runtime.metrics.resources.model_explicit_device_bytes ==
+                0ull &&
+            decoded.runtime.metrics.resources.model_device_addressable_bytes ==
+                (64ull << 30u) &&
+            !(decoded.runtime.metrics.resources.available &
+              YVEX_EXECUTION_RESOURCE_PHYSICAL_RESIDENCY_AVAILABLE),
+        "scoped rates and UMA addressability roundtrip without fabricated residency");
+    measurement->work_unit = YVEX_EXECUTION_WORK_FRAMES;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_OK &&
+            yvex_protocol_message_decode(frame, count, &decoded, &err) ==
+                YVEX_OK &&
+            decoded.measurement.work_unit == YVEX_EXECUTION_WORK_FRAMES,
+        "media frame work units cross the generic measurement protocol");
+    measurement->work_unit = YVEX_EXECUTION_WORK_SAMPLES;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_OK &&
+            yvex_protocol_message_decode(frame, count, &decoded, &err) ==
+                YVEX_OK &&
+            decoded.measurement.work_unit == YVEX_EXECUTION_WORK_SAMPLES,
+        "media sample work units cross the generic measurement protocol");
+    measurement->work_unit = YVEX_EXECUTION_WORK_TOKENS;
+    measurement->available &=
+        ~YVEX_EXECUTION_MEASUREMENT_ROLLING_RATE_AVAILABLE;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "rolling facts require an explicit rolling-rate availability claim");
+    measurement->available |=
+        YVEX_EXECUTION_MEASUREMENT_ROLLING_RATE_AVAILABLE;
+    measurement->scope = YVEX_EXECUTION_SCOPE_UNAVAILABLE;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "measurement facts require an explicit execution scope");
+    measurement->scope = YVEX_EXECUTION_SCOPE_SUBSEQUENT_DECODE;
+    measurement->clock = YVEX_EXECUTION_CLOCK_UNAVAILABLE;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "measured duration requires an explicit clock owner");
+    measurement->clock = YVEX_EXECUTION_CLOCK_HOST_WALL;
+    measurement->rolling_units = measurement->completed_units + 1ull;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "rolling progress cannot exceed cumulative completed work");
+    measurement->rolling_units = 32ull;
+    resource->available &= ~YVEX_EXECUTION_RESOURCE_MODEL_AVAILABLE;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "model bytes require an explicit model-resource availability claim");
+    resource->available |= YVEX_EXECUTION_RESOURCE_MODEL_AVAILABLE;
+    resource->model_explicit_device_bytes = 1ull;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "UMA addressability cannot be promoted to explicit device allocation");
+    resource->model_explicit_device_bytes = 0ull;
+    resource->available |= YVEX_EXECUTION_RESOURCE_SESSION_AVAILABLE;
+    resource->session_attention_allocated_bytes = 8ull;
+    resource->session_attention_resident_bytes = 8ull;
+    resource->session_physical_state_bytes = 4ull;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "typed session state cannot exceed physical session ownership");
+    resource->session_physical_state_bytes = 8ull;
+    resource->available |= YVEX_EXECUTION_RESOURCE_WORKSPACE_AVAILABLE;
+    resource->workspace_current_bytes = 16ull;
+    resource->workspace_peak_bytes = 15ull;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "resource current bytes cannot exceed their measured peak");
     return 0;
 }
 
@@ -1003,6 +1166,7 @@ int yvex_test_protocol(void)
     if (test_schema_refusals() != 0) return 1;
     if (test_message_roundtrip() != 0) return 1;
     if (test_capability_aware_readiness() != 0) return 1;
+    if (test_execution_truth_roundtrip() != 0) return 1;
     if (test_media_result_roundtrip() != 0) return 1;
     if (test_stale_frame_refusal() != 0) return 1;
     if (test_bounded_parser_mutation() != 0) return 1;

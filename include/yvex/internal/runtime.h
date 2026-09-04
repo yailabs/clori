@@ -272,7 +272,7 @@ typedef struct {
     unsigned long long physical_execution_decision_count;
     unsigned long long engine_specialization_count;
     unsigned long long engine_resource_count, engine_resource_generation;
-    unsigned long long mapped_package_bytes, prepared_bytes;
+    unsigned long long artifact_bytes, mapped_package_bytes, prepared_bytes;
     unsigned long long resident_host_bytes, resident_device_bytes;
     double lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_COUNT], total_seconds;
     yvex_runtime_capabilities capabilities;
@@ -456,6 +456,12 @@ typedef struct {
     unsigned long long sequence_candidate_state_bytes;
     unsigned long long sequence_host_state_bytes;
     unsigned long long sequence_device_state_bytes;
+    unsigned long long sequence_recurrent_state_bytes;
+    unsigned long long sequence_convolution_state_bytes;
+    unsigned long long attention_state_allocated_bytes;
+    unsigned long long attention_state_resident_bytes;
+    unsigned long long attention_state_virtual_bytes;
+    unsigned long long attention_state_page_table_bytes;
     int host_workspace_owned, host_workspace_pinned;
     int device_index, compute_capability_major, compute_capability_minor;
     unsigned long long total_device_bytes, sustainable_read_bytes_per_second, sustainable_copy_bytes_per_second;

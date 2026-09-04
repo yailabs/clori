@@ -169,31 +169,53 @@ the scheduler selects compatible work, the batch describes it, and the
 worklist orders real expert populations. No owner may duplicate one activation
 to manufacture semantic width.
 
-The current host worker advances each accepted generation turn to completion in
-bounded one-unit calls. Compatible work from concurrently active workers can
-rendezvous and execute together, but the host does not yet arbitrate prefill and
-decode quanta across a global ready-sequence set. `continuous_batching_ready`
-therefore remains false. Multiple workers or a multi-row kernel do not promote
-that claim.
+The engine scheduler retains independent runnable work and advances it
+cooperatively at transaction-safe execution quanta. Runnable work capacity,
+resident-session capacity, and physical sequence width are independent facts.
+Compatible operations from active workers may rendezvous and execute together,
+but ready sequences cannot dynamically join or leave physical decode batches.
+`continuous_batching_ready` therefore remains false. Multiple workers or a
+multi-row kernel do not promote that claim.
 
 ## Resources and residency
 
-The engine distinguishes:
+The engine's resource summary distinguishes:
 
 - immutable mapped package bytes;
 - copied or prepared model bytes;
-- physically resident host and device bytes;
-- session sequence-state bytes;
-- reusable workspace;
-- temporary execution allocations.
+- explicit host and device allocations and device-addressable bytes;
+- typed attention, recurrent, convolution, candidate, and physical session state;
+- activation arenas, reusable workspace, and transient allocations;
+- current and peak process RSS and logical movement.
 
 Residency schema v7 separates storage backing from backend execution resources.
 Artifact-mapped placement borrows the authenticated mapping and may register it
 once for CUDA-addressable access without making an anonymous model-sized copy.
 Copied host/locked/managed placement owns its prepared bytes. Engine and server
-summaries report mapped package, prepared, resident host, and resident device
-bytes separately; process RSS and CUDA allocation are not treated as complete
-physical-placement truth on unified-memory hardware.
+summaries report every class with explicit availability and placement. On
+unified-memory hardware a mapped artifact may be device-addressable without
+YVEX knowing physical page residency. Explicit CUDA allocation, process RSS,
+and physical GPU working set are not substituted for one another. Overlapping
+spans, state subsets, and peak classes are never presented as an additive total.
+
+## Measurement plane
+
+One execution-measurement schema qualifies work with scope, clock, composition,
+unit, duration, and explicit rate denominators. Cumulative decode covers the
+complete committed decode interval; rolling decode uses its own recent work and
+duration, currently up to 32 token intervals. Host and device measurements may
+overlap and retain that fact rather than being forced into a synthetic sum.
+The stage projection subtracts only disjoint host spans from total generation
+wall and publishes the remaining wall as `unattributed`; overlapping
+attention, component, and synchronization spans remain excluded from that sum.
+An ordinary decode span owns only its model step, so its output, sampling,
+state, detokenization, and publication children remain separately additive. A
+speculative decode span instead encloses one complete draft/verify/commit
+iteration; those child facts remain visible but are not added to the enclosing
+span a second time. This composition difference is typed rather than inferred
+from a family name.
+MiniMax evaluation/frame/sample work uses the same generic record without
+introducing media semantics into scheduler or telemetry ownership.
 
 Admission checks configured limits, cgroup capacity, live system availability,
 and backend memory facts before creating large resources. Live availability is

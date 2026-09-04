@@ -17,11 +17,15 @@ extern "C" {
 
 #define YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1 1u
 #define YVEX_RUNTIME_AV_GENERATION_SCHEMA_V2 2u
+#define YVEX_RUNTIME_AV_GENERATION_RESULT_SCHEMA_V3 3u
 #define YVEX_RUNTIME_MEDIA_CONDITION_SCHEMA_V1 YVEX_MEDIA_CONDITION_SCHEMA_V1
 #define YVEX_RUNTIME_MEDIA_CONDITION_CAP YVEX_MEDIA_CONDITION_CAP
 #define YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V2 2u
 #define YVEX_RUNTIME_MEDIA_MODEL_SCHEMA_V1 1u
 #define YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_V1 1u
+#define YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_V2 2u
+#define YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_CURRENT \
+    YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_V2
 #define YVEX_RUNTIME_MEDIA_PRESET_SCHEMA_V1 1u
 #define YVEX_RUNTIME_MEDIA_EXECUTION_SCHEMA_V1 1u
 #define YVEX_RUNTIME_MEDIA_EXECUTION_WIDTH 1u
@@ -177,6 +181,9 @@ typedef struct {
 typedef struct {
     unsigned int schema_version;
     const char *artifact_reopen_cache_root;
+    int (*observe_component_progress)(void *context, const char *role,
+                                      unsigned long long completed,
+                                      unsigned long long total);
     void (*observe_component)(void *context, const char *role,
                               const yvex_artifact_admission_evidence *evidence);
     void *observer_context;
@@ -191,7 +198,8 @@ typedef struct {
     unsigned int schema_version;
     unsigned long long prompt_tokens, frames, width, height, audio_samples;
     unsigned long long model_evaluations, kernel_launches, peak_device_bytes;
-    unsigned long long peak_workspace_bytes, file_bytes;
+    unsigned long long peak_workspace_bytes, activation_arena_peak_bytes;
+    unsigned long long file_bytes;
     char prompt_identity[YVEX_SHA256_HEX_CAP];
     char conditioning_identity[YVEX_SHA256_HEX_CAP];
     char plan_identity[YVEX_SHA256_HEX_CAP];
@@ -205,7 +213,7 @@ typedef struct {
     char execution_identity[YVEX_SHA256_HEX_CAP];
     char file_identity[YVEX_SHA256_HEX_CAP];
     char publication_identity[YVEX_SHA256_HEX_CAP];
-    int complete;
+    int activation_arena_observed, complete;
 } yvex_runtime_av_generation_result;
 
 typedef struct {

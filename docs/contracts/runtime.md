@@ -237,11 +237,29 @@ retains deterministic expert-major routed populations. CUDA receives those
 objects and may execute bounded tails, but it cannot regroup semantics or
 manufacture width.
 
-The current server worker repeatedly advances one accepted turn until terminal.
-Concurrent active workers can rendezvous at compatible physical operations, but
-there is no global engine policy yet interleaving prefill and decode quanta
-across all ready sequences. This contract therefore does not claim continuous
+The engine scheduler retains multiple independent runnable turns and advances
+them cooperatively at transaction-safe execution quanta. This logical runnable
+capacity is distinct from both the number of resident sessions and the physical
+sequence width of one backend operation. Compatible active operations may
+rendezvous into one physical batch, but ready sequences do not dynamically join
+and leave decode batches. This contract therefore does not claim continuous
 batching; `continuous_batching_ready` remains false.
+
+## Execution accounting
+
+Execution measurement schema v1 binds every available duration or rate to an
+explicit scope, host/device clock, composition, work unit, and denominator.
+Top-level, nested, enclosing, and overlapping measurements are not silently
+added together. Unavailable attribution stays unavailable.
+
+For text generation, cumulative decode rate is all committed decode work divided
+by its complete measured decode wall. Rolling decode rate uses only the most
+recent committed intervals, currently bounded to 32 tokens, and carries its own
+work and duration. Prefill, first decode, later decode, model forward, attention,
+output, logits publication, sampling, state commit, synchronization,
+detokenization, and client publication are distinct when their owners can time
+them. Media uses the same scopes with typed evaluation, frame, sample, byte, or
+operation units rather than pretending every workload is token execution.
 
 ## Cancellation and draining
 
@@ -269,6 +287,21 @@ always fails closed. `auto` may select another admitted numerically equivalent
 strategy when state is still private and policy permits it. An explicit exact
 request refuses when unavailable. Cleanup failure is reported without
 pretending the owner was released.
+
+## Resource truth
+
+Resource summary schema v1 separates artifact/mapped/prepared model spans,
+explicit host/device allocations, device-addressable bytes, typed session state,
+activation arenas, reusable workspace, transients, process RSS, current/peak,
+and logical movement. Artifact and mapped spans may overlap; typed state classes
+are subsets of physical session state; peak classes may overlap in time. They
+are not an additive total.
+
+Placement and availability qualify every number. On unified-memory hardware, a
+mapped artifact may be CUDA-addressable while physical page residency remains
+unmeasured. A zero explicit CUDA allocation therefore never means a zero GPU
+working set. The server aggregates only facts owned by each engine/component and
+does not duplicate immutable model bytes per session.
 
 ## Evidence
 
@@ -299,7 +332,7 @@ does not modify source snapshots or artifacts.
 
 ## Compatibility and non-claims
 
-Hosted behavior crosses private local protocol v18 and the bounded OpenAI
+Hosted behavior crosses private local protocol v19 and the bounded OpenAI
 compatibility profile v2. Pre-v0.1 private protocol versions may refuse rather
 than decode compatibly. Public and internal C ABI follow their typed header and
 schema contracts.

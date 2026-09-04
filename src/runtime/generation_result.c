@@ -159,10 +159,7 @@ int yvex_runtime_generation_profile_transformer(
             profile, YVEX_RUNTIME_PROFILE_EMBEDDING, value->embedding_ns,
             err) != YVEX_OK ||
         yvex_runtime_generation_profile_phase(
-            profile, YVEX_RUNTIME_PROFILE_ATTENTION,
-            profile->backend == YVEX_BACKEND_KIND_CUDA
-                ? value->attention_device_ns
-                : value->attention_ns,
+            profile, YVEX_RUNTIME_PROFILE_ATTENTION, value->attention_ns,
             err) != YVEX_OK ||
         yvex_runtime_generation_profile_phase(
             profile, YVEX_RUNTIME_PROFILE_MOE_TOTAL, value->moe_ns, err) !=
@@ -274,6 +271,23 @@ int yvex_runtime_generation_sampling_account(
              devices, err) != YVEX_OK))
         rc = yvex_error_code(err);
     return rc;
+}
+
+int yvex_runtime_generation_logits_publish(
+    yvex_runtime_profile_record *profile, const yvex_runtime_sampling_context *sampling,
+    yvex_runtime_sampling_source *source, const float *host_logits,
+    unsigned long long host_logits_count,
+    const yvex_runtime_logits_row_result *logits, yvex_error *err)
+{
+    unsigned long long started = 0ull;
+    int rc;
+    if (profile && profile->mode != YVEX_RUNTIME_PROFILE_OFF)
+        started = yvex_core_monotonic_ns();
+    rc = yvex_runtime_sampling_source_from_logits(
+        sampling, source, host_logits, host_logits_count, logits, err);
+    return rc != YVEX_OK || !started ? rc : yvex_runtime_generation_profile_phase(
+        profile, YVEX_RUNTIME_PROFILE_LOGITS_PUBLICATION,
+        yvex_core_monotonic_ns() - started, err);
 }
 
 int yvex_runtime_generation_profile_decode(
@@ -719,7 +733,7 @@ int yvex_runtime_generation_plan_identity(
     yvex_sha256 hash;
     if (!plan || !output) return 0;
     yvex_sha256_init(&hash);
-    return yvex_sha256_update_text(&hash, "yvex.runtime.generation.plan.v6") &&
+    return yvex_sha256_update_text(&hash, "yvex.runtime.generation.plan.v7") &&
            yvex_sha256_update_u64(&hash, plan->schema_version) &&
            yvex_sha256_update_u64(&hash, plan->producer_kind) &&
            yvex_sha256_update_u64(&hash, plan->backend) &&
@@ -728,7 +742,6 @@ int yvex_runtime_generation_plan_identity(
            yvex_sha256_update_u64(&hash, plan->prefill_chunk_tokens) &&
            yvex_sha256_update_u64(&hash, plan->maximum_new_tokens) &&
            yvex_sha256_update_u64(&hash, plan->maximum_output_bytes) &&
-           yvex_sha256_update_u64(&hash, plan->trace_policy) &&
            yvex_sha256_update_u64(&hash, plan->evidence_profile) &&
            yvex_sha256_update_u64(&hash, plan->execution_class) &&
            yvex_sha256_update_text(&hash, plan->runtime_model_identity) &&
@@ -1025,7 +1038,7 @@ int yvex_runtime_generation_result_validate(
                           &expected_final_position);
     if (!plan || !result || (!tokens && result->sampled_token_count) ||
         (!text && result->generated_text_bytes) ||
-        plan->schema_version != YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_V6 ||
+        plan->schema_version != YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_CURRENT ||
         result->schema_version != YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V5 ||
         (plan->producer_kind != YVEX_EXECUTION_PLAN_TRANSFORMER &&
          plan->producer_kind != YVEX_EXECUTION_PLAN_DECODER) ||

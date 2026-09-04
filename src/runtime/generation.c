@@ -244,7 +244,7 @@ static int generation_producer_begin(yvex_runtime_generation_context *context,
                                      int *active, yvex_error *err)
 {
     int rc;
-    if (!context->options.continuous_batching) return YVEX_OK;
+    if (!context->options.compatible_operation_batching) return YVEX_OK;
     rc = yvex_runtime_private_model_scheduler_producer_enter(context->model, err);
     if (rc == YVEX_OK) *active = 1;
     return rc;
@@ -589,7 +589,8 @@ static int generation_project_logits(yvex_runtime_generation_context *context,
             rc = yvex_runtime_generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_OUTPUT_HEAD,
                                            completed - started, err);
         if (rc == YVEX_OK)
-            shared_attribution = context->options.continuous_batching && logits_result->device_values_available;
+            shared_attribution = context->options.compatible_operation_batching &&
+                                 logits_result->device_values_available;
         if (rc == YVEX_OK)
             rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_OUTPUT_HEAD,
                 completed - started, 1ull, 0ull,
@@ -640,10 +641,9 @@ static int generation_project_sample(
         context, prefill, prefill_hidden, prefill_hidden_count, decode,
         decoder, decoder_phase, logits_result, profile, err);
     if (rc == YVEX_OK)
-        rc = yvex_runtime_sampling_source_from_logits(
-            context->sampling, &source, context->logits_row,
-            context->logits_row ? context->logits_count : 0ull,
-            logits_result, err);
+        rc = yvex_runtime_generation_logits_publish(
+            profile, context->sampling, &source, context->logits_row,
+            context->logits_row ? context->logits_count : 0ull, logits_result, err);
     if (rc == YVEX_OK && context->options.sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_STOCHASTIC)
         rc = yvex_runtime_sampling_transaction_begin(context->sampling, &transaction, err);
     if (rc == YVEX_OK) {
@@ -1303,8 +1303,8 @@ static int generation_speculative_current_step(
         rc = generation_refuse(err, YVEX_ERR_STATE,
             "production speculative target logits were materialized on the host");
     if (rc == YVEX_OK)
-        rc = yvex_runtime_sampling_source_from_logits(
-            context->sampling, &source, context->logits_row,
+        rc = yvex_runtime_generation_logits_publish(
+            generation_profile(context), context->sampling, &source, context->logits_row,
             context->logits_row ? context->logits_count : 0ull, &logits, err);
     if (rc == YVEX_OK) {
         started = yvex_core_monotonic_ns();
@@ -1899,13 +1899,27 @@ int yvex_runtime_generation_turn_advance(yvex_runtime_generation_context *contex
     while (turn->status == YVEX_OK && turn->result->stop_reason == YVEX_GENERATION_STOP_NONE &&
            work++ < work_budget) {
         runtime_engine_progress_lease progress = {0};
+        unsigned long long decode_steps_before = turn->result->decode_step_count;
+        unsigned long long decode_started = 0ull;
+        int speculative_iteration =
+            context->options.mode == YVEX_GENERATION_MODE_SPECULATIVE &&
+            !turn->result->speculation_source_boundary_token_count;
         rc = generation_progress_enter(
             context, YVEX_ENGINE_PROGRESS_DECODE, &progress, err);
+        if (rc == YVEX_OK && speculative_iteration)
+            decode_started = yvex_core_monotonic_ns();
         if (rc == YVEX_OK)
-            rc = context->options.mode == YVEX_GENERATION_MODE_TARGET_ONLY ||
-                         turn->result->speculation_source_boundary_token_count
-                     ? generation_target_step(context, turn, &progress, err)
-                     : generation_speculative_step(context, turn, &progress, err);
+            rc = speculative_iteration
+                     ? generation_speculative_step(context, turn, &progress, err)
+                     : generation_target_step(context, turn, &progress, err);
+        /* Speculative decode encloses draft, verification, and publication. */
+        if (rc == YVEX_OK && speculative_iteration &&
+            turn->result->decode_step_count > decode_steps_before)
+            rc = yvex_runtime_generation_profile_phase(
+                generation_profile(context),
+                decode_steps_before ? YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE
+                                    : YVEX_RUNTIME_PROFILE_FIRST_DECODE,
+                yvex_core_monotonic_ns() - decode_started, err);
         if (progress.scheduler)
             rc = generation_progress_finish(&progress, rc, err);
         if (rc != YVEX_OK) {

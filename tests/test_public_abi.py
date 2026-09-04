@@ -39,23 +39,32 @@ RECORDS = {
     "yvex_quant_policy_summary": (
         "include/yvex/quant.h", "YVEX_QUANT_POLICY_SCHEMA_VERSION", 2, 144,
         "8008bea6ecfd46feccef371a6425a8681ce3e9659d47a7806a2486bea192f455"),
+    "yvex_execution_capacity_summary": (
+        "include/yvex/execution.h", "YVEX_EXECUTION_CAPACITY_SCHEMA_V1", 1, 48,
+        "763036124c7201a1908edd26f9a659320b1d0c449ec353440764b6c554a824a1"),
+    "yvex_execution_measurement": (
+        "include/yvex/execution.h", "YVEX_EXECUTION_MEASUREMENT_SCHEMA_V1", 1, 96,
+        "eb839b26a7f01c56fca038b37761e5aa735026304af3030ca439fe2700dee9c9"),
+    "yvex_execution_resource_summary": (
+        "include/yvex/execution.h", "YVEX_EXECUTION_RESOURCE_SCHEMA_V1", 1, 216,
+        "050b17fa9dacd79631700a8466e59bd83822e13bd0eeeaa2406e9bac2f5f7e94"),
     "yvex_server_event": (
-        "include/yvex/server.h", "YVEX_RUNTIME_EVENT_SCHEMA_VERSION", 5, 904,
-        "a9cec914e39a2d7ab4ccbee797b6592b25f1432e46c8f7a27fdff6bc3907aaf3"),
+        "include/yvex/server.h", "YVEX_RUNTIME_EVENT_SCHEMA_VERSION", 6, 1000,
+        "49d73881b50a4a1daffc9767e413674fd8d95b282e869fe29a49e63550de36aa"),
     "yvex_server_metrics": (
-        "include/yvex/server.h", "YVEX_RUNTIME_METRICS_SCHEMA_VERSION", 3, 216,
-        "0b811120863697b41e7c6c3999746c7c06ce41d2578a317512a18e85c61e1bdd"),
+        "include/yvex/server.h", "YVEX_RUNTIME_METRICS_SCHEMA_VERSION", 4, 432,
+        "42020b2d0f4ece74479eb10d97cd64986304dc413368451666c16498462f088a"),
     "yvex_server_options": (
         "include/yvex/server.h", "YVEX_SERVER_OPTIONS_SCHEMA_CURRENT", 4, 88,
         "8073cc5ab362027b9e7696e4dc66012adb523204bfc7c306c66ac398a2ab05ab"),
     "yvex_server_engine_options": (
-        "include/yvex/server.h", "YVEX_SERVER_ENGINE_SCHEMA_CURRENT", 2, 136,
+        "include/yvex/server.h", "YVEX_SERVER_ENGINE_SCHEMA_CURRENT", 3, 136,
         "6741157212a73013a0dfb0c3113fd23994bb5dccbb7146a7d3a0dbf1e80f5f86"),
     "yvex_server_engine_summary": (
-        "include/yvex/server.h", "YVEX_SERVER_ENGINE_SCHEMA_CURRENT", 2, 728,
-        "92deac5947e27a2426866816f8b60b1c2d83dffc135f52a7c97e0b01939d103f"),
+        "include/yvex/server.h", "YVEX_SERVER_ENGINE_SCHEMA_CURRENT", 3, 992,
+        "67ac89685b5c760ca91dcec7e4d6895d0c26d88e3a31164f448f75e7f93ca6e8"),
     "yvex_server_summary": (
-        "include/yvex/server.h", "YVEX_SERVER_SUMMARY_SCHEMA_V1", 1, 832,
+        "include/yvex/server.h", "YVEX_SERVER_SUMMARY_SCHEMA_V2", 2, 1048,
         "187bd214ba857f775c22be5165f40471de9805f5017e515afe8892950e95eae6"),
     "yvex_client_partial_turn": (
         "include/yvex/server.h", "YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1", 1, 392,
@@ -76,11 +85,11 @@ RECORDS = {
         "include/yvex/server.h", "YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1", 1, 524,
         "15b251a93051e0f0cf0c70e1a14c2cdcb019b54d7e27851b6c36b02bcac9802b"),
     "yvex_client_request": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 18, 2024,
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 19, 2024,
         "eda70b9000088f58c57b639c0eb14a15d4893bf1c128d2b7f5f477b20a0a8c84"),
     "yvex_client_message": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 18, 10280,
-        "4a7747aa931f4404e186cb903bd7f49691f02b595d4653273a6501e68ac18872"),
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 19, 10952,
+        "9f1f8b76ed642a46921ee9d02432a499977a13b4b3b5f10c71126cc38c7a6caf"),
     "yvex_tokenizer_plan_summary": (
         "include/yvex/tokenizer.h", "YVEX_TOKENIZER_PLAN_SCHEMA_CURRENT", 5, 872,
         "93fbfdefccd98e3add82e774a6ae9d3aa50384dd991e9bdc0cd90a01d5cdcb6e"),
@@ -144,6 +153,7 @@ def compiler_source() -> str:
         "#include <limits.h>",
         "#include <stddef.h>",
         "#include <yvex/catalog.h>",
+        "#include <yvex/execution.h>",
         "#include <yvex/provider.h>",
         "#include <yvex/quant.h>",
         "#include <yvex/registry.h>",
@@ -163,9 +173,13 @@ def compiler_source() -> str:
         'ABI_ASSERT(YVEX_SERVER_OPTIONS_SCHEMA_V4 == 4u, "server options v4 identity changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_SCHEMA_V1 == 1u, "legacy engine v1 identity changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_SCHEMA_V2 == 2u, "engine v2 identity changed");',
+        'ABI_ASSERT(YVEX_SERVER_ENGINE_SCHEMA_V3 == 3u, "engine v3 identity changed");',
+        'ABI_ASSERT(YVEX_SERVER_SUMMARY_SCHEMA_V1 == 1u, "legacy summary v1 changed");',
+        'ABI_ASSERT(YVEX_SERVER_SUMMARY_SCHEMA_V2 == 2u, "summary v2 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V3 == 3u, "legacy event v3 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V4 == 4u, "event v4 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V5 == 5u, "event v5 identity changed");',
+        'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V6 == 6u, "event v6 identity changed");',
         'ABI_ASSERT(YVEX_TOKENIZER_PLAN_SCHEMA_V3 == 3u, '
         '"legacy tokenizer plan v3 identity changed");',
         'ABI_ASSERT(YVEX_TOKENIZER_PLAN_SCHEMA_V4 == 4u, '
@@ -179,7 +193,7 @@ def compiler_source() -> str:
         '"prompt conversation value changed");',
         'ABI_ASSERT(YVEX_TOKENIZER_PROMPT_VERBATIM == 2, '
         '"prompt verbatim value changed");',
-        'ABI_ASSERT(YVEX_LOCAL_PROTOCOL_VERSION == 18u, "local protocol identity changed");',
+        'ABI_ASSERT(YVEX_LOCAL_PROTOCOL_VERSION == 19u, "local protocol identity changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_NONE == 0, "engine-kind none value changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_TEXT == 1, "engine-kind text value changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_MEDIA == 2, "engine-kind media value changed");',

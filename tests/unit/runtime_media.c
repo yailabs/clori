@@ -665,7 +665,7 @@ static int test_composite_verified_reopen(void)
     request.transformer_artifact_path = paths[1];
     request.video_artifact_path = paths[2];
     request.audio_artifact_path = paths[3];
-    options.schema_version = YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_V1;
+    options.schema_version = YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_CURRENT;
     options.artifact_reopen_cache_root = cache_root;
     rc = yvex_runtime_media_model_open(&model, &request, &options, &summary, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && model && summary.component_count == 4ull &&
@@ -790,13 +790,20 @@ static int test_generation_transaction(void)
     yvex_runtime_media_model_close(&repeated_model);
     active_fixture_context = &first_context;
     rc = yvex_runtime_media_model_generate(model, &first, &first_result, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && first_result.complete,
+    YVEX_TEST_ASSERT(rc == YVEX_OK && first_result.complete &&
+                         first_result.schema_version ==
+                             YVEX_RUNTIME_AV_GENERATION_RESULT_SCHEMA_V3 &&
+                         first_result.activation_arena_observed,
                      "complete staged media transaction");
     YVEX_TEST_ASSERT(first_result.frames == FIXTURE_FRAMES &&
                          first_result.width == FIXTURE_WIDTH &&
                          first_result.height == FIXTURE_HEIGHT &&
-                         first_result.audio_samples == 165333ull,
-                     "exact synchronized media geometry");
+                         first_result.audio_samples == 165333ull &&
+                         first_result.peak_device_bytes == 1024ull &&
+                         first_result.peak_workspace_bytes >= 8192ull &&
+                         first_result.peak_workspace_bytes <=
+                             first.maximum_workspace_bytes,
+                     "exact synchronized media geometry and bounded execution peaks");
     YVEX_TEST_ASSERT(first_context.condition_calls == 1ull &&
                          first_context.latent_calls == 1ull &&
                          first_context.video_calls == 7ull &&

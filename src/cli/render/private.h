@@ -55,6 +55,9 @@ void yvex_cli_host_status_render(FILE *fp, const yvex_server_summary *status,
                                  int json);
 void yvex_cli_host_memory_render(FILE *fp, const yvex_server_summary *status,
                                  int json);
+void yvex_cli_engine_render(FILE *fp,
+                            const yvex_server_engine_summary *engine,
+                            int json);
 int yvex_cli_session_table_render(FILE *fp,
                                   const yvex_cli_session_table_fact *facts,
                                   size_t count);

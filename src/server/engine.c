@@ -27,12 +27,23 @@ typedef struct {
     server_session_registry *sessions;
     server_media_registry *media;
     yvex_server_engine_summary summary;
-    unsigned long long mapped_package_bytes, prepared_bytes;
+    unsigned long long artifact_bytes, mapped_package_bytes, prepared_bytes;
     unsigned long long model_resident_host_bytes;
     unsigned long long model_resident_device_bytes;
-    unsigned long long runnable_sequences;
-    int continuous_batching, telemetry_opened;
+    yvex_runtime_residency_summary model_residency;
+    unsigned long long model_component_count;
+    unsigned long long runnable_sequences, logical_runnable_capacity;
+    unsigned long long physical_sequence_width;
+    int compatible_operation_batching, telemetry_opened;
 } server_engine;
+
+typedef struct {
+    server_engine_manager *manager;
+    server_engine *engine;
+    yvex_runtime_lifecycle_phase phase;
+    unsigned long long phase_started_ns, last_emit_ns, last_completed;
+    int initialized;
+} engine_load_progress;
 
 struct server_engine_manager {
     pthread_mutex_t mutex;
@@ -90,6 +101,110 @@ static unsigned long long adaptive_prefill_chunk(
     if (concurrent_sequences > 1ull && selected < ENGINE_BATCHED_PREFILL_FLOOR)
         selected = ENGINE_BATCHED_PREFILL_FLOOR;
     return selected < context_capacity ? selected : context_capacity;
+}
+
+static yvex_execution_work_unit engine_load_work_unit(
+    yvex_runtime_lifecycle_phase phase)
+{
+    if (phase == YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH)
+        return YVEX_EXECUTION_WORK_BYTES;
+    if (phase == YVEX_RUNTIME_LIFECYCLE_RESIDENCY)
+        return YVEX_EXECUTION_WORK_TENSORS;
+    return YVEX_EXECUTION_WORK_OPERATIONS;
+}
+
+static int engine_load_denominator_known(yvex_runtime_lifecycle_phase phase)
+{
+    return phase == YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH ||
+           phase == YVEX_RUNTIME_LIFECYCLE_RESIDENCY;
+}
+
+static yvex_runtime_trace_policy engine_trace_policy(
+    yvex_server_trace_level level)
+{
+    if (level == YVEX_SERVER_TRACE_FULL) return YVEX_RUNTIME_TRACE_FULL;
+    if (level >= YVEX_SERVER_TRACE_STAGES) return YVEX_RUNTIME_TRACE_STAGES;
+    return YVEX_RUNTIME_TRACE_SUMMARY;
+}
+
+static int engine_load_progress_emit(engine_load_progress *progress,
+                                     yvex_runtime_lifecycle_phase phase,
+                                     unsigned long long completed,
+                                     unsigned long long total,
+                                     unsigned long long now)
+{
+    static const char *const names[YVEX_RUNTIME_LIFECYCLE_COUNT] = {
+        "artifact-open", "artifact-verification", "artifact-admission",
+        "binding-validation", "materialization", "model-seal", "residency",
+        "backend-open", "workspace-prepare", "graph-warmup", "graph-capture",
+        "graph-instantiate", "execution", "publication", "cleanup"};
+    yvex_execution_measurement measurement = {0};
+    server_event_scope scope;
+    yvex_error ignored;
+    unsigned long long elapsed = now > progress->phase_started_ns
+                                     ? now - progress->phase_started_ns : 0ull;
+    double rate = elapsed && completed
+                      ? (double)completed * 1000000000.0 / (double)elapsed
+                      : 0.0;
+    measurement.schema_version = YVEX_EXECUTION_MEASUREMENT_SCHEMA_V1;
+    measurement.scope = YVEX_EXECUTION_SCOPE_MODEL_LIFECYCLE;
+    measurement.clock = YVEX_EXECUTION_CLOCK_HOST_WALL;
+    measurement.composition = YVEX_EXECUTION_COMPOSITION_NESTED;
+    measurement.work_unit = engine_load_work_unit(phase);
+    measurement.completed_units = completed;
+    if (total && engine_load_denominator_known(phase)) {
+        measurement.available |=
+            YVEX_EXECUTION_MEASUREMENT_DENOMINATOR_AVAILABLE;
+        measurement.total_units = total;
+    }
+    if (elapsed) {
+        measurement.available |=
+            YVEX_EXECUTION_MEASUREMENT_DURATION_AVAILABLE;
+        measurement.duration_ns = elapsed;
+    }
+    if (elapsed && completed) {
+        measurement.available |=
+            YVEX_EXECUTION_MEASUREMENT_CUMULATIVE_RATE_AVAILABLE;
+        measurement.cumulative_rate = rate;
+    }
+    server_event_scope_from_engine(&scope, &progress->engine->summary);
+    yvex_error_clear(&ignored);
+    (void)yvex_server_telemetry_emit_provider(
+        progress->manager->telemetry, &scope,
+        YVEX_SERVER_EVENT_ENGINE_LOAD_PROGRESS, YVEX_SERVER_SEVERITY_INFO,
+        NULL, NULL, NULL, names[phase], completed,
+        engine_load_denominator_known(phase) ? total : 0ull, phase,
+        (double)elapsed / 1000000000.0, rate, NULL, NULL, &measurement, NULL,
+        &ignored);
+    return 1;
+}
+
+static int engine_load_progress_observe(
+    void *opaque, yvex_runtime_lifecycle_phase phase,
+    unsigned long long completed, unsigned long long total)
+{
+    engine_load_progress *progress = opaque;
+    unsigned long long now = yvex_core_monotonic_ns();
+    int phase_changed;
+    int emit;
+    if (!progress || phase >= YVEX_RUNTIME_LIFECYCLE_COUNT ||
+        (total && completed > total))
+        return 1;
+    phase_changed = !progress->initialized || progress->phase != phase;
+    if (phase_changed) {
+        progress->phase = phase;
+        progress->phase_started_ns = now;
+        progress->last_completed = 0ull;
+        progress->initialized = 1;
+    }
+    emit = phase_changed || (total && completed == total) ||
+           now - progress->last_emit_ns >= 1000000000ull ||
+           (completed >= progress->last_completed &&
+            completed - progress->last_completed >= 64ull * 1024ull * 1024ull);
+    if (!emit) return 1;
+    progress->last_emit_ns = now;
+    progress->last_completed = completed;
+    return engine_load_progress_emit(progress, phase, completed, total, now);
 }
 
 static int options_admit(server_engine *engine,
@@ -174,10 +289,9 @@ static void generation_options(const server_engine *engine,
     options->maximum_device_bytes = engine->options.maximum_device_bytes;
     options->concurrent_sequences = engine->options.concurrent_sequences;
     options->runnable_sequences = engine->runnable_sequences;
-    options->continuous_batching = engine->continuous_batching;
-    options->trace_policy = engine->options.trace_level == YVEX_SERVER_TRACE_FULL
-                                ? YVEX_RUNTIME_TRACE_FULL
-                                : YVEX_RUNTIME_TRACE_STAGES;
+    options->compatible_operation_batching =
+        engine->compatible_operation_batching;
+    options->trace_policy = engine_trace_policy(engine->options.trace_level);
     options->evidence_profile = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
     options->sampling_policy.schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1;
     options->sampling_policy.strategy = YVEX_SAMPLING_STRATEGY_STOCHASTIC;
@@ -194,6 +308,7 @@ static int engine_request_queue_open(server_engine_manager *manager,
     unsigned long long workers = manager->request_workers;
     if (workers > engine->options.maximum_sessions)
         workers = engine->options.maximum_sessions;
+    engine->logical_runnable_capacity = workers;
     engine->runnable_sequences = workers > engine->options.concurrent_sequences
                                      ? workers
                                      : engine->options.concurrent_sequences;
@@ -208,6 +323,7 @@ static int engine_request_queue_open(server_engine_manager *manager,
 static int execution_probe(server_engine *engine,
                            yvex_runtime_generation_context_summary *capacity,
                            char specialization_identity[YVEX_SHA256_HEX_CAP],
+                           engine_load_progress *progress,
                            yvex_error *err)
 {
     yvex_runtime_execution_session *session = NULL;
@@ -224,15 +340,33 @@ static int execution_probe(server_engine *engine,
     request.maximum_device_bytes = engine->options.maximum_device_bytes;
     rc = yvex_model_engine_scheduler_maximum_width_copy(engine->model, &width, err);
     if (rc == YVEX_OK)
-        engine->continuous_batching =
+        engine->compatible_operation_batching =
             engine->options.concurrent_sequences > 1ull && width >= 2ull;
     if (rc == YVEX_OK)
+        engine->physical_sequence_width =
+            engine->compatible_operation_batching
+                ? (width < engine->options.concurrent_sequences
+                       ? width : engine->options.concurrent_sequences)
+                : 1ull;
+    if (rc == YVEX_OK) {
+        (void)engine_load_progress_observe(
+            progress, YVEX_RUNTIME_LIFECYCLE_BACKEND_OPEN, 0ull, 1ull);
         rc = yvex_runtime_session_open(&session, engine->model, &request,
                                        &failure, err);
+        if (rc == YVEX_OK)
+            (void)engine_load_progress_observe(
+                progress, YVEX_RUNTIME_LIFECYCLE_BACKEND_OPEN, 1ull, 1ull);
+    }
     generation_options(engine, &options);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK) {
+        (void)engine_load_progress_observe(
+            progress, YVEX_RUNTIME_LIFECYCLE_WORKSPACE_PREPARE, 0ull, 1ull);
         rc = yvex_runtime_generation_context_open(
             &generation, engine->model, session, &options, err);
+        if (rc == YVEX_OK)
+            (void)engine_load_progress_observe(
+                progress, YVEX_RUNTIME_LIFECYCLE_WORKSPACE_PREPARE, 1ull, 1ull);
+    }
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_context_summary_copy(generation, capacity, err);
     if (rc == YVEX_OK)
@@ -275,6 +409,7 @@ static int text_engine_open(server_engine_manager *manager,
     const yvex_model_engine_view *view;
     yvex_paths paths;
     yvex_error path_error;
+    engine_load_progress progress = {0};
     int rc;
     generation_options(engine, &startup);
     request.artifact_path = engine->artifact_path;
@@ -304,14 +439,26 @@ static int text_engine_open(server_engine_manager *manager,
     request.residency_backend = engine->options.backend;
     request.maximum_host_bytes = engine->options.maximum_host_bytes;
     request.maximum_device_bytes = engine->options.maximum_device_bytes;
+    progress.manager = manager;
+    progress.engine = engine;
+    request.progress = engine_load_progress_observe;
+    request.progress_context = &progress;
     yvex_error_clear(&path_error);
     if (yvex_paths_default(&paths, &path_error) == YVEX_OK)
         request.artifact_reopen_cache_root = paths.cache_dir;
     rc = yvex_model_engine_open(&engine->model, &request, &failure, err);
     if (rc == YVEX_OK)
         rc = yvex_model_engine_summary_copy(engine->model, &model, err);
+    view = rc == YVEX_OK ? yvex_model_engine_view_get(engine->model) : NULL;
+    if (rc == YVEX_OK && !view)
+        rc = engine_refuse(err, YVEX_ERR_STATE,
+                           "runtime model view is unavailable");
+    if (rc == YVEX_OK && view->residency)
+        rc = yvex_runtime_residency_snapshot(
+            view->residency, &engine->model_residency, NULL, NULL, err);
     if (rc == YVEX_OK)
-        rc = execution_probe(engine, &capacity, specialization_identity, err);
+        rc = execution_probe(engine, &capacity, specialization_identity,
+                             &progress, err);
     if (rc == YVEX_OK) {
         event_scope.engine_kind = engine->options.engine_kind;
         event_scope.execution_strategy = engine->options.execution_strategy;
@@ -323,21 +470,22 @@ static int text_engine_open(server_engine_manager *manager,
                                    specialization_identity);
         rc = yvex_server_sessions_open(
             &engine->sessions, engine->model, &engine->options, engine->generation,
-            engine->runnable_sequences, engine->continuous_batching,
+            engine->runnable_sequences, engine->compatible_operation_batching,
             &event_scope, manager->telemetry, err);
     }
-    view = rc == YVEX_OK ? yvex_model_engine_view_get(engine->model) : NULL;
-    if (rc != YVEX_OK || !view) return rc != YVEX_OK ? rc : YVEX_ERR_STATE;
+    if (rc != YVEX_OK) return rc;
     engine->summary.context_capacity = engine->options.context_capacity;
     engine->summary.prefill_chunk_tokens = engine->options.prefill_chunk_tokens;
     engine->summary.maximum_new_tokens = engine->options.maximum_new_tokens;
     engine->summary.maximum_output_bytes = engine->options.maximum_output_bytes;
     engine->summary.maximum_sessions = engine->options.maximum_sessions;
     engine->summary.concurrent_sequences = engine->options.concurrent_sequences;
+    engine->artifact_bytes = model.artifact_bytes;
     engine->mapped_package_bytes = model.mapped_package_bytes;
     engine->prepared_bytes = model.prepared_bytes;
     engine->model_resident_host_bytes = model.resident_host_bytes;
     engine->model_resident_device_bytes = model.resident_device_bytes;
+    engine->model_component_count = 1ull;
     engine->summary.mapped_package_bytes = engine->mapped_package_bytes;
     engine->summary.prepared_bytes = engine->prepared_bytes;
     engine->summary.resident_host_bytes = engine->model_resident_host_bytes;
@@ -385,6 +533,12 @@ static int media_engine_open(server_engine_manager *manager,
     yvex_core_text_copy(engine->summary.specialization_identity,
                         sizeof(engine->summary.specialization_identity),
                         summary.specialization_identity);
+    engine->artifact_bytes = model.artifact_bytes;
+    engine->mapped_package_bytes = model.mapped_package_bytes;
+    engine->prepared_bytes = model.prepared_bytes;
+    engine->model_resident_host_bytes = model.resident_host_bytes;
+    engine->model_resident_device_bytes = model.resident_device_bytes;
+    engine->model_component_count = model.component_count;
     yvex_server_telemetry_media_model_opened(manager->telemetry,
                                              model.component_count);
     engine->telemetry_opened = 1;
@@ -421,6 +575,10 @@ int yvex_server_engine_summary_valid(const yvex_server_engine_summary *engine)
          engine->explicit_reasoning_channel_supported != 1) ||
         (engine->continuous_batching_ready != 0 &&
          engine->continuous_batching_ready != 1) ||
+        !yvex_server_execution_capacity_valid(&engine->capacity) ||
+        !yvex_server_execution_resource_valid(&engine->resources) ||
+        engine->continuous_batching_ready !=
+            engine->capacity.continuous_batching_ready ||
         !optional_summary_identity_valid(engine->runtime_model_identity) ||
         !optional_summary_identity_valid(engine->runtime_binding_identity) ||
         !optional_summary_identity_valid(engine->artifact_identity) ||
@@ -434,6 +592,7 @@ int yvex_server_engine_summary_valid(const yvex_server_engine_summary *engine)
 
 static void summary_base(server_engine *engine)
 {
+    yvex_execution_capacity_summary *capacity = &engine->summary.capacity;
     engine->summary.schema_version = YVEX_SERVER_ENGINE_SCHEMA_CURRENT;
     engine->summary.state = engine->state;
     engine->summary.backend = engine->options.backend;
@@ -448,7 +607,25 @@ static void summary_base(server_engine *engine)
     engine->summary.maximum_sessions = engine->options.maximum_sessions;
     engine->summary.concurrent_sequences = engine->options.concurrent_sequences;
     engine->summary.execution_ready = engine->state == YVEX_SERVER_ENGINE_LOADED;
-    engine->summary.continuous_batching_ready = engine->continuous_batching;
+    engine->summary.continuous_batching_ready = 0;
+    memset(capacity, 0, sizeof(*capacity));
+    capacity->schema_version = YVEX_EXECUTION_CAPACITY_SCHEMA_V1;
+    capacity->session_capacity = engine->options.maximum_sessions;
+    capacity->runnable_work_capacity = engine->logical_runnable_capacity
+                                           ? engine->logical_runnable_capacity
+                                           : 1ull;
+    if (capacity->runnable_work_capacity > capacity->session_capacity)
+        capacity->runnable_work_capacity = capacity->session_capacity;
+    capacity->physical_sequence_width = engine->physical_sequence_width
+                                            ? engine->physical_sequence_width : 1ull;
+    capacity->cooperative_scheduling_ready =
+        capacity->runnable_work_capacity > 1ull;
+    capacity->compatible_operation_batching_ready =
+        engine->compatible_operation_batching;
+    capacity->continuous_batching_ready = 0;
+    if (!engine->summary.resources.schema_version)
+        engine->summary.resources.schema_version =
+            YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
     yvex_core_text_copy(engine->summary.alias,
                         sizeof(engine->summary.alias), engine->alias);
     yvex_core_text_copy(engine->summary.target_id,
@@ -473,8 +650,12 @@ static void engine_lifecycle_event(
 
 static int summary_resources(server_engine *engine, yvex_error *err)
 {
-    unsigned long long session_host = 0ull, session_device = 0ull;
+    yvex_execution_resource_summary session = {0};
+    server_media_summary media = {0};
+    yvex_execution_resource_summary *resources = &engine->summary.resources;
     int owns_resources = engine->model || engine->sessions || engine->media;
+    memset(resources, 0, sizeof(*resources));
+    resources->schema_version = YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
     engine->summary.mapped_package_bytes =
         owns_resources ? engine->mapped_package_bytes : 0ull;
     engine->summary.prepared_bytes =
@@ -483,16 +664,92 @@ static int summary_resources(server_engine *engine, yvex_error *err)
         owns_resources ? engine->model_resident_host_bytes : 0ull;
     engine->summary.resident_device_bytes =
         owns_resources ? engine->model_resident_device_bytes : 0ull;
+    if (!owns_resources) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    resources->available = YVEX_EXECUTION_RESOURCE_MODEL_AVAILABLE;
+    resources->component_count = engine->model_component_count;
+    resources->model_artifact_bytes = engine->artifact_bytes;
+    resources->model_mapped_bytes = engine->mapped_package_bytes;
+    resources->model_prepared_bytes = engine->prepared_bytes;
+    resources->model_device_addressable_bytes =
+        engine->model_residency.cuda_addressable_bytes;
+    resources->logical_upload_bytes = engine->model_residency.cuda_upload_bytes;
+    if (engine->media) {
+        resources->placement = YVEX_EXECUTION_PLACEMENT_COMPOSITE;
+        resources->model_explicit_host_bytes =
+            engine->model_resident_host_bytes;
+        resources->model_explicit_device_bytes =
+            engine->model_resident_device_bytes;
+    } else if (engine->model_residency.placement ==
+               YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED) {
+        resources->placement = YVEX_EXECUTION_PLACEMENT_MANAGED_UNIFIED;
+        resources->available |= YVEX_EXECUTION_RESOURCE_UNIFIED_MEMORY;
+    } else if (engine->model_residency.placement ==
+                   YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
+               engine->model_residency.cuda_addressable_bytes) {
+        resources->placement =
+            YVEX_EXECUTION_PLACEMENT_ARTIFACT_MAPPED_DEVICE_ADDRESSABLE;
+        if (engine->model_residency.cuda_pageable_map_count)
+            resources->available |= YVEX_EXECUTION_RESOURCE_UNIFIED_MEMORY;
+    } else if (engine->model_residency.placement ==
+               YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED) {
+        resources->placement = YVEX_EXECUTION_PLACEMENT_ARTIFACT_MAPPED;
+    } else {
+        resources->placement = YVEX_EXECUTION_PLACEMENT_EXPLICIT_HOST;
+        resources->model_explicit_host_bytes =
+            engine->model_resident_host_bytes;
+        resources->available |=
+            YVEX_EXECUTION_RESOURCE_PHYSICAL_RESIDENCY_AVAILABLE;
+    }
     if (engine->sessions &&
-        yvex_server_sessions_resource_bytes(engine->sessions, &session_host,
-                                            &session_device, err) != YVEX_OK)
+        yvex_server_sessions_resource_summary(engine->sessions, &session,
+                                              err) != YVEX_OK)
         return yvex_error_code(err);
-    if (!yvex_core_u64_add(engine->summary.resident_host_bytes, session_host,
-                           &engine->summary.resident_host_bytes) ||
-        !yvex_core_u64_add(engine->summary.resident_device_bytes, session_device,
-                           &engine->summary.resident_device_bytes))
-        return engine_refuse(err, YVEX_ERR_BOUNDS,
-                             "engine resource total overflowed");
+    if (engine->media &&
+        yvex_server_media_registry_summary(engine->media, &media, err) !=
+            YVEX_OK)
+        return yvex_error_code(err);
+#define MERGE(field)                                                            \
+    if (!yvex_core_u64_add(resources->field, session.field, &resources->field)) \
+        return engine_refuse(err, YVEX_ERR_BOUNDS,                              \
+                             "engine resource total overflowed")
+    resources->available |= session.available;
+    MERGE(session_attention_allocated_bytes);
+    MERGE(session_attention_resident_bytes);
+    MERGE(session_attention_virtual_bytes);
+    MERGE(session_attention_page_table_bytes);
+    MERGE(session_recurrent_state_bytes);
+    MERGE(session_convolution_state_bytes);
+    MERGE(session_candidate_state_bytes);
+    MERGE(session_physical_state_bytes);
+    MERGE(workspace_current_bytes);
+    MERGE(workspace_peak_bytes);
+#undef MERGE
+    if (media.execution_resources_observed) {
+        resources->available |= YVEX_EXECUTION_RESOURCE_WORKSPACE_AVAILABLE |
+                                YVEX_EXECUTION_RESOURCE_TRANSIENT_AVAILABLE;
+        if (media.execution_workspace_peak_bytes >
+            resources->workspace_peak_bytes)
+            resources->workspace_peak_bytes =
+                media.execution_workspace_peak_bytes;
+        if (media.execution_transient_peak_bytes >
+            resources->transient_peak_bytes)
+            resources->transient_peak_bytes =
+                media.execution_transient_peak_bytes;
+    }
+    if (media.activation_arena_observed) {
+        resources->available |= YVEX_EXECUTION_RESOURCE_ARENA_AVAILABLE;
+        if (media.activation_arena_peak_bytes >
+            resources->activation_arena_peak_bytes)
+            resources->activation_arena_peak_bytes =
+                media.activation_arena_peak_bytes;
+    }
+    engine->summary.resident_host_bytes =
+        resources->model_explicit_host_bytes;
+    engine->summary.resident_device_bytes =
+        resources->model_explicit_device_bytes;
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -535,10 +792,14 @@ static int engine_close(server_engine_manager *manager, server_engine *engine,
     }
     engine->summary.execution_ready = 0;
     if (rc == YVEX_OK) {
+        engine->artifact_bytes = 0ull;
         engine->mapped_package_bytes = 0ull;
         engine->prepared_bytes = 0ull;
         engine->model_resident_host_bytes = 0ull;
         engine->model_resident_device_bytes = 0ull;
+        engine->model_component_count = 0ull;
+        memset(&engine->model_residency, 0,
+               sizeof(engine->model_residency));
         (void)summary_resources(engine, NULL);
     }
     if (err) *err = primary;
@@ -657,6 +918,8 @@ int yvex_server_engine_manager_load(
         rc = candidate.options.engine_kind == YVEX_SERVER_ENGINE_MEDIA
                  ? media_engine_open(manager, &candidate, media, err)
                  : text_engine_open(manager, &candidate, err);
+    if (rc == YVEX_OK)
+        rc = summary_resources(&candidate, err);
     if (rc != YVEX_OK) {
         yvex_error primary = err ? *err : (yvex_error){0}, cleanup;
         (void)engine_close(manager, &candidate, &cleanup);

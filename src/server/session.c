@@ -31,6 +31,9 @@ typedef struct {
     unsigned long long first_reasoning_ns, reasoning_completed_ns;
     unsigned long long first_final_ns, reasoning_tokens, final_tokens;
     unsigned long long committed_tokens, last_progress_ns;
+    unsigned long long
+        decode_commit_ns[YVEX_SERVER_DECODE_RATE_WINDOW_TOKENS + 1ull];
+    unsigned int decode_commit_count;
     unsigned long long speculative_cycle, proposed_tokens;
     unsigned long long selected_verification_tokens, accepted_tokens;
     unsigned long long rejected_tokens, discarded_tokens, verification_count;
@@ -89,6 +92,46 @@ static unsigned long long monotonic_ns(void)
 static double elapsed_seconds(unsigned long long start,
                               unsigned long long end);
 
+static void turn_decode_timestamp_record(turn_sink *sink,
+                                         unsigned long long now)
+{
+    if (sink->decode_commit_count ==
+        YVEX_SERVER_DECODE_RATE_WINDOW_TOKENS + 1ull) {
+        memmove(sink->decode_commit_ns, sink->decode_commit_ns + 1,
+                YVEX_SERVER_DECODE_RATE_WINDOW_TOKENS *
+                    sizeof(*sink->decode_commit_ns));
+        sink->decode_commit_count--;
+    }
+    sink->decode_commit_ns[sink->decode_commit_count++] = now;
+}
+
+static void turn_first_decode_measurement(
+    const turn_sink *sink, unsigned long long now,
+    yvex_execution_measurement *measurement)
+{
+    unsigned long long start = sink->prefill_completed_ns
+                                   ? sink->prefill_completed_ns
+                                   : sink->started_ns;
+    unsigned long long duration = now > start ? now - start : 0ull;
+    memset(measurement, 0, sizeof(*measurement));
+    measurement->schema_version = YVEX_EXECUTION_MEASUREMENT_SCHEMA_V1;
+    measurement->scope = YVEX_EXECUTION_SCOPE_FIRST_DECODE;
+    measurement->clock = YVEX_EXECUTION_CLOCK_HOST_WALL;
+    measurement->composition = YVEX_EXECUTION_COMPOSITION_NESTED;
+    measurement->work_unit = YVEX_EXECUTION_WORK_TOKENS;
+    measurement->available =
+        YVEX_EXECUTION_MEASUREMENT_DENOMINATOR_AVAILABLE;
+    measurement->completed_units = 1ull;
+    measurement->total_units = 1ull;
+    if (duration) {
+        measurement->available |=
+            YVEX_EXECUTION_MEASUREMENT_DURATION_AVAILABLE |
+            YVEX_EXECUTION_MEASUREMENT_CUMULATIVE_RATE_AVAILABLE;
+        measurement->duration_ns = duration;
+        measurement->cumulative_rate = 1000000000.0 / (double)duration;
+    }
+}
+
 static const yvex_runtime_speculation_progress *turn_speculation_summary(
     const turn_sink *sink, yvex_runtime_speculation_progress *summary)
 {
@@ -113,18 +156,24 @@ static int turn_decode_progress(
     turn_sink *sink, const yvex_runtime_generation_token_result *token,
     unsigned long long now, yvex_error *err)
 {
+    yvex_execution_measurement measurement;
     yvex_runtime_speculation_progress speculation;
     const yvex_runtime_speculation_progress *speculation_fact;
     unsigned long long since_time, since_tokens;
     double seconds;
     if (!token->model_committed) return YVEX_OK;
     sink->committed_tokens++;
+    turn_decode_timestamp_record(sink, now);
     if (!sink->last_progress_ns) sink->last_progress_ns = sink->first_fragment_ns;
     since_time = now - sink->last_progress_ns;
     since_tokens = sink->committed_tokens % TURN_PROGRESS_TOKEN_INTERVAL;
     if (since_time < TURN_PROGRESS_INTERVAL_NS && since_tokens != 0u)
         return YVEX_OK;
     seconds = elapsed_seconds(sink->first_fragment_ns, now);
+    yvex_server_decode_measurement(
+        sink->first_fragment_ns, sink->committed_tokens,
+        sink->decode_commit_ns, sink->decode_commit_count, now,
+        &measurement);
     speculation_fact = turn_speculation_summary(sink, &speculation);
     sink->last_progress_ns = now;
     return yvex_server_telemetry_emit_provider(
@@ -136,7 +185,8 @@ static int turn_decode_progress(
         sink->committed_tokens, token->position_after,
         sink->reasoning_tokens, seconds,
         seconds > 0.0 ? (double)sink->committed_tokens / seconds : 0.0,
-        speculation_fact, sink->request->provider_request, NULL, err);
+        speculation_fact, sink->request->provider_request, &measurement, NULL,
+        err);
 }
 
 static void turn_envelope_project(
@@ -407,7 +457,8 @@ static int session_generation_open(
     options.maximum_device_bytes = registry->options.maximum_device_bytes;
     options.concurrent_sequences = registry->options.concurrent_sequences;
     options.runnable_sequences = registry->runnable_sequences;
-    options.continuous_batching = registry->continuous_batching;
+    options.compatible_operation_batching =
+        registry->compatible_operation_batching;
     options.trace_policy = registry->options.trace_level == YVEX_SERVER_TRACE_FULL
         ? YVEX_RUNTIME_TRACE_FULL : (registry->options.trace_level >= YVEX_SERVER_TRACE_STAGES
                                          ? YVEX_RUNTIME_TRACE_STAGES : YVEX_RUNTIME_TRACE_SUMMARY);
@@ -563,7 +614,9 @@ static int turn_fragment(void *opaque,
     int rc = YVEX_OK;
     unsigned long long now = monotonic_ns();
     if (!sink->first_fragment_ns) {
+        yvex_execution_measurement measurement;
         sink->first_fragment_ns = now;
+        turn_first_decode_measurement(sink, now, &measurement);
         rc = yvex_server_telemetry_emit_provider(
             sink->registry->telemetry, &sink->registry->event_scope,
             YVEX_SERVER_EVENT_GENERATION_FIRST_TOKEN,
@@ -571,7 +624,7 @@ static int turn_fragment(void *opaque,
             sink->request_id, sink->turn_id, "decode", token->ordinal,
             token->sampled_token_id, 0u,
             elapsed_seconds(sink->started_ns, sink->first_fragment_ns), 0.0,
-            NULL, sink->request->provider_request, NULL, err);
+            NULL, sink->request->provider_request, &measurement, NULL, err);
     }
     if (token->sampled_token_id == sink->reasoning_start_token_id) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "server.reasoning",
@@ -610,8 +663,50 @@ static int turn_fragment(void *opaque,
             YVEX_SERVER_SEVERITY_DEBUG, sink->session->name,
             sink->request_id, sink->turn_id, "decode", token->ordinal,
             byte_count, token->sampled_token_id, 0.0, 0.0,
-            NULL, sink->request->provider_request, NULL, err);
+            NULL, sink->request->provider_request, NULL, NULL, err);
     return rc;
+}
+
+static void turn_progress_measurement(
+    yvex_runtime_generation_progress_kind kind, unsigned long long value_a,
+    unsigned long long value_b, unsigned long long elapsed_ns,
+    int prompt_rendering,
+    yvex_execution_measurement *measurement)
+{
+    memset(measurement, 0, sizeof(*measurement));
+    measurement->schema_version = YVEX_EXECUTION_MEASUREMENT_SCHEMA_V1;
+    measurement->scope = kind != YVEX_GENERATION_PROGRESS_PROMPT_ACCEPTED
+                             ? YVEX_EXECUTION_SCOPE_PREFILL
+                         : prompt_rendering
+                             ? YVEX_EXECUTION_SCOPE_PROMPT_RENDERING
+                             : YVEX_EXECUTION_SCOPE_TOKENIZER;
+    measurement->clock = YVEX_EXECUTION_CLOCK_HOST_WALL;
+    measurement->composition = YVEX_EXECUTION_COMPOSITION_NESTED;
+    measurement->work_unit = YVEX_EXECUTION_WORK_TOKENS;
+    measurement->available =
+        YVEX_EXECUTION_MEASUREMENT_DENOMINATOR_AVAILABLE;
+    if (kind == YVEX_GENERATION_PROGRESS_PREFILL_STARTED) {
+        measurement->completed_units = 0ull;
+        measurement->total_units = value_a;
+    } else if (kind == YVEX_GENERATION_PROGRESS_PREFILL_PROGRESS) {
+        measurement->completed_units = value_a;
+        measurement->total_units = value_b;
+    } else {
+        measurement->completed_units = value_a;
+        measurement->total_units = value_a;
+    }
+    if (elapsed_ns) {
+        measurement->available |=
+            YVEX_EXECUTION_MEASUREMENT_DURATION_AVAILABLE;
+        measurement->duration_ns = elapsed_ns;
+        if (measurement->completed_units) {
+            measurement->available |=
+                YVEX_EXECUTION_MEASUREMENT_CUMULATIVE_RATE_AVAILABLE;
+            measurement->cumulative_rate =
+                (double)measurement->completed_units * 1000000000.0 /
+                (double)elapsed_ns;
+        }
+    }
 }
 
 static int turn_progress(void *opaque,
@@ -622,12 +717,14 @@ static int turn_progress(void *opaque,
     turn_sink *sink = opaque;
     yvex_client_message message;
     yvex_server_event event;
+    yvex_execution_measurement measurement;
     yvex_server_event_kind event_kind;
     const char *phase;
     int rc;
     if (kind == YVEX_GENERATION_PROGRESS_PROMPT_ACCEPTED) {
         event_kind = YVEX_SERVER_EVENT_TOKENIZER_COMPLETED;
-        phase = "tokenizer";
+        phase = sink->request->provider_request ? "prompt-rendering"
+                                                : "tokenizer";
     } else if (kind == YVEX_GENERATION_PROGRESS_PREFILL_STARTED) {
         sink->prefill_started_ns = monotonic_ns();
         event_kind = YVEX_SERVER_EVENT_PREFILL_STARTED;
@@ -643,14 +740,20 @@ static int turn_progress(void *opaque,
     {
         unsigned long long now = kind == YVEX_GENERATION_PROGRESS_PREFILL_PROGRESS
                                      ? monotonic_ns() : sink->prefill_completed_ns;
-        double elapsed = kind >= YVEX_GENERATION_PROGRESS_PREFILL_PROGRESS
-                             ? elapsed_seconds(sink->prefill_started_ns, now) : 0.0;
+        unsigned long long elapsed_ns =
+            kind >= YVEX_GENERATION_PROGRESS_PREFILL_PROGRESS &&
+                    now > sink->prefill_started_ns
+                ? now - sink->prefill_started_ns : 0ull;
+        double elapsed = (double)elapsed_ns / 1000000000.0;
+        turn_progress_measurement(kind, value_a, value_b, elapsed_ns,
+                                  sink->request->provider_request != NULL,
+                                  &measurement);
         rc = yvex_server_telemetry_emit_provider(
             sink->registry->telemetry, &sink->registry->event_scope, event_kind,
             YVEX_SERVER_SEVERITY_INFO, sink->session->name,
             sink->request_id, sink->turn_id, phase, value_a, value_b, 0u,
             elapsed, elapsed > 0.0 ? (double)value_a / elapsed : 0.0,
-            NULL, sink->request->provider_request, &event, err);
+            NULL, sink->request->provider_request, &measurement, &event, err);
         if (rc != YVEX_OK || sink->request->provider_request) return rc;
         memset(&message, 0, sizeof(message));
         message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
@@ -704,7 +807,7 @@ static int turn_speculation_progress(
         kinds[progress->kind],
         YVEX_SERVER_SEVERITY_INFO, sink->session->name, sink->request_id,
         sink->turn_id, "speculation", 0u, 0u, 0u, progress->seconds, 0.0,
-        progress, sink->request->provider_request, &event, err);
+        progress, sink->request->provider_request, NULL, &event, err);
     if (rc != YVEX_OK || sink->request->provider_request) return rc;
     memset(&message, 0, sizeof(message));
     message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
@@ -1108,6 +1211,77 @@ static int session_provider_result_prepare(
     return status;
 }
 
+static void session_turn_measurement_project(
+    yvex_client_message *completed, const turn_sink *sink,
+    unsigned long long now, unsigned long long decode_end)
+{
+    completed->queue_seconds = sink->queue_seconds;
+    completed->prefill_seconds = elapsed_seconds(
+        sink->prefill_started_ns, sink->prefill_completed_ns);
+    completed->first_token_seconds =
+        sink->first_fragment_ns
+            ? elapsed_seconds(sink->started_ns, sink->first_fragment_ns)
+            : 0.0;
+    completed->reasoning_tokens = sink->reasoning_tokens;
+    completed->final_tokens = sink->final_tokens;
+    completed->first_reasoning_seconds =
+        sink->first_reasoning_ns
+            ? elapsed_seconds(sink->started_ns, sink->first_reasoning_ns)
+            : 0.0;
+    completed->first_final_seconds =
+        sink->first_final_ns
+            ? elapsed_seconds(sink->started_ns, sink->first_final_ns)
+            : 0.0;
+    completed->reasoning_seconds =
+        sink->first_reasoning_ns
+            ? elapsed_seconds(sink->prefill_completed_ns
+                                  ? sink->prefill_completed_ns
+                                  : sink->started_ns,
+                              sink->reasoning_completed_ns
+                                  ? sink->reasoning_completed_ns
+                                  : decode_end)
+            : 0.0;
+    completed->final_seconds =
+        sink->first_final_ns
+            ? elapsed_seconds(sink->reasoning_completed_ns
+                                  ? sink->reasoning_completed_ns
+                              : sink->prefill_completed_ns
+                                  ? sink->prefill_completed_ns
+                                  : sink->started_ns,
+                              decode_end)
+            : 0.0;
+    completed->total_completion_seconds = elapsed_seconds(sink->started_ns, now);
+    completed->reasoning_rate =
+        completed->reasoning_seconds > 0.0
+            ? (double)completed->reasoning_tokens / completed->reasoning_seconds
+            : 0.0;
+    completed->final_rate =
+        completed->final_seconds > 0.0
+            ? (double)completed->final_tokens / completed->final_seconds
+            : 0.0;
+    completed->total_completion_rate =
+        completed->total_completion_seconds > 0.0
+            ? (double)completed->generated_tokens /
+                  completed->total_completion_seconds
+            : 0.0;
+    completed->decode_seconds =
+        sink->prefill_completed_ns
+            ? elapsed_seconds(sink->prefill_completed_ns, decode_end)
+            : 0.0;
+    completed->prefill_rate =
+        completed->prefill_seconds > 0.0
+            ? (double)completed->prefill_tokens / completed->prefill_seconds
+            : 0.0;
+    completed->decode_rate =
+        completed->decode_seconds > 0.0
+            ? (double)completed->generated_tokens / completed->decode_seconds
+            : 0.0;
+    yvex_server_decode_measurement(
+        sink->first_fragment_ns, sink->committed_tokens,
+        sink->decode_commit_ns, sink->decode_commit_count, now,
+        &completed->measurement);
+}
+
 static int session_turn_publish(server_session_registry *registry, server_session *session,
                                 const yvex_client_request *request, turn_sink *sink,
                                 const yvex_runtime_generation_result *result, int status,
@@ -1117,6 +1291,10 @@ static int session_turn_publish(server_session_registry *registry, server_sessio
     yvex_tokenizer_provider_result provider_result;
     yvex_runtime_session_summary runtime_summary;
     unsigned long long now = monotonic_ns();
+    unsigned long long decode_end = sink->decode_commit_count
+                                        ? sink->decode_commit_ns[
+                                              sink->decode_commit_count - 1ull]
+                                        : now;
     yvex_runtime_speculation_progress speculation;
     const yvex_runtime_speculation_progress *speculation_fact;
     yvex_error secondary;
@@ -1187,68 +1365,7 @@ static int session_turn_publish(server_session_registry *registry, server_sessio
                                 provider_result.tool_calls[0].name);
         }
     }
-    completed.queue_seconds = sink->queue_seconds;
-    completed.prefill_seconds = elapsed_seconds(
-        sink->prefill_started_ns, sink->prefill_completed_ns);
-    completed.first_token_seconds = sink->first_fragment_ns
-                                        ? elapsed_seconds(sink->started_ns,
-                                                          sink->first_fragment_ns)
-                                        : 0.0;
-    completed.reasoning_tokens = sink->reasoning_tokens;
-    completed.final_tokens = sink->final_tokens;
-    completed.first_reasoning_seconds = sink->first_reasoning_ns
-                                             ? elapsed_seconds(
-                                                   sink->started_ns,
-                                                   sink->first_reasoning_ns)
-                                             : 0.0;
-    completed.first_final_seconds = sink->first_final_ns
-                                         ? elapsed_seconds(sink->started_ns,
-                                                           sink->first_final_ns)
-                                         : 0.0;
-    completed.reasoning_seconds = sink->first_reasoning_ns
-                                      ? elapsed_seconds(
-                                            sink->prefill_completed_ns
-                                                ? sink->prefill_completed_ns
-                                                : sink->started_ns,
-                                            sink->reasoning_completed_ns
-                                                ? sink->reasoning_completed_ns
-                                                : now)
-                                      : 0.0;
-    completed.final_seconds = sink->first_final_ns
-                                  ? elapsed_seconds(
-                                        sink->reasoning_completed_ns
-                                            ? sink->reasoning_completed_ns
-                                            : (sink->prefill_completed_ns
-                                                   ? sink->prefill_completed_ns
-                                                   : sink->started_ns),
-                                        now)
-                                  : 0.0;
-    completed.total_completion_seconds = elapsed_seconds(sink->started_ns, now);
-    completed.reasoning_rate = completed.reasoning_seconds > 0.0
-                                   ? (double)completed.reasoning_tokens /
-                                         completed.reasoning_seconds
-                                   : 0.0;
-    completed.final_rate = completed.final_seconds > 0.0
-                               ? (double)completed.final_tokens /
-                                     completed.final_seconds
-                               : 0.0;
-    completed.total_completion_rate =
-        completed.total_completion_seconds > 0.0
-            ? (double)completed.generated_tokens /
-                  completed.total_completion_seconds
-            : 0.0;
-    completed.decode_seconds = sink->prefill_completed_ns
-                                   ? elapsed_seconds(sink->prefill_completed_ns,
-                                                     now)
-                                   : 0.0;
-    completed.prefill_rate = completed.prefill_seconds > 0.0
-                                 ? (double)completed.prefill_tokens /
-                                       completed.prefill_seconds
-                                 : 0.0;
-    completed.decode_rate = completed.decode_seconds > 0.0
-                                ? (double)completed.generated_tokens /
-                                      completed.decode_seconds
-                                : 0.0;
+    session_turn_measurement_project(&completed, sink, now, decode_end);
     yvex_core_text_copy(completed.session_name, sizeof(completed.session_name),
                         session->name);
     yvex_runtime_identity_copy(completed.session_identity, session->identity);
@@ -1303,199 +1420,10 @@ static int session_turn_publish(server_session_registry *registry, server_sessio
         session->name, sink->request_id, sink->turn_id, "turn",
         result->model_committed_token_count, result->final_position,
         result->stop_reason, elapsed_seconds(sink->started_ns, now),
-        completed.decode_rate, speculation_fact, request->provider_request, NULL,
-        &secondary);
+        completed.decode_rate, speculation_fact, request->provider_request,
+        &completed.measurement, NULL, &secondary);
     yvex_tokenizer_provider_result_clear(&provider_result);
     return status;
-}
-
-static int session_profile_publish(server_session_registry *registry,
-                                   const server_session *session,
-                                   const yvex_client_request *request,
-                                   const turn_sink *sink,
-                                   const yvex_runtime_generation_result *result,
-                                   const yvex_runtime_generation_evidence *evidence,
-                                   yvex_error *err)
-{
-    const yvex_runtime_profile_record *profile =
-        evidence ? &evidence->profile : NULL;
-    yvex_engine_scheduler_summary batches;
-    int rc;
-#define PROFILE_EVENT(phase_, a_, b_, c_, nanoseconds_)                                   \
-    yvex_server_telemetry_emit_provider(                                                   \
-        registry->telemetry, &registry->event_scope,                                      \
-        YVEX_SERVER_EVENT_GENERATION_PROFILE,                                             \
-        YVEX_SERVER_SEVERITY_DEBUG, session->name, sink->request_id, sink->turn_id,       \
-        (phase_), (a_), (b_), (c_), (double)(nanoseconds_) / 1000000000.0, 0.0,           \
-        NULL, request->provider_request, NULL, err)
-    if (!profile || profile->mode == YVEX_RUNTIME_PROFILE_OFF) return YVEX_OK;
-    rc = PROFILE_EVENT("movement",
-        profile->counters[YVEX_RUNTIME_PROFILE_H2D_BYTES],
-        profile->counters[YVEX_RUNTIME_PROFILE_D2H_BYTES],
-        profile->counters[YVEX_RUNTIME_PROFILE_D2D_BYTES], 0ull);
-    if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("transfers",
-            profile->counters[YVEX_RUNTIME_PROFILE_UPLOADS],
-            profile->counters[YVEX_RUNTIME_PROFILE_DOWNLOADS],
-            profile->counters[YVEX_RUNTIME_PROFILE_EXPERT_SUBVIEWS], 0ull);
-    if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("launches",
-            profile->counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES],
-            profile->counters[YVEX_RUNTIME_PROFILE_QUEUE_SYNCHRONIZATIONS],
-            profile->counters[YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS],
-            profile->phase_ns[YVEX_RUNTIME_PROFILE_SYNCHRONIZATION_WAIT]);
-    if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("graphs",
-            profile->counters[YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES],
-            profile->counters[YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES],
-            profile->counters[YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS], 0ull);
-    if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("accelerated_matrix",
-            profile->counters[YVEX_RUNTIME_PROFILE_ACCELERATED_MATRIX_LAUNCHES],
-            profile->counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES],
-            profile->counters[YVEX_RUNTIME_PROFILE_UNIQUE_EXPERTS], 0ull);
-    if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("attention",
-            profile->phase_calls[YVEX_RUNTIME_PROFILE_ATTENTION],
-            profile->counters[YVEX_RUNTIME_PROFILE_CACHE_HITS],
-            profile->counters[YVEX_RUNTIME_PROFILE_CACHE_MISSES],
-            profile->phase_ns[YVEX_RUNTIME_PROFILE_ATTENTION]);
-    if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("moe",
-            profile->counters[YVEX_RUNTIME_PROFILE_ROW_EXPERT_PAIRS],
-            profile->counters[YVEX_RUNTIME_PROFILE_EXPERT_SUBVIEWS],
-            profile->counters[YVEX_RUNTIME_PROFILE_EXPERT_BYTES],
-            profile->phase_ns[YVEX_RUNTIME_PROFILE_MOE_TOTAL]);
-    if (rc == YVEX_OK && evidence->expert_worklists.worklist_count)
-        rc = PROFILE_EVENT("expert-worklist",
-            evidence->expert_worklists.worklist_count,
-            evidence->expert_worklists.pair_count,
-            evidence->expert_worklists.bucket_count, 0ull);
-    if (rc == YVEX_OK && evidence->expert_worklists.worklist_count)
-        rc = PROFILE_EVENT("expert-width",
-            evidence->expert_worklists.maximum_bucket_population,
-            evidence->expert_worklists.matrix_tile_eligible_pairs,
-            evidence->expert_worklists.matrix_tile_executed_pairs, 0ull);
-    if (rc == YVEX_OK && evidence->expert_worklists.worklist_count)
-        rc = PROFILE_EVENT("expert-rows", evidence->expert_worklists.narrow_pairs,
-            evidence->expert_worklists.tail_rows, 0ull, 0ull);
-    if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("output",
-            profile->counters[YVEX_RUNTIME_PROFILE_OUTPUT_HEAD_ROWS],
-            profile->counters[YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES],
-            profile->counters[YVEX_RUNTIME_PROFILE_GENERATED_TOKENS],
-            profile->phase_ns[YVEX_RUNTIME_PROFILE_OUTPUT_HEAD] +
-                profile->phase_ns[YVEX_RUNTIME_PROFILE_SAMPLING]);
-    if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("target",
-            profile->counters[YVEX_RUNTIME_PROFILE_TARGET_FORWARDS],
-            profile->counters[YVEX_RUNTIME_PROFILE_TARGET_ROWS],
-            profile->counters[YVEX_RUNTIME_PROFILE_REPLAYED_ACCEPTED_TARGET_ROWS],
-            profile->phase_ns[YVEX_RUNTIME_PROFILE_TOTAL_GENERATION]);
-    if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("speculation",
-            profile->counters[YVEX_RUNTIME_PROFILE_DRAFT_FORWARDS],
-            profile->counters[YVEX_RUNTIME_PROFILE_VERIFIED_ROWS],
-            profile->counters[YVEX_RUNTIME_PROFILE_PROMOTED_TARGET_ROWS], 0ull);
-    if (rc == YVEX_OK && result->speculation_source_boundary_token_count)
-        rc = PROFILE_EVENT("source-boundary", result->speculation_source_boundary_token_count,
-            result->model_committed_token_count - result->speculation_source_boundary_token_count,
-            profile->counters[YVEX_RUNTIME_PROFILE_REPLAYED_ACCEPTED_TARGET_ROWS], 0ull);
-    if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("candidate",
-            profile->counters[YVEX_RUNTIME_PROFILE_ACCEPTED_DRAFT_TOKENS],
-            profile->counters[YVEX_RUNTIME_PROFILE_DISCARDED_CANDIDATE_ROWS],
-            profile->counters[YVEX_RUNTIME_PROFILE_TARGET_EXTENSIONS], 0ull);
-    if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("prefill",
-            profile->counters[YVEX_RUNTIME_PROFILE_PROMPT_TOKENS],
-            profile->counters[YVEX_RUNTIME_PROFILE_REUSED_TOKENS],
-            profile->counters[YVEX_RUNTIME_PROFILE_NEW_PREFILL_TOKENS],
-            profile->phase_ns[YVEX_RUNTIME_PROFILE_TOTAL_PREFILL]);
-    if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("decode",
-            profile->phase_calls[YVEX_RUNTIME_PROFILE_FIRST_DECODE],
-            profile->phase_calls[YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE],
-            profile->counters[YVEX_RUNTIME_PROFILE_GENERATED_TOKENS],
-            profile->phase_ns[YVEX_RUNTIME_PROFILE_FIRST_DECODE] +
-                profile->phase_ns[YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE]);
-    memset(&batches, 0, sizeof(batches));
-    if (rc == YVEX_OK &&
-        yvex_model_engine_scheduler_summary_copy(
-            registry->model, &batches, err) == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-batches", batches.physical_batches,
-                           batches.multi_source_batches, batches.maximum_width, 0ull);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-batch-rows", batches.submitted_rows,
-                           batches.executed_rows, batches.admitted_maximum_width, 0ull);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-batch-multi-source",
-                           batches.multi_source_batches,
-                           batches.multi_source_rows,
-                           batches.maximum_multi_source_width, 0ull);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-batch-sources",
-                           batches.maximum_source_count,
-                           batches.registered_producers, 0ull, 0ull);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-scheduling",
-                           batches.progress_submissions,
-                           batches.cooperative_yields,
-                           batches.cooperative_resumes,
-                           batches.scheduler_wait_nanoseconds);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-quanta",
-                           batches.progress_completions,
-                           batches.maximum_ready_sequence_work,
-                           batches.maximum_active_sequences,
-                           batches.maximum_quantum_nanoseconds);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-batch-experts",
-                           batches.multi_source_worklists,
-                           batches.multi_source_expert_pairs,
-                           batches.maximum_multi_source_bucket_population, 0ull);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-batch-expert-rows",
-                           batches.multi_source_matrix_tile_eligible_pairs,
-                           batches.multi_source_matrix_tile_executed_pairs,
-                           batches.multi_source_narrow_pairs, 0ull);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("batch-expert-population-1-3",
-                           batches.multi_source_population_histogram[1],
-                           batches.multi_source_population_histogram[2],
-                           batches.multi_source_population_histogram[3], 0ull);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("batch-expert-population-4-6",
-                           batches.multi_source_population_histogram[4],
-                           batches.multi_source_population_histogram[5],
-                           batches.multi_source_population_histogram[6], 0ull);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-batch-coalescing", batches.coalescing_waits,
-                           batches.coalescing_timeouts,
-                           batches.registered_producers, batches.coalescing_ns);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-batch-policy", batches.coalescing_limit_ns,
-                           batches.admitted_maximum_width,
-                           batches.registered_producers, 0ull);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-step-rendezvous",
-                           batches.rendezvous_submissions,
-                           batches.multi_source_rendezvous,
-                           batches.maximum_rendezvous_width, 0ull);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-step-policy", batches.rendezvous_limit_ns,
-                           batches.rendezvous_steps,
-                           batches.registered_producers, 0ull);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-batch-mismatch", batches.phase_mismatches,
-                           batches.layer_mismatches,
-                           batches.operation_mismatches, 0ull);
-    if (rc == YVEX_OK && batches.enabled)
-        rc = PROFILE_EVENT("execution-batch-mismatch-other",
-                           batches.geometry_mismatches, batches.profile_mismatches,
-                           batches.identity_mismatches, 0ull);
-#undef PROFILE_EVENT
-    return rc;
 }
 
 static int session_turn_prompt_set(
@@ -1590,6 +1518,7 @@ static int session_turn(server_session_registry *registry,
     yvex_runtime_generation_turn_request turn;
     yvex_runtime_generation_result result;
     yvex_runtime_generation_evidence evidence;
+    yvex_execution_measurement queue_measurement;
     yvex_runtime_sampling_policy policy;
     yvex_client_message started;
     yvex_client_request resolved_request;
@@ -1682,6 +1611,22 @@ static int session_turn(server_session_registry *registry,
     yvex_core_text_copy(started.session_name, sizeof(started.session_name),
                         session->name);
     rc = emit(emit_context, &started, err);
+    memset(&queue_measurement, 0, sizeof(queue_measurement));
+    queue_measurement.schema_version = YVEX_EXECUTION_MEASUREMENT_SCHEMA_V1;
+    queue_measurement.scope = YVEX_EXECUTION_SCOPE_QUEUE;
+    queue_measurement.clock = YVEX_EXECUTION_CLOCK_HOST_WALL;
+    queue_measurement.composition = YVEX_EXECUTION_COMPOSITION_NESTED;
+    queue_measurement.work_unit = YVEX_EXECUTION_WORK_OPERATIONS;
+    queue_measurement.available =
+        YVEX_EXECUTION_MEASUREMENT_DENOMINATOR_AVAILABLE;
+    queue_measurement.completed_units = 1ull;
+    queue_measurement.total_units = 1ull;
+    if (queue_seconds > 0.0) {
+        queue_measurement.available |=
+            YVEX_EXECUTION_MEASUREMENT_DURATION_AVAILABLE;
+        queue_measurement.duration_ns =
+            (unsigned long long)(queue_seconds * 1000000000.0);
+    }
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_emit_provider(
             registry->telemetry, &registry->event_scope,
@@ -1692,7 +1637,8 @@ static int session_turn(server_session_registry *registry,
                 ? request->provider_request->message_count
                 : request->prompt_bytes,
             session->committed_count, turn.maximum_new_tokens,
-            0.0, 0.0, NULL, request->provider_request, NULL, err);
+            queue_seconds, 0.0, NULL, request->provider_request,
+            &queue_measurement, NULL, err);
     memset(&result, 0, sizeof(result));
     if (rc == YVEX_OK) {
         rc = yvex_runtime_generation_turn_begin(
@@ -1725,8 +1671,9 @@ static int session_turn(server_session_registry *registry,
                              prior_transcript, rc, err);
     if (generation_rc != YVEX_OK && err) *err = primary_error;
     if (rc == YVEX_OK)
-        rc = session_profile_publish(
-            registry, session, request, &sink, &result, &evidence, err);
+        rc = yvex_server_session_profile_publish(
+            registry, session, request, sink.request_id, sink.turn_id, &result,
+            &evidence, err);
     rc = session_turn_publish(registry, session, request, &sink, &result,
                               rc, err);
     atomic_store_explicit(&session->active_turn, 0, memory_order_release);

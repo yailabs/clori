@@ -2454,6 +2454,10 @@ static int runtime_model_open_fixture(const binding_fixture *fixture,
 
 typedef struct {
     unsigned long long events[YVEX_RUNTIME_LIFECYCLE_COUNT];
+    unsigned long long first_completed[YVEX_RUNTIME_LIFECYCLE_COUNT];
+    unsigned long long first_total[YVEX_RUNTIME_LIFECYCLE_COUNT];
+    unsigned long long last_completed[YVEX_RUNTIME_LIFECYCLE_COUNT];
+    unsigned long long last_total[YVEX_RUNTIME_LIFECYCLE_COUNT];
     unsigned long long hash_completed, hash_total;
     int cancel_hash, restrict_memory_after_hash, memory_restricted;
 } runtime_progress_fixture;
@@ -2466,7 +2470,13 @@ static int runtime_progress_collect(void *opaque, yvex_runtime_lifecycle_phase p
 
     if ((unsigned int)phase >= YVEX_RUNTIME_LIFECYCLE_COUNT)
         return 0;
+    if (!progress->events[phase]) {
+        progress->first_completed[phase] = completed;
+        progress->first_total[phase] = total;
+    }
     progress->events[phase]++;
+    progress->last_completed[phase] = completed;
+    progress->last_total[phase] = total;
     if (phase == YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH) {
         progress->hash_completed = completed;
         progress->hash_total = total;
@@ -2515,13 +2525,33 @@ static int test_runtime_model_progress(
                      "runtime progress model opens");
     YVEX_TEST_ASSERT(yvex_model_engine_summary_copy(model, &summary, &err) == YVEX_OK,
                      "runtime progress model summary copies safely");
-    YVEX_TEST_ASSERT(progress.events[YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN] == 1ull &&
+    YVEX_TEST_ASSERT(progress.events[YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN] == 2ull &&
+                         progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 2ull &&
+                         progress.events[
+                             YVEX_RUNTIME_LIFECYCLE_ARTIFACT_ADMISSION] == 2ull &&
                          progress.events[YVEX_RUNTIME_LIFECYCLE_MATERIALIZATION_OPEN] == 2ull &&
                          progress.events[YVEX_RUNTIME_LIFECYCLE_MODEL_SEAL] == 2ull &&
                          progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH] > 1ull &&
                          progress.hash_completed == fixture->admission.file_bytes &&
                          progress.hash_total == fixture->admission.file_bytes,
                      "runtime progress reports exact cold hash coverage");
+    YVEX_TEST_ASSERT(
+        progress.first_completed[YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN] == 0ull &&
+            progress.first_total[YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN] == 1ull &&
+            progress.last_completed[YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN] == 1ull &&
+            progress.last_total[YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN] == 1ull &&
+            progress.first_completed[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull &&
+            progress.first_total[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 1ull &&
+            progress.last_completed[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 1ull &&
+            progress.last_total[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 1ull &&
+            progress.first_completed[YVEX_RUNTIME_LIFECYCLE_RESIDENCY] == 0ull &&
+            progress.first_total[YVEX_RUNTIME_LIFECYCLE_RESIDENCY] ==
+                summary.tensor_count &&
+            progress.last_completed[YVEX_RUNTIME_LIFECYCLE_RESIDENCY] ==
+                summary.tensor_count &&
+            progress.last_total[YVEX_RUNTIME_LIFECYCLE_RESIDENCY] ==
+                summary.tensor_count,
+        "lifecycle owners publish exact operation and tensor denominators");
     YVEX_TEST_ASSERT(summary.total_seconds >= 0.0 &&
                          summary.lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH] >= 0.0 &&
                          summary.lifecycle_seconds[
@@ -2635,7 +2665,7 @@ static int test_runtime_model_progress(
             failure.code == YVEX_MODEL_ENGINE_FAILURE_ALLOCATION &&
             strcmp(failure.field, "system-memory-capacity") == 0 &&
             failure.actual == 1ull &&
-            progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 1ull &&
+            progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 2ull &&
             progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH] > 1ull &&
             progress.events[YVEX_RUNTIME_LIFECYCLE_RESIDENCY] == 0ull,
         "model open rechecks live capacity after hashing and before residency mutation");

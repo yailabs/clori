@@ -7,6 +7,7 @@
 #include <yvex/backend.h>
 #include <yvex/catalog.h>
 #include <yvex/core.h>
+#include <yvex/execution.h>
 #include <yvex/gguf.h>
 #include <yvex/graph.h>
 #include <yvex/materialization.h>

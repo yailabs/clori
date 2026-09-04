@@ -106,6 +106,27 @@ typedef struct {
     yvex_error err;
 } live_scheduled_thread;
 
+static yvex_runtime_trace_policy live_trace_policy =
+    YVEX_RUNTIME_TRACE_SUMMARY;
+
+static int live_trace_policy_read(void)
+{
+    const char *value = getenv("YVEX_LIVE_TRACE_POLICY");
+    if (!value || !value[0] || strcmp(value, "summary") == 0) {
+        live_trace_policy = YVEX_RUNTIME_TRACE_SUMMARY;
+        return 1;
+    }
+    if (strcmp(value, "none") == 0)
+        live_trace_policy = YVEX_RUNTIME_TRACE_NONE;
+    else if (strcmp(value, "stages") == 0)
+        live_trace_policy = YVEX_RUNTIME_TRACE_STAGES;
+    else if (strcmp(value, "full") == 0)
+        live_trace_policy = YVEX_RUNTIME_TRACE_FULL;
+    else
+        return 0;
+    return 1;
+}
+
 static int live_start_gate_wait(live_start_gate *gate, yvex_error *err)
 {
     int aborted;
@@ -391,7 +412,7 @@ static int live_production_request(
         .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V6,
         .context_capacity = context_capacity, .prefill_chunk_tokens = 4ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
-        .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
+        .trace_policy = live_trace_policy};
     yvex_model_engine_failure failure = {0};
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_generation_context *context = NULL;
@@ -403,7 +424,7 @@ static int live_production_request(
     options.maximum_new_tokens = maximum_tokens;
     options.sampling_policy = policy;
     options.concurrent_sequences = concurrent_sequences;
-    options.continuous_batching = concurrent_sequences > 1ull;
+    options.compatible_operation_batching = concurrent_sequences > 1ull;
     rc = yvex_runtime_session_open(&session, model, &session_options,
                                    &failure, err);
     if (rc == YVEX_OK)
@@ -442,7 +463,7 @@ static int live_production_request(
     if (rc == YVEX_OK)
         rc = yvex_model_engine_scheduler_summary_copy(
             model, &out->scheduler, err);
-    if (rc == YVEX_OK && !options.continuous_batching &&
+    if (rc == YVEX_OK && !options.compatible_operation_batching &&
         out->scheduler.physical_batches) {
         rc = YVEX_ERR_STATE;
         yvex_error_set(
@@ -543,7 +564,7 @@ static int live_boundary_execute(
         .context_capacity = context_capacity, .prefill_chunk_tokens = 1ull,
         .maximum_new_tokens = 1ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
-        .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
+        .trace_policy = live_trace_policy};
     yvex_runtime_generation_request request = {
         .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
         .kind = YVEX_GENERATION_INPUT_TEXT, .text = prompt,
@@ -640,7 +661,7 @@ static int live_partial_execute(
         .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V6,
         .context_capacity = 8ull, .prefill_chunk_tokens = 1ull,
         .maximum_new_tokens = 2ull,
-        .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
+        .trace_policy = live_trace_policy};
     yvex_runtime_generation_request request = {
         .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
         .kind = YVEX_GENERATION_INPUT_TEXT, .text = prompt,
@@ -769,7 +790,7 @@ static int live_lifecycle_proof(yvex_model_engine *model,
         .context_capacity = 8ull, .prefill_chunk_tokens = 8ull,
         .maximum_new_tokens = 1ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
-        .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
+        .trace_policy = live_trace_policy};
     yvex_runtime_generation_request request = {
         .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
         .kind = YVEX_GENERATION_INPUT_TEXT, .text = prompt,
@@ -903,7 +924,7 @@ static int live_dspark_cancellation_proof(
         .prefill_chunk_tokens = 8ull,
         .maximum_new_tokens = 8ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
-        .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
+        .trace_policy = live_trace_policy};
     yvex_runtime_generation_request request = {
         .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
         .kind = YVEX_GENERATION_INPUT_TEXT,
@@ -1572,7 +1593,7 @@ static void *live_scheduled_generation_main(void *opaque)
     return NULL;
 }
 
-static int live_continuous_batching_proof(
+static int live_compatible_operation_batching_proof(
     yvex_model_engine *model, yvex_runtime_sampling_policy policy,
     unsigned long long maximum_tokens, const live_generation *reference,
     yvex_engine_scheduler_summary *out, yvex_error *err)
@@ -1642,7 +1663,7 @@ static int live_continuous_batching_proof(
             rc = YVEX_ERR_STATE;
             yvex_error_setf(
                 err, rc, "generation_live.scheduler",
-                "real continuous batching was not observed "
+                "compatible-operation batching was not observed "
                 "(rendezvous=%llu/%llu batches=%llu/%llu sources=%llu worklists=%llu)",
                 out->multi_source_rendezvous, out->maximum_rendezvous_width,
                 out->multi_source_batches, out->maximum_multi_source_width,
@@ -1894,7 +1915,7 @@ int main(int argc, char **argv)
     live_generation reference;
     live_manual manual;
     live_acceptance_corpus corpus = {0};
-    yvex_engine_scheduler_summary continuous = {0};
+    yvex_engine_scheduler_summary compatible = {0};
     yvex_execution_qualification_publication qualification = {0};
     yvex_paths paths;
     yvex_backend_kind backend;
@@ -1904,6 +1925,11 @@ int main(int argc, char **argv)
     unsigned long long maximum_tokens, seed;
     const char *step = "arguments";
     int rc;
+    if (!live_trace_policy_read()) {
+        fprintf(stderr,
+                "YVEX_LIVE_TRACE_POLICY must be none, summary, stages, or full\n");
+        return 2;
+    }
     if (argc != 8 ||
         (strcmp(argv[3], "cpu") != 0 && strcmp(argv[3], "cuda") != 0) ||
         (strcmp(argv[4], "target-only") != 0 && strcmp(argv[4], "dspark") != 0) ||
@@ -1991,9 +2017,9 @@ int main(int argc, char **argv)
         mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
         policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY &&
         maximum_tokens >= 3ull) {
-        step = "continuous-batching";
-        rc = live_continuous_batching_proof(
-            model, policy, maximum_tokens, &production, &continuous, &err);
+        step = "compatible-operation-batching";
+        rc = live_compatible_operation_batching_proof(
+            model, policy, maximum_tokens, &production, &compatible, &err);
     }
     if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA &&
         mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
@@ -2083,7 +2109,9 @@ int main(int argc, char **argv)
             printf("%s%u", index ? "," : "", production.tokens[index].sampled_token_id);
         printf("\n");
         printf(
-            "generation_profile identity=%s kernel_launches=%llu graph_launches=%llu "
+            "generation_profile identity=%s mode=%s execution_plan=%s "
+            "aggregate_run_result=%s measurement_wall_ns=%llu "
+            "kernel_launches=%llu graph_launches=%llu "
             "graph_captures=%llu graph_replays=%llu queue_syncs=%llu event_syncs=%llu "
             "device_syncs=%llu h2d_bytes=%llu d2h_bytes=%llu d2d_bytes=%llu "
             "target_forwards=%llu target_rows=%llu row_expert_pairs=%llu "
@@ -2093,6 +2121,11 @@ int main(int argc, char **argv)
             "prefill_ns=%llu first_decode_ns=%llu subsequent_decode_ns=%llu "
             "generation_ns=%llu\n",
             production.evidence.profile.profile_identity,
+            yvex_runtime_profile_mode_name(production.evidence.profile.mode),
+            production.plan.generation_plan_identity,
+            production.result.generation_execution_identity,
+            production.evidence.profile.completed_ns -
+                production.evidence.profile.started_ns,
             production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES],
             production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES],
             production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES],
@@ -2153,21 +2186,22 @@ int main(int argc, char **argv)
                production.evidence.expert_worklists.provenance_counts[
                    YVEX_EXECUTION_BATCH_COMPILED_COMPATIBLE]);
         printf(
-            "generation_scheduler continuous_batching=%s admitted_width=%llu "
+            "generation_scheduler compatible_operation_batching=%s "
+            "admitted_width=%llu "
             "rendezvous=%llu multi_source_rendezvous=%llu max_rendezvous_width=%llu "
             "physical_batches=%llu multi_source_batches=%llu "
             "max_multi_source_width=%llu max_source_count=%llu "
             "multi_source_worklists=%llu\n",
-            continuous.enabled ? "pass" : "not-run",
-            continuous.admitted_maximum_width,
-            continuous.rendezvous_steps,
-            continuous.multi_source_rendezvous,
-            continuous.maximum_rendezvous_width,
-            continuous.physical_batches,
-            continuous.multi_source_batches,
-            continuous.maximum_multi_source_width,
-            continuous.maximum_source_count,
-            continuous.multi_source_worklists);
+            compatible.enabled ? "pass" : "not-run",
+            compatible.admitted_maximum_width,
+            compatible.rendezvous_steps,
+            compatible.multi_source_rendezvous,
+            compatible.maximum_rendezvous_width,
+            compatible.physical_batches,
+            compatible.multi_source_batches,
+            compatible.maximum_multi_source_width,
+            compatible.maximum_source_count,
+            compatible.multi_source_worklists);
         if (qualification.published)
             printf("execution_qualification path=%s run_identity=%s bytes=%llu\n",
                    qualification.path, qualification.run_identity,

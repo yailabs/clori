@@ -217,6 +217,14 @@ start_host
 
 # Explicit chat preserves scrollback, streams output, and restores bracketed paste mode.
 start_console explicit 24 100 'chat --session linear' nocolor
+wait_for "$root/explicit.typescript" 'commands'
+wait_for "$root/explicit.typescript" '/help'
+wait_for "$root/explicit.typescript" '/status'
+wait_for "$root/explicit.typescript" '/context'
+wait_for "$root/explicit.typescript" '/cancel'
+wait_for "$root/explicit.typescript" '/sessions'
+wait_for "$root/explicit.typescript" '/reset'
+wait_for "$root/explicit.typescript" '/quit'
 printf 'hello\r' >&3
 wait_for "$root/explicit.typescript" 'hello from yvex'
 wait_for "$root/explicit.typescript" 'output adaptive · envelope 256'
@@ -304,11 +312,14 @@ wait_for "$root/bare.typescript" '/status'
 wait_count "$root/bare.typescript" "$(printf '\033[?2004h')" 2
 printf '\033[200~hello\nworld 🌍\033[201~\r' >&3
 wait_count "$root/bare.typescript" 'hello from yvex' 1
+wait_count "$root/bare.typescript" "$(printf '\033[?2004h')" 3
 printf '\033[A\r' >&3
 wait_count "$root/bare.typescript" 'hello from yvex' 2
+wait_count "$root/bare.typescript" "$(printf '\033[?2004h')" 4
 printf 'world\033[Hhello \033[F 🌍\r' >&3
 wait_for "$root/bare.typescript" 'hello world'
 wait_count "$root/bare.typescript" 'hello from yvex' 3
+wait_count "$root/bare.typescript" "$(printf '\033[?2004h')" 5
 printf 'draft-resize' >&3
 kill -WINCH "$client_pid"
 wait_for "$root/bare.typescript" 'draft-resize'

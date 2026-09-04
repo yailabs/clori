@@ -446,7 +446,7 @@ view and a prompt labelled with the product model name, not the deployment
 profile alias:
 
 ```text
-YVEX 0.1.0 · protocol 18
+YVEX 0.1.0 · protocol 19
 
   model      DeepSeek V4 Flash
   variant    IQ2_XXS/Q2_K/MXFP4
@@ -605,7 +605,7 @@ state, and persistent KV while sharing immutable model resources:
 
 Client disconnect and detach do not close the engine. A partial or cancelled
 turn can retain model-committed state and is never silently marked complete.
-Protocol v18 reports the exact engine generation, committed position,
+Protocol v19 reports the exact engine generation, committed position,
 token/text counts, state generations, failure class, and reset requirement.
 Reset clears the session KV, tokens, transcript, decoder, and RNG policy without
 closing the engine or host.
@@ -630,8 +630,12 @@ Use compact status for normal operation:
 `model list` marks resident logical models LOADED without turning generations
 into peer models. Advanced `engine list` reports exact generation,
 specialization, backend, residency, and readiness facts. `host memory`
-separates mapped package, prepared/derived, resident, sequence-state,
-workspace/temporary, process RSS, and backend allocation facts.
+separates artifact/mapped/prepared model spans, device-addressable and explicit
+device allocation, typed session state, arena/workspace/transient current and
+peak, process RSS, placement, and whether physical residency was measured. On
+UMA, addressable mapped weights are not reported as zero GPU use merely because
+the explicit device allocator owns zero bytes; unknown page placement remains
+`not measured`. The displayed classes can overlap and must not all be summed.
 
 Follow typed server activity independently of the foreground host stream:
 
@@ -643,18 +647,26 @@ Follow typed server activity independently of the foreground host stream:
 ```
 
 The foreground server stream and `host logs` project each request as one
-coherent unit with stable time, request, session, phase, duration and result
-fields. They group prefill and speculative cycles, show queue pressure only
-when contended, emit low-frequency committed-token decode progress, use human
-byte units and named stop reasons, and finish with one stable completion or
-failure summary. They suppress ordinary connection churn, token fragments and
-profiler detail. `host status` remains a current snapshot; `host logs` contains
+coherent compact unit. Normal rows use `REQ`, `PF`, `1ST`, `DEC`, `DONE`,
+`CXL`, and `FAIL`; live generation uses `t`/`p` for generated tokens/position,
+`avg` for cumulative decode rate, `r32` for the bounded recent rate, `sp` for
+speculative acceptance, and `rss`/`dev`/`ws`/`st`/`run`/`q` for live resource
+and queue facts. Long identifiers are shortened only in this human projection.
+They group speculative cycles, show queue pressure only when contended, and
+finish with one stable terminal row. Ordinary connection churn, duplicate load
+lifecycle detail, token fragments, and profiler rows are suppressed. `host
+status` remains a current snapshot; `host logs` contains
 chronology only and never prepends status sections. Without `--follow`, the
 command returns after a bounded recent retained event tail.
 `host logs --follow` remains attached for live events. `host logs --verbose`
 exposes each typed speculative cycle. `host logs --json` emits the
 canonical complete JSONL event record, including typed detail omitted by the compact
 human view. Prompts and answers remain absent from every projection by default.
+
+Large engine loads use server-authored `LOAD` phases. `verify` reports actual
+bytes and `res` actual tensors when a denominator exists; phases such as `bind`,
+`open`, `admit`, `mat`, `seal`, `be`, and `ws` show activity and elapsed time
+without inventing percentages.
 
 Raw server-event JSONL is selected at startup with `--logs json`. Increase
 `--trace-level` from `summary` to `stages`, `tokens`, or `full` only when the

@@ -65,6 +65,7 @@ int yvex_test_sequence_state_session(void)
     yvex_sequence_state_plan plan;
     yvex_sequence_state *state = NULL;
     yvex_sequence_state_summary state_summary;
+    yvex_runtime_session_summary runtime_summary;
     yvex_runtime_execution_session session;
     yvex_error err;
 
@@ -88,6 +89,22 @@ int yvex_test_sequence_state_session(void)
     session.summary.open = 1;
     session.sequence_state = state;
     session.view.sequence_state = state;
+    YVEX_TEST_ASSERT(
+        yvex_sequence_state_summary_copy(state, &state_summary, &err) ==
+                YVEX_OK &&
+            yvex_runtime_session_summary_copy(
+                &session, &runtime_summary, &err) == YVEX_OK &&
+            runtime_summary.sequence_committed_state_bytes ==
+                state_summary.committed_state_bytes &&
+            runtime_summary.sequence_candidate_state_bytes ==
+                state_summary.candidate_state_bytes &&
+            runtime_summary.sequence_host_state_bytes ==
+                state_summary.host_state_bytes &&
+            runtime_summary.sequence_recurrent_state_bytes ==
+                state_summary.recurrent_state_bytes &&
+            runtime_summary.sequence_convolution_state_bytes ==
+                state_summary.convolution_state_bytes,
+        "runtime session summary projects exact typed recurrent ownership");
 
     session_state_execution_begin(&session);
     YVEX_TEST_ASSERT(

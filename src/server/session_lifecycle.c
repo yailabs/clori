@@ -359,7 +359,7 @@ int yvex_server_sessions_open(server_session_registry **out,
                               const yvex_server_engine_options *options,
                               unsigned long long engine_generation,
                               unsigned long long runnable_sequences,
-                              int continuous_batching,
+                              int compatible_operation_batching,
                               const server_event_scope *event_scope,
                               server_telemetry *telemetry, yvex_error *err)
 {
@@ -393,7 +393,8 @@ int yvex_server_sessions_open(server_session_registry **out,
     registry->options = *options;
     registry->engine_generation = engine_generation;
     registry->event_scope = *event_scope;
-    registry->continuous_batching = continuous_batching != 0;
+    registry->compatible_operation_batching =
+        compatible_operation_batching != 0;
     {
         const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
         const yvex_tokenizer_plan_summary *tokenizer =
@@ -436,23 +437,70 @@ int yvex_server_sessions_count(server_session_registry *registry,
     return YVEX_OK;
 }
 
-int yvex_server_sessions_resource_bytes(
-    server_session_registry *registry, unsigned long long *host_bytes,
-    unsigned long long *device_bytes, yvex_error *err)
+static int session_resource_accumulate(
+    yvex_execution_resource_summary *total,
+    const yvex_runtime_session_summary *session)
 {
-    unsigned long long index, host = 0ull, device = 0ull;
-    if (host_bytes) *host_bytes = 0ull;
-    if (device_bytes) *device_bytes = 0ull;
-    if (!registry || !host_bytes || !device_bytes ||
+    unsigned long long workspace_current = 0ull, workspace_peak = 0ull;
+    unsigned long long attention_peak, host_peak;
+#define ADD(field, value) \
+    do { if (!yvex_core_u64_add(total->field, (value), &total->field)) return 0; } while (0)
+    attention_peak = session->workspace_peak_bytes > session->workspace_bytes
+                         ? session->workspace_peak_bytes
+                         : session->workspace_bytes;
+    host_peak = session->host_workspace_peak_bytes >
+                        session->host_workspace_bytes
+                    ? session->host_workspace_peak_bytes
+                    : session->host_workspace_bytes;
+    if (!yvex_core_u64_add(session->workspace_bytes,
+                           session->host_workspace_bytes, &workspace_current) ||
+        !yvex_core_u64_add(workspace_current,
+                           session->device_workspace_bytes, &workspace_current) ||
+        !yvex_core_u64_add(attention_peak, host_peak, &workspace_peak) ||
+        !yvex_core_u64_add(workspace_peak,
+                           session->device_workspace_bytes, &workspace_peak))
+        return 0;
+    ADD(session_attention_allocated_bytes,
+        session->attention_state_allocated_bytes);
+    ADD(session_attention_resident_bytes,
+        session->attention_state_resident_bytes);
+    ADD(session_attention_virtual_bytes,
+        session->attention_state_virtual_bytes);
+    ADD(session_attention_page_table_bytes,
+        session->attention_state_page_table_bytes);
+    ADD(session_recurrent_state_bytes,
+        session->sequence_recurrent_state_bytes);
+    ADD(session_convolution_state_bytes,
+        session->sequence_convolution_state_bytes);
+    ADD(session_candidate_state_bytes,
+        session->sequence_candidate_state_bytes);
+    ADD(session_physical_state_bytes,
+        session->attention_state_allocated_bytes);
+    ADD(session_physical_state_bytes, session->sequence_host_state_bytes);
+    ADD(session_physical_state_bytes, session->sequence_device_state_bytes);
+    ADD(workspace_current_bytes, workspace_current);
+    ADD(workspace_peak_bytes, workspace_peak);
+#undef ADD
+    return 1;
+}
+
+int yvex_server_sessions_resource_summary(
+    server_session_registry *registry,
+    yvex_execution_resource_summary *resources, yvex_error *err)
+{
+    unsigned long long index;
+    int saw_session = 0;
+    if (resources) memset(resources, 0, sizeof(*resources));
+    if (!registry || !resources ||
         pthread_mutex_lock(&registry->mutex) != 0) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.resources",
                        "registry and resource outputs are required");
         return YVEX_ERR_INVALID_ARG;
     }
+    resources->schema_version = YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
     for (index = 0ull; index < registry->capacity; ++index) {
         const server_session *session = &registry->sessions[index];
-        yvex_runtime_session_summary summary;
-        unsigned long long owned_host, owned_device;
+        yvex_runtime_session_summary summary = {0};
         if (!session->name[0] || !session->execution ||
             session->state == YVEX_SERVER_SESSION_CLOSED)
             continue;
@@ -461,23 +509,17 @@ int yvex_server_sessions_resource_bytes(
             (void)pthread_mutex_unlock(&registry->mutex);
             return yvex_error_code(err);
         }
-        owned_host = summary.peak_host_bytes >= summary.host_resident_bytes
-                         ? summary.peak_host_bytes - summary.host_resident_bytes
-                         : 0ull;
-        owned_device =
-            summary.peak_device_bytes >= summary.device_resident_bytes
-                ? summary.peak_device_bytes - summary.device_resident_bytes
-                : 0ull;
-        if (!yvex_core_u64_add(host, owned_host, &host) ||
-            !yvex_core_u64_add(device, owned_device, &device)) {
+        if (!session_resource_accumulate(resources, &summary)) {
             (void)pthread_mutex_unlock(&registry->mutex);
             yvex_error_set(err, YVEX_ERR_BOUNDS, "server.session.resources",
                            "session resource total overflowed");
             return YVEX_ERR_BOUNDS;
         }
+        saw_session = 1;
     }
-    *host_bytes = host;
-    *device_bytes = device;
+    if (saw_session)
+        resources->available = YVEX_EXECUTION_RESOURCE_SESSION_AVAILABLE |
+                               YVEX_EXECUTION_RESOURCE_WORKSPACE_AVAILABLE;
     (void)pthread_mutex_unlock(&registry->mutex);
     yvex_error_clear(err);
     return YVEX_OK;

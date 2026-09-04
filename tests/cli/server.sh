@@ -193,12 +193,12 @@ while test "$attempt" -lt 100; do
 done
 test "$ready" -eq 1 || fail 'persistent host did not become ready'
 contains "$OUT_DIR/host.out" 'YVEX HOST · verified inference runtime'
-contains "$OUT_DIR/host.out" 'protocol 18'
+contains "$OUT_DIR/host.out" 'protocol 19'
 contains "$OUT_DIR/host.out" '0/2 engines · 2 workers'
-contains "$OUT_DIR/host.out" 'events lifecycle · generation · RAM/GPU'
+contains "$OUT_DIR/host.out" 'events lifecycle · progress · resources'
 contains "$OUT_DIR/host.out" 'host ready · Ctrl-C to stop'
 contains "$OUT_DIR/status.json" '"schema":"yvex.host.status.v1"'
-contains "$OUT_DIR/status.json" '"protocol":18'
+contains "$OUT_DIR/status.json" '"protocol":19'
 contains "$OUT_DIR/status.json" '"status":2'
 contains "$OUT_DIR/status.json" '"host_ready":true'
 contains "$OUT_DIR/status.json" '"engine_count":0'
@@ -211,9 +211,12 @@ contains "$OUT_DIR/status.json" '"openai_enabled":false'
 run_client host memory >"$OUT_DIR/memory.out"
 run_client host memory --json >"$OUT_DIR/memory.json"
 contains "$OUT_DIR/memory.out" 'MEMORY'
-contains "$OUT_DIR/memory.out" 'Device resident'
-contains "$OUT_DIR/memory.json" '"schema":"yvex.host.memory.v1"'
+contains "$OUT_DIR/memory.out" 'Explicit device'
+contains "$OUT_DIR/memory.out" 'Physical pages'
+contains "$OUT_DIR/memory.out" 'not reported'
+contains "$OUT_DIR/memory.json" '"schema":"yvex.host.memory.v2"'
 contains "$OUT_DIR/memory.json" '"resident_device_bytes":0'
+contains "$OUT_DIR/memory.json" '"physical_residency_known":false'
 
 run_client engine list --json >"$OUT_DIR/models-empty.json"
 contains "$OUT_DIR/models-empty.json" '"schema":"yvex.engine.list.v1"'
@@ -333,10 +336,11 @@ contains "$OUT_DIR/server-terminal.typescript" '▀█████████�
 contains "$OUT_DIR/server-terminal.typescript" 'Y V E X'
 contains "$OUT_DIR/server-terminal.typescript" 'STATE      ● STARTING'
 contains "$OUT_DIR/server-terminal.typescript" 'NATIVE'
-not_contains "$OUT_DIR/server-terminal.typescript" 'LOAD      deepseek4-v4-flash-dspark · generation 1'
-contains "$OUT_DIR/server-terminal.typescript" 'FAILED    deepseek4-v4-flash-dspark-'
-contains "$OUT_DIR/server-terminal.typescript" 'generation 0'
-contains "$OUT_DIR/server-terminal.typescript" 'EVENTS     lifecycle · generation · RAM/GPU'
+not_contains "$OUT_DIR/server-terminal.typescript" 'LOAD   deepseek4-v4-flash-dspark · g1'
+contains "$OUT_DIR/server-terminal.typescript" 'FAIL'
+contains "$OUT_DIR/server-terminal.typescript" 'deepseek4-v4-flash-dspark-'
+contains "$OUT_DIR/server-terminal.typescript" ' g0 CPU'
+contains "$OUT_DIR/server-terminal.typescript" 'EVENTS     lifecycle · progress · resources'
 contains "$OUT_DIR/server-terminal.typescript" 'host ready · Ctrl-C to stop'
 not_contains "$OUT_DIR/server-terminal.typescript" 'CONTROL'
 not_contains "$OUT_DIR/server-terminal.typescript" 'OPERATE'
@@ -346,8 +350,7 @@ not_contains "$OUT_DIR/server-terminal.typescript" 'yvex[host] >'
 not_contains "$OUT_DIR/server-terminal.typescript" 'yvex[multi-engine] >'
 test ! -e "$SOCKET_PATH"
 
-# Narrow terminals use a separate static reduction of the same canonical mark:
-# long angular wings, central core, lower facets, and body all remain visible.
+# Narrow terminals use a smaller solid reduction of the same canonical mark.
 HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 TERM=xterm-256color \
     script -q -f -e -c \
         "stty cols 80 rows 30; $YVEX_BIN serve --openai off" \

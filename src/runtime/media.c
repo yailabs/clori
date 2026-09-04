@@ -83,6 +83,8 @@ typedef struct {
     unsigned long long video_latent_values, audio_latent_values, rgb_values, pcm_values;
     unsigned long long layout_position_values;
     unsigned long long host_live, host_peak;
+    unsigned long long activation_arena_peak;
+    int activation_arena_observed;
     char prompt_identity[YVEX_SHA256_HEX_CAP];
     char execution_identity[YVEX_SHA256_HEX_CAP];
 } generation_state;
@@ -658,6 +660,24 @@ static void generation_state_close(generation_state *state)
                  sizeof(float));
 }
 
+static void generation_component_resources_observe(
+    generation_state *state, const yvex_component_execution *component)
+{
+    yvex_component_resource_summary summary = {0};
+    yvex_error ignored;
+    unsigned long long arena_bytes;
+    if (!state || !component) return;
+    yvex_error_clear(&ignored);
+    if (yvex_component_execution_resource_summary(
+            component, &summary, &ignored) != YVEX_OK ||
+        !yvex_core_u64_add(summary.host_arena_bytes,
+                           summary.device_arena_bytes, &arena_bytes))
+        return;
+    state->activation_arena_observed = 1;
+    if (arena_bytes > state->activation_arena_peak)
+        state->activation_arena_peak = arena_bytes;
+}
+
 static int model_contract_validate(
     const yvex_runtime_av_generation_request *request, yvex_error *err)
 {
@@ -850,6 +870,22 @@ static int media_model_resources_open(yvex_runtime_media_model *model,
     return YVEX_OK;
 }
 
+typedef struct {
+    const yvex_runtime_media_model_open_options *options;
+    const char *role;
+} media_model_component_progress;
+
+static int media_model_component_progress_observe(
+    void *opaque, unsigned long long completed, unsigned long long total)
+{
+    const media_model_component_progress *progress = opaque;
+    return !progress || !progress->options ||
+           !progress->options->observe_component_progress ||
+           progress->options->observe_component_progress(
+               progress->options->observer_context, progress->role,
+               completed, total);
+}
+
 static int media_model_component_admit(
     yvex_runtime_media_model *model, media_component_index component,
     const char *name, const yvex_artifact *artifact, const yvex_gguf *gguf,
@@ -858,6 +894,7 @@ static int media_model_component_admit(
     unsigned long long *artifact_bytes, yvex_error *err)
 {
     yvex_artifact_admission_options admission_options = {0};
+    media_model_component_progress progress = {open_options, name};
     yvex_artifact_admission_evidence *evidence =
         &model->summary.components[component].evidence;
     yvex_artifact_admission_failure failure = {0};
@@ -867,6 +904,10 @@ static int media_model_component_admit(
     admission_options.schema_version = YVEX_ARTIFACT_ADMISSION_OPTIONS_SCHEMA_V1;
     admission_options.reopen_cache_root =
         open_options ? open_options->artifact_reopen_cache_root : NULL;
+    if (open_options && open_options->observe_component_progress) {
+        admission_options.progress = media_model_component_progress_observe;
+        admission_options.progress_context = &progress;
+    }
     rc = model->contract.component_admit(
         name, artifact, gguf, tensors, &admission_options, admission, evidence,
         &failure, err);
@@ -1024,7 +1065,8 @@ int yvex_runtime_media_model_open(
     if (summary) memset(summary, 0, sizeof(*summary));
     rc = model_contract_validate(request, err);
     if (rc == YVEX_OK && open_options &&
-        open_options->schema_version != YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_V1)
+        open_options->schema_version !=
+            YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_CURRENT)
         rc = generation_fail(err, YVEX_ERR_INVALID_ARG, "runtime.media-model",
                              "media model-open options schema is unsupported");
     if (rc != YVEX_OK || !out || !summary) {
@@ -1120,6 +1162,8 @@ static int conditioning_component_execute(
     request->text_component = rc == YVEX_OK ? &component : NULL;
     if (rc == YVEX_OK)
         rc = generation->condition(request, &state->conditioning_result, err);
+    if (rc == YVEX_OK)
+        generation_component_resources_observe(state, &component);
     request->text_component = NULL;
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
@@ -1148,6 +1192,8 @@ static int keyframe_component_execute(
     request->video_component = rc == YVEX_OK ? &component : NULL;
     if (rc == YVEX_OK)
         rc = generation->keyframe_encode(request, &state->keyframe_result, err);
+    if (rc == YVEX_OK)
+        generation_component_resources_observe(state, &component);
     request->video_component = NULL;
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
@@ -1393,6 +1439,8 @@ static int latent_execute(generation_state *state, yvex_error *err)
             request->maximum_workspace_bytes, state->video_rows, state->video_row_values,
             state->audio_rows, state->audio_row_values, &state->latent_result,
             &state->evaluator_result, err);
+    if (rc == YVEX_OK)
+        generation_component_resources_observe(state, &component);
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
     if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
@@ -1551,6 +1599,8 @@ static int video_execute(generation_state *state, yvex_error *err)
     if (rc == YVEX_OK)
         rc = yvex_runtime_av_video_reconstruct(
             &execution, state->rgb, state->rgb_values, &state->video_result, err);
+    if (rc == YVEX_OK)
+        generation_component_resources_observe(state, &component);
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
     if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
@@ -1597,6 +1647,8 @@ static int audio_execute(generation_state *state, yvex_error *err)
     if (rc == YVEX_OK)
         rc = request->audio_decode(
             &component, &options, &state->audio_result, &failure, err);
+    if (rc == YVEX_OK)
+        generation_component_resources_observe(state, &component);
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
     if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
@@ -1668,7 +1720,7 @@ static int result_publish(
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long index;
     unsigned long long launches;
-    result->schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V2;
+    result->schema_version = YVEX_RUNTIME_AV_GENERATION_RESULT_SCHEMA_V3;
     result->prompt_tokens = state->conditioning_result.token_count;
     result->frames = state->request->frames;
     result->width = state->request->width;
@@ -1696,6 +1748,8 @@ static int result_publish(
         result->peak_workspace_bytes = state->video_result.peak_workspace_bytes;
     if (state->audio_result.peak_workspace_bytes > result->peak_workspace_bytes)
         result->peak_workspace_bytes = state->audio_result.peak_workspace_bytes;
+    result->activation_arena_peak_bytes = state->activation_arena_peak;
+    result->activation_arena_observed = state->activation_arena_observed;
     result->file_bytes = state->media_result.file_bytes;
     yvex_core_text_copy(result->prompt_identity, sizeof(result->prompt_identity),
                         state->prompt_identity);

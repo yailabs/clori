@@ -298,12 +298,6 @@ static const char *backend_name(yvex_backend_kind backend)
 {
     return backend == YVEX_BACKEND_KIND_CUDA ? "CUDA" : "CPU";
 }
-static const char *engine_kind_name(yvex_server_engine_kind kind)
-{
-    if (kind == YVEX_SERVER_ENGINE_TEXT) return "text";
-    if (kind == YVEX_SERVER_ENGINE_MEDIA) return "media";
-    return "none";
-}
 static const char *execution_strategy_name(
     yvex_server_execution_strategy strategy)
 {
@@ -343,62 +337,6 @@ static int host_status(int json)
     int rc = runtime_summary_fetch(&summary, &err);
     if (rc == YVEX_OK) yvex_cli_host_status_render(stdout, &summary, json);
     return rc == YVEX_OK ? 0 : client_error(&err);
-}
-static const char *engine_state_name(yvex_server_engine_state state)
-{
-    switch (state) {
-    case YVEX_SERVER_ENGINE_UNLOADED: return "unloaded";
-    case YVEX_SERVER_ENGINE_LOADING: return "loading";
-    case YVEX_SERVER_ENGINE_LOADED: return "loaded";
-    case YVEX_SERVER_ENGINE_DRAINING: return "draining";
-    case YVEX_SERVER_ENGINE_UNLOADING: return "unloading";
-    case YVEX_SERVER_ENGINE_FAILED: return "failed";
-    }
-    return "unknown";
-}
-static void render_engine(const yvex_server_engine_summary *engine, int json)
-{
-    if (json) {
-        fputs("{\"alias\":", stdout);
-        yvex_cli_out_json_string(stdout, engine->alias);
-        printf(",\"generation\":%llu,\"state\":", engine->generation);
-        yvex_cli_out_json_string(stdout, engine_state_name(engine->state));
-        printf(",\"backend\":%u,\"engine_kind\":", (unsigned int)engine->backend);
-        yvex_cli_out_json_string(stdout, engine_kind_name(engine->engine_kind));
-        fputs(",\"execution_strategy\":", stdout);
-        yvex_cli_out_json_string(
-            stdout, execution_strategy_name(engine->execution_strategy));
-        printf(",\"execution_ready\":%s,\"continuous_batching\":%s,"
-               "\"context_capacity\":%llu,\"prefill_chunk_tokens\":%llu,"
-               "\"maximum_new_tokens\":%llu,\"maximum_sessions\":%llu,"
-               "\"concurrent_sequences\":%llu,\"active_work\":%llu,\"sessions\":%llu,"
-               "\"mapped_package_bytes\":%llu,\"resident_host_bytes\":%llu,"
-               "\"resident_device_bytes\":%llu,\"prepared_bytes\":%llu,\"target\":",
-               engine->execution_ready ? "true" : "false",
-               engine->continuous_batching_ready ? "true" : "false",
-               engine->context_capacity, engine->prefill_chunk_tokens,
-               engine->maximum_new_tokens, engine->maximum_sessions,
-               engine->concurrent_sequences, engine->active_work,
-               engine->session_count, engine->mapped_package_bytes,
-               engine->resident_host_bytes, engine->resident_device_bytes,
-               engine->prepared_bytes);
-        yvex_cli_out_json_string(stdout, engine->target_id);
-        fputs(",\"model_identity\":", stdout);
-        yvex_cli_out_json_string(stdout, engine->runtime_model_identity);
-        fputs(",\"specialization_identity\":", stdout);
-        yvex_cli_out_json_string(stdout, engine->specialization_identity);
-        fputc('}', stdout);
-        return;
-    }
-    printf("%-24s generation=%llu state=%-10s %s/%s/%s work=%llu sessions=%llu "
-           "mapped=%.2f GiB prepared=%.2f GiB device=%.2f GiB\n",
-           engine->alias, engine->generation, engine_state_name(engine->state),
-           backend_name(engine->backend), engine_kind_name(engine->engine_kind),
-           execution_strategy_name(engine->execution_strategy),
-           engine->active_work, engine->session_count,
-           (double)engine->mapped_package_bytes / 1073741824.0,
-           (double)engine->prepared_bytes / 1073741824.0,
-           (double)engine->resident_device_bytes / 1073741824.0);
 }
 static int engine_generation_resolve(const char *alias,
                                      unsigned long long *generation,
@@ -526,7 +464,7 @@ static int engine_control(yvex_client_operation operation, const char *alias)
                        message.reason);
         rc = message.status;
     } else if (rc == YVEX_OK && message.kind == YVEX_CLIENT_MESSAGE_ENGINE) {
-        render_engine(&message.engine, 0);
+        yvex_cli_engine_render(stdout, &message.engine, 0);
     } else if (rc == YVEX_OK) {
         yvex_error_set(&err, YVEX_ERR_FORMAT, "client.engine",
                        "server returned an unexpected engine response");
@@ -569,7 +507,7 @@ static int engine_catalog(const char *filter, int json)
             fputs("{\"schema\":\"yvex.engine.v1\",\"engine\":", stdout);
         else if (json && count)
             fputc(',', stdout);
-        render_engine(&message.engine, json);
+        yvex_cli_engine_render(stdout, &message.engine, json);
         count++;
     }
     if (json && (!filter || count)) fputs(filter ? "}\n" : "]}\n", stdout);
@@ -1538,6 +1476,7 @@ static int chat(const client_engine_binding *selected_engine,
     }
     render_console_status(&status, selected_model, 1);
     options.reasoning_policy = status.console.reasoning_policy;
+    yvex_cli_out_repl_catalog();
     yvex_cli_terminal_style_get(stdout, &style);
     for (;;) {
         char *line = NULL;
@@ -1797,8 +1736,7 @@ static void render_console_status(
                    style.warning, style.reset,
                    message->partial_turn.committed_token_count,
                    message->partial_turn.committed_token_count == 1u ? "" : "s");
-        printf("  %s/help%s commands · Ctrl-C cancels · Ctrl-D exits\n\n",
-               style.accent, style.reset);
+        putchar('\n');
         return;
     }
     printf("%schat%s · ", style.strong, style.reset);

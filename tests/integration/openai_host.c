@@ -87,8 +87,12 @@ static int send_status(int fd, const yvex_client_request *request,
 {
     yvex_client_message message;
     message_base(&message, YVEX_CLIENT_MESSAGE_STATUS, request);
-    message.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V1;
+    message.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V2;
     message.runtime.metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
+    message.runtime.metrics.resources.schema_version =
+        YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
+    message.runtime.metrics.resources.available =
+        YVEX_EXECUTION_RESOURCE_PROCESS_AVAILABLE;
     message.runtime.status = YVEX_SERVER_STATUS_READY;
     message.runtime.host_ready = 1;
     message.runtime.engine_count = 1u;
@@ -120,6 +124,19 @@ static void fixture_engine(yvex_server_engine_summary *engine)
     engine->resident_device_bytes = 1073741824ull;
     engine->execution_ready = 1;
     engine->explicit_reasoning_channel_supported = 1;
+    engine->capacity.schema_version = YVEX_EXECUTION_CAPACITY_SCHEMA_V1;
+    engine->capacity.session_capacity = engine->maximum_sessions;
+    engine->capacity.runnable_work_capacity = 1ull;
+    engine->capacity.physical_sequence_width = 1ull;
+    engine->resources.schema_version = YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
+    engine->resources.placement = YVEX_EXECUTION_PLACEMENT_EXPLICIT_HOST;
+    engine->resources.available =
+        YVEX_EXECUTION_RESOURCE_MODEL_AVAILABLE |
+        YVEX_EXECUTION_RESOURCE_PHYSICAL_RESIDENCY_AVAILABLE;
+    engine->resources.component_count = 1ull;
+    engine->resources.model_mapped_bytes = engine->mapped_package_bytes;
+    engine->resources.model_explicit_device_bytes =
+        engine->resident_device_bytes;
     strcpy(engine->alias, "deepseek4-v4-flash-dspark");
     strcpy(engine->target_id, "deepseek4-v4-flash-dspark");
     memset(engine->runtime_model_identity, 'a', 64u);
@@ -150,8 +167,12 @@ static int send_console_status(int fd, const yvex_client_request *request,
 {
     yvex_client_message message;
     message_base(&message, YVEX_CLIENT_MESSAGE_CONSOLE_STATUS, request);
-    message.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V1;
+    message.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V2;
     message.runtime.metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
+    message.runtime.metrics.resources.schema_version =
+        YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
+    message.runtime.metrics.resources.available =
+        YVEX_EXECUTION_RESOURCE_PROCESS_AVAILABLE;
     message.runtime.status = YVEX_SERVER_STATUS_READY;
     message.runtime.host_ready = 1;
     message.runtime.engine_count = 1u;
@@ -215,7 +236,7 @@ static int send_native_progress(int fd, const yvex_client_request *request,
             phases[index], values[index][0], values[index][1], 0u,
             index >= 2u ? (double)(index - 1u) : 0.0,
             index >= 2u ? 2.0 : 0.0,
-            NULL, NULL, &message.event, err);
+            NULL, NULL, NULL, &message.event, err);
         if (rc == YVEX_OK) rc = yvex_server_protocol_send(fd, &message, err);
     }
     yvex_server_telemetry_close(&telemetry);
@@ -279,7 +300,7 @@ static int send_event_stream(int fd, const yvex_client_request *request,
             index < 5u ? "fixture-turn" : NULL, phases[index], values[index][0],
             values[index][1], values[index][2],
             speculation_ptr ? speculation.seconds : 0.0, 0.0,
-            speculation_ptr, NULL,
+            speculation_ptr, NULL, NULL,
             &message.event, err);
         if (rc == YVEX_OK) rc = yvex_server_protocol_send(fd, &message, err);
     }

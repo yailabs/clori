@@ -49,6 +49,10 @@ static inline void server_event_scope_from_engine(
            sizeof(scope->specialization_identity));
 }
 #define SERVER_REQUEST_QUEUE_KEY_CAP 224u
+#define YVEX_SERVER_PROTOCOL_CAPACITY_BYTES 40u
+#define YVEX_SERVER_PROTOCOL_MEASUREMENT_BYTES 112u
+#define YVEX_SERVER_PROTOCOL_RESOURCE_BYTES 224u
+#define YVEX_SERVER_DECODE_RATE_WINDOW_TOKENS 32ull
 
 typedef void (*server_request_queue_execute)(void *context, void *work);
 typedef void (*server_request_queue_observe)(void *context,
@@ -122,7 +126,7 @@ struct server_session_registry {
     server_telemetry *telemetry;
     server_session *sessions;
     unsigned long long capacity, count, next_id, runnable_sequences;
-    int mutex_ready, closing, continuous_batching;
+    int mutex_ready, closing, compatible_operation_batching;
     unsigned long long engine_generation;
     server_event_scope event_scope;
 };
@@ -130,6 +134,10 @@ struct server_session_registry {
 typedef struct {
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
     char specialization_identity[YVEX_SHA256_HEX_CAP];
+    unsigned long long activation_arena_peak_bytes;
+    unsigned long long execution_workspace_peak_bytes;
+    unsigned long long execution_transient_peak_bytes;
+    int activation_arena_observed, execution_resources_observed;
 } server_media_summary;
 
 typedef struct {
@@ -241,6 +249,40 @@ int yvex_server_protocol_receive(int fd, yvex_client_request *request,
 int yvex_server_protocol_send(int fd, const yvex_client_message *message,
                               yvex_error *err);
 int yvex_server_protocol_message_valid(const yvex_client_message *message);
+int yvex_server_execution_capacity_valid(
+    const yvex_execution_capacity_summary *);
+int yvex_server_execution_measurement_valid(
+    const yvex_execution_measurement *);
+int yvex_server_execution_resource_valid(
+    const yvex_execution_resource_summary *);
+void yvex_server_decode_measurement(
+    unsigned long long first_fragment_ns,
+    unsigned long long committed_tokens,
+    const unsigned long long *decode_commit_ns,
+    unsigned int decode_commit_count,
+    unsigned long long now,
+    yvex_execution_measurement *measurement);
+int yvex_server_profile_reconcile(
+    const yvex_runtime_profile_record *, yvex_runtime_generation_mode,
+    unsigned long long *attributed_ns, unsigned long long *unattributed_ns);
+int yvex_server_protocol_capacity_encode(
+    const yvex_execution_capacity_summary *,
+    unsigned char[YVEX_SERVER_PROTOCOL_CAPACITY_BYTES]);
+int yvex_server_protocol_capacity_decode(
+    const unsigned char *, unsigned long long,
+    yvex_execution_capacity_summary *);
+int yvex_server_protocol_measurement_encode(
+    const yvex_execution_measurement *,
+    unsigned char[YVEX_SERVER_PROTOCOL_MEASUREMENT_BYTES]);
+int yvex_server_protocol_measurement_decode(
+    const unsigned char *, unsigned long long,
+    yvex_execution_measurement *);
+int yvex_server_protocol_resource_encode(
+    const yvex_execution_resource_summary *,
+    unsigned char[YVEX_SERVER_PROTOCOL_RESOURCE_BYTES]);
+int yvex_server_protocol_resource_decode(
+    const unsigned char *, unsigned long long,
+    yvex_execution_resource_summary *);
 
 int yvex_server_telemetry_open(server_telemetry **out,
                                unsigned long long capacity, yvex_error *err);
@@ -262,8 +304,9 @@ int yvex_server_telemetry_emit_provider(
     unsigned long long value_a, unsigned long long value_b,
     unsigned long long value_c, double seconds, double rate,
     const yvex_runtime_speculation_progress *speculation,
-    const yvex_provider_request *provider, yvex_server_event *emitted,
-    yvex_error *err);
+    const yvex_provider_request *provider,
+    const yvex_execution_measurement *measurement,
+    yvex_server_event *emitted, yvex_error *err);
 int yvex_server_telemetry_next(server_telemetry *telemetry,
                           unsigned long long after_sequence, int wait,
                           yvex_server_event *event, yvex_error *err);
@@ -315,7 +358,7 @@ int yvex_server_sessions_open(server_session_registry **out, yvex_model_engine *
                               const yvex_server_engine_options *options,
                               unsigned long long engine_generation,
                               unsigned long long runnable_sequences,
-                              int continuous_batching,
+                              int compatible_operation_batching,
                               const server_event_scope *event_scope,
                               server_telemetry *telemetry,
                               yvex_error *err);
@@ -327,9 +370,12 @@ int yvex_server_sessions_execute(server_session_registry *registry,
                                     void *emit_context, yvex_error *err);
 int yvex_server_sessions_count(server_session_registry *registry,
                                   unsigned long long *count, yvex_error *err);
-int yvex_server_sessions_resource_bytes(
-    server_session_registry *, unsigned long long *, unsigned long long *,
-    yvex_error *);
+int yvex_server_sessions_resource_summary(
+    server_session_registry *, yvex_execution_resource_summary *, yvex_error *);
+int yvex_server_session_profile_publish(
+    server_session_registry *, const server_session *, const yvex_client_request *,
+    const char *, const char *, const yvex_runtime_generation_result *,
+    const yvex_runtime_generation_evidence *, yvex_error *);
 int yvex_server_sessions_console_status(server_session_registry *registry,
                                         const char *session_name,
                                         yvex_console_status *status,

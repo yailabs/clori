@@ -47,6 +47,13 @@ struct server_media_registry {
     char profile_identity[YVEX_SHA256_HEX_CAP];
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
     server_event_scope event_scope;
+    char load_progress_role[32];
+    unsigned long long load_progress_started_ns, load_progress_last_emit_ns;
+    unsigned long long load_progress_last_completed;
+    unsigned long long activation_arena_peak_bytes;
+    unsigned long long execution_workspace_peak_bytes;
+    unsigned long long execution_transient_peak_bytes;
+    int activation_arena_observed, execution_resources_observed;
     unsigned long long profile_count, frames_per_chunk, frame_remainder;
     unsigned long long minimum_frames, maximum_frames;
     unsigned long long minimum_inference_steps, maximum_inference_steps;
@@ -396,7 +403,8 @@ static int turn_complete(server_message_emit emit, void *context,
 {
     yvex_client_message message = {0};
     unsigned long long duration_numerator;
-    if (!result || result->schema_version != YVEX_RUNTIME_AV_GENERATION_SCHEMA_V2 ||
+    if (!result ||
+        result->schema_version != YVEX_RUNTIME_AV_GENERATION_RESULT_SCHEMA_V3 ||
         !result->complete ||
         !yvex_core_u64_mul(result->frames, 1000ull, &duration_numerator) ||
         !yvex_core_u64_mul(duration_numerator,
@@ -514,20 +522,26 @@ typedef struct {
     const char *request_id;
     server_message_emit emit;
     void *emit_context;
+    unsigned long long phase_started_ns[5];
 } media_progress_sink;
 
 static int media_event_emit(
     media_progress_sink *sink, yvex_server_event_kind kind,
     const char *phase, unsigned long long value_a,
     unsigned long long value_b, unsigned long long value_c,
-    double seconds, yvex_error *err)
+    double seconds, const yvex_execution_measurement *measurement,
+    yvex_error *err)
 {
     yvex_client_message message = {0};
+    double rate = measurement &&
+                          (measurement->available &
+                           YVEX_EXECUTION_MEASUREMENT_CUMULATIVE_RATE_AVAILABLE)
+                      ? measurement->cumulative_rate : 0.0;
     int rc = yvex_server_telemetry_emit_provider(
         sink->registry->telemetry, &sink->registry->event_scope, kind,
         YVEX_SERVER_SEVERITY_INFO,
         sink->session->name, sink->request_id, NULL, phase, value_a, value_b,
-        value_c, seconds, 0.0, NULL, NULL, &message.event, err);
+        value_c, seconds, rate, NULL, NULL, measurement, &message.event, err);
     if (rc != YVEX_OK) return rc;
     message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     message.kind = YVEX_CLIENT_MESSAGE_EVENT;
@@ -537,6 +551,72 @@ static int media_event_emit(
     message.execution_strategy = YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
     message.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
     return sink->emit(sink->emit_context, &message, err);
+}
+
+static unsigned int media_progress_phase(
+    yvex_runtime_media_progress_kind kind)
+{
+    if (kind <= YVEX_RUNTIME_MEDIA_PROGRESS_CONDITIONING_COMPLETE) return 0u;
+    if (kind <= YVEX_RUNTIME_MEDIA_PROGRESS_LATENT_COMPLETE) return 1u;
+    if (kind <= YVEX_RUNTIME_MEDIA_PROGRESS_VIDEO_COMPLETE) return 2u;
+    if (kind <= YVEX_RUNTIME_MEDIA_PROGRESS_AUDIO_COMPLETE) return 3u;
+    return 4u;
+}
+
+static int media_progress_starts(yvex_runtime_media_progress_kind kind)
+{
+    return kind == YVEX_RUNTIME_MEDIA_PROGRESS_CONDITIONING_START ||
+           kind == YVEX_RUNTIME_MEDIA_PROGRESS_LATENT_START ||
+           kind == YVEX_RUNTIME_MEDIA_PROGRESS_VIDEO_START ||
+           kind == YVEX_RUNTIME_MEDIA_PROGRESS_AUDIO_START ||
+           kind == YVEX_RUNTIME_MEDIA_PROGRESS_PUBLICATION_START;
+}
+
+static yvex_execution_measurement media_progress_measurement(
+    media_progress_sink *sink, const yvex_runtime_media_progress *progress,
+    unsigned long long now)
+{
+    static const yvex_execution_measurement_scope scopes[] = {
+        YVEX_EXECUTION_SCOPE_PREFILL,
+        YVEX_EXECUTION_SCOPE_MODEL_FORWARD,
+        YVEX_EXECUTION_SCOPE_MODEL_COMPONENT,
+        YVEX_EXECUTION_SCOPE_MODEL_COMPONENT,
+        YVEX_EXECUTION_SCOPE_CLIENT_PUBLICATION,
+    };
+    static const yvex_execution_work_unit units[] = {
+        YVEX_EXECUTION_WORK_TOKENS,
+        YVEX_EXECUTION_WORK_EVALUATIONS,
+        YVEX_EXECUTION_WORK_FRAMES,
+        YVEX_EXECUTION_WORK_SAMPLES,
+        YVEX_EXECUTION_WORK_BYTES,
+    };
+    yvex_execution_measurement measurement = {0};
+    unsigned int phase = media_progress_phase(progress->kind);
+    unsigned long long started = sink->phase_started_ns[phase];
+    unsigned long long duration = started && now > started ? now - started : 0ull;
+    measurement.schema_version = YVEX_EXECUTION_MEASUREMENT_SCHEMA_V1;
+    measurement.scope = scopes[phase];
+    measurement.clock = YVEX_EXECUTION_CLOCK_HOST_WALL;
+    measurement.composition = YVEX_EXECUTION_COMPOSITION_NESTED;
+    measurement.work_unit = units[phase];
+    measurement.completed_units = progress->completed;
+    if (progress->total) {
+        measurement.available |=
+            YVEX_EXECUTION_MEASUREMENT_DENOMINATOR_AVAILABLE;
+        measurement.total_units = progress->total;
+    }
+    if (duration) {
+        measurement.available |=
+            YVEX_EXECUTION_MEASUREMENT_DURATION_AVAILABLE;
+        measurement.duration_ns = duration;
+    }
+    if (duration && progress->completed) {
+        measurement.available |=
+            YVEX_EXECUTION_MEASUREMENT_CUMULATIVE_RATE_AVAILABLE;
+        measurement.cumulative_rate =
+            (double)progress->completed * 1000000000.0 / (double)duration;
+    }
+    return measurement;
 }
 
 static int media_progress_observe(
@@ -549,20 +629,30 @@ static int media_progress_observe(
         "publication-start", "publication-complete",
     };
     media_progress_sink *sink = opaque;
+    yvex_execution_measurement measurement;
     yvex_server_event_kind kind = YVEX_SERVER_EVENT_GENERATION_PROGRESS;
+    unsigned long long now;
+    unsigned int phase;
 
     if (!sink || !progress ||
         progress->schema_version != YVEX_RUNTIME_MEDIA_PROGRESS_SCHEMA_V1 ||
         progress->kind > YVEX_RUNTIME_MEDIA_PROGRESS_PUBLICATION_COMPLETE)
         return media_refuse(err, YVEX_ERR_INVALID_ARG,
                             "typed media execution progress is required");
+    now = yvex_core_monotonic_ns();
+    phase = media_progress_phase(progress->kind);
+    if (media_progress_starts(progress->kind))
+        sink->phase_started_ns[phase] = now;
+    measurement = media_progress_measurement(sink, progress, now);
     if (progress->kind == YVEX_RUNTIME_MEDIA_PROGRESS_CONDITIONING_START)
         kind = YVEX_SERVER_EVENT_PREFILL_STARTED;
     else if (progress->kind == YVEX_RUNTIME_MEDIA_PROGRESS_CONDITIONING_COMPLETE)
         kind = YVEX_SERVER_EVENT_PREFILL_COMPLETED;
     return media_event_emit(sink, kind, phases[progress->kind],
                             progress->completed, progress->total,
-                            progress->value, 0.0, err);
+                            progress->value,
+                            (double)measurement.duration_ns / 1000000000.0,
+                            &measurement, err);
 }
 
 static int output_path_build(server_media_registry *registry,
@@ -603,7 +693,12 @@ static int generation_execute(server_media_registry *registry,
     yvex_runtime_media_condition conditions[YVEX_RUNTIME_MEDIA_CONDITION_CAP] = {0};
     yvex_runtime_av_generation_result result = {0};
     media_progress_sink sink = {
-        registry, session, request, request_id, emit, context,
+        .registry = registry,
+        .session = session,
+        .request = request,
+        .request_id = request_id,
+        .emit = emit,
+        .emit_context = context,
     };
     char path[YVEX_PATH_CAP];
     unsigned long long started = yvex_core_monotonic_ns(), completed;
@@ -653,11 +748,11 @@ static int generation_execute(server_media_registry *registry,
                       request, session, NULL, err);
     if (rc == YVEX_OK)
         rc = media_event_emit(&sink, YVEX_SERVER_EVENT_REQUEST_STARTED,
-                              "media", 1ull, 0ull, 0ull, 0.0, err);
+                              "media", 1ull, 0ull, 0ull, 0.0, NULL, err);
     if (rc == YVEX_OK)
         rc = media_event_emit(
             &sink, YVEX_SERVER_EVENT_GENERATION_PROFILE, "hosted-preset",
-            preset.width, preset.height, preset.frames, 0.0, err);
+            preset.width, preset.height, preset.frames, 0.0, NULL, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_media_model_generate(
             registry->model, &generation, &result, err);
@@ -685,6 +780,24 @@ static int generation_execute(server_media_registry *registry,
                          &primary, &telemetry_error);
         if (err) *err = primary;
         return rc;
+    }
+    /* Resource observation must not turn a valid completed result into failure. */
+    if (pthread_mutex_lock(&registry->mutex) == 0) {
+        if (result.activation_arena_observed) {
+            registry->activation_arena_observed = 1;
+            if (result.activation_arena_peak_bytes >
+                registry->activation_arena_peak_bytes)
+                registry->activation_arena_peak_bytes =
+                    result.activation_arena_peak_bytes;
+        }
+        if (result.peak_workspace_bytes >
+            registry->execution_workspace_peak_bytes)
+            registry->execution_workspace_peak_bytes =
+                result.peak_workspace_bytes;
+        if (result.peak_device_bytes > registry->execution_transient_peak_bytes)
+            registry->execution_transient_peak_bytes = result.peak_device_bytes;
+        registry->execution_resources_observed = 1;
+        (void)pthread_mutex_unlock(&registry->mutex);
     }
     session->state = YVEX_SERVER_SESSION_READY;
     rc = yvex_server_telemetry_emit(
@@ -907,8 +1020,9 @@ int yvex_server_media_registry_count(server_media_registry *registry,
 int yvex_server_media_registry_summary(server_media_registry *registry,
                                        server_media_summary *summary, yvex_error *err)
 {
-    if (!registry || !summary)
+    if (!registry || !summary || pthread_mutex_lock(&registry->mutex) != 0)
         return media_refuse(err, YVEX_ERR_INVALID_ARG, "media summary is required");
+    memset(summary, 0, sizeof(*summary));
     yvex_core_text_copy(summary->runtime_model_identity,
                         sizeof(summary->runtime_model_identity),
                         registry->runtime_model_identity[0]
@@ -917,6 +1031,17 @@ int yvex_server_media_registry_summary(server_media_registry *registry,
     yvex_core_text_copy(summary->specialization_identity,
                         sizeof(summary->specialization_identity),
                         registry->profile_identity);
+    summary->execution_workspace_peak_bytes =
+        registry->execution_workspace_peak_bytes;
+    summary->execution_transient_peak_bytes =
+        registry->execution_transient_peak_bytes;
+    summary->execution_resources_observed =
+        registry->execution_resources_observed;
+    summary->activation_arena_peak_bytes =
+        registry->activation_arena_peak_bytes;
+    summary->activation_arena_observed =
+        registry->activation_arena_observed;
+    (void)pthread_mutex_unlock(&registry->mutex);
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -927,6 +1052,7 @@ static void component_admission_observe(
 {
     server_media_registry *registry = opaque;
     yvex_error event_error;
+    yvex_execution_measurement measurement = {0};
     unsigned long long receipt;
     double rate;
 
@@ -939,15 +1065,100 @@ static void component_admission_observe(
     rate = evidence->seconds > 0.0
                ? (double)evidence->bytes_hashed / evidence->seconds
                : 0.0;
+    measurement.schema_version = YVEX_EXECUTION_MEASUREMENT_SCHEMA_V1;
+    measurement.scope = YVEX_EXECUTION_SCOPE_MODEL_LIFECYCLE;
+    measurement.clock = YVEX_EXECUTION_CLOCK_HOST_WALL;
+    measurement.composition = YVEX_EXECUTION_COMPOSITION_NESTED;
+    measurement.work_unit = evidence->bytes_hashed
+                                ? YVEX_EXECUTION_WORK_BYTES
+                                : YVEX_EXECUTION_WORK_OPERATIONS;
+    measurement.available =
+        YVEX_EXECUTION_MEASUREMENT_DENOMINATOR_AVAILABLE;
+    measurement.completed_units = evidence->bytes_hashed
+                                      ? evidence->bytes_hashed : 1ull;
+    measurement.total_units = evidence->bytes_hashed
+                                  ? evidence->file_bytes : 1ull;
+    if (evidence->seconds > 0.0) {
+        measurement.available |=
+            YVEX_EXECUTION_MEASUREMENT_DURATION_AVAILABLE;
+        measurement.duration_ns =
+            (unsigned long long)(evidence->seconds * 1000000000.0);
+        if (measurement.completed_units) {
+            measurement.available |=
+                YVEX_EXECUTION_MEASUREMENT_CUMULATIVE_RATE_AVAILABLE;
+            measurement.cumulative_rate =
+                (double)measurement.completed_units / evidence->seconds;
+        }
+    }
     yvex_error_clear(&event_error);
-    (void)yvex_server_telemetry_emit(
+    (void)yvex_server_telemetry_emit_provider(
         registry->telemetry, &registry->event_scope,
         YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE,
         evidence->cache_failure ? YVEX_SERVER_SEVERITY_WARNING
                                 : YVEX_SERVER_SEVERITY_INFO,
         NULL, NULL, NULL, role, evidence->bytes_hashed, evidence->file_bytes,
         receipt, evidence->seconds,
-        rate, &event_error);
+        rate, NULL, NULL, &measurement, NULL, &event_error);
+}
+
+static int component_admission_progress(
+    void *opaque, const char *role, unsigned long long completed,
+    unsigned long long total)
+{
+    server_media_registry *registry = opaque;
+    yvex_execution_measurement measurement = {0};
+    unsigned long long now, elapsed;
+    int changed, emit;
+    yvex_error ignored;
+    if (!registry || !role || !role[0] || !total || completed > total)
+        return 0;
+    now = yvex_core_monotonic_ns();
+    changed = strcmp(registry->load_progress_role, role) != 0;
+    if (changed) {
+        yvex_core_text_copy(registry->load_progress_role,
+                            sizeof(registry->load_progress_role), role);
+        registry->load_progress_started_ns = now;
+        registry->load_progress_last_completed = 0ull;
+    }
+    emit = changed || completed == total ||
+           now - registry->load_progress_last_emit_ns >= 1000000000ull ||
+           (completed >= registry->load_progress_last_completed &&
+            completed - registry->load_progress_last_completed >=
+                64ull * 1024ull * 1024ull);
+    if (!emit) return 1;
+    registry->load_progress_last_emit_ns = now;
+    registry->load_progress_last_completed = completed;
+    elapsed = now > registry->load_progress_started_ns
+                  ? now - registry->load_progress_started_ns : 0ull;
+    measurement.schema_version = YVEX_EXECUTION_MEASUREMENT_SCHEMA_V1;
+    measurement.scope = YVEX_EXECUTION_SCOPE_MODEL_LIFECYCLE;
+    measurement.clock = YVEX_EXECUTION_CLOCK_HOST_WALL;
+    measurement.composition = YVEX_EXECUTION_COMPOSITION_NESTED;
+    measurement.work_unit = YVEX_EXECUTION_WORK_BYTES;
+    measurement.available =
+        YVEX_EXECUTION_MEASUREMENT_DENOMINATOR_AVAILABLE;
+    measurement.completed_units = completed;
+    measurement.total_units = total;
+    if (elapsed) {
+        measurement.available |=
+            YVEX_EXECUTION_MEASUREMENT_DURATION_AVAILABLE;
+        measurement.duration_ns = elapsed;
+        if (completed) {
+            measurement.available |=
+                YVEX_EXECUTION_MEASUREMENT_CUMULATIVE_RATE_AVAILABLE;
+            measurement.cumulative_rate =
+                (double)completed * 1000000000.0 / (double)elapsed;
+        }
+    }
+    yvex_error_clear(&ignored);
+    (void)yvex_server_telemetry_emit_provider(
+        registry->telemetry, &registry->event_scope,
+        YVEX_SERVER_EVENT_ENGINE_LOAD_PROGRESS,
+        YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, role, completed, total,
+        YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH,
+        (double)elapsed / 1000000000.0, measurement.cumulative_rate, NULL,
+        NULL, &measurement, NULL, &ignored);
+    return 1;
 }
 
 int yvex_server_media_registry_start(
@@ -965,8 +1176,10 @@ int yvex_server_media_registry_start(
         return media_refuse(err, YVEX_ERR_STATE,
                             "media runtime model is already open");
     }
-    open_options.schema_version = YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_V1;
+    open_options.schema_version =
+        YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_CURRENT;
     open_options.artifact_reopen_cache_root = registry->artifact_reopen_cache_root;
+    open_options.observe_component_progress = component_admission_progress;
     open_options.observe_component = component_admission_observe;
     open_options.observer_context = registry;
     rc = yvex_runtime_media_model_open(

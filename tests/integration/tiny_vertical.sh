@@ -236,8 +236,20 @@ assert engine["state"] == "loaded" and engine["execution_ready"]
 assert engine["context_capacity"] == 8
 assert engine["prefill_chunk_tokens"] == 8
 assert engine["maximum_new_tokens"] == 8
-assert engine["concurrent_sequences"] == 1
+assert engine["configured_physical_sequence_width"] == 1
 assert not engine["continuous_batching"]
+assert engine["capacity"] == {
+    "sessions": 8,
+    "runnable_work": 2,
+    "physical_sequence_width": 1,
+    "cooperative_scheduling": True,
+    "compatible_operation_batching": False,
+    "continuous_batching": False,
+}
+resource = engine["resources"]
+assert resource["model_artifact_bytes"] == resource["model_mapped_bytes"]
+assert resource["model_explicit_device_bytes"] == 0
+assert not resource["physical_residency_known"]
 assert len(engine["model_identity"]) == 64
 assert len(engine["specialization_identity"]) == 64
 print(engine["generation"])
@@ -526,13 +538,38 @@ wait "$server_pid"
 server_pid=
 wait "$log_pid"
 log_pid=
-grep -E 'REQUEST[[:space:]]+persisted/' "$root/server.out" >/dev/null
-grep -E 'COMPLETE[[:space:]]+[^[:space:]]+/[^[:space:]]+ · [1-9][0-9]* token' \
+grep -E 'REQ[[:space:]]+persisted/' "$root/server.out" >/dev/null
+grep -E 'DONE[[:space:]]+[^[:space:]]+/[^[:space:]]+ t[1-9][0-9]* p[1-9][0-9]*' \
+    "$root/server.out" >/dev/null
+grep -E 'LOAD[[:space:]]+bind[[:space:]]+start' "$root/server.out" >/dev/null
+grep -E 'LOAD[[:space:]]+verify[[:space:]]+[0-9.]+/[0-9.]+[KMGB] 100%' \
+    "$root/server.out" >/dev/null
+grep -E 'MODEL[[:space:]]+tiny-executable g[1-9][0-9]* CPU tgt' \
+    "$root/server.out" >/dev/null
+! grep -E 'operations completed|total unavailable|generation [0-9]|first committed token|prompt tokens|depth [0-9]' \
     "$root/server.out" >/dev/null
 ! grep -F '"kind":' "$root/server.out" >/dev/null
 grep -F '"kind":"generation.completed"' "$root/server.log.jsonl" >/dev/null
-grep -F '"phase":"graphs"' "$root/server.log.jsonl" >/dev/null
-grep -F '"phase":"accelerated_matrix"' "$root/server.log.jsonl" >/dev/null
+grep -F '"kind":"engine.load.progress"' "$root/server.log.jsonl" >/dev/null
+grep -F '"phase":"backend-open"' "$root/server.log.jsonl" >/dev/null
+grep -F '"phase":"workspace-prepare"' "$root/server.log.jsonl" >/dev/null
+grep -F '"phase":"first-decode"' "$root/server.log.jsonl" >/dev/null
+grep -F '"phase":"subsequent-decode"' "$root/server.log.jsonl" >/dev/null
+grep -F '"phase":"logits-publication"' "$root/server.log.jsonl" >/dev/null
+grep -F '"measurement_scope":6' "$root/server.log.jsonl" >/dev/null
+python3 - "$root/server.log.jsonl" <<'PY'
+import json, pathlib, sys
+
+events = [json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+progress = [event for event in events if event["kind"] == "engine.load.progress"]
+assert progress
+for event in progress:
+    denominator = bool(event["measurement_available"] & 2)
+    if event["phase"] in {"artifact-verification", "residency"}:
+        assert denominator and event["measurement_total"] > 0
+    else:
+        assert not denominator and event["measurement_total"] == 0
+PY
 
 printf 'tiny vertical: artifact=%s binding=%s output=ok ctx=8\n' \
     "$first_artifact" "$first_binding"

@@ -6,11 +6,12 @@
 #include <yvex/artifact.h>
 #include <yvex/backend.h>
 #include <yvex/core.h>
+#include <yvex/execution.h>
 #include <yvex/provider.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 18u
+#define YVEX_LOCAL_PROTOCOL_VERSION 19u
 #define YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1 1u
 #define YVEX_CLIENT_MEDIA_CONDITION_CAP 2u
 #define YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1 1u
@@ -25,16 +26,19 @@ extern "C" {
 #define YVEX_SERVER_OPTIONS_SCHEMA_CURRENT YVEX_SERVER_OPTIONS_SCHEMA_V4
 #define YVEX_SERVER_ENGINE_SCHEMA_V1 1u
 #define YVEX_SERVER_ENGINE_SCHEMA_V2 2u
-#define YVEX_SERVER_ENGINE_SCHEMA_CURRENT YVEX_SERVER_ENGINE_SCHEMA_V2
+#define YVEX_SERVER_ENGINE_SCHEMA_V3 3u
+#define YVEX_SERVER_ENGINE_SCHEMA_CURRENT YVEX_SERVER_ENGINE_SCHEMA_V3
 #define YVEX_SERVER_SUMMARY_SCHEMA_V1 1u
+#define YVEX_SERVER_SUMMARY_SCHEMA_V2 2u
 #define YVEX_CONSOLE_STATUS_SCHEMA_V1 1u
 #define YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1 1u
 #define YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 1u
 #define YVEX_RUNTIME_EVENT_SCHEMA_V3 3u
 #define YVEX_RUNTIME_EVENT_SCHEMA_V4 4u
 #define YVEX_RUNTIME_EVENT_SCHEMA_V5 5u
-#define YVEX_RUNTIME_EVENT_SCHEMA_VERSION YVEX_RUNTIME_EVENT_SCHEMA_V5
-#define YVEX_RUNTIME_METRICS_SCHEMA_VERSION 3u
+#define YVEX_RUNTIME_EVENT_SCHEMA_V6 6u
+#define YVEX_RUNTIME_EVENT_SCHEMA_VERSION YVEX_RUNTIME_EVENT_SCHEMA_V6
+#define YVEX_RUNTIME_METRICS_SCHEMA_VERSION 4u
 #define YVEX_SERVER_SESSION_NAME_CAP 64u
 #define YVEX_SERVER_ID_CAP 65u
 #define YVEX_SERVER_REASON_CAP 256u
@@ -143,7 +147,8 @@ typedef enum {
     YVEX_SERVER_EVENT_ENGINE_LOAD_FAILED,
     YVEX_SERVER_EVENT_ENGINE_UNLOAD_STARTED,
     YVEX_SERVER_EVENT_ENGINE_UNLOADED,
-    YVEX_SERVER_EVENT_ENGINE_UNLOAD_FAILED
+    YVEX_SERVER_EVENT_ENGINE_UNLOAD_FAILED,
+    YVEX_SERVER_EVENT_ENGINE_LOAD_PROGRESS
 } yvex_server_event_kind;
 typedef enum {
     YVEX_SERVER_SEVERITY_DEBUG = 0,
@@ -178,6 +183,7 @@ typedef struct {
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char variant_identity[YVEX_SHA256_HEX_CAP];
     char event_identity[YVEX_SHA256_HEX_CAP];
+    yvex_execution_measurement measurement;
 } yvex_server_event;
 typedef struct {
     unsigned int schema_version;
@@ -194,6 +200,7 @@ typedef struct {
     unsigned long long active_http_requests, completed_http_requests;
     unsigned long long failed_http_requests, cancelled_http_requests;
     unsigned long long telemetry_dropped;
+    yvex_execution_resource_summary resources;
 } yvex_server_metrics;
 typedef struct {
     unsigned int schema_version;
@@ -244,6 +251,8 @@ typedef struct {
     char capacity_plan_identity[YVEX_SHA256_HEX_CAP];
     int execution_ready, explicit_reasoning_channel_supported;
     int continuous_batching_ready;
+    yvex_execution_capacity_summary capacity;
+    yvex_execution_resource_summary resources;
 } yvex_server_engine_summary;
 typedef struct {
     unsigned int schema_version;
@@ -349,11 +358,7 @@ typedef enum {
     YVEX_CLIENT_STREAM_ERROR
 } yvex_client_stream_channel;
 
-/*
- * A terminal failure may follow an atomic model-state commit. This snapshot keeps the exact
- * committed boundary distinct from the failure class and makes reset admission explicit. Facts
- * whose runtime owner cannot yet report a generation remain unavailable rather than synthesized.
- */
+/* A terminal failure snapshot separates committed state from failure/reset facts. */
 typedef struct {
     unsigned int schema_version;
     int available, committed_progress, reset_required;
@@ -372,7 +377,6 @@ typedef struct {
     char token_ledger_identity[YVEX_SHA256_HEX_CAP];
     char published_text_identity[YVEX_SHA256_HEX_CAP];
 } yvex_client_partial_turn;
-
 typedef struct {
     unsigned int schema_version;
     yvex_backend_kind backend;
@@ -533,6 +537,7 @@ typedef struct {
     yvex_server_summary runtime;
     yvex_console_status console;
     yvex_server_event event;
+    yvex_execution_measurement measurement;
 } yvex_client_message;
 int yvex_server_create(yvex_server **out, const yvex_server_options *options,
                        yvex_error *err);
@@ -561,8 +566,7 @@ const char *yvex_server_session_state_name(yvex_server_session_state state);
 void yvex_server_close(yvex_server **server);
 int yvex_client_connect(yvex_client **out, const char *socket_path,
                         yvex_error *err);
-int yvex_client_timeout_set(yvex_client *client,
-                            unsigned long long milliseconds,
+int yvex_client_timeout_set(yvex_client *client, unsigned long long milliseconds,
                             yvex_error *err);
 int yvex_client_send(yvex_client *client, const yvex_client_request *request,
                      yvex_error *err);
@@ -589,8 +593,7 @@ int yvex_protocol_message_decode(const unsigned char *input,
                                  unsigned long long byte_count,
                                  yvex_client_message *message,
                                  yvex_error *err);
-int yvex_server_socket_path(char output[YVEX_SERVER_SOCKET_PATH_CAP],
-                            yvex_error *err);
+int yvex_server_socket_path(char output[YVEX_SERVER_SOCKET_PATH_CAP], yvex_error *err);
 #ifdef __cplusplus
 }
 #endif

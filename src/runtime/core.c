@@ -499,14 +499,17 @@ static int runtime_model_artifact_open(
     options.map = 1;
     started = yvex_core_monotonic_ns();
     rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN,
-                                0ull, 0ull, err);
+                                0ull, 1ull, err);
     if (rc == YVEX_OK)
         rc = yvex_artifact_open(&model->artifact, &options, err);
     runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN, started);
+    if (rc == YVEX_OK)
+        rc = runtime_model_progress(
+            request, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN, 1ull, 1ull, err);
     started = yvex_core_monotonic_ns();
     if (rc == YVEX_OK)
         rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_ADMISSION,
-                                    0ull, 0ull, err);
+                                    0ull, 1ull, err);
     if (rc == YVEX_OK)
         rc = yvex_artifact_snapshot_get(model->artifact, &model->admission.file_snapshot, err);
     if (rc == YVEX_OK)
@@ -548,6 +551,10 @@ static int runtime_model_artifact_open(
         rc = runtime_model_once(&model->summary.gguf_directory_parses,
                                 "runtime.model.gguf-directory", err);
     runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_ADMISSION, started);
+    if (rc == YVEX_OK)
+        rc = runtime_model_progress(
+            request, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_ADMISSION, 1ull, 1ull,
+            err);
     return rc;
 }
 
@@ -645,6 +652,7 @@ static void runtime_model_summary_bind(
                                model->binding_summary.executable_graph_identity);
     model->summary.artifact_bytes_hashed =
         model->summary.artifact_hash_passes ? model->admission.artifact_bytes_hashed : 0ull;
+    model->summary.artifact_bytes = model->admission.file_bytes;
     model->summary.tensor_count = model->binding_summary.tensor_count;
     model->summary.attention_layer_count = model->binding_summary.layer_count;
     model->summary.draft_attention_layer_count =
@@ -683,7 +691,7 @@ static int runtime_model_residency_open(
     if (!attention_summary->required_binding_count) return YVEX_OK;
     started = yvex_core_monotonic_ns();
     rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_RESIDENCY,
-                                0ull, attention_summary->required_binding_count, err);
+                                0ull, descriptor_summary->tensor_count, err);
     memset(&options, 0, sizeof(options));
     options.maximum_host_bytes = request->maximum_host_bytes;
     if (rc == YVEX_OK)
@@ -732,6 +740,10 @@ static int runtime_model_residency_open(
             }
             return rc;
         }
+    rc = runtime_model_progress(
+        request, YVEX_RUNTIME_LIFECYCLE_RESIDENCY,
+        summary.binding_count, descriptor_summary->tensor_count, err);
+    if (rc != YVEX_OK) return rc;
     model->summary.capabilities.attention_weight_residency_ready = 1;
     model->summary.capabilities.attention_envelope_ready =
         model->summary.capabilities.attention_envelope_ready && summary.envelope_complete;
@@ -918,7 +930,8 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
     total_started = yvex_core_monotonic_ns();
     memset(&binding_failure, 0, sizeof(binding_failure));
     phase_started = yvex_core_monotonic_ns();
-    rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN, 0ull, 0ull, err);
+    rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN,
+                                0ull, 1ull, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_binding_open_compatible(
             &model->binding, request->runtime_binding_path, request->expected_family_adapter_id,
@@ -929,6 +942,9 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
         rc = runtime_model_once(&model->summary.runtime_binding_parses,
                                 "runtime.model.binding-parse", err);
     runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN, phase_started);
+    if (rc == YVEX_OK)
+        rc = runtime_model_progress(
+            request, YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN, 1ull, 1ull, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
             out, model, failure, binding_failure.code == YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY
@@ -1140,23 +1156,6 @@ cleanup_failed:
                                  "runtime dependent cleanup failed during model invalidation");
     if (err) *err = cleanup;
     return cleanup_rc;
-}
-
-static int runtime_summary_copy(const void *owner, const void *summary, void *out,
-                                size_t size, int mutex_ready, pthread_mutex_t *mutex,
-                                const char *where, const char *argument_reason,
-                                const char *synchronization_reason, yvex_error *err) {
-    if (!owner || !summary || !out) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, where, argument_reason);
-        return YVEX_ERR_INVALID_ARG;
-    }
-    if (!mutex_ready || !mutex || pthread_mutex_lock(mutex) != 0) {
-        yvex_error_set(err, YVEX_ERR_STATE, where, synchronization_reason);
-        return YVEX_ERR_STATE;
-    }
-    memcpy(out, summary, size);
-    (void)pthread_mutex_unlock(mutex);
-    return yvex_runtime_private_success(err);
 }
 
 int yvex_model_engine_summary_copy(const yvex_model_engine *model,
@@ -1870,16 +1869,6 @@ int yvex_runtime_session_close(yvex_runtime_execution_session **session_ptr, yve
     return yvex_runtime_private_success(err);
 }
 
-int yvex_runtime_session_summary_copy(const yvex_runtime_execution_session *session,
-                                      yvex_runtime_session_summary *out, yvex_error *err) {
-    yvex_runtime_execution_session *mutable_session = (yvex_runtime_execution_session *)session;
-    return runtime_summary_copy(
-        session, session ? &session->summary : NULL, out, sizeof(*out),
-        session ? session->lifecycle_mutex_ready : 0,
-        session ? &mutable_session->lifecycle_mutex : NULL, "runtime.session.summary",
-        "runtime session and summary output are required",
-        "runtime session synchronization is unavailable", err);
-}
 /*
  * Borrow view.
  *

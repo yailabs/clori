@@ -1,8 +1,8 @@
-# Local Protocol v18
+# Local Protocol v19
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 18`.
+Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 19`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -17,18 +17,18 @@ Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 18 and exchanges bounded typed frames.
+Every connection negotiates version 19 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
 malformed fields refuse without entering the server scheduler.
 
-Every earlier version, including v17, is refused explicitly. There is no private
+Every earlier version, including v18, is refused explicitly. There is no private
 pre-v0.1 compatibility decoder. Unknown operations and response kinds fail
 closed.
 
 ## Operations
 
-Protocol v18 carries host status/stop, engine load/list/unload, model and memory
+Protocol v19 carries host status/stop, engine load/list/unload, model and memory
 facts for each engine generation, text or media engine kind, target-only or
 speculative text execution strategy,
 session lifecycle, bounded copy-on-write session fork, generation turns and
@@ -74,6 +74,13 @@ line without timing the asynchronous request locally. Provider/OpenAI requests
 retain their provider stream contract and do not receive these native console
 messages.
 
+Engine preparation and load publish the same server-authored progress contract.
+Artifact verification reports real bytes and residency reports real tensors
+when their owners know a denominator. Binding, opening, admission,
+materialization, sealing, backend open, and workspace preparation otherwise
+report phase and elapsed activity without fabricating a percentage. Replaceable
+progress is coalesced; lifecycle completion and failure remain retained.
+
 The shared event stream also carries low-frequency rolling decode progress with
 committed count, sequence position, elapsed/rate, reasoning count and optional
 cumulative speculative economics. Normal cadence is bounded to one second or
@@ -108,7 +115,7 @@ request fail before scheduler admission. Conditions are request-owned and do
 not alter engine identity or persist in a later turn.
 
 The admitted tokenizer contract classifies source-authored explicit reasoning
-separately from final text. Protocol v18 permits an omitted policy to remain
+separately from final text. Protocol v19 permits an omitted policy to remain
 `source-default` until the exact loaded model resolves it; concrete `disabled`,
 `low`, `enabled`, and `maximum` choices remain request facts. Provider request
 v4 independently carries source-default/drop/preserve reasoning-history policy.
@@ -134,9 +141,12 @@ state, target, backend, engine kind, execution strategy, capacity, memory classe
 specialization identities, session/work counts, and executable readiness.
 
 Text and composite media engines use the same summary while exposing only facts
-their engine owner can authenticate. Physical continuous-batching readiness is
-per engine and remains false until the engine scheduler and executable path have
-proved it; multiple host workers do not manufacture that claim. `console.status`
+their engine owner can authenticate. Capacity schema v1 separates session
+capacity, scheduler-visible runnable work, admitted physical sequence width,
+cooperative scheduling, compatible-operation batching, and dynamic continuous
+batching. The latter remains false until ready sequences can enter and leave
+physical decode batches; multiple host workers or compatible row coalescing do
+not manufacture that claim. `console.status`
 returns a server-composed snapshot containing, where authoritative:
 
 - host readiness and the selected alias and engine generation;
@@ -167,6 +177,14 @@ rejected and discarded drafts, correction/bonus tokens, maximum and mean
 accepted prefix, confidence facts, separate draft/verification/commit timing,
 effective committed rate, and policy identity. Exact seconds are never
 reconstructed from rounded rates.
+
+Protocol v19 additionally carries measurement schema v1. Each record identifies
+its phase scope, host/device clock, top-level/nested/enclosing/overlapping
+composition, work unit, and availability. A cumulative rate uses the complete
+declared work/duration denominator; rolling decode uses its own recent work and
+duration, with a bounded 32-token window for current text generation. Missing
+or overlapping phase facts remain explicit rather than being forced into an
+invalid wall-time sum.
 
 Existing generated-token and completion-usage fields retain their meaning:
 only target-verified committed tokens count. Proposal counts remain separate.
@@ -217,9 +235,21 @@ the version when field meaning or operation semantics become incompatible.
 HTTP/OpenAI compatibility has its own version and does not expose this wire
 format.
 
+## Resource truth
+
+Resource schema v1 distinguishes immutable artifact and mapped bytes, prepared
+model state, explicit host/device allocation, device-addressable mappings,
+typed attention/recurrent/convolution/candidate session state, physical session
+state, activation arenas, reusable workspace, transients, process RSS, current
+and peak facts, and logical movement. Availability and placement are explicit.
+On unified-memory systems, device addressability does not become a claim about
+physical page residency; an unknown physical working set remains unmeasured.
+Overlapping model spans, typed session subsets, and peak classes must not be
+summed into a synthetic total.
+
 ## Non-claims
 
-Protocol v18 is not a public remote API, authentication protocol, TLS transport,
+Protocol v19 is not a public remote API, authentication protocol, TLS transport,
 stable cross-version SDK promise, distributed serving protocol, or model
 quality contract. Versioned checkpoints preserve the admitted model and
 semantic-session state across restart; the in-memory fork does not create a

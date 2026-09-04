@@ -538,8 +538,7 @@ static size_t startup_text_columns(const char *text)
 
 static const char *startup_logo_line(size_t index)
 {
-    /* Solid half-block silhouette sampled from the canonical butterfly mark.
-     * It avoids terminal-font-dependent Braille and decorative line glyphs. */
+    /* High-contrast silhouette sampled from the canonical butterfly mark. */
     static const char *const logo[] = {
         " ██▄▄            ▄   ██   ▄            ▄▄██",
         "   ▀███▄▄         █▄ ▄  ▄█         ▄▄███▀",
@@ -567,7 +566,7 @@ static const char *startup_logo_wide_line(size_t index)
 
 static const char *startup_logo_compact_line(size_t index)
 {
-    /* A smaller sample of the same canonical silhouette. */
+    /* Smaller solid silhouette for narrow terminals. */
     static const char *const logo[] = {
         " ▄                              ▄",
         " ▀██▄▄       ▀▄ ▀▀  ▀       ▄▄██▀",
@@ -653,7 +652,7 @@ static void startup_announce_wide(const yvex_server_options *options,
     startup_hero_row(style, startup_logo_wide_line(6u), "OPENAI", openai,
                      options->openai_enabled ? style->success : style->dim);
     startup_hero_row(style, startup_logo_wide_line(7u), "EVENTS",
-                     "lifecycle · generation · RAM/GPU", style->strong);
+                     "lifecycle · progress · resources", style->strong);
     startup_hero_row(style, startup_logo_wide_line(8u), NULL, NULL, NULL);
     startup_hero_row(style, startup_logo_wide_line(9u), NULL, NULL, NULL);
     startup_hero_row(style, startup_logo_wide_line(10u), NULL, NULL, NULL);
@@ -678,7 +677,7 @@ static void startup_announce_compact(const yvex_server_options *options,
                (unsigned int)options->openai_port);
     else
         printf(" · OpenAI disabled");
-    printf("\n  events lifecycle · generation · RAM/GPU");
+    printf("\n  events lifecycle · progress · resources");
     if (!human_terminal) printf(" · Ctrl-C to stop");
     putchar('\n');
 }

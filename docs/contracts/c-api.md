@@ -249,9 +249,9 @@ engine kind from text execution strategy while retaining alias, package,
 backend, capacity, memory, and generation facts. Engine schema v1 is refused
 before the added fields are read.
 The source-authored conversation boundary admits provider request/wire schema
-v4, tokenizer plan v5, tokenizer provider result v2, and local protocol v18.
-Runtime event schema v5 and generation plan/result schema v5 remain current.
-Generation plan ABI v5 adds the workload-profile identity
+v4, tokenizer plan v5, tokenizer provider result v2, and local protocol v19.
+Runtime event schema v6, generation plan schema v7, and generation result
+schema v5 are current. Generation plan ABI v5 added the workload-profile identity
 required to bind phase evidence to the compiled workload. Generation result
 schema v5 adds the identity-bearing committed-token extent of a
 source-output-channel boundary; the target-only continuation extent is derived
@@ -600,7 +600,25 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v18
+## Execution Truth ABI
+
+`<yvex/execution.h>` owns three pointer-free schema-v1 records shared by typed
+runtime reports, the private protocol, and clients. Capacity separates resident
+sessions, scheduler-visible runnable work, physical sequence width,
+cooperative scheduling, compatible-operation batching, and dynamic continuous
+batching. Measurement binds scope, clock, composition, unit, availability,
+duration, explicit denominator, and independent cumulative/rolling rates.
+Resource truth separates model, typed session state, arena, workspace,
+transient, process, placement, current/peak, and movement facts.
+
+The records do not expose a scheduler queue, CUDA object, family type, profiler,
+or benchmark policy. Availability distinguishes unknown from measured zero;
+overlapping spans and timing scopes remain non-additive. Protocol codecs reject
+unknown enums, inconsistent availability, impossible rate denominators, invalid
+current/peak relations, and UMA claims that confuse device addressability with
+measured physical page residency.
+
+## Application Provider And Local Protocol v19
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
 result ABI. Provider schema v3 represents an omitted completion
@@ -615,13 +633,13 @@ reasoning, at most one assistant tool call, and its original field semantics.
 Clone and wire-decode publish only a complete owned request graph. The provider
 owner neither parses HTTP nor renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v18 carries the sealed provider request through the
+`<yvex/server.h>` protocol v19 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 explicit reasoning, function calls, usage, terminal completion, and failure.
 Typed events bind the provider adapter, provider-request identity, and external
 correlation ID while excluding prompt and output content.
 
-Protocol v18 carries host status/stop, engine load/list/unload, exact
+Protocol v19 carries host status/stop, engine load/list/unload, exact
 alias/generation routing, separate engine kind and semantic execution strategy,
 speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn
@@ -640,7 +658,7 @@ typed digest/identity evidence. Version 9 adds the startup capacity-plan
 identity, required and unreserved bytes, admitted concurrent sequences, and
 separate independent-session-scheduling and continuous-batching readiness.
 Provider v4's source-default reasoning/history semantics and generation-bound
-routing are not executable by an older peer, so every non-v18 frame refuses during the handshake;
+routing are not executable by an older peer, so every non-v19 frame refuses during the handshake;
 there is no private pre-v0.1 compatibility decoder.
 
 Version 12 added the typed terminal media result. Version 13 separates host
@@ -666,6 +684,15 @@ facts. The event identity binds those new kinds and v16 frames fail closed.
 Version 18 carries provider request/wire v4 so omitted reasoning and reasoning
 history are resolved by the admitted source conversation policy; v17 frames
 fail closed.
+Version 19 adds fixed, validated execution-capacity, scoped-measurement, and
+resource-summary subrecords. Runnable work, physical sequence width,
+compatible-operation batching, and dynamic continuous batching remain separate
+facts. Measurements bind scope, clock, overlap/composition, work unit, exact
+denominators, and cumulative or bounded rolling rates. Resources bind model,
+session, arena, workspace, transient, process, placement, and availability
+without treating UMA addressability as measured physical device residency.
+Event, engine, metric, and host-summary schemas advance with those incompatible
+facts; v18 frames fail closed.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map
 queue capacity, timeout, incompatible state and unsupported input without

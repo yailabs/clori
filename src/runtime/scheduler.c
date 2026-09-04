@@ -1587,7 +1587,7 @@ int yvex_runtime_private_generation_logits_project(
     ticket.result = result;
     ticket.host_logits = context->logits_row;
     ticket.host_logits_capacity = context->logits_row ? context->logits_count : 0ull;
-    ticket.admitted_width = context->options.continuous_batching
+    ticket.admitted_width = context->options.compatible_operation_batching
                                 ? context->options.concurrent_sequences : 1ull;
     if (!source || !result || !ticket.admitted_width)
         return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,

@@ -18,6 +18,9 @@ extern "C" {
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V5 5u
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V6 6u
 #define YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_V6 6u
+#define YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_V7 7u
+#define YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_CURRENT \
+    YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_V7
 #define YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V5 5u
 #define YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1 1u
 #define YVEX_RUNTIME_PARTIAL_TURN_SCHEMA_V1 1u
@@ -63,7 +66,7 @@ typedef struct yvex_runtime_generation_options {
     unsigned long long additional_stop_token_count;
     int (*cancel_requested)(void *context);
     void *cancel_context;
-    int continuous_batching;
+    int compatible_operation_batching;
 } yvex_runtime_generation_options;
 typedef struct {
     unsigned int schema_version;
@@ -240,7 +243,7 @@ typedef struct {
 } yvex_runtime_generation_turn_request;
 typedef struct {
     unsigned int schema_version;
-    int open, busy, closing, continuous_batching;
+    int open, busy, closing, compatible_operation_batching;
     unsigned long long execution_count, failure_count, cancellation_count;
     unsigned long long token_capacity, text_capacity, workspace_bytes, concurrent_sequences;
     unsigned long long capacity_required_bytes, capacity_unreserved_bytes;

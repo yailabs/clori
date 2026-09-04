@@ -1257,7 +1257,7 @@ test-runtime-deepseek-generation-live: cuda $(GENERATION_LIVE_RUNNER) $(YVEX_BIN
 		cpu target-only greedy 0 1 >"$$tmp_dir/cpu.out"; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda target-only greedy 0 3 >"$$tmp_dir/cuda-greedy.out"; \
-	grep -F 'generation_scheduler continuous_batching=pass' \
+	grep -F 'generation_scheduler compatible_operation_batching=pass' \
 		"$$tmp_dir/cuda-greedy.out" >/dev/null; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda target-only stochastic 42 2 >"$$tmp_dir/cuda-stochastic-first.out"; \

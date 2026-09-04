@@ -85,9 +85,10 @@ static int generation_options_valid(const yvex_runtime_generation_options *optio
            options->runnable_sequences <= 64ull &&
            (!options->runnable_sequences ||
             options->runnable_sequences >= options->concurrent_sequences) &&
-           (options->continuous_batching == 0 ||
-            options->continuous_batching == 1) &&
-           (!options->continuous_batching || options->concurrent_sequences > 1ull);
+           (options->compatible_operation_batching == 0 ||
+            options->compatible_operation_batching == 1) &&
+           (!options->compatible_operation_batching ||
+            options->concurrent_sequences > 1ull);
 }
 
 static int generation_device_stochastic(
@@ -645,8 +646,8 @@ static int generation_capacity_workload(
     context->workload_profile.latency_priority =
         context->options.workload_kind ==
         YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
-    context->workload_profile.continuous_batching =
-        context->options.continuous_batching;
+    /* Compatible-operation coalescing is not dynamic continuous batching. */
+    context->workload_profile.continuous_batching = 0;
     yvex_core_text_copy(context->workload_profile.name,
                         sizeof(context->workload_profile.name),
                         names[context->options.workload_kind]);
@@ -677,7 +678,7 @@ static int generation_physical_row_capacity(
                 "compiled speculative execution width is invalid");
         if (draft_width > *capacity) *capacity = draft_width;
     }
-    if (context->options.continuous_batching &&
+    if (context->options.compatible_operation_batching &&
         context->options.concurrent_sequences > *capacity)
         *capacity = context->options.concurrent_sequences;
     yvex_error_clear(err);
@@ -1260,7 +1261,7 @@ static int generation_plan_build(yvex_runtime_generation_context *context,
         return generation_context_refuse(
             err, YVEX_ERR_STATE,
             "generation lower-owner plans are incompatible");
-    plan.schema_version = YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_V6;
+    plan.schema_version = YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_CURRENT;
     plan.producer_kind = producer_kind;
     plan.backend = context->options.backend;
     plan.mode = context->options.mode;
@@ -1342,13 +1343,13 @@ static int generation_execution_owners_open(
     *workspace_bytes = 0ull;
     if (decoder_producer &&
         (options->mode != YVEX_GENERATION_MODE_TARGET_ONLY ||
-         options->continuous_batching))
+         options->compatible_operation_batching))
         return generation_context_refuse(
             err, YVEX_ERR_UNSUPPORTED,
-            options->continuous_batching
-                ? "heterogeneous decoder continuous batching is not admitted"
+            options->compatible_operation_batching
+                ? "heterogeneous decoder compatible-operation batching is not admitted"
                 : "heterogeneous decoder execution has no admitted draft producer");
-    if (options->continuous_batching) {
+    if (options->compatible_operation_batching) {
         rc = generation_scheduler_maximum_width(context, &compatible_width, err);
         if (rc != YVEX_OK) return rc;
     } else {
@@ -1364,7 +1365,7 @@ static int generation_execution_owners_open(
     if (options->mode == YVEX_GENERATION_MODE_SPECULATIVE &&
         workspace_token_capacity < YVEX_SPECULATION_MAX_BLOCK + 2ull)
         workspace_token_capacity = YVEX_SPECULATION_MAX_BLOCK + 2ull;
-    if (options->continuous_batching &&
+    if (options->compatible_operation_batching &&
         workspace_token_capacity < options->concurrent_sequences)
         workspace_token_capacity = options->concurrent_sequences;
     transformer.maximum_host_bytes = options->maximum_host_bytes;
@@ -1372,8 +1373,8 @@ static int generation_execution_owners_open(
     transformer.context_capacity = options->context_capacity;
     transformer.workspace_token_capacity = workspace_token_capacity;
     transformer.minimum_device_workspace_bytes = context->sampling_workspace_bytes;
-    transformer.engine_scheduling = options->continuous_batching;
-    transformer.scheduler_maximum_width = options->continuous_batching
+    transformer.engine_scheduling = options->compatible_operation_batching;
+    transformer.scheduler_maximum_width = options->compatible_operation_batching
                                               ? compatible_width : 0ull;
     transformer.cancel_requested = options->cancel_requested;
     transformer.cancel_context = options->cancel_context;
@@ -1400,7 +1401,8 @@ static int generation_execution_owners_open(
     }
     logits.maximum_rows = options->mode == YVEX_GENERATION_MODE_SPECULATIVE
                               ? YVEX_SPECULATION_MAX_BLOCK + 1ull
-                              : options->continuous_batching ? compatible_width : 1ull;
+                              : options->compatible_operation_batching
+                                    ? compatible_width : 1ull;
     logits.maximum_host_bytes = options->maximum_host_bytes;
     logits.maximum_device_bytes = options->maximum_device_bytes;
     logits.evidence_profile = options->evidence_profile;
@@ -1445,8 +1447,8 @@ static int generation_execution_owners_open(
     speculation.prefill_chunk_tokens = options->prefill_chunk_tokens;
     speculation.maximum_host_bytes = options->maximum_host_bytes;
     speculation.maximum_device_bytes = options->maximum_device_bytes;
-    speculation.engine_scheduling = options->continuous_batching;
-    speculation.scheduler_maximum_width = options->continuous_batching
+    speculation.engine_scheduling = options->compatible_operation_batching;
+    speculation.scheduler_maximum_width = options->compatible_operation_batching
                                               ? compatible_width : 0ull;
     speculation.cancel_requested = options->cancel_requested;
     speculation.cancel_context = options->cancel_context;
@@ -1499,8 +1501,8 @@ int yvex_runtime_generation_context_summary_copy(
         summary->concurrent_sequences = context->capacity_plan.concurrent_sequences;
         summary->capacity_required_bytes = context->capacity_plan.required_bytes;
         summary->capacity_unreserved_bytes = context->capacity_plan.unreserved_bytes;
-        summary->continuous_batching =
-            context->workload_profile.continuous_batching;
+        summary->compatible_operation_batching =
+            context->options.compatible_operation_batching;
         yvex_runtime_identity_copy(summary->generation_plan_identity,
                                    context->plan.generation_plan_identity);
         yvex_runtime_identity_copy(summary->capacity_plan_identity,
@@ -1585,7 +1587,7 @@ int yvex_runtime_generation_context_open(
     if (context->options.backend == YVEX_BACKEND_KIND_CUDA)
         rc = yvex_runtime_session_prepare_attention_workspace(
             context->session,
-            context->options.continuous_batching ||
+            context->options.compatible_operation_batching ||
                     context->execution_profile.attention_resolution !=
                 YVEX_EXECUTION_RESOLUTION_EXACT
                 ? YVEX_RUNTIME_MODE_EAGER : YVEX_RUNTIME_MODE_FULL,

@@ -1046,7 +1046,7 @@ static int generation_test_plan_binds_workload_profile(void)
     yvex_runtime_generation_plan_summary plan;
     char before[YVEX_SHA256_HEX_CAP], after[YVEX_SHA256_HEX_CAP];
     memset(&plan, 0, sizeof(plan));
-    plan.schema_version = YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_V6;
+    plan.schema_version = YVEX_RUNTIME_GENERATION_PLAN_SCHEMA_CURRENT;
     plan.producer_kind = YVEX_EXECUTION_PLAN_TRANSFORMER;
     strcpy(plan.producer_plan_identity,
            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
@@ -1054,6 +1054,11 @@ static int generation_test_plan_binds_workload_profile(void)
            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     YVEX_TEST_ASSERT(yvex_runtime_generation_plan_identity(&plan, before),
                      "generation plan must bind a workload profile");
+    plan.trace_policy = YVEX_RUNTIME_TRACE_FULL;
+    YVEX_TEST_ASSERT(yvex_runtime_generation_plan_identity(&plan, after) &&
+                         strcmp(before, after) == 0,
+                     "observability policy must not alter semantic execution identity");
+    plan.trace_policy = YVEX_RUNTIME_TRACE_NONE;
     plan.workload_profile_identity[0] = 'b';
     YVEX_TEST_ASSERT(yvex_runtime_generation_plan_identity(&plan, after) &&
                          strcmp(before, after) != 0,
@@ -1080,6 +1085,7 @@ static int generation_test_decode_profile_projection(void)
     decode.completed = 1;
     decode.kernel_launches = 19ull;
     decode.accelerated_matrix_launches = 3ull;
+    decode.attention_ns = 11000ull;
     decode.attention_device_ns = 7000ull;
     YVEX_TEST_ASSERT(
         yvex_runtime_profile_begin(
@@ -1091,8 +1097,8 @@ static int generation_test_decode_profile_projection(void)
                 YVEX_OK &&
             profile.counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES] == 19ull &&
             profile.counters[YVEX_RUNTIME_PROFILE_ACCELERATED_MATRIX_LAUNCHES] == 3ull &&
-            profile.phase_ns[YVEX_RUNTIME_PROFILE_ATTENTION] == 7000ull,
-        "decode profile preserves backend launch classes and device timing");
+            profile.phase_ns[YVEX_RUNTIME_PROFILE_ATTENTION] == 11000ull,
+        "decode profile preserves launch classes and non-perturbative host timing");
     return 0;
 }
 
