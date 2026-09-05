@@ -677,7 +677,7 @@ if rg -n -i '(families/|deepseek|minimax)' src/model/artifacts/gate.c; then
 fi
 artifact_catalog_owners=$(rg -l 'deepseek_artifact_catalog' src include |
     LC_ALL=C sort)
-if [ "$artifact_catalog_owners" != 'src/graph/families/deepseek_v4.c' ]; then
+if [ "$artifact_catalog_owners" != 'src/graph/families/deepseek_v4_artifact.c' ]; then
     printf '%s\n' "$artifact_catalog_owners" >&2
     fail "DeepSeek physical artifact catalog escaped its family compiler projection"
 fi

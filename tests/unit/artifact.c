@@ -256,6 +256,25 @@ typedef struct {
     const char *admission_identity;
 } deepseek_catalog_fixture;
 
+/* Minimal descriptor used only to select an expected catalog identity.
+ * Sparse fixture payloads remain unverified and cannot qualify execution. */
+static int write_deepseek_profile(int fd, const char *profile)
+{
+    static const char key[] = "yvex.quant.profile.identity";
+    unsigned char bytes[160] = {'G', 'G', 'U', 'F', 3u};
+    size_t offset = 32u + sizeof(key) - 1u;
+
+    bytes[16] = 1u;
+    bytes[24] = (unsigned char)(sizeof(key) - 1u);
+    memcpy(bytes + 32u, key, sizeof(key) - 1u);
+    bytes[offset] = 8u;
+    offset += 4u;
+    bytes[offset] = 64u;
+    offset += 8u;
+    memcpy(bytes + offset, profile, 64u);
+    return pwrite(fd, bytes, sizeof(bytes), 0) == (ssize_t)sizeof(bytes);
+}
+
 static int test_deepseek_catalog_entry(const char *root,
                                        const deepseek_catalog_fixture *fixture)
 {
@@ -272,6 +291,7 @@ static int test_deepseek_catalog_entry(const char *root,
                      "variant catalog path fits");
     fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     YVEX_TEST_ASSERT(fd >= 0 && ftruncate(fd, (off_t)fixture->file_bytes) == 0 &&
+                         write_deepseek_profile(fd, fixture->profile_identity) &&
                          close(fd) == 0,
                      "variant sparse extent created");
     options.path = path;
@@ -324,6 +344,51 @@ static int test_deepseek_catalog_entry(const char *root,
     }
     yvex_artifact_close(artifact);
     YVEX_TEST_ASSERT(unlink(path) == 0, "variant sparse artifact cleaned");
+    return 0;
+}
+
+static int test_deepseek_same_extent_selection(const char *root)
+{
+    static const char *const profiles[] = {
+        "6a99e9f7c374e3f718cce705002bf2b799db9cc1b86f65091631857f52c1c587",
+        "4aac0961d3159f8a3d585cd4b08e2d15115c3577ca9df080875238bb79290b2c",
+        "0000000000000000000000000000000000000000000000000000000000000000"};
+    char path[YVEX_ARTIFACT_PATH_CAP], previous[YVEX_SHA256_HEX_CAP] = {0};
+    yvex_artifact_options options = {0};
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure failure;
+    yvex_artifact *artifact = NULL;
+    yvex_error err;
+    size_t index;
+    int fd, rc;
+
+    YVEX_TEST_ASSERT(snprintf(path, sizeof(path), "%s/same-extent.gguf", root) <
+                         (int)sizeof(path), "same-extent path fits");
+    options.path = path;
+    options.readonly = 1;
+    for (index = 0u; index < 3u; ++index) {
+        fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        YVEX_TEST_ASSERT(fd >= 0 && ftruncate(fd, 98018204640ll) == 0 &&
+                             write_deepseek_profile(fd, profiles[index]) && close(fd) == 0,
+                         "same extent carries a distinct profile");
+        YVEX_TEST_ASSERT(yvex_artifact_open(&artifact, &options, &err) == YVEX_OK,
+                         "same-extent fixture opens");
+        rc = yvex_artifact_admit_deepseek(artifact, &admission, &failure, &err);
+        if (index < 2u) {
+            YVEX_TEST_ASSERT(rc == YVEX_OK &&
+                                 strcmp(admission.profile_identity, profiles[index]) == 0 &&
+                                 !admission.artifact_identity_verified &&
+                                 strcmp(previous, admission.artifact_identity) != 0,
+                             "equal size never aliases distinct full artifact identities");
+            memcpy(previous, admission.artifact_identity, sizeof(previous));
+        } else {
+            YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && !admission.complete,
+                             "known size does not admit an unknown profile");
+        }
+        yvex_artifact_close(artifact);
+        artifact = NULL;
+        YVEX_TEST_ASSERT(unlink(path) == 0, "same-extent fixture cleaned");
+    }
     return 0;
 }
 
@@ -395,6 +460,8 @@ static int test_deepseek_variant_admission_catalog(void)
                      "native-drafter DeepSeek catalog entry is exact");
     YVEX_TEST_ASSERT(test_deepseek_catalog_entry(root, &compact_mxfp4) == 0,
                      "compact MXFP4 DeepSeek catalog entry is exact");
+    YVEX_TEST_ASSERT(test_deepseek_same_extent_selection(root) == 0,
+                     "catalog selection distinguishes equal-size artifacts");
     YVEX_TEST_ASSERT(rmdir(root) == 0, "variant catalog root cleaned");
     return 0;
 }

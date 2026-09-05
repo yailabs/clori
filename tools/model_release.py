@@ -74,6 +74,38 @@ def release_path(value):
     return value
 
 
+def descriptor_authority(receipt):
+    authority = receipt.get("descriptor_authority")
+    if authority is None:
+        require(receipt.get("descriptors_equal_to_forensic") is True,
+                "invalid tensor structure: descriptors_equal_to_forensic")
+        return
+    require(authority.get("kind") == "yvex.physical_variant_plan.v1"
+            and receipt.get("descriptors_match_sealed_plan") is True,
+            "invalid sealed-plan descriptor authority")
+    evidence_files([authority])
+    lines = Path(authority["path"]).read_text().splitlines()
+    require(lines and lines[0] == authority["kind"], "wrong descriptor plan format")
+    facts = {}
+    for line in lines[1:]:
+        key, value = line.split("=", 1)
+        if key != "decision":
+            require(key not in facts, "duplicate descriptor plan fact")
+            facts[key] = value
+    require(facts.get("plan_schema") == "2"
+            and facts.get("decision_count") == str(receipt["tensor_count"]),
+            "descriptor plan schema/count mismatch")
+    for plan_key, metadata_key in (
+            ("profile_identity", "yvex.quant.profile.identity"),
+            ("required_payload_identity", "yvex.source.payload.identity"),
+            ("transform_identity", "yvex.transform.identity")):
+        require(facts.get(plan_key) == receipt["metadata"].get(metadata_key)
+                and HEX256.fullmatch(facts.get(plan_key, "")),
+                "descriptor plan identity mismatch")
+    evidence_files([{"path": receipt["fresh_tensor_manifest"],
+                     "sha256": receipt["tensor_manifest_sha256"]}])
+
+
 def project_file(item, model, receipts, upstream, source_binding=None):
     matches = [r for r in model["representations"] if r["path"] == item["path"]]
     require(len(matches) == 1, "file is not an unambiguous catalog representation")
@@ -94,8 +126,9 @@ def project_file(item, model, receipts, upstream, source_binding=None):
     require(registered["format"].lower() == receipt["format"].lower(), "catalog format mismatch")
     require(receipt["tensor_count"] == registered["tensor_count"] > 0, "catalog tensor mismatch")
     require(sum(receipt["types"].values()) == receipt["tensor_count"], "incomplete tensor types")
-    for key in ("bounds_valid", "unique_tensor_names", "nonoverlap", "descriptors_equal_to_forensic"):
+    for key in ("bounds_valid", "unique_tensor_names", "nonoverlap"):
         require(receipt[key] is True, f"invalid tensor structure: {key}")
+    descriptor_authority(receipt)
     metadata = receipt["metadata"]
     repositories = [metadata[k] for k in ("general.source.huggingface.repository", "general.source.repository")
                     if k in metadata]

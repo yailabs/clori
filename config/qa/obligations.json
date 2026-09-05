@@ -9,7 +9,7 @@
   "change_classes": [
     {
       "id": "model-release",
-      "patterns": ["tools/model_release.py", "tests/model_release.py"],
+      "patterns": ["tools/model_release.py", "tools/model_release_build.py", "tests/model_release.py"],
       "lanes": ["fast", "structural"],
       "tests": ["property.model-release"],
       "reason": "Release projections reject stale bytes, wrong source, incomplete components and borrowed validation"

@@ -189,10 +189,13 @@ def render_make(root: Path, rows: list[list[str]]) -> str:
 
 def render_family_header(rows: list[list[str]]) -> str:
     prefix = "src/graph/families/"
+    # Only a primary family owner exports a descriptor. Nested owners can
+    # implement an admission boundary without registering another family.
     names = [
         Path(row[0]).stem
         for row in rows
         if row[0].startswith(prefix) and Path(row[0]).suffix == ".c"
+        and row[2] == "graph.family." + Path(row[0]).stem
     ]
     if len(names) != len(set(names)):
         fail("graph family provider names are not unique")

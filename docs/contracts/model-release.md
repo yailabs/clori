@@ -35,6 +35,13 @@ full-file checksum. Receipts are local engineering evidence, not signatures or
 protection against a malicious evidence author. Publication must independently
 verify the intended bytes; stat equality alone is not remote integrity proof.
 
+A reconstructed artifact can instead bind its fresh tensor manifest to a
+checksummed `yvex.physical_variant_plan.v1` through `descriptor_authority` and
+`descriptors_match_sealed_plan`. The projection checks the current plan's source,
+transformation, profile and tensor count against the receipt. Historical offsets
+are not an authority for newly emitted bytes. Changed plans or tensor manifests
+invalidate the projection.
+
 Some admitted component formats embed a source snapshot identity instead of a
 repository/revision pair. An optional `source_binding` references a checksummed
 canonical source inspection report with `source_verified`, `repository`,
@@ -61,5 +68,25 @@ belong in the qualification triage; they need no artificial public release recor
 Observability records download, conversion, quantization and validation duration,
 peak working storage and final artifact storage. Missing historical values are
 null with a reason. Current checksum or execution time does not fill a historical
-preparation timing gap. Qualification neither uploads nor modifies model bytes,
+preparation timing gap. The projection neither uploads nor modifies model bytes,
 provider caches, runtime sessions or distribution repositories.
+
+Controlled reconstruction can record a new build with
+`tools/model_release_build.py --request REQUEST.json --out-dir NEW_DIRECTORY`.
+The request declares `stage`, `logical_identity`, `upstream`, exact `argv`,
+expected new `outputs`, `storage_root`, `required_free_bytes`, optional
+`working_paths` and checksum-bound `input_evidence`. The observer refuses existing
+outputs and insufficient space, executes without a shell, preserves raw logs,
+measures monotonic duration, hashes new outputs and records executable and source
+identity before/after, including the observer and input evidence. Shared source
+or input changes invalidate the receipt. Arguments
+and command output must contain no credentials; the observer never dumps the
+environment. Sampled allocated high-water is explicitly a lower bound, not an
+exact peak. The receipt is preparation evidence for a release assessment and
+does not grant structural, numerical or runtime qualification.
+
+The DeepSeek family admission owner contains the exact admitted physical release
+identities. Profile identity and extent select the expected catalog record;
+selection alone never verifies payload bytes. Binding preparation still requires
+full-file identity verification and current compiler physical compatibility.
+This remains separate from publication eligibility and the local model library.

@@ -884,6 +884,7 @@ class Audit:
             f"yvex_graph_family_descriptor_{Path(row[0]).stem}"
             for row in self.manifest_rows
             if row[0].startswith("src/graph/families/") and row[0].endswith(".c")
+            and row[2] == "graph.family." + Path(row[0]).stem
         }
 
     def symbol_snapshot(self) -> dict[str, object]:
