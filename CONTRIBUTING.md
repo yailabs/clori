@@ -5,6 +5,22 @@ executable, tested, or internally coherent. Read [`AGENTS.md`](AGENTS.md) for
 the repository contract and [`ROADMAP.md`](ROADMAP.md) for current project
 state before proposing implementation work.
 
+For usage help, start with [SUPPORT.md](SUPPORT.md). Report vulnerabilities
+through [SECURITY.md](SECURITY.md), rather than a public issue or pull request.
+
+## Set up a development checkout
+
+Use the [build instructions](README.md#1-build), then run
+`python3 tools/qa.py doctor` to inspect the prerequisites for the relevant QA
+lane. Repository guards also require `ripgrep`. The official SDK integration
+test needs `uv`, `curl`, Node.js, and npm on `PATH`; its pinned SDK packages
+are downloaded into external caches or temporary directories. CUDA and live
+model requirements belong to their separate lanes.
+
+Use a development branch or fork and submit a pull request against `main`.
+Documentation fixes and reproducible bug reports are welcome; you do not need
+to know the internal owner to report a user-visible failure.
+
 ## Before opening work
 
 Search existing issues and the active roadmap boundary first. A good issue has:
@@ -63,12 +79,11 @@ The directory is the namespace. Before adding or moving production code:
 1. identify the existing semantic owner and all real consumers;
 2. prove that a new translation unit, header, subsystem, or family file meets
    the admission rules in `AGENTS.md`;
-3. obtain explicit authorization where required;
-4. update `config/source_owners.tsv` in the same patch;
-5. regenerate the deterministic build projection with
+3. update `config/source_owners.tsv` in the same patch;
+4. regenerate the deterministic build projection with
    `make generate-source-manifest`;
-6. preserve source-relative object and archive identities; and
-7. run ownership, repository-layout, source-layout, and architecture guards.
+5. preserve source-relative object and archive identities; and
+6. run ownership, repository-layout, source-layout, and architecture guards.
 
 The owner manifest is the sole handwritten production membership list. The
 root Makefile consumes its generated projection; do not add a parallel source
@@ -97,8 +112,8 @@ with their typed owners rather than being copied into the registry.
 
 Runtime-facing `yvex` commands remain protocol-only. Offline commands may call
 admitted engine APIs but must terminate and never become a second daemon.
-`yvexd` remains the only persistent model, session, KV, worker, and telemetry
-authority.
+`yvex serve` owns the persistent model, session, KV, worker, and telemetry
+lifecycle within the single `yvex` executable.
 
 ## Code and contracts
 
@@ -171,10 +186,10 @@ Valid types are `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`,
 `ci`, and `chore`. Use the narrow semantic owner as scope. Milestone IDs are
 not commit subjects.
 
-A pull request must state:
+A pull request must state, with detail proportional to the change:
 
 - problem and owned boundary;
-- implementation and intentional non-changes;
+- implementation and affected contracts;
 - production command/API reachability, or the exact non-applicability reason;
 - QA plan identity, required lanes, structured result summary, and any blocked
   mandatory evidence;
@@ -203,10 +218,10 @@ A fixture is not a complete text path. A complete artifact is not a supported
 artifact. Component timing is not a model benchmark. OpenAI-compatible JSON is
 not model evaluation. One successful request is not release qualification.
 
-Before advancing a milestone, classify every unresolved item as a gate blocker,
-boundary incompleteness, evidence gap, deferred depth, optimization debt,
-generalization debt, or external blocker according to `AGENTS.md`. Only an
-accepted update to `ROADMAP.md` changes the active macro boundary.
+Before advancing a milestone, report unresolved blockers and evidence gaps,
+the progression decision, and whether downstream work can safely proceed as
+required by `AGENTS.md`. Only an accepted update to `ROADMAP.md` changes the
+active macro boundary.
 
 ## Security and private data
 
@@ -215,8 +230,20 @@ service environments, private filesystem paths, raw telemetry, or model
 payloads. Default logs and errors must not expose prompt/output content,
 filesystem layout, credentials, or internal memory.
 
-The current server is local and loopback-only. Do not expose it remotely or
-claim authentication/TLS without a separately admitted security boundary.
+The [security policy](SECURITY.md) owns vulnerability reporting and the local
+trust boundary, including the unauthenticated loopback HTTP listener.
+
+## License and attribution
+
+Contributions to YVEX's original code and documentation are made under the
+repository's [MIT license](LICENSE). Submit only material you have the right
+to contribute. Preserve third-party copyright and license notices and identify
+any imported code or data, its source, and its terms in the pull request and
+[NOTICE.md](NOTICE.md) where applicable.
+
+Model weights, tokenizer assets, datasets, and external tools retain their own
+terms. Their availability or successful execution does not place them under
+YVEX's license. Packaged distributions must retain `LICENSE` and `NOTICE.md`.
 
 ## Where information belongs
 
@@ -224,6 +251,9 @@ claim authentication/TLS without a separately admitted security boundary.
 | --- | --- |
 | current milestones, dependency order, gates, non-claims | `ROADMAP.md` |
 | repository ownership and contribution invariants | `AGENTS.md` |
+| vulnerability reporting and local trust boundary | `SECURITY.md` |
+| usage help and public bug reporting | `SUPPORT.md` |
+| software license and third-party attribution | `LICENSE` and `NOTICE.md` |
 | documentation classes and update policy | `docs/development/documentation-policy.md` |
 | repository terminology and invariants | `AGENTS.md` and owning C interfaces |
 | implemented system architecture | `docs/architecture/` |

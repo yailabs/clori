@@ -207,7 +207,7 @@
     },
     {
       "id": "documentation-only",
-      "patterns": ["docs/**", "README.md", "CHANGELOG.md", "ROADMAP.md", "CONTRIBUTING.md", "AGENTS.md"],
+      "patterns": ["docs/**", "README.md", "CHANGELOG.md", "ROADMAP.md", "CONTRIBUTING.md", "AGENTS.md", "LICENSE", "NOTICE.md", "SECURITY.md", "SUPPORT.md", "CODE_OF_CONDUCT.md", ".github/ISSUE_TEMPLATE/**", ".github/dependabot.yml"],
       "lanes": ["structural"],
       "tests": [],
       "reason": "documentation changes require ownership, links, project-control, and architecture checks only"

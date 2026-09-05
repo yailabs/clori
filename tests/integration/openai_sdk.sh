@@ -4,8 +4,14 @@ set -eu
 
 YVEX_OPENAI_ADAPTER=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}
 YVEX_OPENAI_HOST=${YVEX_OPENAI_HOST:-build/tests/openai_host}
-YVEX_NODE_BIN=${YVEX_NODE_BIN:-/home/dgmothx/lab/bet-tennis/.tools/node/bin/node}
-YVEX_NPM_BIN=${YVEX_NPM_BIN:-/home/dgmothx/lab/bet-tennis/.tools/node/bin/npm}
+YVEX_NODE_BIN=${YVEX_NODE_BIN:-node}
+YVEX_NPM_BIN=${YVEX_NPM_BIN:-npm}
+for sdk_tool in uv curl "$YVEX_NODE_BIN" "$YVEX_NPM_BIN"; do
+    command -v "$sdk_tool" >/dev/null 2>&1 || {
+        printf 'OpenAI SDK prerequisite unavailable: %s\n' "$sdk_tool" >&2
+        exit 1
+    }
+done
 . tests/support/cleanup.sh
 
 root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-openai-sdk.XXXXXX")
@@ -52,7 +58,7 @@ test "$attempt" -lt 100
 
 YVEX_OPENAI_BASE_URL=$base uv run --no-project --with openai==2.50.0 \
     python tests/integration/openai_sdk.py
-PATH=$(dirname "$YVEX_NODE_BIN"):$PATH "$YVEX_NPM_BIN" install \
+PATH=$(dirname "$(command -v "$YVEX_NODE_BIN")"):$PATH "$YVEX_NPM_BIN" install \
     --prefix "$root/node" --no-save --ignore-scripts --silent openai@7.1.0
 YVEX_OPENAI_BASE_URL=$base \
 YVEX_OPENAI_NODE_MODULE=$root/node/node_modules/openai \

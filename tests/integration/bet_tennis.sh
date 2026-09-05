@@ -4,7 +4,7 @@ set -eu
 
 YVEX_OPENAI_ADAPTER=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}
 YVEX_OPENAI_HOST=${YVEX_OPENAI_HOST:-build/tests/openai_host}
-YVEX_BET_TENNIS_ROOT=${YVEX_BET_TENNIS_ROOT:-/home/dgmothx/lab/bet-tennis}
+: "${YVEX_BET_TENNIS_ROOT:?set the external bet-tennis checkout explicitly}"
 . tests/support/cleanup.sh
 
 root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-openai-bet-tennis.XXXXXX")

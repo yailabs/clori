@@ -14,6 +14,10 @@ contracts, operation, and evidence.
   engine, state, scheduler, backend, and evidence boundaries.
 - [Contributing](../CONTRIBUTING.md) — build, tests, review, and safe shared
   development.
+- [Support](../SUPPORT.md) and [security](../SECURITY.md) — usage help,
+  private vulnerability reporting, and the local trust boundary.
+- [License](../LICENSE) and [notices](../NOTICE.md) — software and third-party
+  attribution.
 
 ## Architecture and contracts
 

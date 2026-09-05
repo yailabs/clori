@@ -15,6 +15,9 @@ REQUIRED = {
     "README.md",
     "ROADMAP.md",
     "CONTRIBUTING.md",
+    "NOTICE.md",
+    "SECURITY.md",
+    "SUPPORT.md",
     "CHANGELOG.md",
     "AGENTS.md",
     "docs/README.md",
@@ -132,6 +135,9 @@ def check_current_truth(paths: set[str]) -> None:
             continue
         if "Active Next:" in text:
             active.append(relative)
+        if relative in {"README.md", "CONTRIBUTING.md", "SECURITY.md", "SUPPORT.md"}:
+            if "`yvexd`" in text:
+                fail(f"public guidance names the retired daemon executable: {relative}")
         if (
             "PROJECT.md" in text
             and relative != "ROADMAP.md"

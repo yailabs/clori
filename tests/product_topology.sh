@@ -12,6 +12,8 @@ test ! -e ./yvex-openai
 test ! -e "$BUILD_DIR/package/product/bin/yvex-dev"
 test ! -e "$BUILD_DIR/package/product/bin/yvex-openai"
 test ! -e "$BUILD_DIR/package/developer"
+cmp LICENSE "$BUILD_DIR/package/product/share/yvex/LICENSE"
+cmp NOTICE.md "$BUILD_DIR/package/product/share/yvex/NOTICE.md"
 test "$(find "$BUILD_DIR/package/product/bin" -maxdepth 1 -type f -perm /111 \
     -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" = 'yvex '
 

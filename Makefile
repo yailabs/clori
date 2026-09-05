@@ -451,7 +451,7 @@ lib: $(LIBYVEX)
 
 client: generate-operator-registry $(YVEX_BIN)
 
-package: client config/package_manifest.tsv NOTICE.md
+package: client config/package_manifest.tsv LICENSE NOTICE.md
 	@set -eu; \
 	package_root='$(BUILD_DIR)/package'; \
 	package_dir='$(BUILD_DIR)/package/product'; \
@@ -459,7 +459,7 @@ package: client config/package_manifest.tsv NOTICE.md
 	if test -d "$$package_root"; then find "$$package_root" -depth -mindepth 1 -delete; fi; \
 	mkdir -p "$$package_dir/bin" "$$package_dir/share/yvex"; \
 	cp '$(YVEX_BIN)' "$$package_dir/bin/yvex"; \
-	cp config/package_manifest.tsv NOTICE.md "$$package_dir/share/yvex/"; \
+	cp config/package_manifest.tsv LICENSE NOTICE.md "$$package_dir/share/yvex/"; \
 	printf '%s\n' 'yvex package: command and foreground model server' \
 		> "$$package_dir/share/yvex/profile"; \
 	commit=$$(git rev-parse HEAD); \

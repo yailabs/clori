@@ -456,6 +456,8 @@ report semantics.
   repository invariants.
 - [Contributing](CONTRIBUTING.md),
   [roadmap](ROADMAP.md), and [release target](docs/releases/v0.1.md).
+- [Support](SUPPORT.md) and [security policy](SECURITY.md) — help, private
+  vulnerability reports, and the local trust boundary.
 
 ## Current limits
 
@@ -482,6 +484,7 @@ supported artifact until every later gate closes.
 
 ## License
 
-YVEX is licensed under [`LICENSE`](LICENSE). Third-party notices are in
+YVEX's original code and documentation use the [MIT license](LICENSE).
+Third-party data notices and separately licensed model assets are explained in
 [`NOTICE.md`](NOTICE.md). Public changes are recorded in
 [`CHANGELOG.md`](CHANGELOG.md).
