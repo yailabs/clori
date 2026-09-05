@@ -70,3 +70,7 @@ reproducibility or independently verified remote availability is established.
 Publication, hardware qualification and eviction policy are not implied by
 storage adoption. Model payloads, local catalogs, caches and generated evidence
 stay outside Git.
+
+[Release evidence](model-release.md) projects these owners into exact publication
+candidates. Storage membership and working-set policy do not grant release
+readiness.

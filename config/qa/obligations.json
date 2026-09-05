@@ -8,6 +8,13 @@
   },
   "change_classes": [
     {
+      "id": "model-release",
+      "patterns": ["tools/model_release.py", "tests/model_release.py"],
+      "lanes": ["fast", "structural"],
+      "tests": ["property.model-release"],
+      "reason": "Release projections reject stale bytes, wrong source, incomplete components and borrowed validation"
+    },
+    {
       "id": "selective-ssm-source-and-state",
       "patterns": ["src/model/families/mamba2.c", "src/graph/families/mamba2.c", "include/yvex/internal/families/mamba2.h", "src/model/semantic_decoder.c", "include/yvex/internal/semantic_decoder.h", "src/graph/state_space.c", "include/yvex/internal/state_space.h", "tests/unit/state_space.c", "tests/unit/mamba2.c", "tests/reference/selective_ssd.py"],
       "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],
