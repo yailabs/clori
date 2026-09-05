@@ -28,10 +28,10 @@ curated explanation, not runtime evidence.
 
 `yvex` has three mechanically separated lanes:
 
-- the runtime-client lane uses the private local protocol for chat, one-shot
-  generation, runtime administration, sessions, live model inspection,
+- the runtime-client lane uses the private local protocol for chat,
+  runtime administration, sessions, live model inspection,
   cancellation, and the single human/JSON log surface;
-- the foreground `server` lane owns the persistent multi-engine host and its
+- the foreground `serve` lane owns the persistent multi-engine host and its
   independently loaded engine generations;
 - the finite offline-engine lane calls admitted library owners for compilation,
   artifact operations, inspection, direct component execution, profiling, and
@@ -100,15 +100,11 @@ aliases for directories.
 | OpenAI-compatible projection | `src/server/openai/` and `src/provider/` |
 | Command metadata and projections | `config/operator/registry.json`, generated descriptors, `src/cli/` |
 
-DeepSeek has two irreducible implementation projections:
-`src/model/families/deepseek_v4.c` interprets source and logical facts,
-and `src/graph/families/deepseek_v4.c` composes the family execution recipe.
-The compiled encoded-attention job is complete enough for
-`src/backend/cuda/attention.c` to execute it without recovering DeepSeek topology.
-Their shared basename identifies the same family while their directories and
-machine-readable owners identify distinct dependency levels. Runtime remains
-family-neutral; a concrete family hierarchy beneath the runtime namespace or a
-backend projection duplicating the common operation is forbidden.
+Family source interpretation and graph recipes occupy separate compilation
+levels, described by [family integration](../model-families/integration.md).
+Generic runtime and backend owners consume typed plans, not family-name
+switches. The current pure-SSM decoder gap remains an explicit admission
+barrier rather than an alternate runtime.
 
 The exact source-file ownership manifest is
 [`config/source_owners.tsv`](../../config/source_owners.tsv). It is also the
@@ -119,11 +115,10 @@ ownership rules are in
 
 ## Application surfaces
 
-The private local protocol is version 13. It carries typed host and engine
-lifecycle operations, exact engine-generation routing, streamed channels,
-status, session and partial-turn results, progress, terminal results, and
-refusals. Every earlier version, including v12, is refused rather than
-interpreted under the current fixed-layout contract.
+The [private local protocol](../contracts/local-protocol.md) carries typed
+host/engine lifecycle, exact generation routing, multipart content, leases,
+streamed channels, status, progress, and refusals. Incompatible versions are
+rejected before fixed-layout records are interpreted.
 The in-process OpenAI adapter translates the bounded compatibility profile to
 the same protocol/session semantics. Neither transport enters graph, tokenizer,
 sampling, or model APIs directly.
@@ -135,20 +130,13 @@ REPL slash schemas consume that one authority.
 
 ## Current implementation scope
 
-The admitted DeepSeek-V4-Flash-DSpark vertical reaches target-only and
-target-verified speculative text through one complete artifact, binding,
-engine generation, scheduler, and session authority on CPU and the admitted mixed GB10
-path. Candidate tokens remain private until the complete target admits an
-accepted prefix; native and HTTP clients see only committed text and usage.
+The [family boundary table](../model-families/integration.md#current-family-boundaries)
+distinguishes DeepSeek and Qwen text execution, MiniMax composite media
+execution, and Mamba2's source/component-only boundary. Their shared owners
+do not make their evidence stages interchangeable.
 
-The admitted MiniMax-H3 FL2VA vertical reaches one bounded typed media result
-through the same foreground server, session, protocol, artifact and telemetry
-owners. Its logical hosted model is composite: independently authenticated
-component artifacts use staged residency and one transactional publication
-without introducing a family-specific server or runtime.
-
-The current CUDA path keeps target and draft model execution on CUDA while
-tokenizer work, sampling, protocol handling, and orchestration remain
-host-owned. This is not a claim of DSpark acceleration, complete device
-residency, model evaluation, release benchmark performance, or release
-qualification. Current gates remain in [`ROADMAP.md`](../../ROADMAP.md).
+The [runtime architecture](runtime.md) owns generation, selection,
+transactional state, and measurement. Admitted CUDA selection can retain
+resident logits while tokenizer, RNG coordination, protocol, and orchestration
+remain host-owned. There is no all-on-device, quality, release benchmark, or
+release-qualification implication. [ROADMAP](../../ROADMAP.md) owns those gates.

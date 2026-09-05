@@ -98,13 +98,13 @@
   <text class="text" x="1465" y="207">Raw trace</text>
   <text class="small" x="1465" y="228">typed JSONL events</text>
   <rect class="orange-box" x="1380" y="270" width="170" height="65" rx="10"/>
-  <text class="text" x="1465" y="297">Engine watch</text>
+  <text class="text" x="1465" y="297">Host logs</text>
   <text class="small" x="1465" y="318">compact operations</text>
   <rect class="orange-box" x="1380" y="360" width="170" height="65" rx="10"/>
   <text class="text" x="1465" y="387">yvex chat</text>
   <text class="small" x="1465" y="408">native interactive client</text>
   <rect class="orange-box" x="1380" y="450" width="170" height="65" rx="10"/>
-  <text class="text" x="1465" y="477">host · engine · session</text>
+  <text class="text" x="1465" y="477">host · model · session</text>
   <text class="small" x="1465" y="498">native admin clients</text>
   <rect class="orange-box" x="1380" y="540" width="170" height="75" rx="10"/>
   <text class="text" x="1465" y="568">OpenAI clients</text>

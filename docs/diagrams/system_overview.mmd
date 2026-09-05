@@ -27,16 +27,16 @@ flowchart LR
 
     subgraph interact[D. Interact]
         raw[Raw trace]
-        watch[Engine watch]
+        logs[Host logs]
         chat[yvex chat]
-        admin[yvex host / engine / session]
+        admin[yvex host / model / session]
         apps[SDKs / applications]
     end
 
     artifact -->|load + specialize| sessions
     worker <--> graph
     events --> raw
-    events --> watch
+    events --> logs
     protocol <--> chat
     protocol <--> admin
     openai <--> apps

@@ -1,63 +1,56 @@
 # YVEX Documentation
 
-Code and tests own implemented behavior. [ROADMAP](../ROADMAP.md) owns the live
-project sequence. This page is only the compact route to current architecture,
-contracts, operation, and evidence.
+Code, schemas, and tests own implemented behavior. This page routes readers
+to current information owners; it does not duplicate their status.
 
-## Start here
+## Entry and project method
 
-- [Public README](../README.md) — what YVEX does, current evidence, quick start,
-  and limits.
-- [Operator runbook](operator-runbook.md) — discover or register a package,
-  start the host, load an engine, run work, inspect it, and unload it.
-- [Implemented system](architecture/system.md) — package, specialization,
-  engine, state, scheduler, backend, and evidence boundaries.
-- [Contributing](../CONTRIBUTING.md) — build, tests, review, and safe shared
-  development.
-- [Support](../SUPPORT.md) and [security](../SECURITY.md) — usage help,
-  private vulnerability reporting, and the local trust boundary.
-- [License](../LICENSE) and [notices](../NOTICE.md) — software and third-party
-  attribution.
+| Question | Owner |
+| --- | --- |
+| What is YVEX and how do I start? | [README](../README.md) |
+| Where is the project and what comes next? | [ROADMAP](../ROADMAP.md) |
+| How do I contribute? | [CONTRIBUTING](../CONTRIBUTING.md) |
+| What rules must an engineering agent obey? | [AGENTS](../AGENTS.md) |
+| How does evidence drive agent-assisted progression? | [Agentic engineering](development/agentic-engineering.md) |
+| Where do I get help or report vulnerabilities? | [Support](../SUPPORT.md), [security](../SECURITY.md) |
+| What terms and attribution apply? | [License](../LICENSE), [notices](../NOTICE.md) |
 
 ## Architecture and contracts
 
-| Subject | Current owner |
+| Subject | Owner |
 | --- | --- |
-| Compilation and immutable package | [Compilation architecture](architecture/compilation.md) |
-| Engine/runtime/state/resources | [Runtime architecture](architecture/runtime.md) |
-| Command and operation projections | [Command architecture](architecture/commands.md) |
-| Model-family integration | [Family integration](model-families/integration.md) |
-| DeepSeek vertical | [DeepSeek-V4-Flash](model-families/deepseek-v4-flash.md) |
-| MiniMax composite vertical | [MiniMax-H3](model-families/minimax-h3.md) |
-| Mamba2 source/state boundary (not executable) | [Mamba2](model-families/mamba2.md) |
+| System boundaries and lifetimes | [System](architecture/system.md) |
+| Source-to-package lowering and binding | [Compilation](architecture/compilation.md) |
+| Engine execution, sessions, state, and resources | [Runtime architecture](architecture/runtime.md) |
+| Command grammar and generated projections | [Commands](architecture/commands.md) |
+| External terminal-editor ownership and pin | [REPLAI decision](decisions/0007-external-terminal-editor.md) |
+| Family integration and accepted boundaries | [Integration](model-families/integration.md) |
+| Family-specific facts and evidence barriers | [DeepSeek](model-families/deepseek-v4-flash.md), [MiniMax](model-families/minimax-h3.md), [Mamba2](model-families/mamba2.md) |
 | Managed model storage and location | [Model storage](contracts/model-storage.md) |
-| Artifact admission | [Artifact contract](contracts/artifacts.md) |
-| Runtime behavior and failure | [Runtime contract](contracts/runtime.md) |
-| Local transport | [Local protocol v20](contracts/local-protocol.md) |
-| Installed and internal C ABI | [C API](contracts/c-api.md) |
-| Events and observability | [Events and telemetry](contracts/events-telemetry.md) |
-| OpenAI-compatible HTTP | [Compatibility profile](openai-compatibility.md) |
+| Artifact admission and lifecycle | [Artifact contract](contracts/artifacts.md) |
+| Runtime behavior and failure semantics | [Runtime contract](contracts/runtime.md) |
+| Native wire contract | [Local protocol](contracts/local-protocol.md) |
+| Installed and cross-subsystem records | [C API](contracts/c-api.md) |
+| Event and measurement semantics | [Events and telemetry](contracts/events-telemetry.md) |
+| Bounded compatibility HTTP | [OpenAI compatibility](openai-compatibility.md) |
 
-## Development and release
+Architecture explains organization; contracts specify interfaces and invariants.
+Family records do not replace either with another runtime description.
 
-| Subject | Current owner |
+## Operation, development, and release
+
+| Subject | Owner |
 | --- | --- |
-| Repository engineering rules | [AGENTS](../AGENTS.md) |
-| Source/build ownership | [Source ownership](development/source-ownership.md) |
-| QA lanes and evidence reports | [QA](development/qa.md) |
-| GB10 measurement targets | [GB10 targets](development/gb10-targets.md) |
-| External reference provenance | [Reference baseline](development/reference-baseline.md) |
-| Documentation admission | [Documentation policy](development/documentation-policy.md) |
-| Durable current decisions | [Architecture decisions](decisions/README.md) |
-| Release gate meanings | [Release doctrine](releases/doctrine.md) |
-| v0.1 target | [v0.1 record](releases/v0.1.md) |
+| Startup, acquisition, sessions, media, diagnosis, shutdown | [Operator runbook](operator-runbook.md) |
+| Source membership and build projection | [Source ownership](development/source-ownership.md) |
+| QA lanes, prerequisites, and evidence | [QA](development/qa.md) |
+| Hardware measurement targets and empirical barriers | [GB10 targets](development/gb10-targets.md) |
+| Independent reference provenance | [Reference baseline](development/reference-baseline.md) |
+| Durable decision rationale | [ADRs](decisions/README.md) |
+| Release gate semantics | [Release doctrine](releases/doctrine.md) |
+| Version-specific release scope | [v0.1](releases/v0.1.md) |
 | Public changes | [CHANGELOG](../CHANGELOG.md) |
 
-One selected record retains the empirical boundary immediately preceding the
-current work:
-
-- [DeepSeek GB10 representation barrier](worklog/2026-08-28-deepseek-gb10-matrix-tile-execution.md).
-
-They are evidence history, not live architecture or project control. Detailed
-retired audits, migrations, milestone plans, and routine worklogs remain
-available through Git history instead of the current documentation tree.
+Routine worklogs and retired implementation plans are recoverable from Git.
+Documentation admission and history policy belong to the engineering method,
+not a separate documentation registry.

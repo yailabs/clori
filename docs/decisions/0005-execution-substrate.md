@@ -3,6 +3,11 @@
 Date: 2026-08-03
 Status: accepted
 
+The version numbers and migration context below belong to this decision's
+original checkpoint. Current package storage versus deployment-specialization
+ownership is specified by [compilation](../architecture/compilation.md#runtime-binding);
+the [local protocol](../contracts/local-protocol.md) owns current wire semantics.
+
 ## Context
 
 The first complete DeepSeek-V4-Flash-DSpark vertical proved source-to-text

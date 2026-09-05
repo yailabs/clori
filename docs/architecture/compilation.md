@@ -198,31 +198,17 @@ The fixture adds no production model family and does not establish support, qual
 performance for a real model. Its generated artifact and binding remain temporary build evidence,
 never repository authority.
 
-## Current DeepSeek compilation
+## Current family lowering
 
-The current `deepseek4-v4-flash-dspark` source inventory contains 72,317
-tensors across 48 shards. Exact coverage lowers those source contributions to
-1,409 terminal descriptors: 1,328 target-trunk descriptors and 81 DSpark
-descriptors. The 3,130-source-tensor and 49-terminal delta from the superseded
-checkpoint is explicit; no old-source descriptor remains current authority.
+Exact source inventories, role counts, and physical-policy limitations belong
+to the [family records](../model-families/integration.md#current-family-boundaries).
+Shared compilation preserves source derivation and shared operands instead of
+duplicating bytes for multiple plans.
 
-Target and draft scopes preserve target-layer, feature-tap, draft-stage,
-expert, scale-companion, and shared-resource coordinates. The Transformation
-IR records sharing instead of duplicating payload when two execution plans
-consume one tensor. DSpark behavior is typed metadata and plan input, never a
-writer-side filename convention.
-
-The bootstrap physical profile is
-`deepseek-v4-flash-dspark-bootstrap-q2-v1`. It preserves admitted mixed
-IQ2_XXS/Q2_K decisions only at the level of target roles and assigns explicit
-conservative precision to new draft control, normalization, feature, Markov,
-confidence, and expert roles. The retained DS4 importance matrix is an
-identity-bound predecessor prior, not calibration of the DSpark payload; the
-two snapshots contain different bytes even for at least one shared tensor
-name. Fresh DSpark calibration remains owned by later physical optimization
-and evaluation. The bootstrap artifact and binding remain external
-identity-bound assets. This profile establishes executable correctness, not
-the release variant, quality parity, a benchmark, or optimized GB10 policy.
+The typed architecture is not yet a complete decoder for every sequence
+mixer. Mamba2 has source and recurrent-component evidence but no admitted
+SSM-only artifact/decoder binding. Mandatory FFN or rotary/KV assumptions may
+not be satisfied with fictitious roles to manufacture READY.
 
 ## Repository boundary
 

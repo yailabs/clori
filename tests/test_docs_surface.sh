@@ -6,10 +6,6 @@ fail() {
   exit 1
 }
 
-require_file() {
-  test -f "$1" || fail "missing file: $1"
-}
-
 require_text() {
   grep -nF -- "$2" "$1" >/dev/null || fail "$1 missing required text: $2"
 }
@@ -20,55 +16,8 @@ reject_text() {
   fi
 }
 
-required_files='
-README.md
-CHANGELOG.md
-AGENTS.md
-ROADMAP.md
-CONTRIBUTING.md
-NOTICE.md
-docs/README.md
-docs/architecture/system.md
-docs/architecture/compilation.md
-docs/architecture/runtime.md
-docs/architecture/commands.md
-docs/model-families/integration.md
-docs/model-families/deepseek-v4-flash.md
-docs/model-families/minimax-h3.md
-docs/contracts/artifacts.md
-docs/contracts/runtime.md
-docs/contracts/local-protocol.md
-docs/contracts/events-telemetry.md
-docs/contracts/c-api.md
-docs/openai-compatibility.md
-docs/operator-runbook.md
-docs/development/documentation-policy.md
-docs/development/source-ownership.md
-docs/development/qa.md
-docs/releases/doctrine.md
-docs/releases/v0.1.md
-'
-for file in $required_files
-do
-  require_file "$file"
-done
-
-retired_paths='
-PROJECT.md
-MODEL_ARTIFACTS.md
-docs/audits
-docs/doctrine
-docs/migrations
-docs/milestones
-config/documentation_owners.tsv
-config/frozen_documents.tsv
-.agents/skills/engineering-worklog
-'
-for retired in $retired_paths
-do
-  test ! -e "$retired" || fail "retired governance surface exists: $retired"
-done
-
+# Inventory, links, protocol identity, assets and retired paths have one owner.
+python3 tests/documentation_architecture.py
 require_text README.md '## Why YVEX'
 require_text README.md '## Quick start'
 require_text README.md '## Product boundary'
@@ -94,27 +43,10 @@ require_text docs/model-families/integration.md '# Model-Family Integration Cont
 require_text docs/contracts/artifacts.md '# Artifact and Admission Contract'
 require_text docs/contracts/runtime.md 'A client connection is not a session.'
 require_text docs/contracts/runtime.md 'no explicit exact request silently changes'
-require_text docs/contracts/local-protocol.md 'YVEX_LOCAL_PROTOCOL_VERSION = 20'
 require_text docs/contracts/events-telemetry.md 'No consumer scrapes another renderer'
 require_text docs/contracts/c-api.md '## Compiled Operator Registry Boundary'
 require_text docs/openai-compatibility.md 'YVEX never executes application tools.'
 require_text docs/operator-runbook.md '## First verified startup'
-require_text docs/development/documentation-policy.md 'Git history is their archive.'
-
-diagram_files='
-docs/diagrams/system_overview.svg
-docs/diagrams/physical_compilation.svg
-docs/diagrams/runtime_host_sessions.svg
-docs/diagrams/autoregressive_execution.svg
-'
-for svg in $diagram_files
-do
-  require_text "$svg" '<svg '
-  require_text "$svg" '<title '
-  require_text "$svg" '<desc '
-  require_text "$svg" 'role="img"'
-done
-
 test ! -e ./yvexd || fail 'retired hidden server executable remains'
 if test -x ./yvex; then
   help=$(./yvex)
@@ -166,5 +98,3 @@ printf '%s\n' "$engine_help" | grep -F -- 'yvex engine load [PROFILE]' >/dev/nul
   fail 'engine help lacks explicit profile load'
 printf '%s\n' "$engine_help" | grep -F -- 'yvex engine unload ENGINE' >/dev/null ||
   fail 'engine help lacks independent unload'
-
-python3 tests/documentation_architecture.py

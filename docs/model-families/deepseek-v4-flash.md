@@ -165,13 +165,20 @@ explicit DSpark request fails closed when any draft tensor, plan, qtype,
 workspace, backend capability, or policy requirement is absent. It never
 silently falls back to target-only.
 
+For explicit reasoning, the source-authored terminator ends the speculative
+shape; the final channel continues with ordinary target decode. The
+`source-boundary` event reports boundary extent in `a`, target-only
+continuation in `b`, and replayed accepted target rows in `c` (required zero).
+This identity-bound sub-policy is not silent fallback.
+
 ## Current capability
 
-DeepSeek-V4-Flash-DSpark is the sole complete YVEX source-to-streamed-text vertical.
+DeepSeek-V4-Flash-DSpark has a complete YVEX source-to-streamed-text path
+and is the only currently admitted target-verified speculative family.
 The hosted native, interactive, and bounded OpenAI-compatible paths
 consume one target-verified runtime authority. Target-only and DSpark modes,
 multi-turn reuse, cancellation, reset, and committed-only streaming are
-implemented under private local protocol v20. The admitted tokenizer/prompt
+implemented under the [current local protocol](../contracts/local-protocol.md). The admitted tokenizer/prompt
 profile also supports explicit reasoning high, maximum, and disabled policies
 through separate reasoning, final, tool, and error channels.
 
@@ -182,8 +189,9 @@ This record does not claim:
 - an optimized GB10 physical variant or a DSpark speedup;
 - native MXFP4/NVFP4 Tensor Core execution;
 - production load-aware confidence scheduling or continuous batching;
-- complete accelerator residency or complete device-side stochastic
-  sampling/tokenization;
+- complete accelerator residency or an entirely device-side generation path;
+  admitted CUDA greedy/stochastic selection and speculative correction retain
+  common transactional RNG and host tokenizer ownership;
 - multi-device or distributed serving;
 - model behavior or quality evaluation or quality parity;
 - a public full-model benchmark;

@@ -1,329 +1,105 @@
 # Changelog
 
-All externally meaningful YVEX changes are recorded here. The project is not
-yet released; entries remain under **Unreleased** until release qualification
-and a version tag are accepted.
-
-This changelog follows the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
-without treating every internal milestone, test, or refactor as a public
-change. Git history preserves implementation chronology.
+Externally meaningful changes remain under **Unreleased** until release
+qualification and a version tag are accepted. This is a consolidated public
+change record, not an implementation diary; Git preserves intermediate
+protocol migrations, experiments, and refactor chronology. Current gate state
+belongs to [ROADMAP](ROADMAP.md).
 
 ## Unreleased
 
-### Added
+### Model and source lifecycle
 
-- Provider-neutral remote model discovery with Hugging Face search and exact-revision
-  inspection, typed safetensors/GGUF representation records, and a table-first local
-  lifecycle catalog that keeps acquired source, package readiness, and live host engine state
-  distinct.
-- DeepSeek-V4-Flash-DSpark as the sole current DeepSeek source target, with
-  target-only reference generation and target-verified speculative generation
-  in the same resident runtime model and session authority.
-- Complete server-backed DeepSeek-V4-Flash source-to-streamed-text execution
-  through native and bounded OpenAI-compatible local surfaces.
-- Exact server-owned multi-turn sessions with committed-prefix reuse,
-  cancellation, partial-progress truth, and generation-bound engine lifecycle
-  under one persistent host.
-- Bounded copy-on-write session fork through `yvex session fork SOURCE CHILD
-  MAXIMUM_SHARED_BYTES`: immutable committed state pages are shared while token,
-  RNG, decoder, transcript and conversation state remain independently mutable.
-- Capacity-admitted independent-session scheduling with one keyed mutation
-  authority, bounded worker concurrency, explicit `--parallel N` startup, and
-  protocol v9 facts that distinguish it from still-open continuous batching.
-- Registry-driven command discovery, advanced help, JSON discovery, and Bash,
-  Zsh, and Fish completion.
-- One client-owned linear console at `yvex`. It consumes typed protocol/catalog
-  facts for live prefill, committed output, turn metrics, runtime inspection,
-  cancellation, reconnect, and bounded terminal restoration without reading
-  backend-private state. The foreground server owns host lifetime and log
-  projection only; deterministic `yvex host ...` and `yvex engine ...` commands
-  own lifecycle control.
-- Exact source-authored chat/non-think, think-high and think-max conversation
-  encoding, including tool continuity and drop-thinking multi-turn behavior.
-  Typed reasoning, final, tool and error streams remain separate; REPL and raw
-  output preserve their respective terminal and byte contracts, and the OpenAI
-  v2 projection exposes explicit model output as `reasoning_content` without
-  inferring or exposing hidden chain of thought.
-- A source-derived model-execution descriptor and identity-bound hardware,
-  workload, per-state capacity, page-geometry and phase-roofline contracts for
-  GB10 execution planning.
-- Stable virtual host-state spans whose physical pages are committed from the
-  admitted per-class capacity plan, with bounded candidate/committed preflight,
-  exact reset release, and refusal before an over-budget layer becomes visible.
-  CUDA Driver-VMM residency mirrors that envelope with stable device addresses,
-  on-demand physical granules, bounded visible-span transfers and exact reset
-  decommit. Full-model deep-context product qualification remains open.
-- An operator-reachable, identity-bound CUDA bandwidth fixture that records raw
-  streaming, D2D and coherent-host samples instead of treating peak hardware
-  bandwidth as measured evidence.
-- An identity-bound phase roofline ledger on real CUDA generation. Audit and
-  JSON output distinguish measured facts from unavailable ones. Target-only
-  prefill/decode and output projection publish exact active-weight and launch
-  counts. Target-only transformer phases now publish exact H2D/D2H/D2D
-  movement and synchronization, including feature and status transfers;
-  output projection publishes its exact H2D/D2H movement and synchronization.
-  DSpark draft/verification now publish exact launch, H2D/D2H/D2D movement and
-  synchronization facts across their transformer and output-head work.
-  Accepted-prefix promotion publishes exact state-residency H2D,
-  synchronization and zero kernel/D2H/D2D facts; repeated occupancy samples
-  use a checked work-weighted mean instead of additive accumulation. CUDA
-  output-head rows now publish complete compulsory weight, activation,
-  temporary and zero-state byte facts, giving that phase a real memory lower
-  bound without estimating traffic from allocation capacity. Compatible
-  width-N CUDA rows now share one encoded-head execution, while the ordered
-  logits result owns one aggregate physical-facts
-  record and incompatible inputs retain an explicit row-local fallback.
-  Device-native output batches now publish contiguous identity-bound logits
-  row views for downstream CUDA selection without allocating or downloading a
-  complete host vocabulary buffer.
-- Production CUDA MoE now routes a complete compatible row batch, orders its
-  row/expert pairs by expert, executes resident routed and shared packs through
-  one width-N backend transaction, and derives workspace from admitted layer
-  qtypes and row capacity. Expert scores are evaluated cooperatively, while
-  source tie-breaking and weight accumulation remain ordered. Expert-major
-  pair counts and stable pair emission are likewise parallel rather than owned
-  by one device lane. Selected routes and weights remain device-local;
-  each layer enqueues only bounded status and unique-expert facts, and one
-  transformer-stack completion validates them and reconstructs exact active
-  bytes. A proved final-stage session-stream barrier avoids a redundant wait.
-  Immediate and token-local CPU/CUDA execution remain the explicit portable
-  audit/reference oracles. Resident-weight oracle execution no longer reserves
-  an unused expert staging range. Compatible weight qtypes no longer select Q8
-  activation compression implicitly; production retains F32 activations while
-  full forensic evidence separately selects canonical-order accumulation.
-  Physical Execution IR v3 now seals both the sparse row-regime and SM121
-  Tensor Core expert kernels plus their measured row-population crossover;
-  runtime binding v13 persists that policy, runtime resolves one concrete
-  kernel from admitted request geometry, and CUDA no longer owns a hidden
-  threshold or silent fallback.
-- CUDA mHC envelope gates, combination rows and Sinkhorn row/column passes now
-  execute across their independent stream lanes. Ordered reductions and FP64
-  source transforms remain intact, while BF16 residual-square accumulation no
-  longer consumes FP64 issue bandwidth; the full 43-layer CPU/CUDA oracle stays
-  bit-exact.
-- CUDA DeepSeek RMSNorm now reduces independent BF16 residual squares across
-  the block instead of serializing FP64 accumulation through one lane. The
-  inverse, encoded scale and BF16 publication contracts remain unchanged, and
-  the full attention oracle remains bit-exact.
-- CUDA DeepSeek attention now uses one stable online-softmax sweep over visible
-  local and compressed history. Each source-ordered dot product is consumed
-  once, with prior value lanes renormalized when the running maximum changes;
-  the complete CPU/CUDA oracle remains inside its admitted numerical contract.
-- Normal production CUDA attention now stages completed non-prefix sequence
-  state directly into a session-owned candidate bank through ordered D2D
-  copies. Commit flips the committed bank, while abort and later reuse clone
-  the exact committed state. The retained host oracle no longer causes a
-  duplicate state upload; prefix-addressable speculation and audit/forensic
-  paths keep their explicit host materialization. Logical state identity is
-  token- and position-derived, independent of whether the same prefix arrived
-  through target-only execution, verification or accepted-prefix promotion.
-- Normal non-prefix attention now executes local, compressed and indexer value
-  history directly against pre-admitted CUDA state pages. Position and rolling
-  projections remain explicit, and local-ring wrap retains its bounded
-  workspace instead of writing beyond the resident component.
-- Short CUDA qtype rows now form geometry-selected two-, four- or eight-lane
-  groups across Q8_0, Q2_K, IQ2_XXS and MXFP4 activation dots. Only integer
-  terms are redistributed; every encoded block is reconstructed before the
-  original floating-point reduction order, preserving exact output while
-  filling lanes that the row geometry would otherwise leave idle.
-- IQ2_XXS CUDA sign reconstruction now derives the encoded parity bit with the
-  hardware population-count primitive instead of a serial bit-shift loop,
-  preserving exact qtype, attention and grouped-MoE results.
-- Wide F32 projections with at most 32 output rows now assign one CUDA block to
-  each row/input pair instead of leaving a single warp to traverse 16K source
-  values. Encoded qtypes retain their warp-owned geometry, while the complete
-  DeepSeek attention oracle continues to admit the optimized reduction.
-- Multi-row CUDA qtype projections now group compatible input rows around the
-  same encoded matrix row and tile wider batches explicitly. Output-head and
-  verification launches therefore preserve row locality without changing the
-  existing warp arithmetic or padding logical work.
-- Target-only production stochastic sampling now filters and selects directly
-  from resident CUDA logits. The host publishes the deterministic PCG advance
-  only after cancellation-safe validation. Production stochastic DSpark keeps
-  adjusted draft and target-verification rows resident, performs p/q acceptance
-  and residual correction on CUDA, then publishes RNG and state only after the
-  bounded facts reseal through the canonical acceptance identity. CPU and
-  audit/forensic profiles retain the complete-distribution host reference.
-- Production greedy DSpark verification now projects its complete target row
-  batch to CUDA-resident logits, selects every row through one width-N argmax
-  launch and one synchronization, and transfers only bounded aggregate facts. The
-  greedy draft path now keeps the shared-head base rows resident, fuses each
-  encoded Markov projection with its base row, and transfers only the selected
-  token and bounded status. Greedy CUDA now gathers the encoded Markov embedding
-  row directly from admitted residency and uploads only its bounded row ID. Its
-  normalized and pre-normalized drafter rows now remain device resident through
-  output-head and confidence projection; confidence consumes the resident hidden
-  and Markov views directly and transfers one scalar result. The portable host
-  distribution and confidence paths remain the CPU, audit/forensic and stochastic
-  oracles.
-- Production CUDA target-feature capture now averages source-selected mHC
-  residual streams directly into a transaction-owned token-major device
-  directory and transfers only bounded status. Feature projection consumes that
-  directory without re-upload, executes the resident encoded matrix and RMSNorm
-  without downloading the normalized rows, and feeds the draft core through an
-  identity-bound device view. Its unused host feature workspaces are no longer
-  allocated. Prefix-specific semantic identities bind device-only candidate and
-  promoted rows without a full-array host scan. CPU and audit/forensic profiles
-  retain explicit host feature oracles. Speculative prefill
-  contributes its merged target, projection and draft-core physical facts to the
-  phase roofline ledger.
-- The production CUDA transformer final stage now preserves an optional
-  pre-normalized BF16 row in device storage before applying output RMSNorm.
-  DSpark drafting materializes only that bounded hidden row instead of the
-  expanded residual streams and no longer recomputes the final stage on the
-  host; full evidence retains the independent CPU oracle.
-- Compulsory memory accounting now has one transactional internal fact owner.
-  CUDA embedding, attention, MoE and final projection contribute measured or
-  explicitly missing operations through transformer and decode aggregation;
-  target generation publishes a complete phase memory mask only when every
-  contributing operation is measured. Output-head reporting uses the same
-  representation instead of retaining duplicate mutable fields.
-- Physical-variant research can execute one exact tensor decision from a sealed
-  quantization plan and report bounded reconstruction evidence without emitting
-  a complete artifact. Source-native MXFP4 weights now use the shared Q8_K CUDA
-  activation path in dense, attention and grouped-MoE execution, preserving the
-  portable reference while candidate policies are filtered by role.
+- Provider-neutral discovery and exact-revision inspection, including Hugging
+  Face search and product acquisition of one coherent Safetensors or GGUF
+  representation. Consolidated and sharded alternatives are not blindly
+  downloaded together; dry-run and resumable operation control remain distinct
+  from preparation.
+- Separate acquired source, immutable package, READY deployment, and loaded
+  engine facts in the logical model catalog. Preparation cannot promote a
+  source-only family to executable support.
+- DeepSeek-V4-Flash-DSpark source-to-hosted text with target-only and
+  target-verified speculative execution under one model/state authority.
+- Qwen's admitted hybrid attention/recurrent text specialization and MiniMax's
+  staged composite media execution. Their different numerical and product
+  evidence limits remain in the [family records](docs/model-families/integration.md#current-family-boundaries).
+- Mamba2 exact acquired-source/role interpretation and portable transactional
+  selective-SSD component execution. This is partial support: no complete
+  decoder/artifact, READY deployment, or hosted generation.
 
-### Changed
+### Hosting and application surfaces
 
-- Advanced the installed `yvex_server_options` ABI to schema v4 for the
-  `maximum_engines` field added by persistent multi-engine hosting. The
-  historical v3 identity remains explicit and is refused before legacy bytes
-  can be reinterpreted; a deterministic C/C++ guard now binds current
-  versioned public records to their declared layouts.
-- Separated the installed server engine kind from semantic text execution
-  strategy. Engine schema v2 and runtime event schema v4 expose `text` versus
-  `media` independently from `target-only` versus `speculative`; local protocol
-  v16 refuses v15 and earlier peers instead of reinterpreting them.
-- Model hosting is now a persistent zero-engine `yvex serve` process. Explicit
-  `engine load`, `engine unload`, and `engine list` operations manage
-  identity-bound engine generations without restarting the private protocol or
-  OpenAI listener; native and OpenAI requests route to an exact loaded model.
-  Local protocol v16 carries engine lifecycle, routing, generation, and resource
-  facts.
-- Physical Execution IR v5 and runtime binding v15 retain stable package/storage
-  truth while one deployment specialization owns backend, hardware, activation,
-  implementation-class, width, and crossover choices. The explicit v14 reader
-  imports compatible canonical package records and refuses legacy derived-layout
-  requirements that cannot cross the new boundary truthfully.
-- MiniMax hosted media turns now send Unicode creative prompts directly to the
-  native tokenizer/conditioning pipeline under one identity-bearing YVEX
-  interactive preset. Protocol v16 carries typed first- and last-image
-  conditions, and the same FL2VA engine generation executes text-only,
-  first-frame, last-frame, or dual-anchor requests through Qwen3-VL vision,
-  Visual VAE encoding and condition-aware Omni execution. The removed hardcoded
-  questionnaire parses no creative words or numbers as execution controls;
-  progress remains server-authored control state with a typed media result.
-- Composite artifact startup now reuses the generic verified-reopen authority
-  independently for every component. Cold or invalid-cache opens fully verify
-  and publish or repair receipts, unchanged warm opens avoid complete payload
-  hashing, and selective fallback cannot admit mismatched bytes or imply
-  materialization or residency.
-- Hosted startup now reuses a content-addressed verified-reopen lease for an
-  unchanged local artifact snapshot and falls back to complete authentication
-  when cache evidence is absent, malformed, or stale. On admitted pageable
-  CUDA hardware the authenticated GGUF remains immutable execution backing,
-  eliminating the complete anonymous model allocation and copy. CUDA registers
-  that mapping once and publishes the returned device address without making a
-  whole-artifact prefetch a readiness condition; managed derived layouts retain
-  their explicit prefetch. Memory status distinguishes mapped artifact extent,
-  registration, managed prefetch, non-artifact host residency, accelerator
-  residency and process RSS.
-- Native generation renders explicit reasoning and final output as distinct
-  typed channels and flushes the completed model stream before metrics.
-- Model hosting now uses the explicit foreground `yvex serve` host plus
-  interactive `engine load` or scripted `engine load PROFILE`, and `engine unload ENGINE`. Status, engine inventory,
-  memory, logs and shutdown use the public `host` noun;
-  `host logs [--json]` is the sole observability stream.
-- Generation plan ABI v5 now binds the compiled workload-profile identity, so
-  CUDA phase-roofline evidence validates against its actual workload instead
-  of being rejected against the distinct per-request profiling identity.
-- Production CUDA attention now keeps completed activation rows in the
-  caller-owned device output; only audit and forensic profiles materialize the
-  duplicate numerical host rows.
-- CUDA kernel admission now binds and atomically owns multiple independently
-  compiled manifest-owned PTX/native modules under kernel-bundle identity v3;
-  the routed/shared MoE kernel family no longer shares one monolithic CUDA
-  translation unit with general device kernels.
-- CUDA attention graphs now refresh mutable state-bank inputs before capture
-  and replay, allowing allocation-stable graphs to survive committed-state
-  promotion without restoring stale state or recapturing each turn.
-- Production attention graph pieces now borrow the session execution stream
-  and defer to one fail-closed layer publication barrier instead of
-  synchronizing every captured piece. Audit and forensic timing retains
-  isolated immediate graph completion.
-- CUDA backends now own one non-blocking execution stream per session. Eager
-  attention and width-N MoE completion synchronize that stream instead of the
-  complete CUDA context, while legacy Driver configurations retain an
-  explicitly accounted context-wide fallback.
-- Greedy and stochastic CUDA selection now enqueue bounded result downloads
-  behind their kernels and complete only the owning session stream. The phase
-  ledger accounts stream and device-wide synchronization classes through one
-  checked aggregate without changing persisted, wire, or public C contracts.
-- Target-only CUDA generation now selects admitted full attention graphs through
-  the existing compiled-profile contract; CPU and DSpark retain explicit eager
-  reference execution, and compatible shape changes preserve cached graph
-  executables.
-- Consolidated the product topology to the public `yvex` command and the
-  long-lived `yvexd` host; the OpenAI-compatible listener now runs inside the
-  daemon.
-- Replaced implementation-era top-level command buckets with the canonical
-  `compile`, `artifact`, `inspect`, `execute`, `profile`, and `system`
-  projections.
-- Advanced the private local protocol to version 4, separating selected model
-  configuration from the live runtime model and removing false artifact/model
-  facade operations.
-- Advanced the private local protocol to version 5 for typed speculative-cycle,
-  accepted-prefix, and committed-only usage facts; version 4 is refused.
-- Advanced the private local protocol to version 6 for exact partial-turn and
-  explicit-reasoning facts; version 5 is refused.
-- Advanced the private local protocol to version 7 for typed reasoning/final/
-  tool/error channels and separate reasoning/final timing and token metrics;
-  every non-v7 peer is refused.
-- Advanced the private local protocol to version 8 for immutable committed
-  model-state checkpoint save/restore with an explicit restore byte bound,
-  exact-position admission, and typed identity/digest evidence; every non-v8
-  peer is refused.
-- Made hosted startup registry-first: `model list` reports complete startup
-  profiles, `model select NAME` resolves one profile without path flags, and
-  `runtime start` opens the selected model without environment variables.
-- Made the human terminal surface compact and semantic: startup announces the
-  selected model before admission; REPL attachment facts and commands use a
-  stable vertical hierarchy while turn metrics remain compact; TTY color
-  respects `NO_COLOR`; Ctrl-L clears and redraws active input; and categorized
-  operational watch separates signal from connection churn and detailed
-  trace/profile output.
-- Reorganized documentation by authority and lifecycle, with canonical
-  terminology, family records, contracts, operator procedures, frozen audits,
-  and validated migration paths.
-- Separated physical execution decisions and evidence depth from artifact
-  identity, promoted verified speculative state without accepted-token replay,
-  and made CUDA capacity admission execution-shape specific.
-- Separated artifact capability from runtime-profile readiness in the local
-  model registry, eliminating false metadata drift without changing artifact
-  or binding identity.
-- Advanced runtime bindings to v8 when they carry sealed model geometry while
-  retaining v7 reference bindings, and made startup refuse insufficient model
-  residency memory before opening the complete artifact.
-- Made automatic CUDA builds derive one unambiguous `nvcc`-supported local architecture, so GB10
-  product builds admit identity-bound native SM121 CUBIN without a hidden PTX-only default. Explicit
-  architecture selection remains authoritative and portable PTX remains separately identified.
+- One foreground `yvex serve` host can start with zero engines and retain
+  transport while independently loading and unloading exact engine generations.
+  Multiple fitting engines, explicit ensure-active leases, directional
+  capabilities, and `model active` expose authoritative runtime state.
+- Engine-bound retained sessions, exact prefix reuse, partial-progress truth,
+  cancellation, reset, bounded state checkpoints, and copy-on-write session
+  fork. Live leases/sessions prevent premature engine retirement.
+- Ordered typed multipart content with durable identity and derivation
+  provenance; bounded local media references avoid JSON base64 expansion.
+  Repeated `/attach PATH` staging in `yvex chat` preserves session identity.
+  Unsupported input/model combinations fail before numerical execution.
+- Registry-driven command grammar, discovery, advanced help, and shell
+  completion. Bare `yvex` prints the product map; `yvex chat` is the explicit
+  linear REPL and `host logs` is the shared operational event stream.
+- Source-authored reasoning/final/tool channels, exact prompt policy, and
+  committed-only output. The bounded loopback
+  [OpenAI compatibility profile](docs/openai-compatibility.md) supports its
+  declared Chat Completions and Responses subset; YVEX never executes tools.
 
-### Removed
+### Execution and measurement
 
-- Retired public one-shot generation, implicit bare-command chat, and the
-  stdin-driven foreground server operator console. Bare `yvex` renders the
-  product map, `yvex chat` is the sole interactive REPL, and `yvex serve`
-  either becomes the foreground host or refuses a duplicate without attaching.
-- The separate `yvexd` product, implicit persisted model selection,
-  `runtime start`, and duplicate public `watch`/`trace` grammar.
-- Retired the separate `yvex-dev` and `yvex-openai` product executables.
-- Removed the old top-level `evidence`, `graph`, `quant`, `source`, `tensor`,
-  and `tokenizer` command namespaces; migration hints do not execute hidden
-  aliases.
+- Immutable package/storage meaning is separated from deployment-specific
+  backend, representation, implementation, width, and crossover choices.
+  Binding readers reject legacy records that cannot preserve that distinction.
+- Typed transactional state unifies lifecycle without conflating KV,
+  convolution, recurrent, draft, RNG, decoder, and media geometry.
+  Compatible-operation batching and cooperative runnable concurrency remain
+  distinct from global ready-sequence continuous batching.
+- CUDA device-native logits, admitted greedy/stochastic selection and
+  speculative correction, bounded result transfer, and session-stream
+  synchronization. CPU and detailed reference paths remain explicit.
+  These changes do not claim entirely device-side generation.
+- Verified-reopen artifact leases and artifact-backed UMA addressability avoid
+  treating repeated payload hashing or full anonymous copies as mandatory
+  startup work. Composite components use the same admission owner.
+- Resource reports distinguish mapping, proven addressability, explicit
+  allocations, prepared resources, arenas/workspace, typed session state,
+  current/peak memory, and process RSS. Unknown physical UMA residency is not
+  converted into a false zero GPU working-set claim.
+- Execution accounting publishes scoped phase/counter facts, cumulative and
+  bounded rolling rates, unattributed/overlapping time, and bounded
+  server-authored progress. Detailed profiling and operational observability
+  remain distinct measurement configurations.
+- Hardware-significant execution choices and kernel identities are bound to
+  the admitted deployment. Performance changes require controlled
+  characterization; no component optimization establishes release throughput.
 
-### Security
+### Compatibility and removals
 
-- The hosted protocol and OpenAI-compatible endpoint remain local-only and
-  fail closed. Authentication, TLS, CORS, and remote exposure are not part of
-  the current compatibility profile.
+- The [native protocol contract](docs/contracts/local-protocol.md) is v20.
+  Its multipart/model-control wire semantics require matching peers;
+  earlier fixed layouts are refused rather than reinterpreted.
+- Installed ABI records have independent schema/layout identities, including
+  server capacity and distinct engine-kind versus text-strategy facts.
+  [C API contracts](docs/contracts/c-api.md) own exact versions and migration
+  behavior; runtime bindings and package IR are separately versioned.
+- Removed the separate daemon/developer/OpenAI executables, implicit
+  bare-command chat, public one-shot generation, persisted implicit model
+  selection, and stdin-driven server administration. Advanced source,
+  artifact, compile, profile, and benchmark operations remain discoverable
+  through `yvex help --advanced`; they are not another hosted runtime.
+- The foreground host refuses duplicate startup instead of silently attaching
+  as a client. Exact unsupported backend, strategy, or capability requests
+  fail closed rather than changing execution.
+
+### Security and release limits
+
+The native socket and compatibility listener retain their local trust
+boundary. Authentication, TLS, remote exposure, and full upstream API parity
+are not provided by the compatibility profile. See [SECURITY](SECURITY.md).
+
+Operational execution and software QA do not establish model quality,
+release-path benchmarks, or release readiness. The
+[release doctrine](docs/releases/doctrine.md) keeps those gates separate.

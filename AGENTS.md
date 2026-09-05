@@ -225,6 +225,9 @@ checks without cleaning.
 
 ## Project control and closure
 
+The [engineering method](docs/development/agentic-engineering.md) explains
+delivery design and independent review; this file owns mandatory agent rules.
+
 `ROADMAP.md` is the only live macro project-control authority. Issues own
 bounded work; PRs own delivery diffs and evidence; ADRs own current durable
 decisions. Git history owns retired audits, migrations, milestone plans, and

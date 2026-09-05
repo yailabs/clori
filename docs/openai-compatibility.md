@@ -61,20 +61,10 @@ continuity, merges tool results into the DeepSeek user block, and orders them
 by the preceding call IDs. HTTP state stores typed fields; it never reconstructs
 this history from rendered final text.
 
-The normal server command enables the default loopback listener before any
-model is loaded. Inspect the logical model catalog and start the host:
-
-```sh
-./yvex model list --wide
-./yvex serve
-```
-
-From another terminal, run `./yvex model load` for the linear TTY selector, or
-`./yvex model load MODEL` in automation. The porcelain resolves an exact
-profile and the host creates an exact engine generation; neither is guessed
-from display-name similarity. The OpenAI listener remains available while
-deterministic host and model commands manage residency, and the foreground host
-terminal remains a log stream.
+The loopback listener is owned by the persistent host and remains available
+with zero engines. Use the [startup procedure](operator-runbook.md#first-verified-startup)
+to prepare/load an exact model; profile resolution is not inferred from
+display-name similarity. The foreground terminal remains a log stream.
 Adapter-to-runtime frame I/O has a bounded 600000 ms default timeout; local
 operators may override it with `--openai-timeout-ms` for their admitted workload.
 

@@ -16,19 +16,9 @@ The measured host is one NVIDIA DGX Spark with a GB10 GPU at compute capability
 [DGX Spark hardware specification](https://docs.nvidia.com/dgx/dgx-spark/hardware.html)
 states 273 GB/s peak memory bandwidth, 6,144 CUDA cores, two copy engines and
 up to 1 PFLOP FP4 with sparsity. Those are physical ceilings, not YVEX-achieved
-rates. The accepted artifact is a 108.29 GB mixed IQ2_XXS/Q2_K/BF16/Q8_0
-bootstrap variant, so neither the FP4 compute ceiling nor artifact size alone
-predicts token throughput.
-
-The current retained characterization measured a 9.83 token/s target-only
-short median over ten samples and 7.62 token/s over three 256-token samples.
-The matched DSpark lanes measured 10.68 and 9.72 token/s respectively. One
-1,000-token reasoning characterization measured 2.22 token/s target-only and
-2.08 token/s DSpark, with 241 accepted of 530 proposed tokens. These results
-are controlled engineering characterization, not a release benchmark. Their
-earlier characterization. The current representation barrier and exact
-comparison context are retained in the
-[GB10 representation record](../worklog/2026-08-28-deepseek-gb10-matrix-tile-execution.md).
+rates. Obtain the exact artifact, mapping, preparation, and current/peak
+resource facts from the admitted deployment; an old artifact size or advertised
+FP4 ceiling cannot predict current token throughput.
 
 ## Target dimensions
 
@@ -52,18 +42,21 @@ its producing owner can publish that exact lower bound.
 
 | Workload | Context / width | Current measured | Hard functional minimum | Competitive threshold | YVEX engineering target | Stretch target | Physical bound / governing evidence | Confidence |
 | --- | --- | ---: | ---: | --- | ---: | ---: | --- | --- |
-| target-only decode | short, width 1 | 9.83 token/s; 10-sample characterization | correct sequence; >0 | unadmitted | 20 token/s | 24 token/s first preferred checkpoint | active bytes, 273 GB/s, launch and synchronization depth | medium |
-| target-only decode | 256 output tokens, width 1 | 7.62 token/s; 3-sample characterization | exact continuation; >0 | unadmitted | 20 token/s | 24 token/s first preferred checkpoint | routed MoE, qtype row execution and remaining transformer work | medium |
-| target-only prefill | bounded current fixtures | retained with the bound runtime evidence | correct prefix; >0 | unadmitted | 20 token/s | 30 token/s | attention class, chunk width, active bytes, 48 SMs | low |
+| target-only decode | short, width 1 | baseline required | correct sequence; >0 | unadmitted | 20 token/s | 24 token/s first preferred checkpoint | active bytes, 273 GB/s, launch and synchronization depth | medium |
+| target-only decode | 256 output tokens, width 1 | baseline required | exact continuation; >0 | unadmitted | 20 token/s | 24 token/s first preferred checkpoint | routed MoE, qtype row execution and remaining transformer work | medium |
+| target-only prefill | bounded current fixtures | baseline required | correct prefix; >0 | unadmitted | 20 token/s | 30 token/s | attention class, chunk width, active bytes, 48 SMs | low |
 | target-only decode | 12K context, width 1 | unmeasured | exact continuation; >0 | unadmitted | 15 token/s | 20 token/s | context-band state traffic and attention mix | low |
 | target-only decode | 64K context, width 1 | unmeasured | exact continuation; >0 | unadmitted | 8 token/s | 12 token/s | compressed/indexer history and capacity-safe state access | low |
 | target-only decode | near admitted capacity, width 1 | unmeasured | no overflow; exact stop | unadmitted | 0.80 × short rate | 0.90 × short rate | shape registry and context-bound state traffic | low |
-| DSpark short | width 1--5 verification | 10.68 token/s; 10-sample characterization | target-equivalent committed sequence | unadmitted | at least target-only | material positive speedup | accepted rows per target sweep, draft and verify cost | medium |
-| DSpark no-think | 256 output tokens, width 1--5 verification | 9.72 token/s; 3-sample characterization | target-equivalent committed sequence | unadmitted | at least target-only | material positive speedup | measured acceptance distribution and verification width | medium |
-| DSpark reasoning | 1,000 output tokens, width 1--5 verification | 2.08 token/s; one characterization, target-only 2.22 | target-equivalent committed sequence | unadmitted | at least target-only | material positive speedup | 241/530 acceptance and proposal/verification cost | low |
+| DSpark short | width 1--5 verification | baseline required | target-equivalent committed sequence | unadmitted | at least target-only | material positive speedup | accepted rows per target sweep, draft and verify cost | medium |
+| DSpark no-think | 256 output tokens, width 1--5 verification | baseline required | target-equivalent committed sequence | unadmitted | at least target-only | material positive speedup | measured acceptance distribution and verification width | medium |
+| DSpark reasoning | 1,000 output tokens, width 1--5 verification | baseline required | target-equivalent committed sequence | unadmitted | at least target-only | material positive speedup | acceptance and proposal/verification cost | low |
 | DSpark low acceptance | width 5 verification | unmeasured | no silent fallback; exact residual sampling | unadmitted | at least 0.90 × target-only | at least 1.00 × target-only | bounded wasted draft/verification work | low |
-| concurrent target decode | batch 2–4 | unsupported scheduler | isolated exact sessions | unadmitted | 35 aggregate token/s | 60 aggregate token/s | row batching, queue policy and 48-SM occupancy | low |
+| physical batched target decode | batch 2–4 | unmeasured; requires admitted physical width | isolated exact sessions | unadmitted | 35 aggregate token/s | 60 aggregate token/s | row batching, queue policy and 48-SM occupancy | low |
 | long-context prefill | 12K–64K, admitted chunks | unmeasured | exact state and bounded memory | unadmitted | 50 token/s | 80 token/s | chunk width, attention class, 273 GB/s and launch count | low |
+
+Logical runnable concurrency is separate from the physical batch rows above.
+Cooperative session scheduling alone does not qualify a batched-throughput result.
 
 The numerical YVEX and stretch columns are optimization objectives. The
 20--24 token/s class is an initial minimum engineering floor: 20 token/s is the
@@ -84,7 +77,7 @@ Every result compared with this table binds:
   prefix distribution;
 - prompt/corpus identity, context band, input/output lengths, width, batch and
   concurrency;
-- daemon lifecycle, memory placement, driver/toolkit, clocks, power/thermal
+- host lifecycle, memory placement, driver/toolkit, clocks, power/thermal
   state and machine identity;
 - wall/device/host time, movement, state copies, full-array scans, launches,
   waits, synchronizations, memory high-water mark and committed-token counts.
@@ -93,76 +86,33 @@ An optimization passes only its named metric and correctness gates. Component
 timing cannot promote a full-model rate, and this table cannot promote model
 quality or release qualification.
 
-## Next-owner obligations
+## Retained empirical barrier
 
-The GB10 optimization owner must select GB10-specific expert layouts and
-kernels from causal evidence. The correctness-first width-N MoE path already
-defers bounded status/unique-expert publication across the transformer stack,
-validates it once, reconstructs exact active bytes and reuses a proved final
-session-stream barrier. It no longer materializes selected routes or weights on
-the production host path. The portable Driver fallback reports any context-wide
-synchronization explicitly; immediate and token-local paths remain the
-audit/reference oracles. Target-only production selects stochastic tokens from
-resident CUDA logits with bounded result transfer. Production stochastic
-DSpark now keeps draft and target p/q rows resident, evaluates explicit
-acceptance draws and residual correction on CUDA, and returns only bounded
-tokens and acceptance facts; audit/forensic profiles retain the complete host
-oracle. The sampling owner can stage either host or CUDA selection inside the
-outer RNG transaction, retry an aborted draw exactly and publish one draw only
-with the surrounding transaction. Greedy and stochastic CUDA selection enqueue those bounded facts
-on the session stream and complete only that stream; any legacy context-wide
-fallback remains separately visible. Production greedy DSpark verification now
-retains its width-N
-target logits on CUDA, selects the complete row directory with one argmax
-launch and synchronization, and transfers only bounded aggregate facts.
-Eager attention, reference layouts and evidence-bearing host adapters
-may be replaced only through the existing typed execution profile. Production
-CUDA target-feature capture reduces mHC streams directly into a
-transaction-owned token-major device directory and transfers only bounded
-status for both production sampling classes. Feature projection consumes that directory without an intervening
-upload or normalized-row download, executes the resident encoded width-N
-projection and batched RMSNorm, then binds those rows directly into the draft
-core. Device-only candidate and promoted-prefix identities derive from exact
-producer, binding, tensor and prefix facts rather than a host array scan. CPU,
-audit/forensic profiles retain their explicit host feature oracles.
-CUDA final projection also preserves the
-pre-normalized BF16 drafter row before RMSNorm, so production no longer
-downloads expanded residual streams or recomputes that final stage on the
-host. Compatible width-N CUDA output rows already share activation preparation
-and one encoded-head execution; incompatible and reference directories retain
-an explicit row-local fallback. Batched device selection
-now consumes ordered resident logits views with no vocabulary D2H; greedy
-DSpark target verification consumes the same result class. Greedy drafting also
-keeps the shared-head base rows resident, fuses the encoded Markov projection
-with each base row and selects each proposal on CUDA without vocabulary D2H or a
-host vocabulary scan. Production greedy CUDA gathers each encoded Markov row
-from admitted residency and transfers only its row identifier. The drafter's
-normalized and pre-normalized rows remain resident through output-head and
-confidence projection, while confidence consumes split hidden/Markov device
-views and transfers one scalar. Host Markov decode and confidence remain
-reachable only through the CPU and audit/forensic references. Full-model
-stochastic DSpark now admits one shared session workspace from the maximum of
-the compiled target and draft requirements before either execution owner seals
-it. Two fixed-seed eight-token CUDA runs over the candidate artifact produced
-identical tokens, proposal/acceptance facts, transfer counters and semantic
-per-layer state digest. Wider acceptance-corpus and performance qualification
-remain open; the former machine-reserve refusal is closed.
-The wave must keep prefix promotion, shape
-admission, partial-turn semantics, protocol channels and one model/session
-authority unchanged.
+A bounded historical investigation at commit
+`08edb119681882fdcb73b010acf55defacfc3f59` used a 95,050,210,304-byte artifact,
+SHA-256 `d27b87a9e7c7959c442b0231621588d274f22a8aa916cb05750508cd39ff6f53`,
+binding `31cfc96974c972568efc6f99593b35998c876b0801b3f44253ef05988f78d61b`,
+and specialization
+`d6c205636f1c4a333faff8bb6fcae47e8146293154af2d75a09961353100cbe6`.
+Its raw evidence pointers and experiment details remain recoverable from the
+former DeepSeek representation worklog at documentation checkpoint
+`3f4a1c182d35e5a0e163adb81008ae7a366efcc6`; that record was written after the
+execution checkpoint above.
 
-Kernel order follows the identity-bound phase roofline ledger. Attention, MoE
-and output-head work retain their technical dependencies, but profiling of
-prefill, decode, verification, drafting and concurrent serving selects the
-next causal bottleneck. Physical-variant exploration first uses role probes,
-representative layers, kernel microbenchmarks and bounded logit/acceptance
-checks; complete artifacts are emitted only for surviving candidates.
+The unresolved lesson is representation economics, not a current hardware
+ceiling: a faster width-four tile applied to only 14.61% of eligible work and
+did not improve complete execution (reported 7.99% regression). Real selected
+populations reached at most six, so width eight was not available. A complete
+CUDA-owned package copy did not improve target-only/speculative rates; a
+managed copy caused swap pressure and invalidated direct comparison.
+No candidate from that investigation was retained.
 
-Production attention graph pieces borrow the session execution stream and
-defer completion to the existing layer publication barrier. Piecewise mode now
-uses one scoped wait per layer instead of one graph-local wait per piece plus
-publication. Per-layer device timing belongs to audit and forensic evidence;
-that path retains isolated immediate graphs. Production phase accounting keeps
-exact launch, movement and completion-synchronization facts. Removing the
-remaining layer publication wait requires a later transaction owner that can
-defer state and status visibility across the transformer stack.
+These are historical characterization findings. The worklog's final QA was
+invalidated by source movement; neither its old qtype coverage nor its timings
+qualify the current tree. The next performance owner must repeat a controlled
+baseline, measure physical populations and compulsory bytes, and evaluate
+throughput, memory, preparation cost, and numerical effect together.
+
+Current sampling, session-stream synchronization, resource ownership, and
+measurement architecture belong to [runtime architecture](../architecture/runtime.md)
+and the [runtime contract](../contracts/runtime.md), not this target table.

@@ -340,6 +340,6 @@ schema contracts.
 This contract does not establish public/remote serving, authentication, TLS,
 global ready-sequence continuous batching, independently evictable selective
 prepared layouts, distributed execution, restart-persistent engine instances,
-complete device-side stochastic sampling/tokenization, load-aware confidence
+an entirely device-side generation/tokenizer path, load-aware confidence
 scheduling, DSpark acceleration, model evaluation, release benchmark
 performance, or release qualification.

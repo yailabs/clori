@@ -1,271 +1,102 @@
 # YVEX Roadmap
 
-Date: 2026-08-10
 Status: living public project control
 Release target: v0.1.0
 
-This file is the sole live authority for YVEX macro milestones, dependency
-order, release-gate state, explicit non-claims, and `Active Next`. It is kept
-short enough to review as a whole.
+This file is the sole live authority for macro progression, accepted project
+boundaries, release-gate state, and the next engineering action. Technical
+contracts belong to their code and documentation owners; implementation
+chronology belongs to Git, issues, and pull requests.
 
-Implementation contracts remain with their owning code and technical
-documents. GitHub issues own bounded implementation work; pull requests own
-delivery evidence; decision records own durable architectural choices. None of
-those surfaces may silently change the order or claims recorded here.
+## Accepted foundation
 
-## Product target
+YVEX has one native compiler/runtime and persistent local host. Source
+provenance, artifacts, deployment compatibility, engine generations, typed
+multipart content, directional capabilities, model leases, transactional
+session state, resource accounting, and execution measurement have common
+owners. Multiple fitting engines can coexist without replacing a primary
+conversation. Cooperative scheduling does not imply continuous batching.
 
-YVEX v0.1.0 targets identity-bound DeepSeek-V4-Flash-DSpark text generation on
-an NVIDIA DGX Spark / GB10 CUDA system from a complete GGUF artifact produced
-by YVEX. The accepted product topology is:
+The accepted family boundaries are deliberately unequal:
 
-```text
-yvex  one public executable with explicit offline, foreground-host, native-client,
-      and external-compatibility roles
-```
+- DeepSeek reaches source-to-hosted text and speculative execution.
+- Qwen's admitted specialization reaches hybrid stateful text execution,
+  without claiming its unexecuted vision components.
+- MiniMax reaches composite media execution and publication; full-scale
+  numerical and behavioral correctness remains an open boundary.
+- Mamba2 reaches pinned acquisition, exact source roles, common transactional
+  recurrent state, and component numerics. It remains partial and refuses
+  READY: no complete decoder/artifact, load, or hosted generation.
 
-`yvex serve` directly enters a persistent foreground host lifecycle with no
-loaded engine. Interactive `yvex engine load` (or deterministic automation via
-`yvex engine load PROFILE`) and `yvex engine unload ENGINE` create and retire identity-bound engine
-generations while the Unix-domain protocol, loopback OpenAI-compatible listener,
-and telemetry remain alive.
-Runtime-facing clients route to one exact engine generation through the local
-protocol. Finite compiler and engineering operations may link engine owners but
-never become another hosted runtime.
-
-The current implementation can compile admitted physical packages, specialize
-them for one deployment, dynamically own several fitting engine generations,
-generate streamed text or typed media, retain exact multi-turn sessions, and
-serve the bounded `yvex.openai.compat.v2` profile. Resource admission may still
-permit only one very large engine on GB10. These facts establish executable
-product capability, not model quality, release benchmark, or release
-qualification.
-
-## Control model
-
-One macro milestone is `active`, and the same ID appears exactly once as
-`Active Next`. A milestone ID is stable after publication. A successor or
-`superseded` marker records structural change; IDs are never silently reused.
-
-States used here are:
-
-| State | Meaning |
-| --- | --- |
-| `active` | the single milestone currently being implemented |
-| `blocked` | retained work whose declared predecessor is incomplete |
-| `partial` | useful accepted work landed, but the stated gate remains open |
-| `not-measured` | required benchmark evidence does not yet exist |
-| `complete` | the stated boundary is implemented and validated |
-| `superseded` | retained naming/history marker replaced before completion |
-
-Technical evidence uses the lowest truthful rank defined in
-[`AGENTS.md`](AGENTS.md). Documentation, a command, a fixture, one successful
-run, or a self-authored report cannot promote a capability by itself.
+The [family integration contract](docs/model-families/integration.md#current-family-boundaries)
+links the evidence owners. No source recognition or generic plumbing promotes
+another family to executable support.
 
 ## Current sequence
 
+Only one row is active. States distinguish implemented boundaries from partial
+work, dependency-blocked work, and missing measurements. Published milestone
+IDs are not reused; retired completed sequences remain in Git history rather
+than a second current ledger.
+
 | Order | Milestone | State | Owned after-state | Depends on |
 | ---: | --- | --- | --- | --- |
-| 1 | `V010.PROJECT.CONTROL.PUBLIC.0` | `complete` | Public roadmap, contribution workflow, issue/PR templates, decision records, compact open-work extraction, and project-control guards replace the retired monolithic ledger. | `V010.OPERATOR.SURFACE.AUDIT.0` |
-| 2 | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `complete` | One versioned operation authority drives command paths, flags, defaults, validation, help, discovery, protocol projections, slash catalog, and command tests. | `V010.PROJECT.CONTROL.PUBLIC.0` |
-| 3 | `V010.DOCS.INFORMATION.ARCHITECTURE.0` | `complete` | One governed information architecture separates doctrine, reference and implemented architecture, family facts, contracts, operations, development policy, project control, decisions, audits, migrations, releases, and history. | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` |
-| 4 | `V010.REPO.CODE.COMMENTARY.0` | `complete` | Natural selective technical commentary replaces mandatory labeled prose across every governed first-party source while production lexical tokens remain unchanged. | `V010.DOCS.INFORMATION.ARCHITECTURE.0` |
-| 5 | `V010.OPERATOR.REPL.CONSOLE.0` | `complete` | A mature host-backed linear chat client consumes the canonical operation authority and renders truthful status, progress, metrics, host logs, and cancellation; explicit reasoning remains conditional on an admitted typed channel. | `V010.REPO.CODE.COMMENTARY.0` |
-| 6 | `V010.REBASE.DEEPSEEK.DSPARK.0` | `complete` | The sole DeepSeek vertical is rebound to the exact DSpark source and reaches target-verified speculative text through the hosted product path. | `V010.OPERATOR.REPL.CONSOLE.0` |
-| 7 | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` | `complete` | Identity-bound execution profiles, Physical Execution IR, prefix-addressable candidate state, shape-safe CUDA admission, exact partial turns, typed device views, and operational projections form one verified execution substrate. | `V010.REBASE.DEEPSEEK.DSPARK.0` |
-| 8 | `V010.REPO.ARCHITECTURE.COMPRESSION.0` | `complete` | One source-membership authority and fewer ceremonial owners, internal ABIs, symbols, build declarations, targets, and duplicate registry facts preserve the accepted execution behavior in a directly navigable repository. | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` |
-| 9 | `V010.CORE.COMPILATION.FAMILY.CONSOLIDATION.0` | `complete` | Family semantics terminate in compiler-owned Semantic Model IR and canonical Operator Graph IR; generic passes seal one Physical Execution IR and runtime binding that model-open authenticates and instantiates without reconstructing family topology. | `V010.REPO.ARCHITECTURE.COMPRESSION.0` |
-| 10 | `V010.DEVELOPMENT.ENGINEERING.WORKLOG.0` | `complete` | One repository skill turns selected material checkpoints, repairs, comparable performance changes, and closures into evidence-backed semantic records without automatic publication or product coupling. | `V010.DOCS.INFORMATION.ARCHITECTURE.0` |
-| 11 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `active` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.CORE.COMPILATION.FAMILY.CONSOLIDATION.0` |
-| 12 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, regression, long-context, and refusal evaluation runs over the accepted hosted path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
-| 13 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Reproducible full-model latency, throughput, memory, reliability, and workload evidence is bound to exact source, artifact, runtime, and machine identities. | `V010.EVAL.DEEPSEEK.0` |
-| 14 | `V010.RELEASE.0` | `blocked` | All v0.1.0 software, conformance, runtime, evaluation, benchmark, packaging, operator, claim, and tag gates close together. | `V010.BENCH.DEEPSEEK.0` |
+| 1 | `MAINTENANCE.ARCHITECTURE.REASSESSMENT.0` | `active` | Fresh adversarial review of the integrated architecture and evidence, with findings classified before code work is selected. | Accepted integrated foundation and documentation ownership |
+| 2 | `SPECTRUM.MAMBA2.REPAIR.0` | `partial` | Resolve source authorities and the SSM-only compiled decoder, then earn artifact, deployment, and hosted generation evidence. | Reassessment; repair the same boundary |
+| 3 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `partial` | Improve real warm execution under controlled phase/resource evidence without weakening numerical or lifecycle semantics. | Measured bottleneck selection; explicit resumption |
+| 4 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, long-context, and refusal evaluation over the admitted product path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
+| 5 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Identity-bound full-model latency, throughput, memory, and reliability evidence. | `V010.EVAL.DEEPSEEK.0` |
+| 6 | `V010.RELEASE.0` | `blocked` | All release gates close together; no missing evidence is relabelled pass. | `V010.BENCH.DEEPSEEK.0` |
 
-Active Next: V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
+Active Next: MAINTENANCE.ARCHITECTURE.REASSESSMENT.0
 
-Detailed retired contracts and superseded plans remain traceable in Git
-history; they are not required to understand the current implementation.
+Architecture-spectrum implementation is paused for the reassessment. The next
+Mamba2 delivery repairs its existing boundary; this is not permission to begin
+another architecture, performance campaign, or application integration.
 
-## Accepted foundations
+## Open boundaries
 
-These are current implementation facts consumed by the open sequence. This is
-not a replacement historical ledger.
+### Architecture and model progression
 
-| Boundary | Current truth |
-| --- | --- |
-| Source and compilation | The pinned 48-shard DSpark source, tokenizer, 72,317-tensor coverage, 1,409-terminal Transformation IR, bootstrap physical policy, qtypes, and deterministic GGUF emission have typed owners and identity-bound outputs. |
-| Compiler and family boundary | Compiler-facing family adapters seal source-authored facts into Semantic Model IR and a canonical Operator Graph IR. Generic passes seal Physical Execution IR and one content-addressed binding; runtime model-open authenticates and instantiates that compiled truth without consulting a concrete family implementation. |
-| Pure SSM qualification | [Mamba2](docs/model-families/mamba2.md) is partial: product-acquired pinned source, exact BF16 tensor roles, CPU selective-SSD component numerics and common transactional recurrent-state geometry are proven. Conflicting upstream numerical/token policy and the missing SSM-only compiled decoder prevent READY or hosted-generation claims. |
-| Artifact and admission | One complete DSpark bootstrap artifact contains the target and drafter; structural, payload, roundtrip, materialization, and one binding containing target/draft/verification plans are admitted outside Git. |
-| Runtime and generation | An authenticated package and deployment specialization open as one immutable engine generation; engine-bound sessions retain exact target KV/token truth and bounded candidate state; target-only and target-verified DSpark text and MiniMax typed media use the same host/runtime/backend substrate. |
-| Application serving | Local protocol v20 and YVEX OpenAI Compatibility Profile v2 share one persistent host, engine manager, session registry, request routing, and telemetry authority. V20 carries exact capacity/resource/measurement facts, ordered typed content and provenance, directional specialization capabilities, attached-client/model-lease occupancy, and explicit demand-active lease acquire/release without changing session selection. |
-| Product surface | `yvex` is the sole product executable. `yvex serve` starts the foreground zero-engine host; `model load`, `model unload`, and `model active` own ordinary engine lifecycle/truth; advanced `engine` commands retain exact plumbing; `yvex chat` is the sole public REPL and stages repeated next-turn attachments without creating sessions; bare `yvex` renders help. |
-| Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
-| Documentation architecture | A compact current map links implemented architecture, family records, contracts, operation, development and release owners; retired audits, plans and migrations live in Git history. |
-| Code commentary | Every governed first-party source follows the natural selective-commentary doctrine; the structural guard rejects obsolete templates and boilerplate while production lexical tokens remain unchanged. |
-| Runtime console | Explicit `yvex chat` is the sole client-owned linear, scrollback-preserving console over public protocol facts. Bare `yvex` only renders the product command map. Chat renders protocol-authored progress, committed output, typed metrics, cancellation and bounded terminal restoration without backend-private reads. |
-| Operator surface | The strict generated operation registry drives compiled discovery, help, completion and slash projections; executable tests validate the current graph directly rather than reconciling a frozen audit. |
-| Performance | `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` remains `partial`: startup and bounded profiling are accepted; warm decode remains below admission. |
+Mamba2 exposes unresolved tokenizer/special-token and normalization authority,
+and decoder assumptions that remain too attention/FFN-shaped for pure SSM.
+The [Mamba2 record](docs/model-families/mamba2.md) owns the exact refusal and
+highest evidence stage. A generic recurrent primitive does not close a model.
 
-## Open work
+Future architecture work is selected from demonstrated pressure on execution,
+state, topology, or typed input/output. Public direction is not the private
+candidate ledger: unacquired reference names and planning rows confer no
+capability. Cross-project application roles remain outside YVEX.
 
-### GB10 runtime optimization
+### Performance
 
-The earlier performance delivery reduced cold startup and added internal
-profiling, but did not close warm decode. Fresh consolidated-tree
-characterization retained a 9.83 token/s ten-sample target-only short median,
-7.62 token/s over three 256-token target-only samples, 10.68 token/s on the
-matching DSpark short lane, and 9.72 token/s over the three DSpark 256-token
-samples. One 1,000-token reasoning characterization measured 2.22 token/s
-target-only and 2.08 token/s DSpark. These are controlled characterization,
-not a release benchmark. The 20--24 token/s class is the first minimum
-engineering floor, not the optimization destination.
+DeepSeek long-decode behavior, Qwen steady decode, and MiniMax evaluation cost
+are characterization candidates, not optimization conclusions. Select work
+from controlled identities, phase attribution, rolling versus cumulative
+rates, and resource ownership. Do not transfer old timings to a new tree or
+treat component improvements as whole-model gains.
 
-The active implementation now derives stable package geometry from Physical
-Execution IR v5 and authenticates it through runtime binding v15. The explicit
-v14 reader accepts compatible canonical package records, lifts them into v5,
-and refuses v14 derived-layout requirements that would misrepresent the new
-package/specialization boundary. Deployment implementation class, activation
-representation, admitted widths, hardware capability, and crossovers are
-sealed once in an engine specialization rather than persisted as package
-meaning. Runtime instantiates actual expert-major populations from typed
-execution batches; the backend cannot infer semantic compatibility or
-manufacture execution width.
-Hardware, workload, capacity and state-page facts remain separate. Admission
-refuses insufficient model-residency memory before artifact open. Host graph
-state commits through stable per-class virtual pages; a phase roofline ledger
-and identity-bound native `sm_121` CUBIN coexist with portable PTX. On
-Driver-VMM hardware, CUDA session
-state now reserves stable logical banks and commits only the physical granules
-reached by visible or pre-admitted candidate spans; the non-VMM path remains an
-explicit full-bank fallback. The admitted Q8_0/Q8_K native path now has a
-mandatory SM121 SASS proof for `IMMA.16816.S8.S8` plus native numerical and
-launch-accounting coverage. Physical Execution IR now admits a measured
-sparse/large-row MoE crossover. Exact grouped attention output projection now
-collapses the model-derived output-A group launches for both decode and bounded
-prefill without changing the compiler-selected F32 activation representation.
-Specialized Tensor Core coverage beyond those paths, the remaining attention
-stack, real deep-context qualification and the optimized serving after-state
-remain open.
+[GB10 targets](docs/development/gb10-targets.md) owns workload definitions,
+engineering budgets, and the remaining empirical representation barrier.
+No target number is a measured release result.
 
-The continuation selects expert placement, cache, grouped execution, fusion,
-prefetch, graph capture and kernel order only from measured phase economics.
-Correctness, identity, transactional KV, cancellation, and fail-closed CUDA
-behavior remain mandatory.
+### Release
 
-### Evaluation, benchmark, and release
-
-Evaluation measures model behavior and quality over the accepted runtime path.
-Benchmarking then records reproducible full-model performance. Release
-qualification consumes both plus the complete software, operator, package,
-claim, and artifact evidence defined in the
-[release doctrine](docs/releases/doctrine.md).
-
-### Deferred depth
-
-These retained needs are not on the current critical path and do not create
-public commands by existing in the roadmap:
-
-| Stable ID | Later owner | Admission trigger |
-| --- | --- | --- |
-| `V010.TRACE.3` | observability depth | an admitted consumer requires bounded tensor-role trace |
-| `V010.LOGITS.10` | evaluation/inspection support | a typed log-probability consumer and schema exist |
-| `V010.KV.15` | runtime memory depth | measured pressure justifies paged KV |
-| `V010.KV.17` | runtime memory depth | measured pressure justifies host spill |
-| `V010.KV.18` | runtime memory depth | measured pressure justifies SSD spill |
-| `V010.KV.19` | runtime memory depth | a correctness and evidence contract admits KV quantization |
-
-## Release gates
-
-Gate meanings and closure evidence are normative in
-[`docs/releases/doctrine.md`](docs/releases/doctrine.md). Current state
-is summarized here only to control progression.
-
-| Gate | State |
-| --- | --- |
-| verified source, architecture, mapping, transformation, quantization, artifact, integrity, materialization, runtime descriptor | complete for the admitted DeepSeek vertical and named physical variants |
-| CUDA transformer-to-text generation | complete for the admitted mixed CUDA/host execution contract |
-| long-lived runtime, sessions, streaming, and bounded local OpenAI compatibility | complete |
-| public command architecture | complete |
-| mature runtime console | complete |
-| DSpark source rebase and verified speculative generation | complete |
-| warm GB10 performance admission | blocked; earlier work remains partial |
-| model behavior and quality evaluation | blocked |
-| full-model release benchmark | not measured |
-| release qualification | blocked |
-
-Machine-readable readiness facts retained for claim guards:
+The v0.1 target remains DeepSeek text execution on the admitted GB10 path.
+Other executable families do not automatically enter that release scope.
+[Release doctrine](docs/releases/doctrine.md) defines the independent gates;
+the [v0.1 record](docs/releases/v0.1.md) defines version-specific obligations.
 
 ```text
-canonical_operation_registry_ready=1
-generated_command_descriptors_ready=1
-protocol_v15_ready=1
-mature_repl_console_ready=1
-terminal_application_ready=1
-deepseek_dspark_source_ready=1
-target_only_generation_ready=1
-dspark_verified_generation_ready=1
-server_log_renderer_ready=1
-explicit_reasoning_renderer_ready=1
 model_behavior_evaluation_ready=0
-model_quality_evaluation_ready=0
 full_model_release_benchmark_ready=0
 release_qualification_ready=0
-continuous_batching_ready=0
-multi_model_server_ready=1
-remote_server_ready=0
-authentication_ready=0
-tls_ready=0
 ```
 
-## Public workflow
+## Progression discipline
 
-Contributors start with [`CONTRIBUTING.md`](CONTRIBUTING.md). The workflow is:
-
-1. locate the active macro boundary here;
-2. open or select one bounded issue with an owner, consumer, acceptance, tests,
-   and non-claims;
-3. record architectural decisions under
-   [`docs/decisions/`](docs/decisions/README.md) when ownership or doctrine
-   changes;
-4. implement code, then tests, then project control and documentation;
-5. attach exact validation and progression classification to the pull request;
-6. update this file atomically only when accepted evidence changes macro state.
-
-Issue labels and boards may organize work, but they do not override this file.
-An issue closes implementation scope; a pull request closes delivery evidence;
-only an accepted project-control change advances `Active Next`.
-
-## Historical traceability
-
-The retired 2,701-line `PROJECT.md` ledger is preserved in Git history at
-commit `447257dca7b122bafbddb86073d55eaa7be9513f`. It contains 696 canonical
-historical IDs and the recovery-era track accounting. It is historical
-evidence, not a file that contributors must maintain in parallel.
-
-Stable IDs from that ledger remain stable. Completed, superseded, or deferred
-rows are recovered with Git when needed; they are not copied into another
-public wall. The frozen operator audit preserves the open-obligation extraction
-used for this cutover.
-
-## Current non-claims
-
-YVEX does not currently claim:
-
-- an explicit reasoning channel for a runtime profile that does not advertise
-  one;
-- the initial 20--24 token/s warm-decode performance class or a later
-  optimization destination;
-- DSpark acceleration, optimized block verification, or production load-aware
-  confidence scheduling;
-- model behavior or model quality evaluation;
-- a release-grade full-model benchmark;
-- release qualification;
-- a public or remote production server, authentication, TLS, or remote
-  security;
-- the full OpenAI API, Anthropic compatibility, hosted tools, multimodal
-  OpenAI input, or model-server tool execution;
-- global ready-sequence continuous batching, arbitrary simultaneous residency
-  of huge models, automatic engine swap, distributed serving, or sessions
-  persisted across server restart;
-- a second complete model-family vertical.
+The [engineering method](docs/development/agentic-engineering.md) explains how
+a delivery establishes or falsifies a property and selects `proceed`,
+`repair_same_boundary`, `complete_evidence`, or `blocked_external`.
+Completing a prompt or passing software QA does not itself permit promotion.
+Branch epochs are coordination history, not model-family ownership.

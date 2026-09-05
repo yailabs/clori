@@ -296,8 +296,8 @@ The relevant commands have different responsibilities:
 - `yvex serve` starts the model-neutral persistent host;
 - `yvex model load MODEL` resolves one launchable representation and exact
   profile, then publishes one engine generation;
-- `yvex model unload MODEL` drains and closes that model's resident generation
-  without stopping the host;
+- `yvex model unload MODEL` retires that generation only after dependent
+  sessions and leases are released, without stopping the host;
 - `yvex model active` projects loaded generations, exact activity, clients,
   sessions, leases, directional capabilities, and resource placement;
 - advanced `yvex engine list|show|load|unload` retains exact profile and
@@ -407,73 +407,30 @@ turn.
 
 ## Foreground host and client terminal
 
-The foreground host terminal owns server lifetime and log projection. A second
-terminal uses deterministic control commands or the interactive client; neither
-creates another model copy.
+The [startup procedure](#first-verified-startup) assigns host lifetime to the
+foreground terminal and administration/chat to clients. The host renders its
+boot report and operational stream, never a command prompt. Duplicate
+`yvex serve` refuses rather than attaching or taking over listeners.
 
-Terminal 1 owns the foreground host lifecycle:
-
-```sh
-./yvex serve
-```
-
-The foreground terminal opens with the YVEX hero, executable version and local
-protocol, then remains a compact operational event stream. The banner is a
-human projection; host readiness remains the typed status authority. It does
-not expose a chat or lifecycle prompt. Load and inspect a model from Terminal
-2:
-
-```sh
-./yvex model load
-./yvex model list --wide
-./yvex host status
-```
-
-Running `./yvex serve` from another terminal while this compatible host is
-healthy refuses the duplicate and exits. It neither reserves another Unix or
-OpenAI listener nor opens an stdin-driven prompt. Use `./yvex host stop` only
-when the shared host itself should shut down.
-
-After the selected model reports LOADED, Terminal 2 may run `./yvex chat
---session main` or `./yvex host logs`. Add
-`--verbose` for individual typed speculative cycles or `--json` for canonical
-JSONL. All
-views derive from the same typed event sequence. Default telemetry excludes
-prompt and answer content.
+After a model is loaded, `yvex chat --session main` and `yvex host logs`
+use the same typed runtime authority. Logs support `--verbose` and `--json`;
+prompts and answers are excluded by default. Stop the shared host only when
+its users have agreed to shutdown.
 
 ## Interactive console
 
-`./yvex chat` is the one interactive entrypoint. It opens a concise attachment
-view and a prompt labelled with the product model name, not the deployment
-profile alias:
+`./yvex chat` is the interactive entrypoint. Its attachment view derives model,
+engine, session, context, and resource facts from the host; example memory
+numbers or a screenshot are not admission evidence. `/help` gives the current
+registry-authored command catalog.
 
-```text
-YVEX 0.1.0 · protocol 20
+The [external REPLAI editor](decisions/0007-external-terminal-editor.md) owns
+input editing, history navigation, paste framing, and redraw. YVEX owns
+commands, attachment conversion, session/engine binding, and typed generation
+output and cancellation. The editor closes before generation starts; retained
+presentation helpers are not a second native editor.
 
-  model      DeepSeek V4 Flash
-  variant    IQ2_XXS/Q2_K/MXFP4
-  runtime    ● ready · attached to resident runtime · CUDA · speculative
-  session    main · position 0 · turns 0
-  context    0/4096
-  memory     100.84 GiB process · 91.31 GiB artifact mapped · 0.02 GiB device
-  OpenAI     ● ready · 127.0.0.1:8001
-
-commands
-  /help        Discover canonical commands and operations.
-  /context     Show authoritative context and KV use for the attached session.
-  /status      Return one composed runtime and attached-session snapshot.
-  ...
-  /quit        Exit the interactive client.
-
-  Ctrl-C       cancel an active turn or clear input; press again to exit
-  Ctrl-D       exit and discard an unfinished line
-  Ctrl-L       clear and redraw input
-
-DeepSeek V4 Flash>
-```
-
-The exact identities come from the running server; the example values are not
-admission evidence. The prompt label is a product-catalog projection, while the
+The prompt label is a product-catalog projection, while the
 session remains bound to the exact engine generation. On transport loss the
 same prompt adds `[disconnected]`; it never silently switches models. Model
 output uses typed `reasoning` and `answer` sections when the source emits both;
@@ -511,9 +468,9 @@ policy change that alters the encoded prefix safely rebuilds only physical
 sequence state and re-prefills the authoritative semantic history; reset is
 not required merely to change reasoning mode.
 
-Ctrl-D exits from the prompt and discards an unfinished line. Ctrl-C during a
-turn requests server-owned cancellation and returns to the prompt; a second
-Ctrl-C requests exit. With no active turn, the first Ctrl-C clears the line and
+Ctrl-D deletes at the cursor on nonempty input and exits on empty input.
+Ctrl-C during a turn requests server-owned cancellation and returns to the
+prompt; a second Ctrl-C requests exit. With no active turn, the first Ctrl-C clears the line and
 a second consecutive Ctrl-C exits. EOF, cancellation, resize, and failure all
 restore bracketed-paste and terminal modes before returning control to the
 shell. Cancellation or failure requires `/reset` only when the server reports
@@ -595,7 +552,9 @@ semantics are in [`openai-compatibility.md`](openai-compatibility.md).
 ## Session lifecycle
 
 Named sessions retain their own transcript, committed token ledger, sampling
-state, and persistent KV while sharing immutable model resources:
+state, and typed persistent sequence/component state while sharing immutable
+model resources. KV, recurrent, and convolution classes depend on the admitted
+model; a session is not synonymous with a KV cache:
 
 ```sh
 ./yvex session new main
@@ -613,7 +572,7 @@ Client disconnect and detach do not close the engine. A partial or cancelled
 turn can retain model-committed state and is never silently marked complete.
 Protocol v20 reports the exact engine generation, committed position,
 token/text counts, state generations, failure class, and reset requirement.
-Reset clears the session KV, tokens, transcript, decoder, and RNG policy without
+Reset clears sequence/component state, tokens, transcript, decoder, and RNG policy without
 closing the engine or host.
 
 State checkpoints are immutable and restore only when their model, binding,
@@ -688,9 +647,10 @@ Release one engine while retaining the host and its other engines:
 ./yvex host status
 ```
 
-Unload enters draining, refuses new work for that generation, resolves active
-work under the bounded policy, closes its sessions and resources, and leaves
-the host ready. Request separate host shutdown through the local protocol:
+Unload refuses while a live session or model lease still requires the engine.
+Close dependent sessions and release leases explicitly; detach alone is not
+session closure. Once admitted, retirement drains work and releases engine
+resources while leaving the host ready. Host shutdown is a separate operation:
 
 ```sh
 ./yvex host stop
@@ -762,7 +722,7 @@ artifact/binding.
   repository data.
 - `$XDG_STATE_HOME/yvex/` is reserved for explicit opt-in history, log, and
   trace sinks. The current client does not persist prompts, answers, tokens, or
-  KV.
+  sequence state.
 
 When XDG variables are absent, the client uses the documented HOME-based
 configuration fallback and the protocol owner uses its private runtime
@@ -788,8 +748,8 @@ fallback.
 - OpenAI `422 unsupported_parameter`: remove the named unsupported field;
   fields are never ignored silently.
 
-DeepSeek-specific operation is documented in
-[`operations/deepseek.md`](operations/deepseek.md). Direct component execution,
+DeepSeek-specific semantics and source-boundary events are described in the
+[family record](model-families/deepseek-v4-flash.md). Direct component execution,
 tokenizer conformance, artifact inspection, and physical-compilation
 diagnostics use the advanced `inspect`, `artifact`, `compile`, and `bench`
 surfaces in the finite offline lane. Discover them with

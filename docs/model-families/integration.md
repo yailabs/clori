@@ -19,12 +19,14 @@ do not belong in target identity.
 
 Family classification is not family support. A target becomes executable only
 after exact roles are admitted in an artifact, materialized, lowered, executed,
-and consumed by the complete text path.
+and consumed by its admitted typed product path. Text generation, embeddings,
+and media publication have different terminal semantics.
 
 ## Promotion path
 
 ```text
-source snapshot
+real product acquisition and immutable provider revision
+  -> source snapshot
   -> source tensor inventory
   -> family architecture signature
   -> validated tensor collections
@@ -34,9 +36,8 @@ source snapshot
   -> Physical Execution IR, materialization and runtime binding
   -> sealed runtime descriptor and compiled model plan
   -> backend and graph admission
-  -> prefill and persistent state
-  -> decode, logits, sampling, tokenizer
-  -> generation
+  -> stateful execution through the admitted topology
+  -> typed terminal product (text, tensor, or media)
   -> evaluation
   -> benchmark
   -> release qualification
@@ -78,7 +79,14 @@ geometry.
 The common role space includes embedding, attention norms and projections,
 position metadata, feed-forward norms and projections, final norm, output head,
 and tokenizer facts. Sparse families add router, correction, routed-expert,
-shared-expert, indexing, weighting, and accumulation roles.
+shared-expert, indexing, weighting, and accumulation roles. State-space roles
+retain their convolution, time-step, transition, and gated-normalization
+meaning; equal matrix shapes do not make them attention or FFN roles.
+
+Coverage is bidirectional: each required role has exactly its source operands,
+and every admitted source tensor is consumed or explicitly classified as
+non-execution metadata. Configuration disagreement is resolved by an explicit
+authority rule or refused, never by whichever file is parsed first.
 
 A canonical role map preserves source derivation, scope, shape, dtype, layer,
 expert, shard, axis, tied-weight, and companion-tensor semantics. Runtime code
@@ -134,8 +142,9 @@ shape and count expectations; output-head policy; integrity rules; and
 derivation identities.
 
 A tensor proof artifact proves only a bounded property. A complete artifact
-contains every required role. A supported artifact additionally passes the
-complete runtime, generation, evaluation, benchmark, and release gates.
+contains every required role. Executable admission additionally requires a
+complete binding and backend path; evaluation, benchmarking, and release are
+separate later claims.
 
 ## Runtime prerequisites
 
@@ -152,7 +161,8 @@ both plans and their shared resources. A binding that advertises speculative
 execution must admit every draft and verification requirement; a target-only
 binding cannot be promoted by a runtime flag.
 
-Runtime support requires the same path used by the product:
+Runtime support requires the same typed path used by the product. For an
+autoregressive text model that path is:
 
 ```text
 tokenizer -> prefill -> persistent state -> decode -> logits
@@ -193,7 +203,8 @@ admitted operation or refuses.
 
 ## Dense and sparse composition
 
-A dense decoder uses a fixed FFN path for every token. A sparse/MoE decoder
+A dense FFN, where present, uses fixed projections for every token. Pure SSM
+must not acquire a fictitious FFN simply to fit a decoder template. A sparse/MoE decoder
 adds routing, top-k selection, selected expert dispatch, shared-expert policy,
 weighted accumulation, and conditional parameter access.
 
@@ -207,6 +218,12 @@ The family defines state meaning, geometry, position rules, prefill writes,
 decode reads, continuity, and invalidation. The common state provider owns
 allocation, committed/candidate views, begin/stage/commit/abort, reset, and
 cleanup. Persistent state and workspace never share semantic ownership.
+
+KV, recurrent, and convolution state have distinct typed geometry. Common
+transactional committed/candidate banks do not require retained causal KV.
+Prefill must produce the state consumed by subsequent decode; reset, isolation,
+abort, and cleanup require independent proof. Portable selective-SSD component
+execution proves this mechanism, not a complete SSM-only compiled decoder.
 
 ## Evidence stages
 
@@ -242,17 +259,27 @@ head, sampling, tokenizer stop, or detokenization blocks the complete text
 path. Evaluation and benchmark remain unavailable until generation uses the
 same hosted path exposed to the operator.
 
-## Current records
+## Current family boundaries
 
-- [DeepSeek-V4-Flash-DSpark](deepseek-v4-flash.md) is the sole complete
-  source-to-text vertical and the only family with target-verified speculative
-  generation; optimization, evaluation, benchmark, and release remain open.
-- Qwen has source/header and candidate-role evidence only; it is not a runtime
-  family.
-- Gemma has source/header and candidate-role evidence only; it is not a
-  runtime family.
-- [MiniMax-H3 FL2VA](minimax-h3.md) has an exact verified source snapshot,
-  composite logical architecture, complete tensor-role map, and admitted
-  artifact-neutral Transformation IR; it is not an executable family.
+| Family/target | Accepted boundary | Evidence limit |
+| --- | --- | --- |
+| [DeepSeek-V4-Flash-DSpark](deepseek-v4-flash.md) | Source-to-hosted text; target-verified speculation | No release quality/performance promotion |
+| Qwen3.8-27B | Admitted BF16 text specialization, hybrid recurrent/full-attention decode, hosted sessions | No vision, other modalities, or release claim |
+| [MiniMax-H3 FL2VA](minimax-h3.md) | Four component artifacts, composite iterative execution, synchronized-media publication | Bounded component conformance is not full-scale numerical/behavioral correctness |
+| [Mamba2](mamba2.md) | Exact acquired source/roles, transactional state, CPU selective-SSD component numerics | Partial; no complete artifact/decoder, READY, or hosted generation |
+| Gemma | Source/header and candidate-role observations | Not an executable family |
 
-No second complete family is currently admitted.
+Qwen's current text target is `Qwen/Qwen3.8-27B`, revision
+`1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`, interpreted by the
+[`qwen3_5` model owner](../../src/model/families/qwen3_5.c) and
+[graph recipe](../../src/graph/families/qwen3_5.c). The 64 text layers compose
+48 recurrent sequence mixers and 16 full-attention layers. Text roles consume
+851 of 1,199 source tensors; 333 vision and 15 MTP tensors do not enter the
+admitted text artifact. Source presence does not publish input capability.
+[Adapter tests](../../tests/unit/qwen_adapter.c) and
+[architecture tests](../../tests/unit/qwen3_5_architecture.c) guard that boundary.
+
+These are current evidence summaries, not a universal family compatibility
+matrix. Runtime capability comes from the exact admitted specialization.
+No future architecture candidate advances merely because a common primitive
+has become reusable.

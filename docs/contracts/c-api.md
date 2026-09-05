@@ -890,7 +890,8 @@ they are not independent capability authorities.
 The current runtime supports the complete hosted DeepSeek prompt-to-text path on
 CPU and the admitted mixed GB10 CUDA path. It composes exact tokenizer encoding,
 prompt-suffix prefill, persistent state, MoE, the complete Transformer, raw
-vocabulary logits, common-host sampling, sampled-token decode feedback, typed
+vocabulary logits, common transactional sampling with admitted CPU/CUDA
+selection, sampled-token decode feedback, typed
 stop, incremental detokenization, and committed streaming through one server
 model and isolated server sessions. It does not establish public serving,
 model evaluation, a release-path full-model benchmark, or release readiness.

@@ -3,6 +3,10 @@
 Date: 2026-08-02
 Status: accepted
 
+Protocol versions below record the original decision, not today's wire
+contract; see the [current protocol](../contracts/local-protocol.md).
+The accepted target-verification invariant remains current.
+
 ## Context
 
 The exact DeepSeek-V4-Flash-DSpark checkpoint adds a source-authored drafter to

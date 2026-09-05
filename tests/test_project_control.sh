@@ -20,7 +20,7 @@ $roadmap
 CONTRIBUTING.md
 docs/decisions/README.md
 docs/decisions/0001-public-project-control.md
-docs/development/documentation-policy.md
+docs/development/agentic-engineering.md
 .github/ISSUE_TEMPLATE/bug_report.yml
 .github/ISSUE_TEMPLATE/engineering_change.yml
 .github/ISSUE_TEMPLATE/config.yml
@@ -73,8 +73,11 @@ active_next=$(sed -n 's/^Active Next: \([^[:space:]]*\)$/\1/p' "$roadmap")
 test "$active_next" = "$active_id" ||
   fail "Active Next does not match active milestone: $active_next/$active_id"
 
-all_active_files=$(find . -path './.git' -prune -o -path './build' -prune -o -path './docs/worklog' -prune -o -type f -name '*.md' -exec grep -l '^Active Next: ' {} + | LC_ALL=C sort)
-test "$all_active_files" = './ROADMAP.md' ||
+all_active_files=$(git ls-files --cached --others --exclude-standard -- '*.md' | while IFS= read -r file; do
+  test -f "$file" || continue
+  grep -l '^Active Next: ' "$file" || :
+done | LC_ALL=C sort)
+test "$all_active_files" = 'ROADMAP.md' ||
   fail "Active Next exists outside ROADMAP.md: $all_active_files"
 
 roadmap_lines=$(wc -l < "$roadmap" | tr -d ' ')
@@ -87,7 +90,7 @@ require_text CONTRIBUTING.md '## Commit and pull request'
 require_text CONTRIBUTING.md 'ROADMAP.md'
 require_text docs/decisions/README.md 'Current macro state remains in'
 require_text docs/decisions/0001-public-project-control.md '## Decision'
-require_text docs/development/documentation-policy.md '`ROADMAP.md` is the only live macro project-control surface.'
+require_text docs/development/agentic-engineering.md 'The only live macro project-control surface'
 
 issue_count=$(find .github/ISSUE_TEMPLATE -maxdepth 1 -type f -name '*.yml' | wc -l | tr -d ' ')
 test "$issue_count" -eq 3 || fail "unexpected issue-template count: $issue_count"
