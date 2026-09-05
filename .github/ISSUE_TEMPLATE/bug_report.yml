@@ -1,12 +1,15 @@
 name: Bug report
-description: Report an incorrect, unsafe, or misleading implemented behavior.
+description: Report incorrect or misleading behavior. Report vulnerabilities privately.
 title: "bug: "
 labels:
   - bug
 body:
   - type: markdown
     attributes:
-      value: Read AGENTS.md and ROADMAP.md before filing. Do not include model payloads, prompts, responses, credentials, or private paths.
+      value: |
+        For usage help, read [SUPPORT.md](https://github.com/yailabs/yvex/blob/main/SUPPORT.md).
+        Report security vulnerabilities [privately](https://github.com/yailabs/yvex/security/advisories/new).
+        Do not include model payloads, private prompts or responses, credentials, or private paths.
   - type: textarea
     id: observed
     attributes:
@@ -18,7 +21,7 @@ body:
     id: expected
     attributes:
       label: Expected contract
-      description: Link the owning code or contract and describe the expected behavior.
+      description: Describe the expected behavior; link documentation or code if known.
     validations:
       required: true
   - type: textarea
@@ -46,9 +49,9 @@ body:
     id: impact
     attributes:
       label: Ownership and impact
-      description: Name the likely owner, downstream consumer, and whether this appears to block the active roadmap boundary.
+      description: Describe what this prevents you from doing. Name the affected owner or roadmap boundary if known.
     validations:
-      required: true
+      required: false
   - type: checkboxes
     id: hygiene
     attributes:

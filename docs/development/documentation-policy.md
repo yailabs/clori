@@ -11,6 +11,9 @@ assertion.
 - `README.md` is the bounded public entry, with room for an operational and
   architectural overview (at most 500 physical lines).
 - `ROADMAP.md` is the only live macro project-control surface.
+- `CONTRIBUTING.md` owns contribution workflow, `SUPPORT.md` routes usage help,
+  and `SECURITY.md` owns vulnerability reporting and the local trust boundary.
+- `LICENSE` and `NOTICE.md` retain licensing terms and third-party attribution.
 - `docs/architecture/` explains implemented ownership and execution.
 - `docs/contracts/` owns externally relevant and cross-subsystem contracts.
 - `docs/model-families/` owns current family integration and admitted family

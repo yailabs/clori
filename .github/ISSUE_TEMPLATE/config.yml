@@ -1,1 +1,8 @@
 blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/yailabs/yvex/security/advisories/new
+    about: Send vulnerabilities through private reporting, not a public issue.
+  - name: Usage and troubleshooting
+    url: https://github.com/yailabs/yvex/blob/main/SUPPORT.md
+    about: Find the operator documentation and information needed for a bug report.

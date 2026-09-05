@@ -58,5 +58,5 @@ body:
       options:
         - label: This does not introduce a compatibility executable, duplicate runtime, duplicate registry, or unsupported family abstraction.
           required: true
-        - label: Any new file/header/subsystem boundary is explicitly justified and authorized where AGENTS.md requires it.
+        - label: Any new file, header, or subsystem meets the ownership and admission rules in AGENTS.md.
           required: true
