@@ -304,6 +304,54 @@ assert item["state"] == "REMOTE"
 assert item["execution"] == "unbound source"
 PY
 
+# Standalone and numbered payloads are separate choices. Selection excludes the
+# unselected payload even when include globs are broad; malformed populations fail.
+YVEX_FAKE_HF_DISCOVERY_MODE=alternative-safetensors \
+    expect_rc 2 "$YVEX_BIN" model pull hf://community/alternative-model \
+    --format safetensors --dry-run --models-root "$MODELS_ROOT" \
+    >"$ROOT/alternative-ambiguous.out" 2>"$ROOT/alternative-ambiguous.err"
+contains "$ROOT/alternative-ambiguous.err" 'multiple representations are available'
+YVEX_FAKE_HF_LOG="$ROOT/alternative-hf.log" \
+YVEX_FAKE_HF_AUTH=1 YVEX_FAKE_HF_DISCOVERY_MODE=alternative-safetensors \
+    "$YVEX_BIN" model pull hf://community/alternative-model \
+    --format safetensors --variant safetensors-source --dry-run --models-root "$MODELS_ROOT" \
+    >"$ROOT/alternative-selected.out"
+contains "$ROOT/alternative-selected.out" 'representation safetensors-source'
+python3 - "$ROOT/alternative-hf.log" <<'PY'
+import pathlib, sys
+calls = pathlib.Path(sys.argv[1]).read_text().split("fake-hf argv:\n")
+download = next([line.strip() for line in call.splitlines()] for call in calls
+                if call.startswith("  download\n"))
+assert "--dry-run" in download
+excluded = [download[i + 1] for i, arg in enumerate(download[:-1]) if arg == "--exclude"]
+assert "consolidated.safetensors" in excluded
+assert "model-00001-of-00002.safetensors" not in excluded
+assert "model-00002-of-00002.safetensors" not in excluded
+PY
+standalone_variant="safetensors-file-$(printf '%s' consolidated.safetensors | sha256sum | cut -d ' ' -f 1)"
+YVEX_FAKE_HF_LOG="$ROOT/standalone-hf.log" \
+YVEX_FAKE_HF_AUTH=1 YVEX_FAKE_HF_DISCOVERY_MODE=alternative-safetensors \
+    "$YVEX_BIN" model pull hf://community/alternative-model \
+    --format safetensors --variant "$standalone_variant" --dry-run --models-root "$MODELS_ROOT" \
+    >"$ROOT/standalone-selected.out"
+python3 - "$ROOT/standalone-hf.log" <<'PY'
+import pathlib, sys
+calls = pathlib.Path(sys.argv[1]).read_text().split("fake-hf argv:\n")
+download = next([line.strip() for line in call.splitlines()] for call in calls
+                if call.startswith("  download\n"))
+excluded = [download[i + 1] for i, arg in enumerate(download[:-1]) if arg == "--exclude"]
+assert "consolidated.safetensors" not in excluded
+assert {"model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors", "model.safetensors.index.json"} <= set(excluded)
+PY
+test ! -d "$MODELS_ROOT/hf/minimax/alternative-model"
+for population in incomplete-shards duplicate-shards; do
+    YVEX_FAKE_HF_DISCOVERY_MODE="$population" \
+        expect_rc 4 "$YVEX_BIN" model pull hf://community/alternative-model \
+        --format safetensors --dry-run --models-root "$MODELS_ROOT" \
+        >"$ROOT/$population.out" 2>"$ROOT/$population.err"
+    contains "$ROOT/$population.err" 'provider'
+done
+
 # A real bounded provider pull uses the existing acquisition owner, pins the
 # immutable revision, records local content identity without promoting it to
 # unavailable provider-object hash proof, and is visible through

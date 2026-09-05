@@ -20,6 +20,7 @@ typedef struct {
     const char *exclude[YVEX_MODEL_DOWNLOAD_PATTERN_CAP];
     unsigned int include_count, exclude_count;
     int reference, managed, prepare, stream, resume, dry_run, verbose, json;
+    int clear_stale_locks;
 } model_pull_options;
 
 typedef struct {
@@ -82,6 +83,7 @@ static int pull_options_parse(int argc, char **argv, model_pull_options *out)
         else if (!strcmp(flag, "--prepare")) out->prepare = 1;
         else if (!strcmp(flag, "--stream")) out->stream = 1;
         else if (!strcmp(flag, "--resume")) out->resume = 1;
+        else if (!strcmp(flag, "--clear-stale-locks")) out->clear_stale_locks = 1;
         else if (!strcmp(flag, "--dry-run")) out->dry_run = 1;
         else if (!strcmp(flag, "--verbose")) out->verbose = 1;
         else if (!strcmp(flag, "--json")) out->json = 1;
@@ -296,10 +298,11 @@ static int pull_remote_download(int argc, char **argv,
                                 const model_pull_options *options,
                                 const yvex_source_locator *locator,
                                 const yvex_remote_model *remote,
+                                const yvex_remote_catalog *catalog,
                                 const yvex_model_representation *representation,
                                 const char *models_root)
 {
-    char *download_argv[64];
+    char *download_argv[180];
     char expected[32];
     char derived_name[YVEX_REMOTE_NAME_CAP];
     const char *name;
@@ -307,7 +310,7 @@ static int pull_remote_download(int argc, char **argv,
     const yvex_source_target_identity *target =
         yvex_source_target_identity_find_repository(locator->repository);
     int count = 0, rc;
-    unsigned int index;
+    unsigned int index, excludes = options->exclude_count;
     (void)argc;
     pull_product_name(locator->repository, derived_name);
     name = options->name ? options->name : derived_name;
@@ -326,6 +329,23 @@ static int pull_remote_download(int argc, char **argv,
     if (representation->file_pattern[0]) PULL_ARG("--include", representation->file_pattern);
     PULL_ARG("--include", "*.json");
     PULL_ARG("--include", "tokenizer*");
+    if (options->include_count + 3u > YVEX_MODEL_DOWNLOAD_PATTERN_CAP) {
+        yvex_cli_out_fputs("yvex: too many acquisition include patterns\n", stderr);
+        return 2;
+    }
+    for (index = 0u; index < remote->available_file_count; ++index) {
+        const yvex_remote_file *file = yvex_remote_catalog_file_at(catalog, 0u, index);
+        int index_file = yvex_source_ends_with(file->path, ".safetensors.index.json");
+        int alternate = file->kind == YVEX_REMOTE_FILE_SAFETENSORS &&
+                        strcmp(file->representation, representation->identity);
+        if (!alternate && !(index_file &&
+            !strncmp(representation->identity, "safetensors-file-", 17u))) continue;
+        if (++excludes > YVEX_MODEL_DOWNLOAD_PATTERN_CAP) {
+            yvex_cli_out_fputs("yvex: acquisition exclusion population exceeds bounded contract\n", stderr);
+            return 2;
+        }
+        PULL_ARG("--exclude", file->path);
+    }
     for (index = 0u; index < options->include_count; ++index)
         PULL_ARG("--include", options->include[index]);
     for (index = 0u; index < options->exclude_count; ++index)
@@ -339,16 +359,19 @@ static int pull_remote_download(int argc, char **argv,
         PULL_ARG("--progress", "off");
     }
     if (options->dry_run) download_argv[count++] = "--dry-run";
+    if (options->clear_stale_locks) download_argv[count++] = "--clear-stale-locks";
 #undef PULL_ARG
     model_download_format_bytes(expected, sizeof(expected),
                                 representation->size_bytes);
     if (!options->json)
         yvex_cli_out_writef(stdout,
                             "model       %s\nprovider    Hugging Face\nrepository  %s\n"
-                            "revision    %s\nformat      %s\nprecision   %s\nexpected    %s\n\n",
+                            "revision    %s\nformat      %s\nprecision   %s\nexpected    %s\n"
+                            "representation %s\n\n",
                             name, locator->repository, remote->resolved_revision,
                             representation->format, representation->precision,
-                            representation->size_known ? expected : "unknown");
+                            representation->size_known ? expected : "unknown",
+                            representation->identity);
     if (!options->json)
         yvex_cli_out_writef(stdout, "family      %s%s%s\n\n",
                             pull_family(options, remote),
@@ -481,7 +504,7 @@ static int pull_remote(int argc, char **argv, const model_pull_options *options,
                 result.record_path);
         else rc = print_yvex_error(&err, exit_for_status(rc));
     } else {
-        rc = pull_remote_download(argc, argv, options, locator, remote,
+        rc = pull_remote_download(argc, argv, options, locator, remote, catalog,
                                   representation, models_root);
     }
     yvex_remote_catalog_close(catalog);

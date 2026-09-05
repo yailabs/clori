@@ -105,6 +105,18 @@ JSON
     exit 0
   fi
   if [ "$2" = "list" ] && [ "$#" -ge 3 ] && [ "${3#-}" = "$3" ]; then
+    if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "alternative-safetensors" ]; then
+      printf '%s\n' '[{"path":"config.json","size":512},{"path":"consolidated.safetensors","size":3072},{"path":"model-00001-of-00002.safetensors","size":1024},{"path":"model-00002-of-00002.safetensors","size":2048},{"path":"model.safetensors.index.json","size":128},{"path":"tokenizer.json","size":256}]'
+      exit 0
+    fi
+    if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "incomplete-shards" ]; then
+      printf '%s\n' '[{"path":"config.json","size":512},{"path":"model-00001-of-00002.safetensors","size":1024}]'
+      exit 0
+    fi
+    if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "duplicate-shards" ]; then
+      printf '%s\n' '[{"path":"model-00001-of-00002.safetensors","size":1024},{"path":"model-00001-of-00002.safetensors","size":1024}]'
+      exit 0
+    fi
     if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "unsafe-file" ]; then
       printf '[{"path":"../escape.gguf","size":16}]\n'
       exit 0

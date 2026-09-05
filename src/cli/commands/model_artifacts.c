@@ -811,7 +811,7 @@ static int download_account_admit(const yvex_cli_models_download_options *option
                      "stale lock candidates require --clear-stale-locks");
             return model_download_finish(options, report);
         }
-        if (report->source_scan.lock_count > 0ull) {
+        if (report->source_scan.lock_count > 0ull && !options->dry_run) {
             unsigned long long deleted = 0ull;
             (void)model_download_delete_lock_paths(report, 0, 1, NULL, &deleted);
             report->lock_files_deleted = deleted > 0ull;
@@ -1081,6 +1081,14 @@ static int command_models_download_execute(int arg_count, char **args, int start
         if (!admitted) return rc;
     }
 
+    /* Publish incomplete acquisition truth before the long transfer, so model status/stop
+     * can route a first acquisition through the same catalog used after completion. */
+    if (!options.dry_run && access(report.registry_path, F_OK) != 0) {
+        snprintf(report.status, sizeof(report.status), "model-download-running");
+        rc = model_download_write_json_sidecar(report.registry_path,
+            "yvex.model_download.registry.v1", &options, &report, &err);
+        if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
+    }
     if (provider_kind == YVEX_ACCOUNT_PROVIDER_GITHUB) {
         report.provider_exit_code = model_download_run_github(&options, &report, &err);
         report.hf_exit_code = report.provider_exit_code;

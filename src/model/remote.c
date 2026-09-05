@@ -924,6 +924,122 @@ static int remote_parse_file_object(yvex_json *json,
            (!path[0] || remote_add_file(catalog, model_index, path, size, size_known));
 }
 
+/* A numbered, complete shard population and a standalone file in the same directory
+ * are separate acquisition candidates. This is representation evidence only: source
+ * admission must still authenticate the index, headers and full tensor population. */
+static int remote_shard_name(const char *path, char *prefix, size_t capacity,
+                              unsigned int *ordinal, unsigned int *total)
+{
+    size_t length = strlen(path), index;
+    const size_t suffix = sizeof("-00001-of-00003.safetensors") - 1u;
+    const char *tail;
+
+    /* -00001-of-00003.safetensors */
+    if (length <= suffix) return 0;
+    tail = path + length - suffix;
+    if (tail[0] != '-' || memcmp(tail + 6u, "-of-", 4u) ||
+        strcmp(tail + 15u, ".safetensors")) return 0;
+    *ordinal = 0u; *total = 0u;
+    for (index = 1u; index < 6u; ++index) {
+        if (!isdigit((unsigned char)tail[index]) ||
+            !isdigit((unsigned char)tail[index + 9u])) return 0;
+        *ordinal = *ordinal * 10u + (unsigned int)(tail[index] - '0');
+        *total = *total * 10u + (unsigned int)(tail[index + 9u] - '0');
+    }
+    if (!*ordinal || *ordinal > *total || *total > REMOTE_FILE_CAP ||
+        (size_t)(tail - path) >= capacity) return 0;
+    memcpy(prefix, path, (size_t)(tail - path));
+    prefix[tail - path] = '\0';
+    return 1;
+}
+
+static int remote_same_directory(const char *left, const char *right)
+{
+    const char *a = strrchr(left, '/'), *b = strrchr(right, '/');
+    size_t n = a ? (size_t)(a - left) + 1u : 0u;
+    size_t m = b ? (size_t)(b - right) + 1u : 0u;
+    return n == m && !memcmp(left, right, n);
+}
+
+static int remote_separate_safetensors(yvex_remote_catalog *catalog,
+                                        unsigned long long model_index,
+                                        yvex_error *err)
+{
+    yvex_remote_model *model = &catalog->models[model_index];
+    unsigned long long offset = catalog->file_offsets[model_index];
+    unsigned int i, j;
+    yvex_model_representation *source = remote_representation_find(
+        catalog, model_index, YVEX_MODEL_REPRESENTATION_SAFETENSORS,
+        "safetensors-source");
+    yvex_model_representation template;
+
+    if (!source) return YVEX_OK;
+    template = *source;
+    for (i = 0u; i < model->available_file_count; ++i) {
+        yvex_remote_file *file = &catalog->files[offset + i];
+        char prefix[YVEX_REMOTE_REPOSITORY_CAP];
+        unsigned int ordinal, total;
+        if (file->kind != YVEX_REMOTE_FILE_SAFETENSORS) continue;
+        for (j = 0u; j < i; ++j)
+            if (!strcmp(file->path, catalog->files[offset + j].path))
+                return remote_refuse(err, YVEX_ERR_FORMAT, "duplicate provider payload path");
+        if (remote_shard_name(file->path, prefix, sizeof(prefix), &ordinal, &total)) {
+            unsigned int found = 0u, k;
+            for (k = 0u; k < model->available_file_count; ++k) {
+                char other[YVEX_REMOTE_REPOSITORY_CAP];
+                unsigned int number, population;
+                if (remote_shard_name(catalog->files[offset + k].path, other,
+                                      sizeof(other), &number, &population) &&
+                    !strcmp(prefix, other)) {
+                    if (population != total)
+                        return remote_refuse(err, YVEX_ERR_FORMAT,
+                                             "inconsistent provider shard population");
+                    found++;
+                }
+            }
+            if (found != total)
+                return remote_refuse(err, YVEX_ERR_FORMAT, "incomplete provider shard population");
+            continue;
+        }
+        for (j = 0u; j < model->available_file_count; ++j) {
+            const yvex_remote_file *other = &catalog->files[offset + j];
+            if (remote_same_directory(file->path, other->path) &&
+                remote_shard_name(other->path, prefix, sizeof(prefix), &ordinal, &total)) {
+                char identity[YVEX_REMOTE_NAME_CAP], digest[YVEX_SHA256_HEX_BYTES];
+                yvex_model_representation *alternative;
+                yvex_sha256 hash;
+                unsigned char bytes[YVEX_SHA256_DIGEST_BYTES];
+                yvex_sha256_init(&hash);
+                yvex_sha256_update(&hash, file->path, strlen(file->path));
+                yvex_sha256_final(&hash, bytes);
+                yvex_sha256_hex(bytes, digest);
+                snprintf(identity, sizeof(identity), "safetensors-file-%s", digest);
+                alternative = remote_catalog_add_representation(
+                    catalog, model_index, YVEX_MODEL_REPRESENTATION_SAFETENSORS, identity);
+                if (!alternative) return remote_refuse(err, YVEX_ERR_NOMEM,
+                                                       "too many acquisition representations");
+                *alternative = template;
+                remote_copy(alternative->identity, sizeof(alternative->identity), identity);
+                remote_copy(alternative->file_pattern, sizeof(alternative->file_pattern), file->path);
+                alternative->file_count = 1u;
+                alternative->size_bytes = file->size_bytes;
+                alternative->size_known = file->size_known;
+                alternative->package_preparation_supported = 0;
+                alternative->provisional = 1;
+                remote_copy(alternative->recommendation, sizeof(alternative->recommendation),
+                            "standalone alternative; tensor topology requires independent admission");
+                remote_copy(file->representation, sizeof(file->representation), identity);
+                source = remote_representation_find(catalog, model_index,
+                    YVEX_MODEL_REPRESENTATION_SAFETENSORS, "safetensors-source");
+                source->file_count--;
+                source->size_bytes -= file->size_bytes;
+                break;
+            }
+        }
+    }
+    return YVEX_OK;
+}
+
 static int remote_parse_files(yvex_remote_catalog *catalog,
                               unsigned long long model_index,
                               const char *output,
@@ -944,7 +1060,7 @@ static int remote_parse_files(yvex_remote_catalog *catalog,
     }
     if (item != YVEX_JSON_ITEM_END || array.trailing_separator || !yvex_json_complete(&json))
         return remote_refuse(err, YVEX_ERR_FORMAT, "provider file listing JSON is incomplete");
-    return YVEX_OK;
+    return remote_separate_safetensors(catalog, model_index, err);
 }
 
 static int remote_run(const char *const *arguments,

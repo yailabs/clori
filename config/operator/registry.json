@@ -962,6 +962,12 @@
         "takes_value": false,
         "value_type": "boolean"
       },
+      {
+        "dependencies": ["--resume"],
+        "name": "--clear-stale-locks",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
       {"name": "--dry-run", "takes_value": false, "value_type": "boolean"},
       {
         "conflicts": ["--json"],
