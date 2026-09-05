@@ -67,12 +67,15 @@ execution is implemented for that checkpoint.
 
 ### 1. Build
 
-The native build uses a C11 compiler, GNU Make, Python 3 for generated
-registries, and the platform development libraries used by the Makefile
+The native build uses a C11 compiler, GNU Make, Python 3, pkg-config,
+current stable Rust/Cargo, and the platform development libraries used by the Makefile
 (including zlib, threads, dynamic loading, and math). CUDA execution additionally
 requires a compatible NVIDIA driver and CUDA toolkit. The provider acquisition
 surface uses the installed provider tooling; Hugging Face access uses `hf`.
 Model weights are acquired separately and are never included in the repository.
+
+Chat statically consumes [pinned REPLAI](docs/decisions/0007-external-terminal-editor.md);
+its verified producer is built automatically without a sibling checkout.
 
 ```sh
 make info

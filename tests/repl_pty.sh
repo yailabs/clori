@@ -214,6 +214,10 @@ test "$run_status" -eq 2
 grep -F 'removed command: run' "$root/run.err" >/dev/null
 
 start_host
+XDG_RUNTIME_DIR="$runtime" YVEX_MODELS_REGISTRY="$registry" \
+    YVEX_MODELS_ROOT="$models" YVEX_CONFIG_DIR="$config" XDG_CONFIG_HOME="$config" \
+    python3 tests/replai_consumer.py --binary "$YVEX_BIN" --host-log "$root/host.err" \
+    --output "$root" ${YVEX_REPL_MEMCHECK:+--memcheck "$YVEX_REPL_MEMCHECK"}
 image="$root/attachment.png"
 audio="$root/attachment.wav"
 printf '\211PNG\r\n\032\nfixture' >"$image"
@@ -370,7 +374,7 @@ assert_linear_terminal "$root/cancel.typescript"
 
 # Ctrl-D exits with normal terminal restoration and preserved scrollback.
 start_console eof 18 88 'chat --session eof' nocolor
-printf 'preserved-unsubmitted\004' >&3
+printf '\004' >&3
 finish_console
 assert_linear_terminal "$root/eof.typescript"
 

@@ -104,10 +104,13 @@ private local protocol. It opens no artifacts, initializes no CUDA state,
 starts no host, and loads no engine. A missing host produces the explicit
 `yvex serve` remediation; a missing engine points to `yvex model load`.
 
-The linear editor preserves scrollback and owns bounded history, UTF-8
-deletion, bracketed paste, resize redraw, cancellation, and terminal
-restoration. Registry-derived slash operations are limited to conversation and
-session use:
+The linear editor is the externally linked REPLAI ABI 1 implementation. It owns
+grapheme editing, history navigation, paste, resize/redraw and exact terminal
+restoration. YVEX supplies prompt values, history admission, registry completion
+and interrupt meaning. During generation the editor is closed; YVEX owns output
+and protocol cancellation. See [the dependency decision](../decisions/0007-external-terminal-editor.md)
+for the exact pin, build requirements and lifecycle evidence. Registry-derived
+slash operations remain limited to conversation and session use:
 
 ```text
 /help /status /context

@@ -548,6 +548,14 @@ static int send_generation(int fd, const yvex_client_request *request,
     unsigned long long index;
     int has_tool_result = 0, has_reasoning_history = 0, rc;
 
+    /* Observe the real chat request at the protocol boundary for editor cutover tests. */
+    if (!provider && !strncmp(request->session_name, "replai-", 7u)) {
+        fprintf(stderr, "replai-input %s ", request->session_name);
+        for (index = 0u; index < request->prompt_bytes; ++index)
+            fprintf(stderr, "%02x", (unsigned int)request->prompt[index]);
+        fputc('\n', stderr);
+    }
+
     if (request_contains(provider, "QUEUE_FULL")) {
         message_base(&message, YVEX_CLIENT_MESSAGE_ERROR, request);
         message.status = YVEX_ERR_BOUNDS;

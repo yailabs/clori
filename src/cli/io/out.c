@@ -1171,7 +1171,7 @@ void yvex_cli_out_repl_catalog(void)
     }
     printf("\n\n  %s%-12s%s %scancel an active turn or clear input; press again to exit%s",
            style.warning, "Ctrl-C", style.reset, style.dim, style.reset);
-    printf("\n  %s%-12s%s %sexit and discard an unfinished line%s", style.accent,
+    printf("\n  %s%-12s%s %sexit on empty input; otherwise delete at cursor%s", style.accent,
            "Ctrl-D", style.reset, style.dim, style.reset);
     printf("\n  %s%-12s%s %sclear and redraw input%s", style.accent, "Ctrl-L",
            style.reset, style.dim, style.reset);

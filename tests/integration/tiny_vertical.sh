@@ -278,6 +278,30 @@ assert engine["capabilities"]["outputs"] == ["text"]
 assert engine["capabilities"]["maximum_input_parts"] == 32
 PY
 
+# Drive the actual product editor into the real compiled CPU decoder and back.
+HOME="$home" XDG_RUNTIME_DIR="$runtime" python3 - "$YVEX_BIN" "$root" <<'PYTHON'
+import json, pathlib, subprocess, sys
+sys.path.insert(0, str(pathlib.Path('tests').resolve()))
+from replai_consumer import Chat, ENABLE
+binary = pathlib.Path(sys.argv[1]).resolve()
+c = Chat(binary, 'replai-runtime', pathlib.Path(sys.argv[2]), plain=True, model='tiny-executable')
+try:
+    for turn in range(2):
+        start = c.send(b'a\r')
+        c.wait(ENABLE, start)
+        c.quiet()
+        assert b'okokok' in c.data[start:], bytes(c.data[start:])
+        shown = json.loads(subprocess.check_output([str(binary), 'session', 'show', 'replai-runtime', '--json']))
+        assert shown['session']['position'] == 5, shown
+        assert c.tty_fds() == 5
+        print('real CPU chat: input=a, decoded=okokok, session_position=5, next_prompt=1, tty_fds=5')
+        if turn == 0:
+            start = c.send(b'/reset replai-runtime\r'); c.wait(ENABLE, start); c.quiet()
+    c.finish(b'/close replai-runtime\r')
+finally:
+    c.dispose()
+PYTHON
+
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host logs --json --follow \
     >"$root/server.log.jsonl" 2>"$root/server.log.err" &
 log_pid=$!

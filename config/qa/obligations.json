@@ -228,7 +228,7 @@
     },
     {
       "id": "build-topology",
-      "patterns": ["Makefile", "tools/generate_source_manifest.py", "config/c_policy.json"],
+      "patterns": ["Makefile", "tools/generate_source_manifest.py", "config/c_policy.json", "tools/prepare_replai.py", "config/replai.json"],
       "lanes": ["fast", "structural", "ci"],
       "tests": ["integration.tiny-vertical"],
       "reason": "build topology requires generated dependency parity and repeated compositional builds"

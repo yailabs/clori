@@ -234,6 +234,17 @@ endef
 
 YVEX_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(YVEX_SRCS)) $(OPERATOR_REGISTRY_OBJ)
 CLIENT_LANE_OBJ := $(OBJ_DIR)/src/cli/io/client.o
+# Static external dependency; neither the editor nor its header is vendored.
+REPLAI_PREFIX ?= $(abspath $(BUILD_DIR)/external/replai)
+REPLAI_SOURCE ?=
+REPLAI_HEADER := $(REPLAI_PREFIX)/include/replai.h
+REPLAI_ARCHIVE := $(REPLAI_PREFIX)/lib/libreplai_c.a
+.PHONY: replai-dependency
+replai-dependency:
+	python3 tools/prepare_replai.py --prefix '$(REPLAI_PREFIX)' $(if $(REPLAI_SOURCE),--source '$(REPLAI_SOURCE)')
+$(REPLAI_HEADER) $(REPLAI_ARCHIVE): | replai-dependency
+$(CLIENT_LANE_OBJ): CPPFLAGS += -I$(REPLAI_PREFIX)/include
+$(CLIENT_LANE_OBJ): $(REPLAI_HEADER)
 CLIENT_PROTOCOL_OBJS := \
 	$(OBJ_DIR)/src/core/status.o \
 	$(OBJ_DIR)/src/core/sha256.o \
@@ -460,6 +471,9 @@ package: client config/package_manifest.tsv LICENSE NOTICE.md
 	mkdir -p "$$package_dir/bin" "$$package_dir/share/yvex"; \
 	cp '$(YVEX_BIN)' "$$package_dir/bin/yvex"; \
 	cp config/package_manifest.tsv LICENSE NOTICE.md "$$package_dir/share/yvex/"; \
+	mkdir -p "$$package_dir/share/licenses/replai"; \
+	cp '$(REPLAI_PREFIX)/share/licenses/replai/LICENSE' "$$package_dir/share/licenses/replai/"; \
+	cp '$(REPLAI_PREFIX)/replai-build.json' "$$package_dir/share/yvex/"; \
 	printf '%s\n' 'yvex package: command and foreground model server' \
 		> "$$package_dir/share/yvex/profile"; \
 	commit=$$(git rev-parse HEAD); \
@@ -723,6 +737,7 @@ test-runtime-streaming: $(TEST_RUNNER)
 
 test-repl: client $(OPENAI_FAKE_HOST) $(REPL_PTY_TEST)
 	YVEX_BIN='$(YVEX_BIN)' YVEX_TEST_HOST='$(OPENAI_FAKE_HOST)' \
+		YVEX_CLIENT_LANE_OBJ='$(CLIENT_LANE_OBJ)' REPLAI_PREFIX='$(REPLAI_PREFIX)' \
 		sh $(REPL_PTY_TEST)
 
 test-packaging: package
@@ -1642,10 +1657,14 @@ $(CUDA_CUBIN_INC): $(CUDA_CUBIN)
 			'$(CUDA_NATIVE_ARCH)'; \
 	} >"$$tmp"; mv "$$tmp" "$@"; trap - EXIT HUP INT TERM
 
-$(YVEX_BIN): $(YVEX_OBJS) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX)
+$(YVEX_BIN): $(YVEX_OBJS) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX) $(REPLAI_ARCHIVE)
 	@mkdir -p $(@D)
+	@set -eu; \
+	replai_libs=$$(PKG_CONFIG_PATH='$(REPLAI_PREFIX)/lib/pkgconfig' \
+		pkg-config --libs-only-l --libs-only-other --static replai); \
+	replai_libs=$$(printf '%s' "$$replai_libs" | sed 's/-lreplai_c//g'); \
 	$(CC) $(CFLAGS) $(YVEX_OBJS) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX) \
-		$(LDFLAGS) $(LDLIBS) -o $@
+		$(REPLAI_ARCHIVE) $(LDFLAGS) $(LDLIBS) $$replai_libs -o $@
 
 $(TEST_MAIN_OBJ) $(CUDA_TEST_MAIN_OBJ): CPPFLAGS += -I$(BUILD_DIR)/generated
 $(TEST_MAIN_OBJ) $(CUDA_TEST_MAIN_OBJ): $(QA_REGISTRY_HEADER)

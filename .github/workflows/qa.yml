@@ -3,7 +3,7 @@ name: QA
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, models2]
 
 permissions:
   contents: read
@@ -23,7 +23,11 @@ jobs:
       - name: Install native QA prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ripgrep zlib1g-dev
+          sudo apt-get install --yes --no-install-recommends ripgrep zlib1g-dev pkg-config valgrind
+      - name: Install stable Rust producer toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: 0.11.28
@@ -35,6 +39,8 @@ jobs:
         run: python3 tools/qa.py doctor
       - name: Run canonical hosted lane
         run: python3 tools/qa.py run ci
+      - name: Check real chat memory ownership
+        run: YVEX_REPL_MEMCHECK=valgrind make test-repl
       - name: Upload structured evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

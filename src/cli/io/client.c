@@ -3,12 +3,17 @@
  * also contains finite offline-engine adapters, this lane cannot open artifacts, initialize CUDA,
  * or call generation directly; every hosted client operation crosses the server protocol boundary.
  * The file also owns the linear interactive console. Operation identity and argument schemas come
- * from the compiled registry; terminal state and rendering remain client-owned projections.
+ * from the compiled registry. REPLAI owns interactive editing; product rendering and
+ * generation-time output/cancellation remain client-owned projections.
  */
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 #include <build_commit.h>
 #include <operator/registry.h>
+#include <replai.h>
+#if REPLAI_C_ABI_VERSION != 1
+#error "YVEX requires REPLAI C ABI 1"
+#endif
 #include "src/cli/input/private.h"
 #include "src/cli/io/private.h"
 #include "src/cli/private.h"
@@ -60,10 +65,10 @@ typedef struct {
     int active;
 } client_turn_terminal;
 typedef struct {
-    char *entry[CLIENT_REPL_HISTORY_MAX];
-    size_t count;
-} client_repl_history;
-static volatile sig_atomic_t repl_signal_state;
+    replai_handle *handle;
+    char *last_admitted;
+} client_chat_input;
+static volatile sig_atomic_t chat_interrupts;
 static int console_status(const client_engine_binding *engine, const char *session_name);
 static int console_status_fetch(const client_engine_binding *engine,
                                 const char *session_name, yvex_client_message *message,
@@ -936,303 +941,144 @@ static int session_ensure(const client_engine_binding *engine, const char *name)
     if (rc == YVEX_OK && message.kind != YVEX_CLIENT_MESSAGE_ERROR) return 0;
     return administration_bound(YVEX_CLIENT_OP_SESSION_NEW, engine, name, -1);
 }
-static void repl_history_push(client_repl_history *history, const char *line)
+/* The host admits history and chooses command completions; REPLAI owns edits. */
+static int chat_input_error(replai_handle *input, replai_status status)
 {
+    unsigned char message[128];
+    size_t length = 0u;
+    if (input) (void)replai_close(input);
+    if (replai_status_text(status, message, sizeof(message), &length) == REPLAI_OK)
+        fprintf(stderr, "yvex: terminal interaction: %.*s\n", (int)length, message);
+    else
+        fprintf(stderr, "yvex: terminal interaction failed (%d)\n", (int)status);
+    return -1;
+}
+static int chat_input_open(client_chat_input *input)
+{
+    replai_config config = {0};
+    uint32_t version = 0u;
+    replai_status status = replai_abi_version(&version);
+    if (status != REPLAI_OK || version != REPLAI_C_ABI_VERSION)
+        return chat_input_error(NULL, REPLAI_ABI_MISMATCH);
+    config.struct_size = sizeof(config);
+    config.abi_version = REPLAI_C_ABI_VERSION;
+    config.max_input_bytes = CLIENT_REPL_LINE_MAX;
+    config.history_entries = CLIENT_REPL_HISTORY_MAX;
+    status = replai_create(&config, &input->handle);
+    return status == REPLAI_OK ? 0 : chat_input_error(NULL, status);
+}
+static int chat_history_admit(client_chat_input *input, const char *line)
+{
+    replai_status status;
     char *copy;
-    if (!line[0] || (history->count &&
-                     !strcmp(history->entry[history->count - 1u], line)))
-        return;
+    if (!line[0] || (input->last_admitted && !strcmp(input->last_admitted, line)))
+        return 0;
     copy = strdup(line);
-    if (!copy) return;
-    if (history->count == CLIENT_REPL_HISTORY_MAX) {
-        free(history->entry[0]);
-        memmove(history->entry, history->entry + 1,
-                (CLIENT_REPL_HISTORY_MAX - 1u) * sizeof(history->entry[0]));
-        history->count--;
+    if (!copy) return chat_input_error(input->handle, REPLAI_CAPACITY);
+    status = replai_history_add(input->handle, (const unsigned char *)line, strlen(line));
+    if (status != REPLAI_OK) {
+        free(copy);
+        return chat_input_error(input->handle, status);
     }
-    history->entry[history->count++] = copy;
+    free(input->last_admitted);
+    input->last_admitted = copy;
+    return 0;
 }
-static void repl_history_close(client_repl_history *history)
+static void chat_signal_handler(int number)
 {
-    size_t index;
-    for (index = 0u; index < history->count; ++index) free(history->entry[index]);
-    memset(history, 0, sizeof(*history));
+    (void)number;
+    if (chat_interrupts < 2) chat_interrupts++;
 }
-static void repl_signal_handler(int number)
-{
-    sig_atomic_t interrupts = repl_signal_state & 3;
-    if (number == SIGWINCH)
-        repl_signal_state |= 4;
-    else if (interrupts < 2)
-        repl_signal_state = (repl_signal_state & ~3) | (interrupts + 1);
-}
-static size_t repl_previous(const char *line, size_t cursor)
-{
-    if (!cursor) return 0u;
-    cursor--;
-    while (cursor && (((unsigned char)line[cursor] & 0xc0u) == 0x80u)) cursor--;
-    return cursor;
-}
-static size_t repl_next(const char *line, size_t count, size_t cursor)
-{
-    if (cursor >= count) return count;
-    cursor++;
-    while (cursor < count && (((unsigned char)line[cursor] & 0xc0u) == 0x80u)) cursor++;
-    return cursor;
-}
-static size_t repl_columns(const char *line, size_t start, size_t count)
-{
-    size_t columns = 0u;
-    while (start < count) {
-        if (((unsigned char)line[start] & 0xc0u) != 0x80u) columns++;
-        start++;
-    }
-    return columns;
-}
-static void repl_redraw(const char *prompt, const char *line, size_t count,
-                        size_t cursor)
-{
-    fputs("\r\033[2K", stdout);
-    fputs(prompt, stdout);
-    if (count) (void)fwrite(line, 1u, count, stdout);
-    if (cursor < count)
-        fprintf(stdout, "\033[%zuD", repl_columns(line, cursor, count));
-    fflush(stdout);
-}
-static int repl_replace_line(char **line, size_t *count, size_t *capacity,
-                             size_t *cursor, const char *replacement,
-                             const char *prompt)
-{
-    size_t needed = strlen(replacement) + 1u;
-    char *grown;
-    if (needed > CLIENT_REPL_LINE_MAX + 1u) return 0;
-    if (needed > *capacity) {
-        grown = realloc(*line, needed);
-        if (!grown) return 0;
-        *line = grown;
-        *capacity = needed;
-    }
-    memcpy(*line, replacement, needed);
-    *count = needed - 1u;
-    *cursor = *count;
-    repl_redraw(prompt, *line, *count, *cursor);
-    return 1;
-}
-static int repl_complete_slash(char **line, size_t *count, size_t *capacity,
-                               size_t *cursor, const char *prompt)
+static replai_status chat_complete_slash(replai_handle *input)
 {
     const yvex_operator_descriptor *match = NULL;
-    size_t index, matches = 0u;
-    if (!*line || !*count || (*line)[0] != '/' || strchr(*line, ' ')) return 0;
+    unsigned char draft[CLIENT_REPL_LINE_MAX + 1u];
+    size_t count = 0u, cursor = 0u, index, matches = 0u;
+    replai_status status = replai_draft_copy(input, draft, sizeof(draft) - 1u,
+                                            &count, &cursor);
+    if (status != REPLAI_OK) return status;
+    if (!count || draft[0] != '/' || cursor > count || memchr(draft, ' ', count))
+        return REPLAI_OK;
+    draft[count] = '\0';
     for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
         const yvex_operator_descriptor *candidate = &yvex_operator_descriptors[index];
         if (strcmp(candidate->slash_projection, "none") &&
-            !strncmp(candidate->slash_projection, *line, *count)) {
+            !strncmp(candidate->slash_projection, (const char *)draft, count)) {
             match = candidate;
             matches++;
         }
     }
     if (matches == 1u) {
         char replacement[128];
-        (void)snprintf(replacement, sizeof(replacement), "%s%s",
-                       match->slash_projection, match->argument_count ? " " : "");
-        return repl_replace_line(line, count, capacity, cursor, replacement, prompt);
+        int length = snprintf(replacement, sizeof(replacement), "%s%s",
+                               match->slash_projection, match->argument_count ? " " : "");
+        if (length < 0 || (size_t)length >= sizeof(replacement)) return REPLAI_CAPACITY;
+        return replai_complete(input, 0u, count, (const unsigned char *)replacement,
+                               (size_t)length);
     }
-    if (matches > 1u) return 1;
-    return 0;
+    return REPLAI_OK;
 }
-static int repl_insert_byte(char **line, size_t *count, size_t *capacity,
-                            size_t *cursor, unsigned char byte)
+static int chat_submission(replai_handle *input, char **output, size_t *count)
 {
-    char *grown;
-    size_t next;
-    if (*count >= CLIENT_REPL_LINE_MAX) return 0;
-    if (*count + 1u >= *capacity) {
-        next = *capacity ? *capacity * 2u : 256u;
-        if (next > CLIENT_REPL_LINE_MAX + 1u) next = CLIENT_REPL_LINE_MAX + 1u;
-        grown = realloc(*line, next);
-        if (!grown) return 0;
-        *line = grown;
-        *capacity = next;
+    replai_status status = replai_submitted_copy(input, NULL, 0u, count);
+    char *line;
+    if (status != REPLAI_OK) return chat_input_error(input, status);
+    line = malloc(*count + 1u);
+    if (!line) return chat_input_error(input, REPLAI_CAPACITY);
+    status = replai_submitted_copy(input, (unsigned char *)line, *count, count);
+    if (status != REPLAI_OK) {
+        free(line);
+        return chat_input_error(input, status);
     }
-    memmove(*line + *cursor + 1u, *line + *cursor, *count - *cursor + 1u);
-    (*line)[(*cursor)++] = (char)byte;
-    (*count)++;
-    (*line)[*count] = '\0';
+    line[*count] = '\0';
+    *output = line;
     return 1;
 }
-static void repl_erase(char *line, size_t *count, size_t *cursor, int backward)
+static int chat_read_line(replai_handle *input, const char *label, int connected,
+                           const char *initial, char **output, size_t *count)
 {
-    size_t start = backward ? repl_previous(line, *cursor) : *cursor;
-    size_t end = backward ? *cursor : repl_next(line, *count, *cursor);
-    if (start == end) return;
-    memmove(line + start, line + end, *count - end + 1u);
-    *count -= end - start;
-    *cursor = start;
-}
-static size_t repl_escape_read(unsigned char sequence[8])
-{
-    size_t length = 0u;
-    while (length < 8u) {
-        struct pollfd input = {.fd = STDIN_FILENO, .events = POLLIN};
-        if (poll(&input, 1u, 25) <= 0 || !(input.revents & POLLIN) ||
-            read(STDIN_FILENO, &sequence[length], 1u) != 1)
-            break;
-        length++;
-        if ((sequence[0] == '[' && length >= 2u && sequence[length - 1u] >= '@') ||
-            (sequence[0] == 'O' && length == 2u) ||
-            (sequence[0] != '[' && sequence[0] != 'O'))
-            break;
-    }
-    return length;
-}
-static int repl_read_line(const char *prompt, const char *initial,
-                          const client_repl_history *history,
-                          char **output, size_t *output_count)
-{
-    struct termios saved, raw;
-    char *line = NULL;
-    size_t count = 0u, capacity = 0u, cursor = 0u, selected = history->count;
-    int paste = 0, result = -1;
-    unsigned char byte;
-    if (tcgetattr(STDIN_FILENO, &saved) != 0) return -1;
-    raw = saved;
-    raw.c_lflag &= (tcflag_t)~(ICANON | ECHO);
-    raw.c_iflag &= (tcflag_t)~(ICRNL | IXON);
-    raw.c_cc[VMIN] = 1;
-    raw.c_cc[VTIME] = 0;
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) != 0) return -1;
-    fputs("\033[?2004h", stdout);
-    if (initial && !repl_replace_line(&line, &count, &capacity, &cursor,
-                                      initial, prompt))
-        goto done;
-    if (!initial) repl_redraw(prompt, "", 0u, 0u);
+    const char *suffix = connected ? "" : " [disconnected]";
+    replai_status status = replai_prompt(input, (const unsigned char *)label,
+        strlen(label), (const unsigned char *)suffix, strlen(suffix),
+        (const unsigned char *)"... ", 4u);
+    sig_atomic_t observed_interrupts = chat_interrupts;
+    if (status == REPLAI_OK) status = replai_clear(input);
+    if (status == REPLAI_OK && initial)
+        status = replai_set_draft(input, (const unsigned char *)initial, strlen(initial));
+    if (status == REPLAI_OK && fflush(stdout) != 0) status = REPLAI_IO;
+    if (status == REPLAI_OK) status = replai_open(input, STDIN_FILENO, STDOUT_FILENO);
+    if (status != REPLAI_OK) return chat_input_error(input, status);
     for (;;) {
-        ssize_t got = read(STDIN_FILENO, &byte, 1u);
-        if (got < 0 && errno == EINTR) {
-            if ((repl_signal_state & 3) >= 2) {
-                result = 0;
-                break;
-            }
-            if ((repl_signal_state & 3) == 1) {
-                fputs("^C\r\n", stdout);
-                result = -2;
-                break;
-            }
-            if (repl_signal_state & 4) {
-                struct winsize window;
-                (void)ioctl(STDOUT_FILENO, TIOCGWINSZ, &window);
-                repl_signal_state &= ~4;
-                repl_redraw(prompt, line ? line : "", count, cursor);
-            }
-            continue;
-        }
-        if (got <= 0) {
-            result = 0;
+        replai_event event = {0};
+        int host_interrupt = chat_interrupts != observed_interrupts;
+        event.struct_size = sizeof(event);
+        event.abi_version = REPLAI_C_ABI_VERSION;
+        status = host_interrupt ? replai_interrupt(input, &event)
+                                : replai_poll(input, 100u, &event);
+        if (status != REPLAI_OK) return chat_input_error(input, status);
+        switch (event.kind) {
+        case REPLAI_EVENT_NONE:
+            break;
+        case REPLAI_EVENT_SUBMITTED:
+            return chat_submission(input, output, count);
+        case REPLAI_EVENT_INTERRUPTED:
+            if (!host_interrupt && chat_interrupts < 2) chat_interrupts++;
+            return chat_interrupts >= 2 ? 0 : -2;
+        case REPLAI_EVENT_END_OF_INPUT:
+            return 0;
+        case REPLAI_EVENT_COMPLETION_REQUESTED:
+            status = chat_complete_slash(input);
+            break;
+        case REPLAI_EVENT_EDIT_REJECTED:
+            status = replai_external_output(input, REPLAI_ROLE_WARNING,
+                (const unsigned char *)"input rejected", 14u);
+            break;
+        default:
+            status = REPLAI_ABI_MISMATCH;
             break;
         }
-        if (byte == '\r' || byte == '\n') {
-            if (paste) {
-                if (!repl_insert_byte(&line, &count, &capacity, &cursor, '\n')) break;
-                fputs("\r\n... ", stdout);
-                fflush(stdout);
-                continue;
-            }
-            fputs("\r\n", stdout);
-            result = 1;
-            break;
-        }
-        if (byte == 4u && !paste) {
-            fputs("\r\n", stdout);
-            result = 0;
-            break;
-        }
-        if ((byte == 1u || byte == 5u) && !paste) {
-            cursor = byte == 1u ? 0u : count;
-            repl_redraw(prompt, line ? line : "", count, cursor);
-            continue;
-        }
-        if (byte == '\t' && !paste) {
-            if (!repl_complete_slash(&line, &count, &capacity, &cursor, prompt))
-                fputc('\a', stdout);
-            fflush(stdout);
-            continue;
-        }
-        if (byte == '\f' && !paste)
-            fputs("\033[2J\033[H", stdout);
-        if ((byte == '\f' && !paste) || byte == 8u || byte == 127u) {
-            if (byte != '\f') repl_erase(line, &count, &cursor, 1);
-            repl_redraw(prompt, line ? line : "", count, cursor);
-            continue;
-        }
-        if (byte == 27u) {
-            unsigned char sequence[8];
-            size_t length = repl_escape_read(sequence);
-            if (length == 5u && !memcmp(sequence, "[200~", 5u)) paste = 1;
-            else if (length == 5u && !memcmp(sequence, "[201~", 5u)) paste = 0;
-            else if (!paste && length == 2u && sequence[0] == '[' && sequence[1] == 'A' && selected) {
-                selected--;
-                if (!repl_replace_line(&line, &count, &capacity, &cursor,
-                                       history->entry[selected], prompt))
-                    break;
-            } else if (!paste && length == 2u && sequence[0] == '[' &&
-                       sequence[1] == 'B' && selected < history->count) {
-                selected++;
-                if (!repl_replace_line(&line, &count, &capacity, &cursor,
-                                       selected == history->count ? "" : history->entry[selected],
-                                       prompt))
-                    break;
-            } else if (!paste && length == 2u && sequence[0] == '[' &&
-                       sequence[1] == 'C') {
-                cursor = repl_next(line ? line : "", count, cursor);
-                repl_redraw(prompt, line ? line : "", count, cursor);
-            } else if (!paste && length == 2u && sequence[0] == '[' &&
-                       sequence[1] == 'D') {
-                cursor = repl_previous(line ? line : "", cursor);
-                repl_redraw(prompt, line ? line : "", count, cursor);
-            } else if (!paste && ((length == 2u &&
-                        ((sequence[0] == '[' && sequence[1] == 'H') ||
-                         (sequence[0] == 'O' && sequence[1] == 'H'))) ||
-                       (length == 3u && (!memcmp(sequence, "[1~", 3u) ||
-                                        !memcmp(sequence, "[7~", 3u))))) {
-                cursor = 0u;
-                repl_redraw(prompt, line ? line : "", count, cursor);
-            } else if (!paste && ((length == 2u &&
-                        ((sequence[0] == '[' && sequence[1] == 'F') ||
-                         (sequence[0] == 'O' && sequence[1] == 'F'))) ||
-                       (length == 3u && (!memcmp(sequence, "[4~", 3u) ||
-                                        !memcmp(sequence, "[8~", 3u))))) {
-                cursor = count;
-                repl_redraw(prompt, line ? line : "", count, cursor);
-            } else if (!paste && length == 3u && !memcmp(sequence, "[3~", 3u)) {
-                repl_erase(line, &count, &cursor, 0);
-                repl_redraw(prompt, line ? line : "", count, cursor);
-            }
-            continue;
-        }
-        {
-            size_t old_count = count;
-            if (!repl_insert_byte(&line, &count, &capacity, &cursor, byte)) break;
-            if (cursor == count && old_count + 1u == count) {
-                (void)fwrite(&byte, 1u, 1u, stdout);
-                fflush(stdout);
-            } else repl_redraw(prompt, line, count, cursor);
-        }
+        if (status != REPLAI_OK) return chat_input_error(input, status);
     }
-done:
-    fputs("\033[?2004l", stdout);
-    (void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved);
-    if (result == 1) {
-        if (!line) {
-            line = calloc(1u, 1u);
-            if (!line) result = -1;
-        }
-        *output = line;
-        *output_count = count;
-    } else {
-        free(line);
-    }
-    return result;
 }
 static int repl_switch_session(const client_engine_binding *engine,
                                char current[YVEX_SERVER_SESSION_NAME_CAP],
@@ -1487,24 +1333,22 @@ static int chat(const client_engine_binding *selected_engine,
 {
     client_engine_binding engine = {0};
     client_turn_options options;
-    client_repl_history history;
+    client_chat_input input_state = {0};
     yvex_cli_content_stage *attachments = NULL;
     yvex_client_message status;
     yvex_error err;
     yvex_cli_terminal_style style;
-    struct sigaction action, prior_interrupt, prior_resize;
+    struct sigaction action, prior_interrupt;
     char current[YVEX_SERVER_SESSION_NAME_CAP];
-    char prompt[YVEX_MODEL_LIBRARY_NAME_CAP + 128u];
     char *draft = NULL;
     unsigned long long generated_session = 1u;
     int closed = 0, connected = 1, attached = 0, result = 0;
-    memset(&history, 0, sizeof(history));
     memset(&action, 0, sizeof(action));
-    action.sa_handler = repl_signal_handler;
+    action.sa_handler = chat_signal_handler;
     (void)sigemptyset(&action.sa_mask);
-    repl_signal_state = 0;
+    chat_interrupts = 0;
     if (sigaction(SIGINT, &action, &prior_interrupt) != 0) return 1;
-    if (sigaction(SIGWINCH, &action, &prior_resize) != 0) {
+    if (chat_input_open(&input_state) != 0) {
         (void)sigaction(SIGINT, &prior_interrupt, NULL);
         return 1;
     }
@@ -1556,15 +1400,16 @@ static int chat(const client_engine_binding *selected_engine,
             : selected_model && selected_model->model_selector[0]
                 ? selected_model->model_selector
             : status.console.model_alias[0] ? status.console.model_alias : "yvex";
-        (void)snprintf(prompt, sizeof(prompt), "%.31s%.127s%s>%.31s ", style.accent,
-                       prompt_model, connected ? "" : " [disconnected]",
-                       style.reset);
-        input = repl_read_line(prompt, draft, &history, &line, &count);
+        input = chat_read_line(input_state.handle, prompt_model, connected,
+                               draft, &line, &count);
         free(draft);
         draft = NULL;
         if (input == -2) continue;
-        if (input <= 0) break;
-        repl_signal_state &= ~3;
+        if (input <= 0) {
+            if (input < 0) result = 1;
+            break;
+        }
+        chat_interrupts = 0;
         if (!count) {
             free(line);
             continue;
@@ -1608,7 +1453,11 @@ static int chat(const client_engine_binding *selected_engine,
             }
         }
         connected = 1;
-        repl_history_push(&history, line);
+        if (chat_history_admit(&input_state, line) != 0) {
+            free(line);
+            result = 1;
+            break;
+        }
         {
             yvex_content_part content_parts[YVEX_CONTENT_MAX_PARTS];
             unsigned long long content_part_count = 0u;
@@ -1641,12 +1490,12 @@ static int chat(const client_engine_binding *selected_engine,
 cleanup:
     free(draft);
     yvex_cli_content_stage_close(&attachments);
-    repl_history_close(&history);
+    free(input_state.last_admitted);
+    if (replai_destroy(&input_state.handle) != REPLAI_OK) result = 1;
     if (attached && !closed && connected)
         (void)administration_bound(YVEX_CLIENT_OP_SESSION_DETACH, &engine,
                                    current, -1);
     (void)sigaction(SIGINT, &prior_interrupt, NULL);
-    (void)sigaction(SIGWINCH, &prior_resize, NULL);
     return result;
 }
 static int chat_command(int argc, char **argv, size_t consumed)

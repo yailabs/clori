@@ -16,6 +16,11 @@ for integration tests retain their own licenses. They are not licensed by
 YVEX merely because it links to or invokes them. A distributor that bundles
 those components must retain their applicable notices and terms.
 
+The chat editor statically links [REPLAI](https://github.com/mothx9/replai),
+MIT, Copyright (c) 2026 YAI Labs. Its exact revision is in `config/replai.json`;
+the product package includes `share/licenses/replai/LICENSE` and the native
+build receipt. REPLAI and its Rust dependencies retain their upstream licenses.
+
 ## Unicode data
 
 The classification tables in `src/tokenizer/unicode.c` and normalization

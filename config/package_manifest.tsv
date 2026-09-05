@@ -5,3 +5,5 @@ share/yvex/LICENSE	product	project.license	tracked
 share/yvex/NOTICE.md	product	project.notice	tracked
 share/yvex/profile	product	build.package	generated
 share/yvex/build.tsv	product	build.package	generated
+share/licenses/replai/LICENSE	product	dependency.replai	generated
+share/yvex/replai-build.json	product	dependency.replai	generated
