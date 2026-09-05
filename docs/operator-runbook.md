@@ -433,14 +433,17 @@ presentation helpers are not a second native editor.
 The prompt label is a product-catalog projection, while the
 session remains bound to the exact engine generation. On transport loss the
 same prompt adds `[disconnected]`; it never silently switches models. Model
-output uses typed `reasoning` and `answer` sections when the source emits both;
-disabled reasoning shows only `answer`. The terminal renderer supports bounded
-headings, lists, emphasis, inline/fenced code and quotes, wraps prose to at most
-112 columns, and never changes canonical response bytes. During a turn, the
+output distinguishes explicit reasoning from final text; final text has no extra
+section label. The terminal renderer supports bounded headings, lists, emphasis,
+inline/fenced code and quotes. Prose wraps progressively at display-cell boundaries,
+to at most 96 cells or the narrower terminal measure, independently of wire fragment
+boundaries. CJK, combining marks and single-codepoint emoji use Linux UTF-8 cell
+widths; complex emoji sequences remain terminal-dependent. Inline styling and
+normalized prose spacing do not change canonical response bytes. During a turn, the
 console updates one server-authored prefill line in place. The terminal result
 then reports prefill, generation, TTFT, speculation, initial/final context,
-adaptive or explicit output envelope, truthful stop reason, and session on one
-compact line. Candidate token text is never displayed.
+adaptive or explicit output envelope, truthful stop reason, and session in a
+compact summary. Candidate token text is never displayed.
 
 On a TTY, cyan marks the prompt and active work, green marks readiness and
 completion, orange marks cancellation or warning, red marks refusal, and dim

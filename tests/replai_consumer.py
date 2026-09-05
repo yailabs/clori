@@ -19,10 +19,10 @@ LABEL = b'deepseek4-v4-flash-dspark'
 
 
 class Chat:
-    def __init__(self, binary, name, output, *, plain=False, dumb=False, memcheck=None, model=None):
+    def __init__(self, binary, name, output, *, plain=False, dumb=False, memcheck=None, model=None, columns=100):
         self.master, self.slave = pty.openpty()
         self.name, self.output = name, output
-        fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 100, 0, 0))
+        fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack('HHHH', 30, columns, 0, 0))
         original = termios.tcgetattr(self.slave)
         original[0] ^= termios.IXOFF
         original[6][termios.VMIN] = 3
@@ -162,7 +162,43 @@ def audit(binary):
     print(f'product linkage: static REPLAI ABI {pin["abi"]}, revision={pin["revision"]}; old editor absent', flush=True)
 
 
+def reply_format(binary, output, memcheck):
+    import re
+    import unicodedata
+    for plain, columns in ((False, 100), (True, 100), (True, 40)):
+        c = Chat(binary, 'replai-format', output, plain=plain, memcheck=memcheck, columns=columns)
+        try:
+            rendered = []
+            for request in (b'FORMAT_WHOLE', b'FORMAT_BYTES'):
+                start = c.send(request + b'\r')
+                c.wait(ENABLE, start); c.quiet()
+                raw = bytes(c.data[start:])
+                reply = raw[raw.index(b'FORMAT BEGIN'):raw.index(b'FORMAT END')]
+                if not plain:
+                    assert b'\x1b[1;38;5;250m' in reply
+                    if request == b'FORMAT_WHOLE':
+                        assert b'\x1b[1;38;5;250mC.I.A.A.\x1b[0m' in reply, reply
+                text = re.sub(rb'\x1b\[[0-9;]*m', b'', reply).decode().replace('\r\n', '\n')
+                assert '**' not in text, text
+                assert '你指的是C.I.A.A.吗？' in text, text
+                assert 'Spacing: alpha bold words omega.' in text, text
+                assert '  • CIA' in text, text
+                assert any(line.startswith('    ') for line in text.splitlines()), text
+                assert '\n\n\n' not in text, text
+                for line in text.splitlines():
+                    cells = sum(0 if unicodedata.combining(ch) else
+                                2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+                                for ch in line)
+                    assert cells <= min(96, columns - 2), (cells, line)
+                rendered.append(text)
+            assert rendered[0] == rendered[1], rendered
+            c.finish()
+            print(f'reply: whole == byte fragments; cells <= {min(96, columns - 2)}; inline bold/bullets/spacing preserved', flush=True)
+        finally: c.dispose()
+
+
 def run(binary, host_log, output, memcheck):
+    reply_format(binary, output, memcheck)
     for name, plain, dumb in [('styled', False, False), ('plain', True, False), ('dumb', False, True)]:
         c = Chat(binary, 'replai-' + name, output, plain=plain, dumb=dumb, memcheck=memcheck)
         try:

@@ -388,14 +388,39 @@ static int send_native_markdown(int fd, const yvex_client_request *request,
     return rc;
 }
 
+/* Same reply under different wire fragmentation, including split UTF-8/markup. */
+static int send_native_format(int fd, const yvex_client_request *request,
+                              int bytewise, yvex_error *err)
+{
+    static const char text[] =
+        "FORMAT BEGIN\n"
+        "你好！你指的是**C.I.A.A.**吗？通常我们更熟悉**CIA**这个缩写。\n\n"
+        "- **CIA** 是美国主要的对外情报机构，负责收集和分析外国情报，"
+        "进行秘密行动等。还有更多内容需要解释，不能把文字和格式拆散。\n"
+        "Spacing:    alpha   **bold words**   omega.\r\n"
+        "Unicode: 界🌍é 界🌍é 界🌍é 界🌍é 界🌍é 界🌍é 界🌍é 界🌍é\n"
+        "FORMAT END\n";
+    size_t offset = 0u, step = bytewise ? 1u : sizeof(text) - 1u;
+    int rc = YVEX_OK;
+    while (offset < sizeof(text) - 1u && rc == YVEX_OK) {
+        size_t count = sizeof(text) - 1u - offset;
+        if (count > step) count = step;
+        rc = send_fragment_bytes(fd, request, YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
+            YVEX_CLIENT_STREAM_FINAL_TEXT, (const unsigned char *)text + offset,
+            count, NULL, NULL, err);
+        offset += count;
+    }
+    return rc;
+}
+
 static int send_native_reasoning(int fd, const yvex_client_request *request,
                                  yvex_error *err)
 {
     int rc = send_fragment_bytes(
         fd, request, YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING,
         YVEX_CLIENT_STREAM_EXPLICIT_REASONING,
-        (const unsigned char *)"## Plan\n\n- **Compare** `constraints` carefully.\n",
-        strlen("## Plan\n\n- **Compare** `constraints` carefully.\n"), NULL, NULL, err);
+        (const unsigned char *)"## Plan\n\n- **Compare** `constraints` carefully.",
+        strlen("## Plan\n\n- **Compare** `constraints` carefully."), NULL, NULL, err);
     if (rc == YVEX_OK)
         rc = send_fragment_bytes(
             fd, request, YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
@@ -667,6 +692,12 @@ static int send_generation(int fd, const yvex_client_request *request,
     } else if (rc == YVEX_OK && !provider &&
         native_prompt_contains(request, "MARKDOWN_STREAM")) {
         rc = send_native_markdown(fd, request, err);
+        message.provider_finish = YVEX_PROVIDER_FINISH_STOP;
+    } else if (rc == YVEX_OK && !provider &&
+               (native_prompt_contains(request, "FORMAT_WHOLE") ||
+                native_prompt_contains(request, "FORMAT_BYTES"))) {
+        rc = send_native_format(fd, request,
+            native_prompt_contains(request, "FORMAT_BYTES"), err);
         message.provider_finish = YVEX_PROVIDER_FINISH_STOP;
     } else if (rc == YVEX_OK && !provider &&
                native_prompt_contains(request, "REASONING_STREAM")) {

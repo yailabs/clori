@@ -4,15 +4,18 @@
  * This owner changes presentation only. Canonical response bytes and protocol
  * channel identity remain untouched.
  */
+#define _XOPEN_SOURCE 700
 #include "src/cli/io/private.h"
 
 #include <ctype.h>
 #include <limits.h>
+#include <locale.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <wchar.h>
 
 #define STREAM_PREFERRED_PROSE_WIDTH 96u
 #define STREAM_INLINE_STRONG 1u
@@ -147,25 +150,35 @@ static int stream_utf8_valid(const unsigned char *bytes, size_t available,
     return 1;
 }
 
-static size_t stream_visible_word(const unsigned char *bytes, size_t count)
+/* Width is display cells, not UTF-8 bytes or Unicode scalar count. The public
+ * rendering calls scope wcwidth to a thread-local UTF-8 locale. */
+static unsigned int stream_unit_columns(const unsigned char *bytes, size_t count)
 {
-    size_t index = 0u, visible = 0u;
-    while (index < count && bytes[index] != ' ' && bytes[index] != '\t') {
-        unsigned int extent;
-        if ((bytes[index] == '*' || bytes[index] == '_' ||
-             bytes[index] == '`') &&
-            memchr(bytes + index + 1u, bytes[index], count - index - 1u)) {
-            index++;
-            continue;
-        }
-        extent = stream_utf8_extent(bytes[index]);
-        if (extent && stream_utf8_valid(bytes + index, count - index, extent))
-            index += extent;
-        else
-            index++;
-        visible++;
+    unsigned int extent = stream_utf8_extent(bytes[0]), index;
+    uint32_t scalar;
+    int width;
+    if (bytes[0] < 0x20u || bytes[0] == 0x7fu) return 4u;
+    if (bytes[0] < 0x80u) return 1u;
+    if (!stream_utf8_valid(bytes, count, extent)) return 1u;
+    scalar = bytes[0] & ((1u << (7u - extent)) - 1u);
+    for (index = 1u; index < extent; ++index)
+        scalar = (scalar << 6u) | (bytes[index] & 0x3fu);
+    width = wcwidth((wchar_t)scalar);
+    return width < 0 ? 1u : (unsigned int)width;
+}
+
+static unsigned int stream_prefix_columns(const char *text)
+{
+    const unsigned char *bytes = (const unsigned char *)text;
+    size_t count = strlen(text), index = 0u;
+    unsigned int width = 0u;
+    while (index < count) {
+        unsigned int extent = stream_utf8_extent(bytes[index]);
+        width += stream_unit_columns(bytes + index, count - index);
+        index += extent && stream_utf8_valid(bytes + index, count - index, extent)
+                     ? extent : 1u;
     }
-    return visible;
+    return width;
 }
 
 static int stream_markup_may_open(const yvex_cli_stream_renderer *renderer,
@@ -176,7 +189,7 @@ static int stream_markup_may_open(const yvex_cli_stream_renderer *renderer,
     if (count <= marker_width || bytes[marker_width] == ' ' ||
         bytes[marker_width] == '\t')
         return 0;
-    return !previous || isspace(previous) || ispunct(previous);
+    return !previous || previous >= 0x80u || isspace(previous) || ispunct(previous);
 }
 
 static int stream_prefix(yvex_cli_stream_renderer *renderer,
@@ -190,7 +203,7 @@ static int stream_prefix(yvex_cli_stream_renderer *renderer,
     }
     if (prefix && prefix[0]) {
         if (!stream_ascii(renderer, prefix, style)) return 0;
-        renderer->column += (unsigned int)strlen(prefix);
+        renderer->column += stream_prefix_columns(prefix);
     }
     return 1;
 }
@@ -218,7 +231,7 @@ static int stream_text_unit(yvex_cli_stream_renderer *renderer,
     *consumed = 1u;
     if (bytes[0] < 0x20u || bytes[0] == 0x7fu) {
         if (bytes[0] == '\t') {
-            if (!stream_output(renderer, bytes, 1u, style)) return 0;
+            if (!stream_ascii(renderer, "    ", style)) return 0;
             renderer->column += 4u;
             return 1;
         }
@@ -237,7 +250,7 @@ static int stream_text_unit(yvex_cli_stream_renderer *renderer,
         return 1;
     }
     if (!stream_output(renderer, bytes, extent, style)) return 0;
-    renderer->column++;
+    renderer->column += stream_unit_columns(bytes, available);
     *consumed = extent;
     return 1;
 }
@@ -257,22 +270,9 @@ static int stream_inline(yvex_cli_stream_renderer *renderer,
                      : (strong || emphasis ? YVEX_CLI_STREAM_STYLE_STRONG
                                            : base);
         if (bytes[index] == ' ' || bytes[index] == '\t') {
-            size_t next = index;
-            while (next < count &&
-                   (bytes[next] == ' ' || bytes[next] == '\t')) next++;
-            if (next < count &&
-                renderer->column + 1u +
-                        stream_visible_word(bytes + next, count - next) >
-                    renderer->prose_width &&
-                renderer->column > indent) {
-                if (!stream_continuation(renderer, indent)) return 0;
-            } else if (!stream_ascii(renderer, " ", style)) {
-                return 0;
-            } else {
-                renderer->column++;
-            }
+            renderer->pending_space = 1;
             renderer->inline_previous = ' ';
-            index = next;
+            index++;
             continue;
         }
         if (!code && index + 1u < count &&
@@ -301,16 +301,26 @@ static int stream_inline(yvex_cli_stream_renderer *renderer,
                 continue;
             }
         }
-        if (renderer->column >= renderer->prose_width &&
-            renderer->column > indent && !stream_continuation(renderer, indent))
-            return 0;
+        /* Commit text progressively at cell boundaries. Looking ahead to a word
+         * inside only the current transport fragment makes layout chunk-dependent. */
+        if (renderer->column + (renderer->pending_space ? 1u : 0u) +
+                stream_unit_columns(bytes + index, count - index) >
+                    renderer->prose_width && renderer->column > indent) {
+            if (!stream_continuation(renderer, indent)) return 0;
+            renderer->pending_space = 0;
+        }
+        if (renderer->pending_space) {
+            if (!stream_ascii(renderer, " ", style)) return 0;
+            renderer->column++;
+            renderer->pending_space = 0;
+        }
         if (!stream_text_unit(renderer, bytes + index, count - index,
                               style, &consumed))
             return 0;
         renderer->inline_previous = bytes[index] < 0x80u ? bytes[index] : 0x80u;
         index += consumed;
     }
-    return stream_style_set(renderer, stream_channel_style(renderer, base));
+    return 1;
 }
 
 static size_t stream_fence_offset(const unsigned char *bytes, size_t count)
@@ -457,6 +467,7 @@ static int stream_flush_line(yvex_cli_stream_renderer *renderer, int newline)
         renderer->line_style = YVEX_CLI_STREAM_STYLE_NORMAL;
         renderer->inline_flags = 0u;
         renderer->inline_previous = 0u;
+        renderer->pending_space = 0;
     }
     return ok;
 }
@@ -561,10 +572,9 @@ void yvex_cli_stream_renderer_open(yvex_cli_stream_renderer *renderer,
     stream_width_refresh(renderer);
 }
 
-int yvex_cli_stream_renderer_write(yvex_cli_stream_renderer *renderer,
-                                   yvex_client_stream_channel channel,
-                                   const unsigned char *bytes,
-                                   unsigned long long count)
+static int stream_write(yvex_cli_stream_renderer *renderer,
+                         yvex_client_stream_channel channel,
+                         const unsigned char *bytes, unsigned long long count)
 {
     unsigned long long index;
     if (!renderer || !renderer->output || (!bytes && count) || count > SIZE_MAX)
@@ -579,8 +589,10 @@ int yvex_cli_stream_renderer_write(yvex_cli_stream_renderer *renderer,
         return YVEX_OK;
     }
     if (channel != renderer->channel) {
-        if (renderer->line_count && !stream_flush_line(renderer, 1))
+        if ((renderer->line_started || renderer->line_count || renderer->pending_cr) &&
+            !stream_flush_line(renderer, 1))
             return YVEX_ERR_IO;
+        renderer->pending_cr = renderer->in_fence = 0;
         renderer->channel = channel;
         renderer->channel_announced = 0;
     }
@@ -604,16 +616,19 @@ int yvex_cli_stream_renderer_write(yvex_cli_stream_renderer *renderer,
             !stream_flush_line(renderer, 1))
             return YVEX_ERR_IO;
         renderer->line[renderer->line_count++] = byte;
+        {
+            size_t stable = stream_stable_prefix(renderer);
+            if (stable && !stream_flush_prefix(renderer, stable)) return YVEX_ERR_IO;
+        }
     }
-    if (renderer->line_count) {
-        size_t stable = stream_stable_prefix(renderer);
-        if (stable && !stream_flush_prefix(renderer, stable)) return YVEX_ERR_IO;
-    }
+    if (!stream_style_set(renderer, stream_channel_style(
+                                       renderer, YVEX_CLI_STREAM_STYLE_NORMAL)))
+        return YVEX_ERR_IO;
     return ferror(renderer->output) ? YVEX_ERR_IO : YVEX_OK;
 }
 
-int yvex_cli_stream_renderer_finish(yvex_cli_stream_renderer *renderer,
-                                    int separate_terminal_status)
+static int stream_finish(yvex_cli_stream_renderer *renderer,
+                          int separate_terminal_status)
 {
     int ok = 1;
     if (!renderer || !renderer->output) return YVEX_ERR_INVALID_ARG;
@@ -632,8 +647,49 @@ int yvex_cli_stream_renderer_finish(yvex_cli_stream_renderer *renderer,
         !renderer->last_newline)
         ok = stream_newline(renderer);
     renderer->in_fence = renderer->channel_announced = 0;
-    renderer->line_started = 0;
+    renderer->line_started = renderer->pending_space = 0;
     renderer->inline_flags = 0u;
     renderer->inline_previous = 0u;
     return ok && !ferror(renderer->output) ? YVEX_OK : YVEX_ERR_IO;
+}
+
+/* No process-wide setlocale: application locale and other threads are untouched.
+ * Linux provides C.UTF-8 independently of the caller's LANG/LC_ALL settings. */
+static int stream_render_call(yvex_cli_stream_renderer *renderer,
+                              yvex_client_stream_channel channel,
+                              const unsigned char *bytes, unsigned long long count,
+                              int finish, int separate_terminal_status)
+{
+    locale_t utf8, prior;
+    int rc;
+    if (!renderer || !renderer->enhanced)
+        return finish ? stream_finish(renderer, separate_terminal_status)
+                      : stream_write(renderer, channel, bytes, count);
+    utf8 = newlocale(LC_CTYPE_MASK, "C.UTF-8", (locale_t)0);
+    if (!utf8) return YVEX_ERR_IO;
+    prior = uselocale(utf8);
+    if (!prior) {
+        freelocale(utf8);
+        return YVEX_ERR_IO;
+    }
+    rc = finish ? stream_finish(renderer, separate_terminal_status)
+                : stream_write(renderer, channel, bytes, count);
+    (void)uselocale(prior);
+    freelocale(utf8);
+    return rc;
+}
+
+int yvex_cli_stream_renderer_write(yvex_cli_stream_renderer *renderer,
+                                   yvex_client_stream_channel channel,
+                                   const unsigned char *bytes,
+                                   unsigned long long count)
+{
+    return stream_render_call(renderer, channel, bytes, count, 0, 0);
+}
+
+int yvex_cli_stream_renderer_finish(yvex_cli_stream_renderer *renderer,
+                                    int separate_terminal_status)
+{
+    return stream_render_call(renderer, YVEX_CLIENT_STREAM_FINAL_TEXT, NULL, 0u,
+                              1, separate_terminal_status);
 }

@@ -296,7 +296,8 @@ grep -F 'reasoning' "$root/rendering.typescript" >/dev/null
 grep -F '│ Plan' "$root/rendering.typescript" >/dev/null
 grep -F '│ • Compare constraints carefully.' "$root/rendering.typescript" >/dev/null
 ! grep -F 'answer' "$root/rendering.typescript" >/dev/null
-grep -F 'Result' "$root/rendering.typescript" >/dev/null
+grep -F '  Result' "$root/rendering.typescript" >/dev/null
+! grep -F '## Result' "$root/rendering.typescript" >/dev/null
 printf '/quit\r' >&3
 finish_console
 assert_linear_terminal "$root/rendering.typescript"

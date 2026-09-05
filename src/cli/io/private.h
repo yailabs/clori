@@ -147,7 +147,7 @@ typedef struct {
     size_t line_count;
     unsigned int column, prose_width, line_indent, inline_flags;
     int enhanced, in_fence, pending_cr, channel_announced, line_started;
-    int wrote_bytes, last_newline;
+    int wrote_bytes, last_newline, pending_space;
 } yvex_cli_stream_renderer;
 typedef struct {
     yvex_cli_terminal_style style;
