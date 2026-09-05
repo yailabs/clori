@@ -5,6 +5,7 @@
 #include "tests/test.h"
 
 #include <yvex/internal/compilation.h>
+#include <yvex/internal/source.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +14,10 @@
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 #define FIXTURE_PAYLOAD_ID \
     "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+#define FIXTURE_ROLE_MAP_ID \
+    "1111111111111111111111111111111111111111111111111111111111111111"
+#define FIXTURE_ALTERNATE_ROLE_MAP_ID \
+    "2222222222222222222222222222222222222222222222222222222222222222"
 
 typedef struct {
     unsigned int calls;
@@ -496,6 +501,86 @@ static int test_transform_identity_projection(void)
     return 0;
 }
 
+static int transform_test_specialization_project(
+    void *context, yvex_transform_recipe_sink *sink,
+    yvex_transform_failure *failure, yvex_error *err)
+{
+    yvex_transform_direct_recipe recipe = {0};
+    (void)context;
+
+    recipe.source_name = "specialization.selected";
+    recipe.role = YVEX_TENSOR_ROLE_TOKEN_EMBEDDING;
+    recipe.collection = YVEX_TENSOR_COLLECTION_GLOBAL;
+    recipe.scope = YVEX_TENSOR_SCOPE_GLOBAL;
+    recipe.layer = YVEX_TRANSFORM_IR_NO_ID;
+    recipe.auxiliary = YVEX_TRANSFORM_IR_NO_ID;
+    recipe.expert = YVEX_TRANSFORM_IR_NO_ID;
+    recipe.source_dtype = YVEX_NATIVE_DTYPE_F32;
+    recipe.shape = transform_test_shape(4ull, 0ull);
+    return yvex_transform_recipe_add_direct(sink, &recipe, failure, err);
+}
+
+static int test_transform_specialization_projection(void)
+{
+    static const unsigned long long dims[] = {4ull};
+    yvex_native_weight_table *table = calloc(1u, sizeof(*table));
+    yvex_source_tensor_snapshot *snapshot = NULL;
+    yvex_source_tensor_snapshot_facts facts = {0};
+    yvex_transform_builder_options options = {0};
+    yvex_transform_header header;
+    yvex_transform_ir *first = NULL;
+    yvex_transform_ir *second = NULL;
+    yvex_transform_failure failure = {0};
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(
+        table && yvex_native_weight_table_add(
+                     table, "specialization.deferred", "model-00001.safetensors",
+                     "F32", 1u, dims, 0ull, 16ull, &err) == YVEX_OK &&
+            yvex_native_weight_table_add(
+                table, "specialization.selected", "model-00001.safetensors",
+                "F32", 1u, dims, 16ull, 32ull, &err) == YVEX_OK &&
+            yvex_source_tensor_snapshot_take_table(
+                &snapshot, &table, 1ull, 1ull, &err) == YVEX_OK && snapshot &&
+            yvex_source_tensor_snapshot_facts_get(snapshot, &facts, &err) == YVEX_OK &&
+            facts.tensor_count == 2ull,
+        "specialization fixture retains the complete authenticated source population");
+    transform_test_header(&header, 1ull, 1ull);
+    header.source_snapshot_identity = facts.identity;
+    header.coverage_identity = 0ull;
+    yvex_transform_budget_default(&options.budget);
+    options.source_snapshot = snapshot;
+    YVEX_TEST_ASSERT(
+        yvex_transform_recipe_compile(
+            &first, &header, transform_test_specialization_project, NULL,
+            &options, &failure, &err) != YVEX_OK && !first &&
+            failure.code == YVEX_TRANSFORM_FAILURE_COVERAGE_INCOMPLETE,
+        "full-source schema still refuses an unaccounted source tensor");
+    header.schema_version = YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION;
+    header.architecture_identity = FIXTURE_LOGICAL_ID;
+    header.role_map_identity = FIXTURE_ROLE_MAP_ID;
+    header.source_population_count = facts.tensor_count;
+    YVEX_TEST_ASSERT(
+        yvex_transform_recipe_compile(
+            &first, &header, transform_test_specialization_project, NULL,
+            &options, &failure, &err) == YVEX_OK && first &&
+            yvex_transform_ir_summary_get(first)->source_population_count == 2ull &&
+            yvex_transform_ir_summary_get(first)->source_value_count == 1ull,
+        "specialization schema authenticates the population and compiles its exact subset");
+    header.role_map_identity = FIXTURE_ALTERNATE_ROLE_MAP_ID;
+    YVEX_TEST_ASSERT(
+        yvex_transform_recipe_compile(
+            &second, &header, transform_test_specialization_project, NULL,
+            &options, &failure, &err) == YVEX_OK && second &&
+            strcmp(yvex_transform_ir_summary_get(first)->transform_identity,
+                   yvex_transform_ir_summary_get(second)->transform_identity) != 0,
+        "specialization identity binds the complete source role-map authority");
+    yvex_transform_ir_release(&second);
+    yvex_transform_ir_release(&first);
+    yvex_source_tensor_snapshot_release(snapshot);
+    return 0;
+}
+
 static int test_transform_operation_suite(void)
 {
     const unsigned long long expert_count = 256u;
@@ -768,7 +853,7 @@ static int test_transform_negative_graphs(void)
     yvex_transform_builder_release(&builder);
 
     transform_test_header(&header, 1u, 1u);
-    header.schema_version = YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION + 1u;
+    header.schema_version = YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION + 1u;
     YVEX_TEST_ASSERT(yvex_transform_builder_create(
                          &builder, &header, NULL, &failure, &err) != YVEX_OK &&
                          !builder &&
@@ -1465,6 +1550,7 @@ int yvex_test_transform_ir(void)
 {
     if (test_transform_identity_and_lifecycle() != 0) return 1;
     if (test_transform_identity_projection() != 0) return 1;
+    if (test_transform_specialization_projection() != 0) return 1;
     if (test_transform_operation_suite() != 0) return 1;
     if (test_transform_negative_graphs() != 0) return 1;
     if (test_transform_operation_refusals() != 0) return 1;

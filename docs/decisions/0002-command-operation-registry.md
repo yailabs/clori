@@ -58,18 +58,17 @@ profile, registry identity, product binary hashes, and library hash.
 
 Schema changes require an explicit version change when they alter the
 machine-readable contract. Operation IDs remain stable; removal or structural
-replacement names an explicit successor. Pre-v0.1 command grammar changes are
-recorded in the deterministic migration matrix, while removed top-level paths
-produce refusal hints and never execute compatibility aliases.
+replacement names an explicit successor. Removed top-level paths produce
+refusal hints and never execute compatibility aliases. The initial cutover
+matrix remains available in Git history rather than the production registry.
 
 ## Consequences
 
 - Human help, `yvex.command.discovery.v1`, shell completion, CLI dispatch,
-  slash projections, documentation checks, and audit reconciliation consume
-  one compiled metadata authority.
+  slash projections, and product tests consume one compiled metadata authority.
 - The final command taxonomy can change without preserving implementation-era
   namespaces as hidden aliases.
-- A stale generated product or unmatched audit row fails before product
+- A stale generated product or inconsistent current projection fails before product
   acceptance.
 - Python is a build-time tool only; installed YVEX remains native C/CUDA.
 - Generated descriptors are reviewable build products, not source owners or

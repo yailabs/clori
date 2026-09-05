@@ -15,6 +15,7 @@
 #include <yvex/source.h>
 #include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/compilation.h>
+#include <yvex/internal/physical_variant.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -433,13 +434,6 @@ const yvex_transform_ir *yvex_quant_plan_transform_ir(
     const yvex_quant_plan *plan);
 const yvex_transform_binding *yvex_quant_plan_binding(
     const yvex_quant_plan *plan);
-
-/* Physical-variant plan file. */
-#define YVEX_PHYSICAL_VARIANT_FILE_SCHEMA_VERSION 1u
-int yvex_quant_plan_file_write(const char *path, const yvex_quant_plan *plan,
-                               yvex_error *err);
-int yvex_quant_plan_file_validate(const char *path, const yvex_quant_plan *plan,
-                                  yvex_error *err);
 
 /* Quant Sink. */
 typedef struct {

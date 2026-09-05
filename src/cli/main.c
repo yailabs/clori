@@ -27,9 +27,13 @@ static const yvex_operator_descriptor *descriptor_find(int argc, char **argv,
     size_t best_count = 0u, index, word;
     for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
         const yvex_operator_descriptor *candidate = &yvex_operator_descriptors[index];
-        if (!candidate->cli_projection || !candidate->command_word_count ||
+        if (!candidate->cli_projection ||
             candidate->command_word_count > (size_t)(argc - 1))
             continue;
+        if (!candidate->command_word_count) {
+            if (!best && (argc == 1 || argv[1][0] == '-')) best = candidate;
+            continue;
+        }
         for (word = 0u; word < candidate->command_word_count; ++word)
             if (strcmp(candidate->command_words[word], argv[word + 1u])) break;
         if (word == candidate->command_word_count && word > best_count) {
@@ -104,7 +108,8 @@ static const char *nearest_command(int argc, char **argv, char input[256])
     for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
         const yvex_operator_descriptor *candidate = &yvex_operator_descriptors[index];
         size_t distance;
-        if (!candidate->cli_projection || candidate->visibility == YVEX_OPERATOR_VISIBILITY_REMOVED)
+        if (!candidate->cli_projection || !candidate->command_path[0] ||
+            candidate->visibility == YVEX_OPERATOR_VISIBILITY_REMOVED)
             continue;
         distance = yvex_cli_command_distance(input, candidate->command_path);
         if (distance < best_distance) {
@@ -264,7 +269,9 @@ int main(int argc, char **argv)
     status = yvex_cli_operator_argv_parse(operation, argc, argv, consumed,
                                           &invocation);
     if (status) {
-        yvex_cli_out_writef(stderr, "yvex: %s: %s\n", operation->command_path,
+        yvex_cli_out_writef(stderr, "yvex: %s: %s\n",
+                            operation->command_path[0] ? operation->command_path
+                                                       : "interactive console",
                             invocation.message);
         yvex_client_render_usage_error(operation);
         return status;
@@ -272,6 +279,15 @@ int main(int argc, char **argv)
     if (invocation.help_requested)
         return yvex_client_render_help_path(operation->command_word_count,
                                             operation->command_words, 0, 0);
+    if (operation->lane == YVEX_OPERATOR_LANE_RUNTIME_CLIENT &&
+        operation->runtime_adapter == YVEX_OPERATOR_RUNTIME_CHAT) {
+        int index;
+        for (index = 1; index < argc; ++index)
+            if (!strcmp(argv[index], "--first-image") ||
+                !strcmp(argv[index], "--last-image"))
+                return yvex_client_dispatch(operation, argc, argv, consumed);
+        return yvex_client_dispatch(operation, argc, argv, consumed);
+    }
     if (operation->lane == YVEX_OPERATOR_LANE_RUNTIME_CLIENT)
         return yvex_client_dispatch(operation, argc, argv, consumed);
     if (operation->lane == YVEX_OPERATOR_LANE_OFFLINE_ENGINE)

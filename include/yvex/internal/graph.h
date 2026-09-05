@@ -11,7 +11,8 @@
 #include <yvex/core.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/compiler.h>
-#include <yvex/internal/execution.h>
+#include <yvex/internal/execution_batch.h>
+#include <yvex/internal/execution_observation.h>
 #include <yvex/internal/model.h>
 #include <yvex/registry.h>
 struct yvex_backend_attention_completion;
@@ -56,7 +57,8 @@ typedef struct yvex_attention_layer_plan {
 typedef int (*yvex_attention_recipe_identity_fn)(const void *context, char output[65]);
 typedef int (*yvex_attention_recipe_layer_fn)(const void *context, unsigned long long index,
                                               yvex_attention_layer_plan *output);
-
+int yvex_attention_layer_local_state_width(const yvex_attention_layer_plan *layer,
+                                           unsigned long long *width, yvex_error *err);
 typedef struct {
     const void *context;
     unsigned long long layer_count, auxiliary_layer_count;
@@ -237,10 +239,6 @@ const yvex_attention_layer_plan *
 yvex_attention_plan_layer_at(const yvex_attention_plan *plan, unsigned long long index);
 yvex_attention_binding_class yvex_attention_plan_binding_classify(
     const yvex_attention_plan *plan, const yvex_runtime_tensor_binding *binding);
-int yvex_attention_plan_identity_compute(const yvex_attention_summary *summary,
-                                         const yvex_attention_layer_plan *layers,
-                                         unsigned long long layer_count,
-                                         char output[YVEX_ATTENTION_IDENTITY_CAP]);
 typedef enum {
     YVEX_ATTENTION_OPERATION_CORE = 0,
     YVEX_ATTENTION_OPERATION_ENVELOPE,
@@ -381,12 +379,14 @@ extern const yvex_graph_execution_api yvex_attention_execution_api;
 #define YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1 1u
 struct yvex_family_compiler_adapter;
 struct yvex_model_family_api;
+struct yvex_model_deployment_defaults;
 typedef struct {
     unsigned int schema_version;
     unsigned long long adapter_id, adapter_version;
     const char *target_id, *family_name, *logical_transform_identity;
     const char *operator_family_key, *operator_artifact_filename;
     const char *source_manifest_filename;
+    const struct yvex_model_deployment_defaults *deployment_defaults;
     const struct yvex_model_family_api *(*model)(void);
     const struct yvex_family_compiler_adapter *compiler;
     const yvex_graph_execution_api *api;
@@ -537,10 +537,10 @@ typedef struct {
     unsigned long long layers_executed, bindings_executed;
     unsigned long long swa_layers_executed, csa_layers_executed, hca_layers_executed;
     unsigned long long topk_selected, hca_ratio, payload_bytes_read;
-    unsigned long long kernel_launches, tensor_core_launches, peak_device_bytes;
+    unsigned long long kernel_launches, accelerated_matrix_launches, peak_device_bytes;
     unsigned long long comparison_values;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes;
-    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long queue_synchronizations, device_synchronizations;
     yvex_execution_memory_facts memory;
     unsigned long long cuda_device_execution_elapsed_ns;
     unsigned long long comparison_output_values, comparison_state_values;

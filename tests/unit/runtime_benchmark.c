@@ -7,6 +7,7 @@
 #define _GNU_SOURCE
 #include <yvex/internal/benchmark.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_operator.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -30,6 +31,7 @@ typedef struct {
     char cleanup_chart[YVEX_PATH_CAP];
     char transaction_baseline[YVEX_PATH_CAP];
     char transaction_chart[YVEX_PATH_CAP];
+    char qualification[YVEX_PATH_CAP];
     char corrupt[YVEX_PATH_CAP];
     char symlink_parent[YVEX_PATH_CAP];
 } benchmark_fixture;
@@ -182,6 +184,7 @@ static int fixture_open(benchmark_fixture *fixture)
     PATH(cleanup_chart, "cleanup.svg");
     PATH(transaction_baseline, "transaction.yvex-benchmark");
     PATH(transaction_chart, "transaction.svg");
+    PATH(qualification, "execution.yvex-qualification");
     PATH(corrupt, "corrupt.yvex-benchmark");
     PATH(symlink_parent, "linked");
 #undef PATH
@@ -195,7 +198,7 @@ static int fixture_close(const benchmark_fixture *fixture)
         fixture->cpu_chart,
         fixture->compared_chart, fixture->cleanup_chart,
         fixture->transaction_baseline, fixture->transaction_chart,
-        fixture->corrupt, fixture->symlink_parent,
+        fixture->qualification, fixture->corrupt, fixture->symlink_parent,
     };
     size_t index;
     int ok = 1;
@@ -917,6 +920,135 @@ static int test_chart_cleanup_fault(const benchmark_fixture *fixture,
     return 0;
 }
 
+static void qualification_request(
+    yvex_execution_qualification_request *request)
+{
+    memset(request, 0, sizeof(*request));
+    request->schema_version = YVEX_EXECUTION_QUALIFICATION_SCHEMA_V1;
+    request->source_relation = YVEX_EXECUTION_SOURCE_AUTHENTICATED;
+    request->warm_state = YVEX_EXECUTION_WARM_STATE_COLD;
+    request->contention_state = YVEX_EXECUTION_CONTENTION_ISOLATED;
+    request->source_repository = "fixture/model";
+    request->source_revision = "0123456789abcdef0123456789abcdef01234567";
+    request->product_model = "fixture-model";
+    request->specialization = "text";
+    request->artifact_identity =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    request->runtime_binding_identity =
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    request->deployment_profile = "fixture-profile";
+    request->engine_kind = "text";
+    request->execution_strategy = "target-only";
+    request->runtime_model_identity =
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    request->runtime_descriptor_identity =
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    request->semantic_graph_identity =
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    request->executable_graph_identity =
+        "1111111111111111111111111111111111111111111111111111111111111111";
+    request->backend = "cuda";
+    request->device = "fixture-gpu";
+    request->hardware_profile_identity =
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    request->execution_profile_identity =
+        "9999999999999999999999999999999999999999999999999999999999999999";
+    request->context_capacity = 4096ull;
+    request->prompt_identity =
+        "2222222222222222222222222222222222222222222222222222222222222222";
+    request->prompt_token_identity =
+        "3333333333333333333333333333333333333333333333333333333333333333";
+    request->generation_plan_identity =
+        "4444444444444444444444444444444444444444444444444444444444444444";
+    request->sampling_policy_identity =
+        "5555555555555555555555555555555555555555555555555555555555555555";
+    request->reasoning_policy = "disabled";
+    request->maximum_new_tokens = 8ull;
+    request->maximum_output_bytes = 1024ull;
+    request->seed_present = 1;
+    request->seed = 42ull;
+    request->generation_execution_identity =
+        "6666666666666666666666666666666666666666666666666666666666666666";
+    request->generated_text_digest =
+        "7777777777777777777777777777777777777777777777777777777777777777";
+    request->measurement_identity =
+        "8888888888888888888888888888888888888888888888888888888888888888";
+    request->stop_reason = "max-new-tokens";
+    request->prompt_tokens = 4ull;
+    request->generated_tokens = 8ull;
+    request->final_position = 12ull;
+    request->time_to_first_token_ns = 1000000ull;
+    request->total_generation_ns = 9000000ull;
+}
+
+static int test_execution_qualification(const benchmark_fixture *fixture)
+{
+    static const char other_artifact[] =
+        "9999999999999999999999999999999999999999999999999999999999999999";
+    yvex_execution_qualification_request request;
+    yvex_execution_qualification_record base, changed, reopened, corrupt;
+    yvex_execution_qualification_publication publication, conflict;
+    yvex_error err;
+
+    qualification_request(&request);
+    YVEX_TEST_ASSERT(
+        yvex_execution_qualification_seal(&request, &base, &err) == YVEX_OK &&
+            yvex_execution_qualification_validate(&base, &err) == YVEX_OK &&
+            strlen(base.build_identity) == 64u &&
+            strlen(base.execution_identity) == 64u &&
+            strlen(base.environment_identity) == 64u &&
+            strlen(base.run_identity) == 64u,
+        "qualification seals independent build execution environment and run identities");
+    YVEX_TEST_ASSERT(
+        yvex_execution_qualification_write(
+            fixture->qualification, &base, &publication, &err) == YVEX_OK &&
+            publication.published && publication.file_bytes > 0ull &&
+            yvex_execution_qualification_open(
+                fixture->qualification, &reopened, &err) == YVEX_OK &&
+            !strcmp(reopened.run_identity, base.run_identity) &&
+            !strcmp(reopened.build_identity, base.build_identity) &&
+            !strcmp(reopened.execution_identity, base.execution_identity),
+        "one bounded qualification independently reopens its exact identity chain");
+    request.maximum_new_tokens = 16ull;
+    YVEX_TEST_ASSERT(
+        yvex_execution_qualification_seal(&request, &changed, &err) == YVEX_OK &&
+            !strcmp(changed.build_identity, base.build_identity) &&
+            !strcmp(changed.execution_identity, base.execution_identity) &&
+            !strcmp(changed.environment_identity, base.environment_identity) &&
+            strcmp(changed.run_identity, base.run_identity),
+        "runtime-only generation settings change run identity alone");
+    qualification_request(&request);
+    request.artifact_identity = other_artifact;
+    YVEX_TEST_ASSERT(
+        yvex_execution_qualification_seal(&request, &changed, &err) == YVEX_OK &&
+            !strcmp(changed.build_identity, base.build_identity) &&
+            strcmp(changed.execution_identity, base.execution_identity) &&
+            strcmp(changed.run_identity, base.run_identity),
+        "immutable artifact mutation changes execution and run identity, not build");
+    qualification_request(&request);
+    request.warm_state = YVEX_EXECUTION_WARM_STATE_WARM;
+    request.contention_state = YVEX_EXECUTION_CONTENTION_CONTENDED;
+    YVEX_TEST_ASSERT(
+        yvex_execution_qualification_seal(&request, &changed, &err) == YVEX_OK &&
+            !strcmp(changed.build_identity, base.build_identity) &&
+            !strcmp(changed.execution_identity, base.execution_identity) &&
+            strcmp(changed.environment_identity, base.environment_identity) &&
+            strcmp(changed.run_identity, base.run_identity),
+        "warm and contention conditions change environment and run identity alone");
+    corrupt = base;
+    corrupt.runtime_binding_identity[0] =
+        corrupt.runtime_binding_identity[0] == '0' ? '1' : '0';
+    YVEX_TEST_ASSERT(
+        yvex_execution_qualification_validate(&corrupt, &err) == YVEX_ERR_FORMAT,
+        "execution identity mutation invalidates the qualification chain");
+    YVEX_TEST_ASSERT(
+        yvex_execution_qualification_write(
+            fixture->qualification, &base, &conflict, &err) == YVEX_ERR_STATE &&
+            !conflict.published,
+        "qualification publication never replaces existing evidence");
+    return 0;
+}
+
 int yvex_test_runtime_benchmark(void)
 {
     benchmark_fixture fixture;
@@ -933,6 +1065,7 @@ int yvex_test_runtime_benchmark(void)
     if (test_publication(&fixture, &baseline) != 0 ||
         test_comparison(&baseline, &current) != 0 ||
         test_regression_dimensions(&baseline) != 0 ||
+        test_execution_qualification(&fixture) != 0 ||
         test_refusals(&fixture, &baseline) != 0 ||
         test_chart(&fixture, &current, &baseline) != 0 ||
         test_chart_cleanup_fault(&fixture, &current) != 0 ||

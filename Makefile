@@ -38,10 +38,9 @@
 
 .DEFAULT_GOAL := all
 
-.PHONY: all info lib client package generate-source-manifest \
+.PHONY: all info lib client package print-build-identity generate-source-manifest \
 	check-source-manifest generate-operator-registry \
 	generate-qa-registry check-qa-registry qa qa-fast qa-structural qa-cuda qa-ci qa-doctor \
-	generate-command-migration \
 	check-operator-registry test-operator-registry cuda-info cuda-kernels cuda test-cuda test-cuda-graph \
 	test-cuda-native-sm121 test-cuda-native-sm121-sass \
 	test-cuda-no-nvcc smoke-cuda check-cuda test test-core test-cli test-materialize \
@@ -63,8 +62,7 @@
 	test-runtime-sanitizers-live test-materialize-live-plan \
 	test-materialize-live test-minimax-audio-artifact-live \
 	test-minimax-video-artifact-live test-minimax-text-conditioning-live \
-	test-minimax-text-layer-live test-minimax-omni-block-live \
-	test-minimax-omni-transformer-live test-minimax-omni-transformer-artifact-live \
+	test-minimax-text-layer-live test-minimax-omni-transformer-artifact-live \
 	test-minimax-latent-live test-minimax-tokenizer-live \
 	test-attention test-attention-fixture-isolation \
 	test-attention-live-plan test-attention-live test-attention-cli-live \
@@ -80,7 +78,7 @@
 	test-artifact-live-structure test-artifact-live test-transform-ir-live-plan \
 	test-source-payload-live-plan test-source-payload-live test-gguf-artifact-abi \
 	test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural \
-	test-project-control test-docs-surface \
+	test-project-control test-public-abi test-docs-surface \
 	test-documentation-architecture test-surface test-source-ownership \
 	test-repository-layout test-architecture-boundaries smoke check check-docs \
 	check-guardrails clean
@@ -107,6 +105,7 @@ YVEX_PROTOCOL_VERSION := $(shell sed -n \
 
 CPPFLAGS ?= -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L -Iinclude -I.
 YVEX_BUILD_COMMIT ?= $(shell git rev-parse --verify HEAD 2>/dev/null || printf unknown)
+YVEX_BUILD_SOURCE_TREE ?= $(shell git rev-parse --verify 'HEAD^{tree}' 2>/dev/null || printf unknown)
 YVEX_BUILD_SOURCE_DELTA_IDENTITY ?= $(shell { \
 	git diff --binary --no-ext-diff HEAD -- . 2>/dev/null; \
 	git ls-files --others --exclude-standard 2>/dev/null | LC_ALL=C sort | \
@@ -120,12 +119,17 @@ YVEX_BUILD_SOURCE_STATE ?= $(if $(filter \
 	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855,\
 	$(YVEX_BUILD_SOURCE_DELTA_IDENTITY)),clean,dirty)
 YVEX_BUILD_IDENTITY ?= $(shell printf '%s\n' \
+	'source-tree=$(YVEX_BUILD_SOURCE_TREE)' \
+	'source-delta=$(YVEX_BUILD_SOURCE_DELTA_IDENTITY)' \
+	'source-owners=$(shell sha256sum config/source_owners.tsv 2>/dev/null | cut -d" " -f1)' \
+	'operator-registry=$(shell sha256sum config/operator/registry.json 2>/dev/null | cut -d" " -f1)' \
 	'cc=$(CC)' 'cc-version=$(shell $(CC) --version 2>/dev/null | head -1)' \
 	'cc-target=$(shell $(CC) -dumpmachine 2>/dev/null)' \
-	'cppflags=$(CPPFLAGS)' 'cflags=$(CFLAGS)' 'ldflags=$(LDFLAGS)' 'ldlibs=$(LDLIBS)' \
+	'cppflags=$(YVEX_BUILD_CPPFLAGS)' 'cflags=$(YVEX_BUILD_CFLAGS)' \
+	'ldflags=$(YVEX_BUILD_LDFLAGS)' 'ldlibs=$(YVEX_BUILD_LDLIBS)' \
 	'linker-version=$(shell $(CC) -Wl,--version 2>/dev/null | head -1)' \
 	'nvcc=$(NVCC)' 'nvcc-version=$(shell $(NVCC) --version 2>/dev/null | tail -1)' \
-	'nvccflags=$(NVCCFLAGS)' 'cuda-ldflags=$(CUDA_LDFLAGS)' \
+	'nvccflags=$(YVEX_BUILD_NVCCFLAGS)' 'cuda-ldflags=$(YVEX_BUILD_CUDA_LDFLAGS)' \
 	'cuda-arch-request=$(YVEX_CUDA_ARCH)' 'cuda-arch=$(CUDA_EFFECTIVE_ARCH)' | \
 	sha256sum | cut -d' ' -f1)
 YVEX_BUILD_SOURCE_ROOT ?= $(shell pwd -P)
@@ -134,7 +138,7 @@ CFLAGS ?= -O3 -std=c11 -Wall -Wextra -pedantic -Wstrict-prototypes \
 	-Wundef -Wvla -pthread
 DEPFLAGS ?= -MMD -MP
 LDFLAGS ?=
-LDLIBS ?= -ldl -pthread -lm
+LDLIBS ?= -ldl -pthread -lm -lz
 TEST_CPPFLAGS := $(CPPFLAGS)
 
 BUILD_DIR ?= build
@@ -146,6 +150,7 @@ CUDA_BUILD_CONFIG := $(BUILD_DIR)/generated/cuda_build_config
 SOURCE_OWNER_MANIFEST := config/source_owners.tsv
 SOURCE_MANIFEST_GENERATOR := tools/generate_source_manifest.py
 SOURCE_MANIFEST_MK := $(BUILD_DIR)/generated/sources.mk
+SOURCE_FAMILY_HEADER := $(BUILD_DIR)/generated/source/families.h
 QA_REGISTRY_SOURCE := config/qa/registry.json
 QA_REGISTRY_GENERATOR := tools/generate_qa_registry.py
 QA_REGISTRY_DIR := $(BUILD_DIR)/generated/qa
@@ -163,11 +168,6 @@ OPERATOR_REGISTRY_HEADER := $(OPERATOR_REGISTRY_DIR)/registry.h
 OPERATOR_REGISTRY_C := $(OPERATOR_REGISTRY_DIR)/registry.c
 OPERATOR_REGISTRY_IDENTITY := $(OPERATOR_REGISTRY_DIR)/registry.sha256
 OPERATOR_REGISTRY_OBJ := $(OBJ_DIR)/generated/operator/registry.o
-OPERATOR_AUDIT_ROOT := docs/audits/operator-surface-ec7dcc
-OPERATOR_AUDIT_FILES := $(OPERATOR_AUDIT_ROOT)/commands.tsv \
-	$(OPERATOR_AUDIT_ROOT)/flags.tsv $(OPERATOR_AUDIT_ROOT)/operations.tsv \
-	$(OPERATOR_AUDIT_ROOT)/surfaces.tsv
-OPERATOR_MIGRATION_DOC := docs/migrations/command-architecture-v1.md
 DEEPSEEK_SOURCE ?= $(HOME)/lab/models/hf/deepseek/DeepSeek-V4-Flash-DSpark
 DEEPSEEK_MODELS_ROOT ?= $(HOME)/lab/models/gguf
 DEEPSEEK_SOURCE_MANIFEST ?= $(DEEPSEEK_MODELS_ROOT)/deepseek/deepseek-v4-flash-dspark-source-manifest.json
@@ -203,6 +203,7 @@ include $(SOURCE_MANIFEST_MK)
 include $(QA_REGISTRY_MK)
 endif
 
+CPPFLAGS += -I$(BUILD_DIR)/generated
 TEST_CPPFLAGS += -I$(BUILD_DIR)/generated
 
 # Attention wrappers own a collision-free temporary root and delete only that
@@ -238,6 +239,7 @@ CLIENT_PROTOCOL_OBJS := \
 	$(OBJ_DIR)/src/core/sha256.o \
 	$(OBJ_DIR)/src/core/json.o \
 	$(OBJ_DIR)/src/provider/core.o \
+	$(OBJ_DIR)/src/provider/content.o \
 	$(OBJ_DIR)/src/server/protocol.o \
 	$(OBJ_DIR)/src/server/telemetry.o
 OPENAI_ADAPTER_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(OPENAI_ADAPTER_SRCS))
@@ -263,13 +265,24 @@ $(OBJ_DIR)/src/backend/cuda/capability.o: $(CUDA_CUBIN_INC)
 endif
 endif
 
+# Freeze invocation-wide material flags before target-specific additions can be
+# inherited by build_commit.h through whichever consumer Make visits first.
+YVEX_BUILD_CPPFLAGS := $(CPPFLAGS)
+YVEX_BUILD_CFLAGS := $(CFLAGS)
+YVEX_BUILD_LDFLAGS := $(LDFLAGS)
+YVEX_BUILD_LDLIBS := $(LDLIBS)
+YVEX_BUILD_NVCCFLAGS := $(NVCCFLAGS)
+YVEX_BUILD_CUDA_LDFLAGS := $(CUDA_LDFLAGS)
+
 $(OBJ_DIR)/src/cli/commands/graph.o: CPPFLAGS += -D_XOPEN_SOURCE=700 -I$(BUILD_DIR)/generated
 $(OBJ_DIR)/src/cli/commands/graph.o: $(BUILD_COMMIT_HEADER)
 $(OBJ_DIR)/src/runtime/benchmark.o: CPPFLAGS += -I$(BUILD_DIR)/generated
 $(OBJ_DIR)/src/runtime/benchmark.o: $(BUILD_COMMIT_HEADER)
+$(OBJ_DIR)/src/runtime/evidence.o: $(BUILD_COMMIT_HEADER)
 $(OBJ_DIR)/src/runtime/generation_context.o: CPPFLAGS += -I$(BUILD_DIR)/generated
 $(OBJ_DIR)/src/runtime/generation_context.o: $(BUILD_COMMIT_HEADER)
 OPERATOR_REGISTRY_CONSUMER_OBJS := $(OBJ_DIR)/src/cli/main.o \
+	$(OBJ_DIR)/src/cli/commands/graph.o \
 	$(OBJ_DIR)/src/cli/io/client.o $(OBJ_DIR)/src/cli/io/out.o \
 	$(OBJ_DIR)/src/cli/input/operator.o
 $(OPERATOR_REGISTRY_CONSUMER_OBJS): CPPFLAGS += -I$(BUILD_DIR)/generated
@@ -286,7 +299,6 @@ MATERIALIZE_LIVE_RUNNER := $(TEST_DIR)/materialize_deepseek
 MINIMAX_AUDIO_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_audio
 MINIMAX_VIDEO_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_video
 MINIMAX_TEXT_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_text
-MINIMAX_OMNI_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_omni
 MINIMAX_TRANSFORMER_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_transformer
 ATTENTION_LIVE_RUNNER := $(TEST_DIR)/attention_deepseek
 PREFILL_LIVE_RUNNER := $(TEST_DIR)/prefill_deepseek
@@ -299,13 +311,13 @@ GENERATION_LIVE_RUNNER := $(TEST_DIR)/generation_deepseek
 OPENAI_FAKE_HOST := $(TEST_DIR)/openai_host
 OPENAI_ADAPTER_HOST := $(TEST_DIR)/openai_adapter
 TINY_VERTICAL_COMPILER := $(TEST_DIR)/tiny_compile
+NATIVE_TURN_TEST := $(TEST_DIR)/native_turn
 OFFICIAL_GGUF_CHECKER := $(TEST_DIR)/ggml_gguf_check
 CUDA_TEST_RUNNER := $(TEST_DIR)/test_cuda
 
 TEST_UNIT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(TEST_UNIT_SRCS))
 TEST_REFERENCE_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(TEST_REFERENCE_SRCS))
 TEST_MAIN_OBJ := $(OBJ_DIR)/tests/test.o
-
 QUANT_TEST_UNIT_SRCS := $(QA_QUANT_TEST_SRCS)
 QUANT_TEST_UNIT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(QUANT_TEST_UNIT_SRCS))
 QUANT_TEST_RUNNER_OBJ := $(OBJ_DIR)/tests/unit/quant_runner.o
@@ -321,7 +333,6 @@ MATERIALIZE_LIVE_OBJ := $(OBJ_DIR)/tests/live/materialize_deepseek.o
 MINIMAX_AUDIO_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_audio.o
 MINIMAX_VIDEO_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_video.o
 MINIMAX_TEXT_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_text.o
-MINIMAX_OMNI_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_omni.o
 MINIMAX_TRANSFORMER_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_transformer.o
 ATTENTION_LIVE_OBJ := $(OBJ_DIR)/tests/live/attention_deepseek.o
 PREFILL_LIVE_OBJ := $(OBJ_DIR)/tests/live/prefill_deepseek.o
@@ -331,20 +342,23 @@ DECODE_LIVE_OBJ := $(OBJ_DIR)/tests/live/decode_deepseek.o
 LOGITS_LIVE_OBJ := $(OBJ_DIR)/tests/live/logits_deepseek.o
 TOKENIZER_LIVE_OBJ := $(OBJ_DIR)/tests/live/tokenizer_deepseek.o
 GENERATION_LIVE_OBJ := $(OBJ_DIR)/tests/live/generation_deepseek.o
+$(GENERATION_LIVE_OBJ): CPPFLAGS += -I$(BUILD_DIR)/generated
+$(GENERATION_LIVE_OBJ): $(BUILD_COMMIT_HEADER)
 OPENAI_FAKE_HOST_OBJ := $(OBJ_DIR)/tests/integration/openai_host.o
 OPENAI_ADAPTER_HOST_OBJ := $(OBJ_DIR)/tests/integration/openai_adapter.o
 TINY_VERTICAL_COMPILER_OBJ := $(OBJ_DIR)/tests/integration/tiny_compile.o
+NATIVE_TURN_TEST_OBJ := $(OBJ_DIR)/tests/integration/native_turn.o
 
 RUNNER_OBJS := $(TEST_MAIN_OBJ) $(QUANT_TEST_RUNNER_OBJ) \
 	$(ARTIFACT_TEST_RUNNER_OBJ) $(CUDA_TEST_MAIN_OBJ) \
 	$(SOURCE_PAYLOAD_LIVE_OBJ) $(QUANT_LIVE_OBJ) $(ARTIFACT_LIVE_OBJ) \
 	$(MATERIALIZE_LIVE_OBJ) $(MINIMAX_AUDIO_LIVE_OBJ) $(MINIMAX_VIDEO_LIVE_OBJ) \
-	$(MINIMAX_TEXT_LIVE_OBJ) $(MINIMAX_OMNI_LIVE_OBJ) $(MINIMAX_TRANSFORMER_LIVE_OBJ) \
+	$(MINIMAX_TEXT_LIVE_OBJ) $(MINIMAX_TRANSFORMER_LIVE_OBJ) \
 	$(ATTENTION_LIVE_OBJ) \
 	$(PREFILL_LIVE_OBJ) $(MOE_LIVE_OBJ) \
 	$(TRANSFORMER_LIVE_OBJ) $(DECODE_LIVE_OBJ) $(LOGITS_LIVE_OBJ) $(TOKENIZER_LIVE_OBJ) \
 	$(GENERATION_LIVE_OBJ) $(OPENAI_FAKE_HOST_OBJ) $(OPENAI_ADAPTER_HOST_OBJ) \
-	$(TINY_VERTICAL_COMPILER_OBJ)
+	$(TINY_VERTICAL_COMPILER_OBJ) $(NATIVE_TURN_TEST_OBJ)
 DEPENDENCY_FILES := $(CORE_OBJS:.o=.d) $(YVEX_OBJS:.o=.d) \
 	$(OPENAI_ADAPTER_OBJS:.o=.d) $(TEST_UNIT_OBJS:.o=.d) \
 	$(TEST_REFERENCE_OBJS:.o=.d) $(QUANT_TEST_UNIT_OBJS:.o=.d) \
@@ -362,7 +376,7 @@ info:
 	@echo "project_control: ROADMAP.md"
 	@echo "interface: local client/protocol plus engine library ABI"
 	@echo "library: libyvex.a"
-	@echo "product: ./yvex server|run|chat|session|graph|artifact|quant|tokenizer"
+	@echo "product: ./yvex help|serve|chat|host|engine|session|model|source|artifact|profile|compile|inspect|bench"
 	@echo "runtime_attention: CPU eager and admitted GB10 CUDA eager/piecewise/full implemented"
 	@echo "benchmark_attention: identity-bound baseline, JSON/CSV, and deterministic SVG capability implemented"
 	@echo "persistent_kv: session-owned DeepSeek CPU/CUDA state implemented"
@@ -371,7 +385,7 @@ info:
 
 all: generate-source-manifest generate-operator-registry lib client
 
-generate-source-manifest: $(SOURCE_MANIFEST_MK)
+generate-source-manifest: $(SOURCE_MANIFEST_MK) $(SOURCE_FAMILY_HEADER)
 
 generate-qa-registry: $(QA_REGISTRY_MK) $(QA_REGISTRY_PROJECTIONS)
 
@@ -397,27 +411,30 @@ qa-ci:
 qa-doctor:
 	python3 tools/qa.py doctor
 
-check-source-manifest: $(SOURCE_MANIFEST_MK)
+check-source-manifest: $(SOURCE_MANIFEST_MK) $(SOURCE_FAMILY_HEADER)
 	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) \
-		--output $(SOURCE_MANIFEST_MK) --check
+		--output $(SOURCE_MANIFEST_MK) --family-header $(SOURCE_FAMILY_HEADER) --check
 	@set -eu; \
 	. tests/support/cleanup.sh; \
 	first=$$(mktemp "$${TMPDIR:-/tmp}/yvex-sources.XXXXXX"); \
 	second=$$(mktemp "$${TMPDIR:-/tmp}/yvex-sources.XXXXXX"); \
-	trap 'yvex_test_cleanup "$$first" "$$second"' EXIT HUP INT TERM; \
-	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) --output "$$first"; \
-	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) --output "$$second"; \
-	cmp "$$first" "$$second"
+	first_header=$$(mktemp "$${TMPDIR:-/tmp}/yvex-families.XXXXXX"); \
+	second_header=$$(mktemp "$${TMPDIR:-/tmp}/yvex-families.XXXXXX"); \
+	trap 'yvex_test_cleanup "$$first" "$$second" "$$first_header" "$$second_header"' \
+		EXIT HUP INT TERM; \
+	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) \
+		--output "$$first" --family-header "$$first_header"; \
+	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) \
+		--output "$$second" --family-header "$$second_header"; \
+	cmp "$$first" "$$second"; \
+	cmp "$$first_header" "$$second_header"
 
 generate-operator-registry: $(OPERATOR_REGISTRY_HEADER) $(OPERATOR_REGISTRY_C) \
 	$(OPERATOR_REGISTRY_IDENTITY)
 
-generate-command-migration: $(OPERATOR_MIGRATION_DOC)
-
 check-operator-registry: generate-operator-registry
 	python3 $(OPERATOR_REGISTRY_GENERATOR) --registry $(OPERATOR_REGISTRY_SOURCE) \
-		--output $(OPERATOR_REGISTRY_DIR) --audit-root $(OPERATOR_AUDIT_ROOT) \
-		--migration-output $(OPERATOR_MIGRATION_DOC) --check
+		--output $(OPERATOR_REGISTRY_DIR) --check
 	@set -eu; \
 	. tests/support/cleanup.sh; \
 	first=$$(mktemp -d "$${TMPDIR:-/tmp}/yvex-operator-registry.XXXXXX"); \
@@ -466,7 +483,7 @@ cuda-info: $(YVEX_BIN)
 	@echo "CUDA_HOME: $(CUDA_HOME)"
 	@echo "YVEX_CUDA_ARCH: $(YVEX_CUDA_ARCH)"
 	@echo "YVEX_CUDA_EFFECTIVE_ARCH: $(if $(CUDA_EFFECTIVE_ARCH),$(CUDA_EFFECTIVE_ARCH),portable-ptx)"
-	$(YVEX_BIN) system cuda
+	$(YVEX_BIN) inspect cuda
 
 cuda-kernels: $(CUDA_PTX_INC) $(if $(CUDA_NATIVE_ARCH),$(CUDA_CUBIN_INC))
 	@echo "yvex cuda kernels: built from $(CUDA_CU_SRCS) arch=$(if $(CUDA_EFFECTIVE_ARCH),$(CUDA_EFFECTIVE_ARCH),portable-ptx)"
@@ -475,7 +492,7 @@ cuda: cuda-kernels lib client $(CUDA_TEST_RUNNER)
 	@echo "yvex cuda build: dynamic Driver API plus admitted PTX/native kernel image"
 
 test-cuda: cuda
-	$(YVEX_BIN) system cuda >/dev/null
+	$(YVEX_BIN) inspect cuda >/dev/null
 	$(CUDA_TEST_RUNNER)
 
 test-cuda-graph: cuda
@@ -551,10 +568,10 @@ $(QA_C_UNIT_LEGACY_TARGETS): generate-qa-registry
 # Runtime model/session lifecycle is exercised by the binding owner because the
 # sealed model consumes one independently reopened binding.
 test-runtime-model-session: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.runtime_binding $(TEST_RUNNER)
 
 test-runtime-residency: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.runtime_binding $(TEST_RUNNER)
 
 test-runtime-phases: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_state,deepseek_attention $(TEST_RUNNER)
@@ -569,7 +586,7 @@ test-runtime-digests: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_state,runtime_benchmark,deepseek_attention $(TEST_RUNNER)
 
 test-runtime-family-neutrality: $(TEST_RUNNER) test-architecture-boundaries
-	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.runtime_binding $(TEST_RUNNER)
 
 test-tokenizer: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=tokenizer,runtime_tokenizer,prompt $(TEST_RUNNER)
@@ -604,7 +621,7 @@ test-runtime-benchmark-chart-live: cuda
 		echo "runtime binding must be outside the source repository" >&2; exit 2;; \
 	esac; \
 	for mode in eager piecewise full; do \
-		$(YVEX_BIN) profile attention component --target deepseek4-v4-flash-dspark \
+		$(YVEX_BIN) bench attention component --target deepseek4-v4-flash-dspark \
 			--models-root "$(DEEPSEEK_OPERATOR_MODELS_ROOT)" \
 			--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 			--backend cuda --phase decode --mode "$$mode" --scope full \
@@ -613,7 +630,7 @@ test-runtime-benchmark-chart-live: cuda
 			--baseline "$$evidence_dir/$$mode.yvex-benchmark" --write-baseline \
 			--chart "$$evidence_dir/$$mode.svg" --output json \
 			>"$$evidence_dir/$$mode.json"; \
-		$(YVEX_BIN) profile attention component --target deepseek4-v4-flash-dspark \
+		$(YVEX_BIN) bench attention component --target deepseek4-v4-flash-dspark \
 			--models-root "$(DEEPSEEK_OPERATOR_MODELS_ROOT)" \
 			--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 			--backend cuda --phase decode --mode "$$mode" --scope full \
@@ -670,7 +687,7 @@ test-runtime: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=provider $(TEST_RUNNER)
 	YVEX_TEST_FILTER=openai $(TEST_RUNNER)
 	YVEX_TEST_FILTER=server $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.runtime_binding $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_decode $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_logits $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_sampling $(TEST_RUNNER)
@@ -683,6 +700,7 @@ test-runtime: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_profile $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_state $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_benchmark $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.sequence_state,unit.sequence_state_session,unit.sequence_mixer,unit.selective_ssd,unit.mamba2_source $(TEST_RUNNER)
 	@! YVEX_TEST_FILTER=__unknown_runtime_test__ $(TEST_RUNNER) >/dev/null 2>&1
 	@! YVEX_TEST_FILTER=runtime_benchmark,runtime_benchmark \
 		$(TEST_RUNNER) >/dev/null 2>&1
@@ -693,8 +711,10 @@ test-protocol: $(TEST_RUNNER)
 test-runtime-host: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=server $(TEST_RUNNER)
 
-test-tiny-vertical: client $(TINY_VERTICAL_COMPILER) $(TINY_VERTICAL_TEST)
+test-tiny-vertical: client $(TINY_VERTICAL_COMPILER) $(NATIVE_TURN_TEST) \
+	$(TINY_VERTICAL_TEST)
 	YVEX_BIN='$(YVEX_BIN)' TINY_COMPILER='$(TINY_VERTICAL_COMPILER)' \
+		NATIVE_TURN='$(NATIVE_TURN_TEST)' \
 		TINY_GENERATOR='tests/integration/tiny_model.py' sh $(TINY_VERTICAL_TEST)
 
 test-runtime-streaming: $(TEST_RUNNER)
@@ -721,8 +741,10 @@ test-product-topology: all package tests/product_topology.sh
 	YVEX_BIN='$(YVEX_BIN)' BUILD_DIR='$(BUILD_DIR)' \
 		sh tests/product_topology.sh
 
-test-runtime-client-refoundation-live: client $(CLIENT_REFOUNDATION_LIVE_TEST)
+test-runtime-client-refoundation-live: client $(NATIVE_TURN_TEST) \
+	$(CLIENT_REFOUNDATION_LIVE_TEST)
 	YVEX_BIN='$(YVEX_BIN)' \
+		NATIVE_TURN='$(NATIVE_TURN_TEST)' \
 		YVEX_MODEL_ARTIFACT='$(YVEX_MODEL_ARTIFACT)' \
 		YVEX_RUNTIME_BINDING='$(YVEX_RUNTIME_BINDING)' \
 		sh $(CLIENT_REFOUNDATION_LIVE_TEST)
@@ -872,31 +894,6 @@ test-minimax-text-encoder-live: $(MINIMAX_TEXT_LIVE_RUNNER)
 		"$(BUILD_DIR)/tests/minimax_h3_text_encoder.f32" \
 		"$(MINIMAX_H3_TEXT_ENCODER_REFERENCE)" encoder50
 
-test-minimax-omni-block-live: $(MINIMAX_OMNI_LIVE_RUNNER)
-	@test -n "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" || { \
-		echo "MINIMAX_H3_TRANSFORMER_ARTIFACT is required" >&2; exit 2; }
-	@test -n "$(MINIMAX_H3_OMNI_FIXTURE_ROOT)" || { \
-		echo "MINIMAX_H3_OMNI_FIXTURE_ROOT is required" >&2; exit 2; }
-	$(MINIMAX_OMNI_LIVE_RUNNER) "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.block0.input.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.block0.temb.f32" \
-		"$(BUILD_DIR)/tests/minimax_h3_omni_block0.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.block0.oracle.f32"
-
-test-minimax-omni-transformer-live: $(MINIMAX_TRANSFORMER_LIVE_RUNNER)
-	@test -n "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" || { \
-		echo "MINIMAX_H3_TRANSFORMER_ARTIFACT is required" >&2; exit 2; }
-	@test -n "$(MINIMAX_H3_OMNI_FIXTURE_ROOT)" || { \
-		echo "MINIMAX_H3_OMNI_FIXTURE_ROOT is required" >&2; exit 2; }
-	$(MINIMAX_TRANSFORMER_LIVE_RUNNER) "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.video.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.audio.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.conditioning.f32" \
-		"$(BUILD_DIR)/tests/minimax_h3_omni_video.f32" \
-		"$(BUILD_DIR)/tests/minimax_h3_omni_audio.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.video.oracle.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.audio.oracle.f32"
-
 test-minimax-omni-transformer-artifact-live: $(MINIMAX_TRANSFORMER_LIVE_RUNNER)
 	@test -n "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" || { \
 		echo "MINIMAX_H3_TRANSFORMER_ARTIFACT is required" >&2; exit 2; }
@@ -995,7 +992,7 @@ test-runtime-deepseek-kv-live: cuda
 	test -f "$$binding" && test ! -L "$$binding" || { \
 		echo "runtime binding must be a regular non-symlink file" >&2; exit 2; }; \
 	for backend in cpu cuda; do \
-		$(YVEX_BIN) execute attention state exercise --target deepseek4-v4-flash-dspark \
+		$(YVEX_BIN) bench attention state exercise --target deepseek4-v4-flash-dspark \
 			--models-root "$(DEEPSEEK_OPERATOR_MODELS_ROOT)" \
 			--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 			--backend "$$backend" --phase prefill --mode eager --scope full \
@@ -1031,7 +1028,7 @@ test-runtime-deepseek-prefill-live: cuda $(PREFILL_LIVE_RUNNER) $(YVEX_BIN)
 	$(PREFILL_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		"$$activations" >"$$tmp_dir/api.out"; \
 	for backend in cpu cuda; do \
-		$(YVEX_BIN) execute attention run --target deepseek4-v4-flash-dspark \
+		$(YVEX_BIN) bench attention execute --target deepseek4-v4-flash-dspark \
 			--models-root "$(DEEPSEEK_OPERATOR_MODELS_ROOT)" \
 			--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 			--backend "$$backend" --phase prefill --mode eager --scope full \
@@ -1068,7 +1065,7 @@ test-runtime-deepseek-moe-live: cuda $(MOE_LIVE_RUNNER) $(YVEX_BIN)
 	input="$$tmp_dir/deepseek-moe.yvex-moe-input"; \
 	$(MOE_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$input" \
 		>"$$tmp_dir/api.out"; \
-	$(YVEX_BIN) execute moe --target deepseek4-v4-flash-dspark \
+	$(YVEX_BIN) bench moe --target deepseek4-v4-flash-dspark \
 		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --input tensor-file --input-file "$$input" \
 		--scope full --progress off --output json >"$$tmp_dir/cuda.json"; \
@@ -1095,9 +1092,14 @@ test-runtime-deepseek-transformer-live: cuda $(TRANSFORMER_LIVE_RUNNER) $(YVEX_B
 	test -f "$$binding" && test ! -L "$$binding" || { \
 		echo "runtime binding must be a regular non-symlink file" >&2; exit 2; }; \
 	input="$$tmp_dir/deepseek-transformer.yvex-transformer-input"; \
+	YVEX_TRANSFORMER_LIVE_CUDA_ONLY=1 \
+	YVEX_TRANSFORMER_LIVE_TOKENS=128 \
+	YVEX_TRANSFORMER_LIVE_CONTEXT=128 \
+		$(TRANSFORMER_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$input" \
+		>"$$tmp_dir/chunk.out"; \
 	$(TRANSFORMER_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$input" \
 		>"$$tmp_dir/api.out"; \
-	$(YVEX_BIN) execute transformer run --target deepseek4-v4-flash-dspark \
+	$(YVEX_BIN) bench transformer execute --target deepseek4-v4-flash-dspark \
 		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --phase prefill --input token-ids --input-file "$$input" \
 		--chunk-tokens 1 --context-capacity 1 --progress off --output json \
@@ -1112,6 +1114,7 @@ test-runtime-deepseek-transformer-live: cuda $(TRANSFORMER_LIVE_RUNNER) $(YVEX_B
 		and r["full_model_prefill_ready"] and not r["model_decode_ready"] \
 		and not r["logits_ready"] and not r["generation_ready"]' "$$tmp_dir/cuda.json"; \
 	cat "$$tmp_dir/api.out"; \
+	cat "$$tmp_dir/chunk.out"; \
 	echo "production DeepSeek transformer live: CPU/CUDA token-to-normalized-hidden backbone"
 
 # This serial target proves shared-context prefill and two real CPU/CUDA decode steps.
@@ -1128,7 +1131,7 @@ test-runtime-deepseek-decode-live: cuda $(DECODE_LIVE_RUNNER) $(YVEX_BIN)
 	input="$$tmp_dir/deepseek-decode.yvex-transformer-input"; \
 	$(DECODE_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$input" \
 		>"$$tmp_dir/api.out"; \
-	$(YVEX_BIN) execute transformer decode --target deepseek4-v4-flash-dspark \
+	$(YVEX_BIN) bench transformer decode --target deepseek4-v4-flash-dspark \
 		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --input token-ids --input-file "$$input" \
 		--prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
@@ -1160,7 +1163,7 @@ test-runtime-deepseek-logits-live: cuda $(LOGITS_LIVE_RUNNER) $(YVEX_BIN)
 	input="$$tmp_dir/deepseek-logits.yvex-transformer-input"; \
 	$(LOGITS_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$input" \
 		>"$$tmp_dir/api.out"; \
-	$(YVEX_BIN) execute transformer logits --target deepseek4-v4-flash-dspark \
+	$(YVEX_BIN) bench transformer logits --target deepseek4-v4-flash-dspark \
 		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --input token-ids --input-file "$$input" \
 		--prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
@@ -1175,7 +1178,7 @@ test-runtime-deepseek-logits-live: cuda $(LOGITS_LIVE_RUNNER) $(YVEX_BIN)
 		and r["decode_logits_rows"]==2 and len(r["rows"])==3 \
 		and all(x["logits_count"]==129280 for x in r["rows"]) \
 		and not r["sampling_ready"] and not r["generation_ready"]' "$$tmp_dir/cuda.json"; \
-	$(YVEX_BIN) execute transformer sample --target deepseek4-v4-flash-dspark \
+	$(YVEX_BIN) bench transformer sample --target deepseek4-v4-flash-dspark \
 		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --input token-ids --input-file "$$input" \
 		--prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
@@ -1194,7 +1197,7 @@ test-runtime-deepseek-logits-live: cuda $(LOGITS_LIVE_RUNNER) $(YVEX_BIN)
 		        and x["source_identity"] and x["candidate_identity"] \
 		        for x in r["selected_tokens"]) \
 		and not r["token_append_ready"] and not r["tokenizer_runtime_ready"] \
-		and not r["generation_ready"] and not r["cuda_sampling_ready"]' \
+		and not r["generation_ready"] and not r["device_sampling_ready"]' \
 		"$$tmp_dir/sample.json"; \
 	cat "$$tmp_dir/api.out"; \
 	echo "production DeepSeek logits live: CPU/CUDA complete-vocabulary prefill/decode projection"
@@ -1227,11 +1230,11 @@ test-runtime-deepseek-tokenizer-live: cuda $(TOKENIZER_LIVE_RUNNER) $(LOGITS_LIV
 	PYTHONDONTWRITEBYTECODE=1 "$$reference_python" tests/reference/tokenizer.py "$(DEEPSEEK_SOURCE)" \
 		"$(abspath $(YVEX_BIN))" "$(DEEPSEEK_SELECTED_ARTIFACT)" >"$$tmp_dir/reference.out"; \
 	$(YVEX_BIN) inspect tokenizer "$(DEEPSEEK_SELECTED_ARTIFACT)" >"$$tmp_dir/inspect.out"; \
-	$(YVEX_BIN) execute tokenizer encode "$(DEEPSEEK_SELECTED_ARTIFACT)" --text 'hello world' --pieces \
+	$(YVEX_BIN) inspect tokenizer encode "$(DEEPSEEK_SELECTED_ARTIFACT)" --text 'hello world' --pieces \
 		>"$$tmp_dir/tokenize.out"; \
-	$(YVEX_BIN) execute tokenizer decode "$(DEEPSEEK_SELECTED_ARTIFACT)" --ids 33310,2058 \
+	$(YVEX_BIN) inspect tokenizer decode "$(DEEPSEEK_SELECTED_ARTIFACT)" --ids 33310,2058 \
 		>"$$tmp_dir/detokenize.out"; \
-	$(YVEX_BIN) execute tokenizer prompt "$(DEEPSEEK_SELECTED_ARTIFACT)" --system policy --user hi \
+	$(YVEX_BIN) inspect tokenizer prompt "$(DEEPSEEK_SELECTED_ARTIFACT)" --system policy --user hi \
 		--assistant ok --user next --tokens >"$$tmp_dir/prompt.out"; \
 	grep -q '^tokenizer_runtime_ready: true$$' "$$tmp_dir/inspect.out"; \
 	grep -q '^ids: 33310 2058$$' "$$tmp_dir/tokenize.out"; \
@@ -1256,6 +1259,8 @@ test-runtime-deepseek-generation-live: cuda $(GENERATION_LIVE_RUNNER) $(YVEX_BIN
 		cpu target-only greedy 0 1 >"$$tmp_dir/cpu.out"; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda target-only greedy 0 3 >"$$tmp_dir/cuda-greedy.out"; \
+	grep -F 'generation_scheduler compatible_operation_batching=pass' \
+		"$$tmp_dir/cuda-greedy.out" >/dev/null; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda target-only stochastic 42 2 >"$$tmp_dir/cuda-stochastic-first.out"; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
@@ -1286,7 +1291,7 @@ test-runtime-deepseek-generation-live: cuda $(GENERATION_LIVE_RUNNER) $(YVEX_BIN
 		and int(f["corpus_max_accepted_prefix"])>=2 \
 		and f["speculation_cancellation"]=="pass"' \
 		"$$tmp_dir/cuda-dspark-greedy.out"; \
-	$(YVEX_BIN) execute transformer generate --target deepseek4-v4-flash-dspark \
+	$(YVEX_BIN) bench transformer generate --target deepseek4-v4-flash-dspark \
 		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --text Hi --max-new-tokens 1 --max-output-bytes 64 \
 		--context-capacity 8 --prefill-chunk-tokens 8 --strategy greedy \
@@ -1299,7 +1304,7 @@ test-runtime-deepseek-generation-live: cuda $(GENERATION_LIVE_RUNNER) $(YVEX_BIN
 		and r["generated_tokens"][0]["decode_submitted"] \
 		and r["generated_tokens"][0]["token_id"]==r["generated_tokens"][0]["decode_input_id"]' \
 		"$$tmp_dir/operator.json"; \
-	$(YVEX_BIN) execute transformer generate --target deepseek4-v4-flash-dspark \
+	$(YVEX_BIN) bench transformer generate --target deepseek4-v4-flash-dspark \
 		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --generation-mode dspark --text 'The capital of France is' \
 		--max-new-tokens 8 \
@@ -1428,7 +1433,7 @@ test-materialize-deepseek-variant-live: $(YVEX_BIN)
 		--source-manifest "$(DEEPSEEK_SOURCE_MANIFEST)" \
 		--preset "$(YVEX_QUANT_DSPARK_PRESET)" --imatrix-manifest "$(YVEX_IMATRIX)" \
 		--out-plan "$$root/variant.plan" >/dev/null; \
-	$(YVEX_BIN) execute attention prepare --target deepseek4-v4-flash-dspark \
+	$(YVEX_BIN) bench attention prepare --target deepseek4-v4-flash-dspark \
 		--source "$(DEEPSEEK_SOURCE)" --source-manifest "$(DEEPSEEK_SOURCE_MANIFEST)" \
 		--models-root "$(DEEPSEEK_MODELS_ROOT)" --artifact "$(YVEX_VARIANT_ARTIFACT)" \
 		--runtime-binding-dir "$$root/bindings" \
@@ -1442,12 +1447,12 @@ test-runtime-deepseek-variant-generation-live: cuda $(YVEX_BIN)
 	@binding=$$(find "$(YVEX_VARIANT_BINDING_DIR)" -maxdepth 1 -type f \
 		-name '*.yvex-runtime-binding' -print | sort | tail -1); \
 	test -n "$$binding" || { echo "variant runtime binding is required" >&2; exit 2; }; \
-	$(YVEX_BIN) execute transformer generate --target deepseek4-v4-flash-dspark \
+	$(YVEX_BIN) bench transformer generate --target deepseek4-v4-flash-dspark \
 		--artifact "$(YVEX_VARIANT_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cpu --text Hi --max-new-tokens 1 --max-output-bytes 64 \
 		--context-capacity 8 --prefill-chunk-tokens 8 --strategy greedy \
 		--progress off --output json; \
-	$(YVEX_BIN) execute transformer generate --target deepseek4-v4-flash-dspark \
+	$(YVEX_BIN) bench transformer generate --target deepseek4-v4-flash-dspark \
 		--artifact "$(YVEX_VARIANT_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --text Hi --max-new-tokens 1 --max-output-bytes 64 \
 		--context-capacity 8 --prefill-chunk-tokens 8 --strategy greedy \
@@ -1488,11 +1493,13 @@ test-code-natural: tests/test_code_natural.sh
 test-project-control: tests/test_project_control.sh ROADMAP.md CONTRIBUTING.md
 	sh tests/test_project_control.sh
 
+test-public-abi: tests/test_public_abi.py
+	python3 tests/test_public_abi.py
+
 test-docs-surface: $(YVEX_BIN) tests/test_docs_surface.sh
 	sh tests/test_docs_surface.sh
 
-test-documentation-architecture: tests/documentation_architecture.py \
-		config/documentation_owners.tsv config/frozen_documents.tsv
+test-documentation-architecture: tests/documentation_architecture.py
 	python3 tests/documentation_architecture.py
 
 test-surface: tests/test_surface.sh
@@ -1524,9 +1531,13 @@ $(OBJ_DIR)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-$(SOURCE_MANIFEST_MK): $(SOURCE_OWNER_MANIFEST) $(SOURCE_MANIFEST_GENERATOR)
+$(SOURCE_MANIFEST_MK) $(SOURCE_FAMILY_HEADER) &: \
+		$(SOURCE_OWNER_MANIFEST) $(SOURCE_MANIFEST_GENERATOR)
 	@mkdir -p $(@D)
-	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) --output $@
+	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) \
+		--output $(SOURCE_MANIFEST_MK) --family-header $(SOURCE_FAMILY_HEADER)
+
+$(OBJ_DIR)/src/graph/catalog.o: $(SOURCE_FAMILY_HEADER)
 
 $(QA_REGISTRY_MK) $(QA_REGISTRY_PROJECTIONS) &: \
 		$(QA_REGISTRY_SOURCE) $(QA_REGISTRY_GENERATOR)
@@ -1538,12 +1549,6 @@ $(OPERATOR_REGISTRY_HEADER) $(OPERATOR_REGISTRY_C) $(OPERATOR_REGISTRY_IDENTITY)
 	python3 $(OPERATOR_REGISTRY_GENERATOR) --registry $(OPERATOR_REGISTRY_SOURCE) \
 		--output $(OPERATOR_REGISTRY_DIR)
 
-$(OPERATOR_MIGRATION_DOC): $(OPERATOR_REGISTRY_SOURCE) $(OPERATOR_REGISTRY_GENERATOR) \
-		$(OPERATOR_AUDIT_FILES)
-	python3 $(OPERATOR_REGISTRY_GENERATOR) --registry $(OPERATOR_REGISTRY_SOURCE) \
-		--output $(OPERATOR_REGISTRY_DIR) --audit-root $(OPERATOR_AUDIT_ROOT) \
-		--migration-output $@
-
 $(OPERATOR_REGISTRY_OBJ): $(OPERATOR_REGISTRY_C) $(OPERATOR_REGISTRY_HEADER)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -I$(BUILD_DIR)/generated $(CFLAGS) $(DEPFLAGS) -c \
@@ -1551,6 +1556,9 @@ $(OPERATOR_REGISTRY_OBJ): $(OPERATOR_REGISTRY_C) $(OPERATOR_REGISTRY_HEADER)
 
 .PHONY: FORCE
 FORCE:
+
+print-build-identity:
+	@printf '%s\n' '$(YVEX_BUILD_IDENTITY)'
 
 # CUDA objects and embedded images follow resolved hardware and toolchain facts even when a caller
 # reuses one build directory after changing an explicit or automatically detected architecture.
@@ -1569,8 +1577,8 @@ $(CUDA_BUILD_CONFIG): FORCE
 $(BUILD_COMMIT_HEADER): FORCE
 	@mkdir -p $(@D)
 	@tmp="$@.tmp"; \
-	printf '#ifndef YVEX_BUILD_PROVENANCE_INCLUDED\n#define YVEX_BUILD_PROVENANCE_INCLUDED\n#define YVEX_BUILD_COMMIT "%s"\n#define YVEX_BUILD_SOURCE_STATE "%s"\n#define YVEX_BUILD_SOURCE_DELTA_IDENTITY "%s"\n#define YVEX_BUILD_IDENTITY "%s"\n#define YVEX_BUILD_SOURCE_ROOT "%s"\n#endif\n' \
-		'$(YVEX_BUILD_COMMIT)' '$(YVEX_BUILD_SOURCE_STATE)' \
+	printf '#ifndef YVEX_BUILD_PROVENANCE_INCLUDED\n#define YVEX_BUILD_PROVENANCE_INCLUDED\n#define YVEX_BUILD_COMMIT "%s"\n#define YVEX_BUILD_SOURCE_TREE "%s"\n#define YVEX_BUILD_SOURCE_STATE "%s"\n#define YVEX_BUILD_SOURCE_DELTA_IDENTITY "%s"\n#define YVEX_BUILD_IDENTITY "%s"\n#define YVEX_BUILD_SOURCE_ROOT "%s"\n#endif\n' \
+		'$(YVEX_BUILD_COMMIT)' '$(YVEX_BUILD_SOURCE_TREE)' '$(YVEX_BUILD_SOURCE_STATE)' \
 		'$(YVEX_BUILD_SOURCE_DELTA_IDENTITY)' '$(YVEX_BUILD_IDENTITY)' \
 		'$(YVEX_BUILD_SOURCE_ROOT)' >"$$tmp"; \
 	if test -r "$@" && cmp -s "$$tmp" "$@"; then rm -f "$$tmp"; \
@@ -1650,7 +1658,8 @@ $(TEST_RUNNER): $(TEST_MAIN_OBJ) $(TEST_UNIT_OBJS) $(TEST_REFERENCE_OBJS) \
 	$(OPENAI_ADAPTER_OBJS) $(LIBYVEX) tests/test.h
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(TEST_MAIN_OBJ) $(TEST_UNIT_OBJS) $(TEST_REFERENCE_OBJS) \
-		$(OPENAI_ADAPTER_OBJS) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
+		$(OPENAI_ADAPTER_OBJS) $(LIBYVEX) \
+		$(LDFLAGS) $(LDLIBS) -o $@
 
 $(QUANT_TEST_RUNNER): $(QUANT_TEST_RUNNER_OBJ) $(QUANT_TEST_UNIT_OBJS) $(LIBYVEX) tests/test.h
 	@mkdir -p $(@D)
@@ -1663,9 +1672,9 @@ $(ARTIFACT_TEST_RUNNER): $(ARTIFACT_TEST_RUNNER_OBJ) \
 		$(patsubst %.c,$(OBJ_DIR)/%.o,$(QA_ARTIFACT_TEST_SRCS)) \
 		$(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(OPENAI_FAKE_HOST): $(OPENAI_FAKE_HOST_OBJ) $(LIBYVEX)
+$(OPENAI_FAKE_HOST): $(OPENAI_FAKE_HOST_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX)
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(OPENAI_FAKE_HOST_OBJ) $(LIBYVEX) \
+	$(CC) $(CFLAGS) $(OPENAI_FAKE_HOST_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX) \
 		$(LDFLAGS) $(LDLIBS) -o $@
 
 $(OPENAI_ADAPTER_HOST): $(OPENAI_ADAPTER_HOST_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX)
@@ -1676,6 +1685,11 @@ $(OPENAI_ADAPTER_HOST): $(OPENAI_ADAPTER_HOST_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBY
 $(TINY_VERTICAL_COMPILER): $(TINY_VERTICAL_COMPILER_OBJ) $(LIBYVEX)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(TINY_VERTICAL_COMPILER_OBJ) $(LIBYVEX) \
+		$(LDFLAGS) $(LDLIBS) -o $@
+
+$(NATIVE_TURN_TEST): $(NATIVE_TURN_TEST_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(NATIVE_TURN_TEST_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX) \
 		$(LDFLAGS) $(LDLIBS) -o $@
 
 $(SOURCE_PAYLOAD_LIVE_RUNNER): $(SOURCE_PAYLOAD_LIVE_OBJ) $(LIBYVEX)
@@ -1705,10 +1719,6 @@ $(MINIMAX_VIDEO_LIVE_RUNNER): $(MINIMAX_VIDEO_LIVE_OBJ) $(LIBYVEX)
 $(MINIMAX_TEXT_LIVE_RUNNER): $(MINIMAX_TEXT_LIVE_OBJ) $(LIBYVEX)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(MINIMAX_TEXT_LIVE_OBJ) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
-
-$(MINIMAX_OMNI_LIVE_RUNNER): $(MINIMAX_OMNI_LIVE_OBJ) $(LIBYVEX)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(MINIMAX_OMNI_LIVE_OBJ) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(MINIMAX_TRANSFORMER_LIVE_RUNNER): $(MINIMAX_TRANSFORMER_LIVE_OBJ) $(LIBYVEX)
 	@mkdir -p $(@D)

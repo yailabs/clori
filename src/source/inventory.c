@@ -553,6 +553,85 @@ static int source_index_key_compare(const void *key, const void *row) {
     return strcmp((const char *)key, ((const source_index_entry *)row)->tensor);
 }
 
+/*
+ * Hugging Face index generators may serialize an exact byte count as an
+ * integral JSON decimal (for example 55562855904.0).  Keep the core u64
+ * parser non-coercing and admit only number spellings that are mathematically
+ * exact unsigned integers here at the provider-metadata boundary.
+ */
+static int source_parse_exact_u64_number(yvex_json *json,
+                                         unsigned long long *out)
+{
+    char text[128], digits[128];
+    const char *cursor;
+    size_t digit_count = 0u, fractional_digits = 0u, begin = 0u, end;
+    long long exponent = 0ll, scale;
+    int exponent_negative = 0;
+    unsigned long long value = 0ull;
+    size_t index;
+
+    if (!json || !out || !yvex_json_number_text(json, text, sizeof(text)) ||
+        text[0] == '-') return 0;
+    cursor = text;
+    while (isdigit((unsigned char)*cursor)) {
+        if (digit_count >= sizeof(digits)) return 0;
+        digits[digit_count++] = *cursor++;
+    }
+    if (*cursor == '.') {
+        cursor++;
+        while (isdigit((unsigned char)*cursor)) {
+            if (digit_count >= sizeof(digits)) return 0;
+            digits[digit_count++] = *cursor++;
+            fractional_digits++;
+        }
+    }
+    if (*cursor == 'e' || *cursor == 'E') {
+        cursor++;
+        if (*cursor == '+' || *cursor == '-') {
+            exponent_negative = *cursor == '-';
+            cursor++;
+        }
+        while (isdigit((unsigned char)*cursor)) {
+            unsigned int digit = (unsigned int)(*cursor++ - '0');
+
+            if (exponent > 1000ll) return 0;
+            exponent = exponent * 10ll + (long long)digit;
+        }
+        if (exponent_negative) exponent = -exponent;
+    }
+    if (*cursor != '\0' || digit_count == 0u ||
+        fractional_digits > (size_t)LLONG_MAX) return 0;
+    scale = exponent - (long long)fractional_digits;
+    while (begin < digit_count && digits[begin] == '0') begin++;
+    if (begin == digit_count) {
+        *out = 0ull;
+        return 1;
+    }
+    end = digit_count;
+    if (scale < 0ll) {
+        unsigned long long remove = (unsigned long long)(-scale);
+
+        if (remove > (unsigned long long)(end - begin)) return 0;
+        while (remove) {
+            if (digits[--end] != '0') return 0;
+            remove--;
+        }
+    }
+    for (index = begin; index < end; ++index) {
+        unsigned int digit = (unsigned int)(digits[index] - '0');
+
+        if (value > (ULLONG_MAX - digit) / 10ull) return 0;
+        value = value * 10ull + digit;
+    }
+    while (scale > 0ll) {
+        if (value > ULLONG_MAX / 10ull) return 0;
+        value *= 10ull;
+        scale--;
+    }
+    *out = value;
+    return 1;
+}
+
 static int source_parse_index_metadata(yvex_json *json, source_index *index) {
     char key[YVEX_JSON_KEY_CAP];
     yvex_json_iter iter;
@@ -564,7 +643,7 @@ static int source_parse_index_metadata(yvex_json *json, source_index *index) {
            YVEX_JSON_ITEM_READY) {
         if (strcmp(key, "total_size") == 0) {
             if (index->has_declared_total_size ||
-                !yvex_json_u64(json, &index->declared_total_size))
+                !source_parse_exact_u64_number(json, &index->declared_total_size))
                 return 0;
             index->has_declared_total_size = 1;
         } else if (!yvex_json_skip_value(json)) {

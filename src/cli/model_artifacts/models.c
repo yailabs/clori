@@ -1,16 +1,17 @@
 /*
  * Provide models namespace routing and registry-backed models commands.
  *
- * Preserves existing models command syntax; CLI-only and excluded from libyvex.a. Registry command
- * output is operator CLI surface, not domain ownership.
+ * CLI-only and excluded from libyvex.a. Registry command output is operator projection, not domain
+ * ownership.
  */
 #include "src/cli/model_artifacts/private.h"
 
 #include <yvex/artifact.h>
-
+#include <yvex/internal/deployment_compatibility.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef struct {
     const char *registry_path;
@@ -24,10 +25,12 @@ typedef struct {
     const char *calibration;
     const char *sha256;
     const char *support_level;
+    const char *runtime_profile;
+    const char *runtime_installation;
     const char *runtime_binding;
     const char *runtime_target;
     const char *runtime_backend;
-    const char *runtime_mode;
+    const char *runtime_execution_strategy;
     const char *runtime_context;
 } models_add_options;
 
@@ -86,10 +89,15 @@ static const yvex_cli_field_spec registry_add_fields[] = {
                    selected_embedding_output_count, NULL),
     REGISTRY_FIELD("registered_selected_embedding_slice_bytes", YVEX_CLI_FIELD_U64,
                    selected_embedding_slice_bytes, NULL),
+    REGISTRY_FIELD("runtime_profile", YVEX_CLI_FIELD_TEXT, runtime_profile, ""),
+    REGISTRY_FIELD("runtime_installation", YVEX_CLI_FIELD_TEXT, runtime_installation, ""),
     REGISTRY_FIELD("runtime_binding", YVEX_CLI_FIELD_TEXT, runtime_binding, ""),
     REGISTRY_FIELD("runtime_target", YVEX_CLI_FIELD_TEXT, runtime_target, ""),
     REGISTRY_FIELD("runtime_backend", YVEX_CLI_FIELD_TEXT, runtime_backend, ""),
-    REGISTRY_FIELD("runtime_mode", YVEX_CLI_FIELD_TEXT, runtime_mode, ""),
+    REGISTRY_FIELD("runtime_engine_kind", YVEX_CLI_FIELD_TEXT,
+                   runtime_engine_kind, ""),
+    REGISTRY_FIELD("runtime_execution_strategy", YVEX_CLI_FIELD_TEXT,
+                   runtime_execution_strategy, ""),
     REGISTRY_FIELD("runtime_context", YVEX_CLI_FIELD_U64, runtime_context, NULL),
 };
 
@@ -125,20 +133,28 @@ static const yvex_cli_field_spec registry_inspect_fields[] = {
     REGISTRY_FIELD("selected_embedding_slice_bytes", YVEX_CLI_FIELD_U64,
                    selected_embedding_slice_bytes, NULL),
     REGISTRY_FIELD("artifact_execution_ready", YVEX_CLI_FIELD_BOOL, execution_ready, NULL),
+    REGISTRY_FIELD("runtime_profile", YVEX_CLI_FIELD_TEXT, runtime_profile, ""),
+    REGISTRY_FIELD("runtime_installation", YVEX_CLI_FIELD_TEXT, runtime_installation, ""),
     REGISTRY_FIELD("runtime_binding", YVEX_CLI_FIELD_TEXT, runtime_binding, ""),
     REGISTRY_FIELD("runtime_target", YVEX_CLI_FIELD_TEXT, runtime_target, ""),
     REGISTRY_FIELD("runtime_backend", YVEX_CLI_FIELD_TEXT, runtime_backend, ""),
-    REGISTRY_FIELD("runtime_mode", YVEX_CLI_FIELD_TEXT, runtime_mode, ""),
+    REGISTRY_FIELD("runtime_engine_kind", YVEX_CLI_FIELD_TEXT,
+                   runtime_engine_kind, ""),
+    REGISTRY_FIELD("runtime_execution_strategy", YVEX_CLI_FIELD_TEXT,
+                   runtime_execution_strategy, ""),
     REGISTRY_FIELD("runtime_context", YVEX_CLI_FIELD_U64, runtime_context, NULL),
 };
 
 static const yvex_model_registry_entry empty_registry_entry = {
+    .schema_version = YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT,
     .alias = "", .family = "", .model = "", .scope = "", .artifact_class = "",
-    .qprofile = "", .calibration = "", .producer = "yvex", .schema_version = "v1",
+    .qprofile = "", .calibration = "", .producer = "yvex", .artifact_schema = "v1",
     .path = "", .sha256 = "", .format = "", .architecture = "",
     .primary_tensor_name = "", .primary_tensor_role = "", .primary_tensor_dtype = "",
-    .primary_tensor_dims = "", .support_level = "", .runtime_binding = "",
-    .runtime_target = "", .runtime_backend = "", .runtime_mode = ""
+    .primary_tensor_dims = "", .support_level = "", .runtime_profile = "",
+    .runtime_installation = "", .runtime_binding = "",
+    .runtime_target = "", .runtime_backend = "", .runtime_engine_kind = "",
+    .runtime_execution_strategy = ""
 };
 
 static const models_verify_pair verify_audit_pairs[] = {
@@ -207,62 +223,74 @@ static const char *const literal_pair_4[] = { "identity_status: recorded",
     "status: models-added"};
 
 static const char *const models_help_lines[] = {
-    "usage: yvex model registry scan --root DIR [--registry FILE]",
-    "       yvex model registry add --path FILE [--alias ALIAS] [--support-level LEVEL] "
-        "[--runtime-binding FILE --target ID --backend cpu|cuda --ctx N] [--registry FILE]",
-    "       yvex model acquire TARGET [--models-root DIR] [--auth auto|required|never] [--dry-run] "
+    "usage: yvex model search [QUERY] [--author NAME] [--filter TAG] [--page N] [--limit N | --all] "
+        "[--interactive] [--output table|audit|json]",
+    "       yvex source inspect OWNER/NAME [--revision REVISION] [--output table|audit|json]",
+    "usage: yvex profile scan --root DIR [--registry FILE]",
+    "       yvex profile create --path FILE [--alias ALIAS] [--support-level LEVEL] "
+        "[--startup-profile single-artifact --runtime-binding FILE --target ID "
+        "--backend cpu|cuda --execution-strategy target-only|speculative --ctx N] "
+        "[--startup-profile composite --installation-root DIR --target ID --backend cuda "
+        "] [--registry FILE]",
+    "       yvex source acquire TARGET [--models-root DIR] [--auth auto|required|never] [--dry-run] "
         "[--progress auto|live|plain|log|off] [--tick-seconds N] [--no-progress] [--audit | --output "
         "normal|table|audit]",
-    "       yvex model acquisition status TARGET [--models-root DIR] [--audit | --output "
+    "       yvex source status TARGET [--models-root DIR] [--audit | --output "
         "normal|table|audit]",
-    "       yvex model acquisition stop TARGET [--models-root DIR] [--force] [--timeout-seconds N] "
+    "       yvex source stop TARGET [--models-root DIR] [--force] [--timeout-seconds N] "
         "[--match-provider-process] [--dry-run] [--audit]",
-    "       yvex model acquisition resume TARGET [--models-root DIR] [--auth auto|required|never] "
+    "       yvex source resume TARGET [--models-root DIR] [--auth auto|required|never] "
         "[--progress auto|live|plain|log|off] [--tick-seconds N] [--clear-stale-locks] [--audit]",
-    "       yvex model acquisition cleanup TARGET [--models-root DIR] [--stale-locks] [--logs] "
+    "       yvex source cleanup TARGET [--models-root DIR] [--stale-locks] [--logs] "
         "[--receipts] [--failed-partials] [--all-provider-cache] [--dry-run] [--yes] [--audit]",
-    "       yvex model acquire --repo OWNER/NAME --family deepseek|glm|qwen|gemma "
-        "[--name LOCAL_NAME] [--models-root DIR] [--auth auto|required|never] "
-        "[--progress auto|live|plain|log|off]",
-    "       yvex model acquire --provider github --repo OWNER/NAME [--release TAG] --asset GLOB "
+    "       yvex source acquire --repo OWNER/NAME --family deepseek|glm|qwen|gemma|minimax-h3 "
+        "[--name LOCAL_NAME] [--revision REVISION] [--include GLOB ...] [--exclude GLOB ...] "
+        "[--models-root DIR] [--auth auto|required|never] [--progress auto|live|plain|log|off]",
+    "       yvex source acquire --provider github --repo OWNER/NAME [--release TAG] --asset GLOB "
         "[--models-root DIR] [--auth auto|required|never] [--progress auto|live|plain|log|off]",
     "       yvex inspect artifact registry [--models-root DIR] [--family deepseek|glm|qwen|gemma] "
         "[--output normal|table|audit|json]",
     "       yvex inspect artifact status TARGET [--models-root DIR] [--audit | --output "
         "normal|table|audit|json]",
-    "       yvex compile artifact prepare TARGET [--overwrite] [--source DIR] [--out FILE | --out-dir DIR] "
+    "       yvex compile TARGET [--overwrite] [--source DIR] [--out FILE | --out-dir DIR] "
         "[--models-root DIR] [--registry FILE] [--dry-run] [--no-register] "
         "[--audit | --output normal|table|audit]",
-    "       yvex inspect artifact check TARGET [--backend cpu|cuda] [--level quick|runtime|full] "
+    "       yvex artifact status TARGET [--backend cpu|cuda] [--level quick|runtime|full] "
         "[--models-root DIR] [--registry FILE] [--report-dir DIR] [--no-materialize] [--no-graph] "
         "[--audit | --output normal|table|audit]",
-    "       yvex model list [--registry FILE] [--audit | --output normal|table|audit]",
-    "       yvex model registry verify|inspect ALIAS [--registry FILE] [--audit | --output normal|table|audit]",
-    "       yvex model registry remove ALIAS [--registry FILE]",
+    "       yvex model list [--models-root DIR] [--registry FILE] "
+        "[--output table|audit|json]",
+    "       yvex profile verify|show ALIAS [--registry FILE] [--audit | --output normal|table|audit]",
+    "       yvex profile remove ALIAS [--registry FILE]",
     "\nExamples:",
-    "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed",
-    "  yvex model acquire gemma-4-12b-it --models-root ~/lab/models --dry-run --audit",
-    "  yvex model acquisition status gemma-4-12b-it --models-root ~/lab/models --audit",
-    "  yvex model acquisition stop gemma-4-12b-it --models-root ~/lab/models --audit",
-    "  yvex model acquisition resume gemma-4-12b-it --models-root ~/lab/models --auth required "
+    "  yvex model search \"MiniMax H3\" --output table",
+    "  yvex source inspect MiniMaxAI/MiniMax-H3 --output table",
+    "  yvex source acquire --repo OWNER/GGUF_REPOSITORY --family FAMILY --name LOCAL_NAME "
+        "--revision REVISION --include 'selected-file.gguf' --models-root ~/lab/models",
+    "  yvex artifact status deepseek4-v4-flash-dspark-selected-embed",
+    "  yvex source acquire gemma-4-12b-it --models-root ~/lab/models --dry-run --audit",
+    "  yvex source status gemma-4-12b-it --models-root ~/lab/models --audit",
+    "  yvex source stop gemma-4-12b-it --models-root ~/lab/models --audit",
+    "  yvex source resume gemma-4-12b-it --models-root ~/lab/models --auth required "
         "--progress live --tick-seconds 2 --audit",
-    "  yvex model acquisition cleanup gemma-4-12b-it --models-root ~/lab/models --stale-locks "
+    "  yvex source cleanup gemma-4-12b-it --models-root ~/lab/models --stale-locks "
         "--dry-run --audit",
-    "  yvex model acquire gemma-4-12b-it --models-root ~/lab/models --auth required "
+    "  yvex source acquire gemma-4-12b-it --models-root ~/lab/models --auth required "
         "--progress live --tick-seconds 2 --audit",
-    "  yvex model acquire qwen3-8b --models-root ~/lab/models --auth auto --audit",
-    "  yvex model acquisition status qwen3-32b --models-root ~/lab/models",
+    "  yvex source acquire qwen3-8b --models-root ~/lab/models --auth auto --audit",
+    "  yvex source status qwen3-32b --models-root ~/lab/models",
     "  yvex inspect artifact registry --models-root ~/lab/models --output table",
     "  yvex inspect artifact status qwen3-6-35b-a3b --models-root ~/lab/models --audit",
-    "  yvex model acquire --provider github --repo OWNER/REPO --release TAG --asset \"*.gguf\" "
+    "  yvex source acquire --provider github --repo OWNER/REPO --release TAG --asset \"*.gguf\" "
         "--models-root ~/lab/models --auth auto --audit",
-    "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed --backend cpu --level runtime",
-    "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed --backend cuda --level runtime --no-graph",
-    "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed --level full --report-dir build/reports",
-    "\nModels manages the local alias registry, source tensor download sidecars, GGUF artifact discovery, "
-        "selected artifact preparation, selected artifact checks, digest identity, and metadata drift facts "
-        "for registered artifacts. Download uses the local accounts/provider preflight for Hugging Face and "
-        "GitHub provider CLIs, writes source intake reports only, and does not register runtime artifacts. "
+    "  yvex artifact status deepseek4-v4-flash-dspark-selected-embed --backend cpu --level runtime",
+    "  yvex artifact status deepseek4-v4-flash-dspark-selected-embed --backend cuda --level runtime --no-graph",
+    "  yvex artifact status deepseek4-v4-flash-dspark-selected-embed --level full --report-dir build/reports",
+    "\nModels separates remote provider discovery, physical representations, acquired sources, admitted "
+        "packages, the local catalog, and live engines. Search and remote inspect normalize Hugging Face "
+        "metadata without downloading payloads. Download uses the local accounts/provider preflight for "
+        "Hugging Face and GitHub provider CLIs, writes source intake reports only, and does not register "
+        "runtime artifacts. "
         "Artifacts list/status reads operator paths, GGUF filenames, and source sidecars only; it does not "
         "hash files, load tensor payloads, emit GGUF, materialize, execute runtime paths, generate, evaluate, "
         "or benchmark. Prepare currently supports deepseek4-v4-flash-dspark-selected-embed only and does not "
@@ -295,7 +323,8 @@ static int parse_models_registry_options(int arg_count,
             *output_mode = YVEX_MODELS_OUTPUT_AUDIT;
         } else if (output_mode && strcmp(args[i], "--output") == 0) {
             if (i + 1 >= arg_count) {
-                yvex_cli_out_writef(stderr, "yvex: models --output requires normal|table|audit\n");
+                yvex_cli_out_writef(stderr,
+                                    "yvex: models --output requires normal|table|audit|json\n");
                 return 2;
             }
             if (!parse_models_output_mode(args[++i], output_mode)) {
@@ -303,9 +332,7 @@ static int parse_models_registry_options(int arg_count,
                 return 2;
             }
         } else if (output_mode && strcmp(args[i], "--json") == 0) {
-            yvex_cli_out_writef(stderr,
-                "yvex: models JSON output is unsupported; use --output normal|table|audit\n");
-            return 2;
+            *output_mode = YVEX_MODELS_OUTPUT_JSON;
         } else if (strcmp(args[i], "--json") != 0) {
             yvex_cli_out_writef(stderr, "yvex: unknown models option: %s\n", args[i]);
             return 2;
@@ -336,11 +363,22 @@ static int parse_models_add_options(int arg_count, char **args,
         else if (strcmp(args[i], "--calibration") == 0) options->calibration = args[++i];
         else if (strcmp(args[i], "--sha256") == 0) options->sha256 = args[++i];
         else if (strcmp(args[i], "--support-level") == 0) options->support_level = args[++i];
+        else if (strcmp(args[i], "--startup-profile") == 0)
+            options->runtime_profile = args[++i];
+        else if (strcmp(args[i], "--installation-root") == 0)
+            options->runtime_installation = args[++i];
         else if (strcmp(args[i], "--runtime-binding") == 0) options->runtime_binding = args[++i];
         else if (strcmp(args[i], "--target") == 0) options->runtime_target = args[++i];
         else if (strcmp(args[i], "--backend") == 0) options->runtime_backend = args[++i];
-        else if (strcmp(args[i], "--generation-mode") == 0)
-            options->runtime_mode = args[++i];
+        else if (strcmp(args[i], "--execution-strategy") == 0)
+            options->runtime_execution_strategy = args[++i];
+        else if (strcmp(args[i], "--generation-mode") == 0) {
+            yvex_cli_out_writef(
+                stderr,
+                "yvex: --generation-mode is retired; use --execution-strategy "
+                "target-only|speculative (composite media profiles need neither)\n");
+            return 2;
+        }
         else if (strcmp(args[i], "--ctx") == 0) options->runtime_context = args[++i];
         else {
             yvex_cli_out_writef(stderr, "yvex: unknown models add option: %s\n", args[i]);
@@ -400,7 +438,8 @@ static int command_models_scan(int arg_count, char **args)
     return 0;
 }
 
-static int command_models_add(int arg_count, char **args)
+int yvex_model_profile_create_adapter(int arg_count, char **args,
+                                      int render_result, int replace_existing)
 {
     models_add_options cli_options;
     yvex_model_registry *registry = NULL;
@@ -414,7 +453,7 @@ static int command_models_add(int arg_count, char **args)
     char primary_tensor_role[64] = {0};
     char primary_tensor_dtype[32] = {0};
     char primary_tensor_dims[128] = {0};
-    unsigned int runtime_fields = 0u;
+    unsigned int single_fields = 0u, composite_fields = 0u;
     char *context_end = NULL;
     int have_derived = 0;
     int rc;
@@ -447,28 +486,55 @@ static int command_models_add(int arg_count, char **args)
     entry.calibration = cli_options.calibration ? cli_options.calibration : entry.calibration;
     entry.path = cli_options.path;
     entry.support_level = cli_options.support_level ? cli_options.support_level : "";
-    runtime_fields += cli_options.runtime_binding != NULL;
-    runtime_fields += cli_options.runtime_target != NULL;
-    runtime_fields += cli_options.runtime_backend != NULL;
-    runtime_fields += cli_options.runtime_mode != NULL;
-    runtime_fields += cli_options.runtime_context != NULL;
-    if (runtime_fields != 0u && runtime_fields != 5u) {
+    single_fields += cli_options.runtime_binding != NULL;
+    single_fields += cli_options.runtime_target != NULL;
+    single_fields += cli_options.runtime_backend != NULL;
+    single_fields += cli_options.runtime_execution_strategy != NULL;
+    single_fields += cli_options.runtime_context != NULL;
+    composite_fields += cli_options.runtime_installation != NULL;
+    composite_fields += cli_options.runtime_target != NULL;
+    composite_fields += cli_options.runtime_backend != NULL;
+    if (cli_options.runtime_profile &&
+        strcmp(cli_options.runtime_profile, "single-artifact") != 0 &&
+        strcmp(cli_options.runtime_profile, "composite") != 0) {
         yvex_cli_out_writef(stderr,
-            "yvex: a startup profile requires --runtime-binding, --target, --backend, "
-            "--generation-mode, and --ctx together\n");
+            "yvex: --startup-profile must be single-artifact or composite\n");
         return 2;
     }
-    if (runtime_fields == 5u) {
+    if (cli_options.runtime_profile &&
+        strcmp(cli_options.runtime_profile, "composite") == 0) {
+        if (composite_fields != 3u || cli_options.runtime_binding ||
+            cli_options.runtime_context || cli_options.runtime_execution_strategy) {
+            yvex_cli_out_writef(stderr,
+                "yvex: a composite startup profile requires --installation-root, --target, "
+                "and --backend without --execution-strategy, --runtime-binding, or --ctx\n");
+            return 2;
+        }
+        entry.runtime_profile = "composite";
+        entry.runtime_installation = cli_options.runtime_installation;
+        entry.runtime_target = cli_options.runtime_target;
+        entry.runtime_backend = cli_options.runtime_backend;
+        entry.runtime_engine_kind = "media";
+        entry.runtime_execution_strategy = "not-applicable";
+    } else if (single_fields != 0u || cli_options.runtime_profile) {
+        if (single_fields != 5u || cli_options.runtime_installation) {
+            yvex_cli_out_writef(stderr,
+                "yvex: a startup profile requires --runtime-binding, --target, --backend, "
+                "--execution-strategy, and --ctx together\n");
+            return 2;
+        }
         errno = 0;
         entry.runtime_context = strtoull(cli_options.runtime_context, &context_end, 10);
         if (errno || !context_end || *context_end || entry.runtime_context == 0ull) {
             yvex_cli_out_writef(stderr, "yvex: model registry add --ctx requires a positive integer\n");
             return 2;
         }
+        entry.runtime_profile = "single-artifact";
         entry.runtime_binding = cli_options.runtime_binding;
         entry.runtime_target = cli_options.runtime_target;
         entry.runtime_backend = cli_options.runtime_backend;
-        entry.runtime_mode = cli_options.runtime_mode;
+        entry.runtime_engine_kind = "text";
+        entry.runtime_execution_strategy = cli_options.runtime_execution_strategy;
     }
 
     rc = populate_registry_identity(&entry,
@@ -490,67 +556,575 @@ static int command_models_add(int arg_count, char **args)
                         cli_options.sha256, registered_sha256);
         return print_yvex_error(&err, exit_for_status(YVEX_ERR_STATE));
     }
-    if (runtime_fields == 5u) {
+    if ((entry.runtime_profile && entry.runtime_profile[0]) || single_fields != 0u) {
         rc = yvex_model_registry_startup_validate(&entry, &err);
         if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
     }
 
     rc = models_registry_open(&registry, cli_options.registry_path, 1, &err);
+    if (rc == YVEX_OK && replace_existing &&
+        yvex_model_registry_find(registry, entry.alias))
+        rc = yvex_model_registry_remove(registry, entry.alias, &err);
     if (rc == YVEX_OK) rc = yvex_model_registry_add(registry, &entry, &err);
     if (rc == YVEX_OK) rc = yvex_model_registry_save(registry, cli_options.registry_path, &err);
     if (rc != YVEX_OK) {
         yvex_model_registry_close(registry);
         return print_yvex_error(&err, exit_for_status(rc));
     }
-    yvex_cli_out_writef(stdout, "models: add\n");
-    (void)yvex_cli_out_fields(stdout, &entry, registry_add_fields,
-                              sizeof(registry_add_fields) / sizeof(registry_add_fields[0]));
-    yvex_cli_out_lines(stdout, literal_pair_4, sizeof(literal_pair_4) / sizeof(literal_pair_4[0]));
+    if (render_result) {
+        yvex_cli_out_writef(stdout, "models: add\n");
+        (void)yvex_cli_out_fields(
+            stdout, &entry, registry_add_fields,
+            sizeof(registry_add_fields) / sizeof(registry_add_fields[0]));
+        yvex_cli_out_lines(stdout, literal_pair_4,
+                           sizeof(literal_pair_4) / sizeof(literal_pair_4[0]));
+    }
     yvex_model_registry_close(registry);
     return 0;
 }
 
-static int command_models_list(int arg_count, char **args)
+static int command_models_add(int arg_count, char **args)
 {
-    yvex_model_registry *registry = NULL;
+    return yvex_model_profile_create_adapter(arg_count, args, 1, 0);
+}
+
+static int command_models_remote(int arg_count, char **args)
+{
+    yvex_cli_model_inspect_options cli;
+    yvex_remote_inspect_options options;
+    yvex_local_catalog_options local_options;
+    yvex_remote_catalog *catalog = NULL;
+    yvex_local_catalog *local_catalog = NULL;
     yvex_error err;
-    const char *registry_path = NULL;
-    yvex_models_output_mode output_mode = YVEX_MODELS_OUTPUT_NORMAL;
-    unsigned long long i;
-    unsigned long long count;
+    yvex_account_provider provider;
     int rc;
 
-    yvex_error_clear(&err);
-    rc = parse_models_registry_options(arg_count, args, 3, &registry_path, &output_mode);
+    rc = model_remote_inspect_options_parse(arg_count, args, 3, &cli);
     if (rc != 0) return rc;
-    rc = models_registry_open(&registry, registry_path, 1, &err);
-    if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
-    count = yvex_model_registry_count(registry);
-    if (output_mode != YVEX_MODELS_OUTPUT_AUDIT) {
-        yvex_cli_out_writef(stdout, "MODELS  count=%llu\n\n", count);
-        yvex_cli_out_writef(stdout, "%-44s  %-10s  %-8s  %7s  %s\n",
-               "ALIAS",
-               "FAMILY",
-               "BACKEND",
-               "CONTEXT",
-               "STARTUP");
-        for (i = 0; i < count; ++i) {
-            const yvex_model_registry_entry *entry = yvex_model_registry_at(registry, i);
-            print_model_registry_entry_cli(entry);
-        }
-        yvex_cli_out_writef(stdout, "status: models-list\n");
-        yvex_model_registry_close(registry);
-        return 0;
+    if (!yvex_account_provider_from_name(cli.provider, &provider)) return 2;
+    memset(&options, 0, sizeof(options));
+    options.provider = provider;
+    options.repository = cli.repository;
+    options.revision = cli.revision;
+    yvex_error_clear(&err);
+    rc = yvex_remote_model_inspect(&catalog, &options, &err);
+    memset(&local_options, 0, sizeof(local_options));
+    local_options.models_root = cli.models_root;
+    if (rc == YVEX_OK)
+        rc = yvex_local_catalog_open(&local_catalog, &local_options, &err);
+    if (rc != YVEX_OK) {
+        yvex_remote_catalog_close(catalog);
+        return print_yvex_error(&err, exit_for_status(rc));
     }
-    yvex_cli_out_writef(stdout, "models: list\n");
-    for (i = 0; i < count; ++i) {
-        const yvex_model_registry_entry *entry = yvex_model_registry_at(registry, i);
-        print_model_registry_entry_audit(entry);
+    rc = yvex_remote_catalog_render(stdout, catalog, local_catalog,
+                                    cli.output_mode, 1);
+    yvex_local_catalog_close(local_catalog);
+    yvex_remote_catalog_close(catalog);
+    if (rc != YVEX_OK) {
+        yvex_error_set(&err, rc, "model_inspect", "cannot render remote model catalog");
+        return print_yvex_error(&err, exit_for_status(rc));
     }
-    yvex_cli_out_writef(stdout, "count: %llu\n", count);
-    yvex_cli_out_writef(stdout, "status: models-list\n");
-    yvex_model_registry_close(registry);
     return 0;
+}
+
+static int command_models_search(int arg_count, char **args)
+{
+    yvex_cli_model_search_options cli;
+    yvex_remote_search_options options;
+    yvex_local_catalog_options local_options;
+    yvex_remote_catalog *catalog = NULL;
+    yvex_local_catalog *local_catalog = NULL;
+    yvex_error err;
+    yvex_account_provider provider;
+    int rc;
+
+    rc = model_search_options_parse(arg_count, args, 3, &cli);
+    if (rc != 0) return rc;
+    if (!strcmp(cli.provider, "local")) {
+        if (cli.author || cli.filter) {
+            yvex_cli_out_fputs(
+                "yvex: local model search supports QUERY, paging, and output options only\n",
+                stderr);
+            return 2;
+        }
+        return yvex_model_catalog_search_local(&cli);
+    }
+    if (!yvex_account_provider_from_name(cli.provider, &provider)) return 2;
+    memset(&options, 0, sizeof(options));
+    options.provider = provider;
+    options.query = cli.query;
+    options.author = cli.author;
+    options.filter = cli.filter;
+    options.page = cli.page;
+    options.page_size = cli.page_size;
+    yvex_error_clear(&err);
+    rc = yvex_remote_model_search(&catalog, &options, &err);
+    memset(&local_options, 0, sizeof(local_options));
+    local_options.models_root = cli.models_root;
+    if (rc == YVEX_OK)
+        rc = yvex_local_catalog_open(&local_catalog, &local_options, &err);
+    if (rc != YVEX_OK) {
+        yvex_remote_catalog_close(catalog);
+        return print_yvex_error(&err, exit_for_status(rc));
+    }
+    rc = yvex_remote_catalog_render(stdout, catalog, local_catalog,
+                                    cli.output_mode, 0);
+    yvex_local_catalog_close(local_catalog);
+    yvex_remote_catalog_close(catalog);
+    if (rc != YVEX_OK) {
+        yvex_error_set(&err, rc, "model_search", "cannot render remote model catalog");
+        return print_yvex_error(&err, exit_for_status(rc));
+    }
+    return 0;
+}
+
+static int library_open_cli(int arg_count, char **args, int option_start,
+                            yvex_model_library **library,
+                            yvex_model_catalog_output_mode *mode)
+{
+    yvex_cli_model_list_options cli;
+    yvex_local_catalog_options options = {0};
+    yvex_error err;
+    int rc = model_local_list_options_parse(
+        arg_count, args, option_start, "model plumbing",
+        YVEX_MODEL_LOCAL_OPTIONS_DETAIL | YVEX_MODEL_LOCAL_OPTIONS_LEGACY_OUTPUT,
+        &cli);
+    if (rc != 0) return rc;
+    options.models_root = cli.models_root;
+    options.registry_path = cli.registry_path;
+    yvex_error_clear(&err);
+    rc = yvex_model_library_open(library, &options, &err);
+    if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
+    *mode = cli.output_mode;
+    return 0;
+}
+
+static int model_has_deployment(const yvex_model_library_entry *model)
+{
+    return model && (model->artifact_count || model->profile_count);
+}
+
+static void source_identity(const yvex_local_source_record *source,
+                            char output[YVEX_MODEL_LIBRARY_ID_CAP])
+{
+    (void)snprintf(output, YVEX_MODEL_LIBRARY_ID_CAP, "%s:%s@%s",
+                   source->provider, source->repository, source->revision);
+}
+
+static void source_render(const yvex_model_library_entry *model,
+                          const yvex_local_source_record *source,
+                          yvex_model_catalog_output_mode mode)
+{
+    char identity[YVEX_MODEL_LIBRARY_ID_CAP];
+    source_identity(source, identity);
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_TABLE) {
+        yvex_cli_out_writef(stdout, "%-28s %-16s verify=%s\n",
+                            source->name, source->acquisition_state,
+                            source->verification_state);
+        yvex_cli_out_writef(stdout, "  source: %s\n  model binding: %s\n", identity,
+                            model_has_deployment(model) ? model->display_name : "none");
+        if (source->blocker[0])
+            yvex_cli_out_writef(stdout, "  action: %s\n", source->blocker);
+        return;
+    }
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_AUDIT) {
+        yvex_cli_out_writef(
+            stdout,
+            "%s\n  state: %s\n  verification: %s\n  size: %s\n"
+            "  model binding: %s\n  model identity: %s\n  path: %s\n",
+            identity, source->acquisition_state, source->verification_state,
+            source->size_known ? "known" : "unknown",
+            model_has_deployment(model) ? model->display_name : "none",
+            model->identity, source->path);
+        if (source->blocker[0])
+            yvex_cli_out_writef(stdout, "  blocker: %s\n", source->blocker);
+        return;
+    }
+    yvex_cli_out_fputs("{\"identity\":", stdout);
+    yvex_cli_out_json_string(stdout, identity);
+    yvex_cli_out_fputs(",\"model_identity\":", stdout);
+    yvex_cli_out_json_string(stdout, model->identity);
+    yvex_cli_out_fputs(",\"name\":", stdout);
+    yvex_cli_out_json_string(stdout, source->name);
+    yvex_cli_out_fputs(",\"family\":", stdout);
+    yvex_cli_out_json_string(stdout, source->family);
+    yvex_cli_out_fputs(",\"provider\":", stdout);
+    yvex_cli_out_json_string(stdout, source->provider);
+    yvex_cli_out_fputs(",\"repository\":", stdout);
+    yvex_cli_out_json_string(stdout, source->repository);
+    yvex_cli_out_fputs(",\"revision\":", stdout);
+    yvex_cli_out_json_string(stdout, source->revision);
+    yvex_cli_out_fputs(",\"representation\":", stdout);
+    yvex_cli_out_json_string(stdout, source->representation);
+    yvex_cli_out_fputs(",\"acquisition_state\":", stdout);
+    yvex_cli_out_json_string(stdout, source->acquisition_state);
+    yvex_cli_out_fputs(",\"verification_state\":", stdout);
+    yvex_cli_out_json_string(stdout, source->verification_state);
+    yvex_cli_out_fputs(",\"blocker\":", stdout);
+    yvex_cli_out_json_string(stdout, source->blocker);
+    yvex_cli_out_fputs(",\"path\":", stdout);
+    yvex_cli_out_json_string(stdout, source->path);
+    yvex_cli_out_writef(stdout, ",\"size_bytes\":%llu,\"size_known\":%s}",
+                        source->size_bytes,
+                        source->size_known ? "true" : "false");
+}
+
+static void artifact_render(const yvex_model_library_entry *model,
+                            const yvex_model_artifact_fact *artifact,
+                            unsigned long long profile_count,
+                            unsigned long long launchable_count,
+                            yvex_model_catalog_output_mode mode)
+{
+    char size[32];
+    const char *identity = artifact->identity[0] ? artifact->identity : artifact->path;
+    model_download_format_bytes(size, sizeof(size), artifact->file_size);
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_TABLE) {
+        yvex_cli_out_writef(
+            stdout, "  %.20s  %-28s %8s · %llu tensors · %llu/%llu runnable profiles\n",
+            identity, artifact->artifact_class[0] ? artifact->artifact_class
+                                                 : artifact->format,
+            size, artifact->tensor_count, launchable_count, profile_count);
+        return;
+    }
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_AUDIT) {
+        yvex_cli_out_writef(
+            stdout,
+            "%s\n  model: %s\n  class: %s\n  format: %s\n  variant: %s\n"
+            "  size: %llu\n  tensors: %llu\n  legacy execution capability: %s\n"
+            "  profiles: %llu (%llu runnable)\n  path: %s\n",
+            identity, model->identity, artifact->artifact_class, artifact->format,
+            artifact->physical_variant, artifact->file_size,
+            artifact->tensor_count, artifact->execution_ready ? "recorded" : "not-recorded",
+            profile_count, launchable_count, artifact->path);
+        return;
+    }
+    yvex_cli_out_fputs("{\"identity\":", stdout);
+    yvex_cli_out_json_string(stdout, identity);
+    yvex_cli_out_fputs(",\"model_identity\":", stdout);
+    yvex_cli_out_json_string(stdout, model->identity);
+    yvex_cli_out_fputs(",\"path\":", stdout);
+    yvex_cli_out_json_string(stdout, artifact->path);
+    yvex_cli_out_fputs(",\"artifact_class\":", stdout);
+    yvex_cli_out_json_string(stdout, artifact->artifact_class);
+    yvex_cli_out_fputs(",\"format\":", stdout);
+    yvex_cli_out_json_string(stdout, artifact->format);
+    yvex_cli_out_fputs(",\"physical_variant\":", stdout);
+    yvex_cli_out_json_string(stdout, artifact->physical_variant);
+    yvex_cli_out_writef(stdout,
+                        ",\"file_size\":%llu,\"tensor_count\":%llu,"
+                        "\"execution_ready\":%s,\"profile_count\":%llu,"
+                        "\"launchable_profile_count\":%llu}",
+                        artifact->file_size, artifact->tensor_count,
+                        artifact->execution_ready ? "true" : "false",
+                        profile_count, launchable_count);
+}
+
+static void profile_binding_label(const yvex_model_runtime_profile_fact *profile,
+                                  char *out, size_t capacity)
+{
+    const char *path = profile->runtime_binding;
+    const char *end, *start;
+    size_t length;
+
+    if (!path[0]) {
+        snprintf(out, capacity, "%s", profile->installation[0] ? "installed" : "direct");
+        return;
+    }
+    end = strrchr(path, '/');
+    if (!end || end == path) {
+        snprintf(out, capacity, "binding");
+        return;
+    }
+    start = end;
+    while (start > path && start[-1] != '/') --start;
+    length = (size_t)(end - start);
+    if (!length || length >= capacity) snprintf(out, capacity, "binding");
+    else {
+        memcpy(out, start, length);
+        out[length] = '\0';
+    }
+}
+
+static void profile_render(const yvex_model_library_entry *model,
+                           const yvex_model_runtime_profile_fact *profile,
+                           yvex_model_catalog_output_mode mode)
+{
+    const char *deployment = profile->artifact_class[0] ? profile->artifact_class
+                                                        : profile->profile[0]
+                                                              ? profile->profile : "default";
+    char binding[128];
+    profile_binding_label(profile, binding, sizeof(binding));
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_TABLE) {
+        yvex_cli_out_writef(
+            stdout,
+            "  %s\n    deployment=%s · artifact=%.16s · binding=%s\n"
+            "    %s/%s/%s · context=%llu · %s\n"
+            "    capability input=0x%llx · output=0x%llx · max-parts=%llu\n",
+            profile->alias, deployment, profile->artifact_identity, binding,
+            profile->backend, profile->engine_kind, profile->execution_strategy,
+            profile->context_capacity, profile->launchable ? "runnable" : "blocked",
+            profile->capabilities.input_kinds,
+            profile->capabilities.output_kinds,
+            profile->capabilities.maximum_input_parts);
+        if (!profile->launchable)
+            yvex_cli_out_writef(stdout, "  blocker: %s\n", profile->blocker);
+        return;
+    }
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_AUDIT) {
+        yvex_cli_out_writef(
+            stdout,
+            "%s\n  model: %s\n  deployment: %s\n  artifact: %s\n"
+            "  binding label: %s\n  binding: %s\n  backend: %s\n  engine: %s\n"
+            "  strategy: %s\n  context: %llu\n  status: %s\n"
+            "  capability input: 0x%llx\n  capability output: 0x%llx\n"
+            "  maximum input parts: %llu\n",
+            profile->alias, model->identity, deployment, profile->artifact_identity,
+            binding, profile->runtime_binding, profile->backend, profile->engine_kind,
+            profile->execution_strategy, profile->context_capacity,
+            profile->launchable ? "runnable" : "blocked",
+            profile->capabilities.input_kinds,
+            profile->capabilities.output_kinds,
+            profile->capabilities.maximum_input_parts);
+        if (!profile->launchable)
+            yvex_cli_out_writef(stdout, "  blocker: %s\n", profile->blocker);
+        return;
+    }
+    yvex_cli_out_fputs("{\"identity\":", stdout);
+    yvex_cli_out_json_string(stdout, profile->alias);
+    yvex_cli_out_fputs(",\"model_identity\":", stdout);
+    yvex_cli_out_json_string(stdout, model->identity);
+    yvex_cli_out_fputs(",\"profile_class\":", stdout);
+    yvex_cli_out_json_string(stdout, profile->profile);
+    yvex_cli_out_fputs(",\"artifact_identity\":", stdout);
+    yvex_cli_out_json_string(stdout, profile->artifact_identity);
+    yvex_cli_out_fputs(",\"artifact_path\":", stdout);
+    yvex_cli_out_json_string(stdout, profile->artifact_path);
+    yvex_cli_out_fputs(",\"runtime_binding\":", stdout);
+    yvex_cli_out_json_string(stdout, profile->runtime_binding);
+    yvex_cli_out_fputs(",\"runtime_target\":", stdout);
+    yvex_cli_out_json_string(stdout, profile->runtime_target);
+    yvex_cli_out_fputs(",\"deployment_class\":", stdout);
+    yvex_cli_out_json_string(stdout, deployment);
+    yvex_cli_out_fputs(",\"backend\":", stdout);
+    yvex_cli_out_json_string(stdout, profile->backend);
+    yvex_cli_out_fputs(",\"engine_kind\":", stdout);
+    yvex_cli_out_json_string(stdout, profile->engine_kind);
+    yvex_cli_out_fputs(",\"execution_strategy\":", stdout);
+    yvex_cli_out_json_string(stdout, profile->execution_strategy);
+    yvex_cli_out_fputs(",\"blocker\":", stdout);
+    yvex_cli_out_json_string(stdout, profile->blocker);
+    yvex_cli_out_writef(
+        stdout,
+        ",\"context_capacity\":%llu,\"launchable\":%s,\"capabilities\":{"
+        "\"input_mask\":%llu,\"output_mask\":%llu,\"properties\":%llu,"
+        "\"maximum_input_parts\":%llu}}",
+                        profile->context_capacity,
+                        profile->launchable ? "true" : "false",
+                        profile->capabilities.input_kinds,
+                        profile->capabilities.output_kinds,
+                        profile->capabilities.execution_properties,
+                        profile->capabilities.maximum_input_parts);
+}
+
+static int command_library_list(int arg_count, char **args)
+{
+    return yvex_model_catalog_list_command(arg_count, args);
+}
+
+static int command_library_show(int arg_count, char **args)
+{
+    return yvex_model_catalog_show_command(arg_count, args);
+}
+
+static int command_source_list(int arg_count, char **args)
+{
+    yvex_model_library *library = NULL;
+    yvex_model_catalog_output_mode mode = YVEX_MODEL_CATALOG_OUTPUT_TABLE;
+    unsigned long long model_index, source_index, emitted = 0u;
+    int rc = library_open_cli(arg_count, args, 3, &library, &mode);
+    if (rc) return rc;
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON)
+        yvex_cli_out_fputs("{\"schema\":\"yvex.source.list.v1\",\"sources\":[", stdout);
+    else if (mode == YVEX_MODEL_CATALOG_OUTPUT_TABLE)
+        yvex_cli_out_fputs("SOURCES\n", stdout);
+    for (model_index = 0u; model_index < yvex_model_library_count(library); ++model_index) {
+        const yvex_model_library_entry *model = yvex_model_library_at(library, model_index);
+        for (source_index = 0u;
+             source_index < yvex_model_library_source_count(library, model_index);
+             ++source_index) {
+            if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON && emitted)
+                yvex_cli_out_writef(stdout, "%c", ',');
+            source_render(model, yvex_model_library_source_at(
+                                     library, model_index, source_index), mode);
+            emitted++;
+        }
+    }
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON) yvex_cli_out_fputs("]}\n", stdout);
+    else if (!emitted) yvex_cli_out_fputs("no acquired sources known locally\n", stdout);
+    yvex_model_library_close(library);
+    return 0;
+}
+
+static int command_source_show(int arg_count, char **args)
+{
+    yvex_model_library *library = NULL;
+    yvex_model_catalog_output_mode mode = YVEX_MODEL_CATALOG_OUTPUT_TABLE;
+    unsigned long long model_index, source_index;
+    int rc;
+    if (arg_count < 4) {
+        yvex_cli_out_fputs("yvex: source show requires SOURCE\n", stderr);
+        return 2;
+    }
+    rc = library_open_cli(arg_count, args, 4, &library, &mode);
+    if (rc) return rc;
+    for (model_index = 0u; model_index < yvex_model_library_count(library); ++model_index) {
+        const yvex_model_library_entry *model = yvex_model_library_at(library, model_index);
+        for (source_index = 0u;
+             source_index < yvex_model_library_source_count(library, model_index);
+             ++source_index) {
+            const yvex_local_source_record *source = yvex_model_library_source_at(
+                library, model_index, source_index);
+            char identity[YVEX_MODEL_LIBRARY_ID_CAP];
+            source_identity(source, identity);
+            if (strcmp(identity, args[3])) continue;
+            if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON)
+                yvex_cli_out_fputs("{\"schema\":\"yvex.source.v1\",\"source\":", stdout);
+            source_render(model, source, mode == YVEX_MODEL_CATALOG_OUTPUT_JSON
+                                            ? mode : YVEX_MODEL_CATALOG_OUTPUT_AUDIT);
+            if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON) yvex_cli_out_fputs("}\n", stdout);
+            yvex_model_library_close(library);
+            return 0;
+        }
+    }
+    yvex_model_library_close(library);
+    yvex_cli_out_writef(stderr, "yvex: source not found: %s\n", args[3]);
+    return 2;
+}
+
+static unsigned long long artifact_profile_count(
+    const yvex_model_library *library, unsigned long long model_index,
+    const yvex_model_artifact_fact *artifact, int launchable_only)
+{
+    unsigned long long index, count = 0u;
+
+    for (index = 0u; index < yvex_model_library_profile_count(library, model_index);
+         ++index) {
+        const yvex_model_runtime_profile_fact *profile =
+            yvex_model_library_profile_at(library, model_index, index);
+        int same = artifact->identity[0]
+                       ? strcmp(artifact->identity, profile->artifact_identity) == 0
+                       : strcmp(artifact->path, profile->artifact_path) == 0;
+        if (same && (!launchable_only || profile->launchable)) count++;
+    }
+    return count;
+}
+
+static int command_artifact_list(int arg_count, char **args)
+{
+    yvex_model_library *library = NULL;
+    yvex_model_catalog_output_mode mode = YVEX_MODEL_CATALOG_OUTPUT_TABLE;
+    unsigned long long model_index, artifact_index, emitted = 0u;
+    int rc = library_open_cli(arg_count, args, 3, &library, &mode);
+    if (rc) return rc;
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON)
+        yvex_cli_out_fputs("{\"schema\":\"yvex.artifact.list.v1\",\"artifacts\":[", stdout);
+    else if (mode == YVEX_MODEL_CATALOG_OUTPUT_TABLE)
+        yvex_cli_out_fputs("ARTIFACTS\n", stdout);
+    for (model_index = 0u; model_index < yvex_model_library_count(library); ++model_index) {
+        const yvex_model_library_entry *model = yvex_model_library_at(library, model_index);
+        if (mode == YVEX_MODEL_CATALOG_OUTPUT_TABLE &&
+            yvex_model_library_artifact_count(library, model_index))
+            yvex_cli_out_writef(stdout, "\n%s\n", model->display_name);
+        for (artifact_index = 0u;
+             artifact_index < yvex_model_library_artifact_count(library, model_index);
+             ++artifact_index) {
+            const yvex_model_artifact_fact *artifact = yvex_model_library_artifact_at(
+                library, model_index, artifact_index);
+            unsigned long long profiles = artifact_profile_count(
+                library, model_index, artifact, 0);
+            unsigned long long launchable = artifact_profile_count(
+                library, model_index, artifact, 1);
+            if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON && emitted)
+                yvex_cli_out_writef(stdout, "%c", ',');
+            artifact_render(model, artifact, profiles, launchable, mode);
+            emitted++;
+        }
+    }
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON) yvex_cli_out_fputs("]}\n", stdout);
+    else if (!emitted) yvex_cli_out_fputs("no compiled artifacts known locally\n", stdout);
+    yvex_model_library_close(library);
+    return 0;
+}
+
+static int command_profile_list(int arg_count, char **args)
+{
+    yvex_model_library *library = NULL;
+    yvex_model_catalog_output_mode mode = YVEX_MODEL_CATALOG_OUTPUT_TABLE;
+    unsigned long long model_index, profile_index, emitted = 0u;
+    int rc = library_open_cli(arg_count, args, 3, &library, &mode);
+    if (rc) return rc;
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON)
+        yvex_cli_out_fputs("{\"schema\":\"yvex.profile.list.v1\",\"profiles\":[", stdout);
+    else if (mode == YVEX_MODEL_CATALOG_OUTPUT_TABLE)
+        yvex_cli_out_fputs(
+            "DEPLOYMENT PROFILES\nEach entry is a distinct physical artifact/binding.\n",
+            stdout);
+    for (model_index = 0u; model_index < yvex_model_library_count(library); ++model_index) {
+        const yvex_model_library_entry *model = yvex_model_library_at(library, model_index);
+        if (mode == YVEX_MODEL_CATALOG_OUTPUT_TABLE &&
+            yvex_model_library_profile_count(library, model_index))
+            yvex_cli_out_writef(stdout, "\n%s · %llu/%llu runnable\n",
+                                model->display_name,
+                                model->launchable_profile_count,
+                                model->profile_count);
+        for (profile_index = 0u;
+             profile_index < yvex_model_library_profile_count(library, model_index);
+             ++profile_index) {
+            if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON && emitted)
+                yvex_cli_out_writef(stdout, "%c", ',');
+            profile_render(model, yvex_model_library_profile_at(
+                                      library, model_index, profile_index), mode);
+            emitted++;
+        }
+    }
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON) yvex_cli_out_fputs("]}\n", stdout);
+    else if (!emitted) yvex_cli_out_fputs("no runtime profiles known locally\n", stdout);
+    yvex_model_library_close(library);
+    return 0;
+}
+
+static int command_profile_show(int arg_count, char **args)
+{
+    yvex_model_library *library = NULL;
+    yvex_model_catalog_output_mode mode = YVEX_MODEL_CATALOG_OUTPUT_TABLE;
+    unsigned long long model_index, profile_index;
+    int rc;
+    if (arg_count < 4) {
+        yvex_cli_out_fputs("yvex: profile show requires PROFILE\n", stderr);
+        return 2;
+    }
+    rc = library_open_cli(arg_count, args, 4, &library, &mode);
+    if (rc) return rc;
+    for (model_index = 0u; model_index < yvex_model_library_count(library); ++model_index) {
+        const yvex_model_library_entry *model = yvex_model_library_at(library, model_index);
+        for (profile_index = 0u;
+             profile_index < yvex_model_library_profile_count(library, model_index);
+             ++profile_index) {
+            const yvex_model_runtime_profile_fact *profile =
+                yvex_model_library_profile_at(library, model_index, profile_index);
+            if (strcmp(profile->alias, args[3])) continue;
+            if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON)
+                yvex_cli_out_fputs("{\"schema\":\"yvex.profile.v1\",\"profile\":", stdout);
+            profile_render(model, profile, mode == YVEX_MODEL_CATALOG_OUTPUT_JSON
+                                             ? mode : YVEX_MODEL_CATALOG_OUTPUT_AUDIT);
+            if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON) yvex_cli_out_fputs("}\n", stdout);
+            yvex_model_library_close(library);
+            return 0;
+        }
+    }
+    yvex_model_library_close(library);
+    yvex_cli_out_writef(stderr, "yvex: profile not found: %s\n", args[3]);
+    return 2;
 }
 
 /*
@@ -801,10 +1375,13 @@ static int command_models_inspect(int arg_count, char **args)
         return 2;
     }
     if (output_mode != YVEX_MODELS_OUTPUT_AUDIT) {
+        yvex_deployment_compatibility compatibility = {0};
         yvex_error startup_error;
         int startup_ready;
         yvex_error_clear(&startup_error);
-        startup_ready = yvex_model_registry_startup_validate(entry, &startup_error) == YVEX_OK;
+        startup_ready = yvex_deployment_compatibility_evaluate(
+                            entry, &compatibility, &startup_error) == YVEX_OK &&
+                        compatibility.current;
         yvex_cli_out_writef(stdout, "model: %s\n", entry->alias);
         yvex_cli_out_writef(stdout, "family: %s class=%s tensors=%llu size=%llu\n",
                entry->family ? entry->family : "",
@@ -820,12 +1397,16 @@ static int command_models_inspect(int arg_count, char **args)
                entry->execution_ready ? "ready" : "not-established-by-inspection");
         if (startup_ready)
             yvex_cli_out_writef(
-                stdout, "runtime profile: ready binding=available backend=%s mode=%s context=%llu\n",
-                entry->runtime_backend, entry->runtime_mode,
+                stdout, "runtime profile: ready kind=%s backend=%s strategy=%s context=%llu\n",
+                entry->runtime_engine_kind, entry->runtime_backend,
+                entry->runtime_execution_strategy,
                 entry->runtime_context);
         else
-            yvex_cli_out_writef(stdout, "runtime profile: unavailable (%s)\n",
-                                yvex_error_message(&startup_error));
+            yvex_cli_out_writef(
+                stdout, "runtime profile: unavailable (%s: %s)\n",
+                yvex_deployment_compatibility_status_name(compatibility.status),
+                compatibility.reason[0] ? compatibility.reason
+                                        : yvex_error_message(&startup_error));
         yvex_cli_out_writef(stdout, "status: models-inspect\n");
         yvex_model_registry_close(registry);
         return 0;
@@ -835,12 +1416,18 @@ static int command_models_inspect(int arg_count, char **args)
                               sizeof(registry_inspect_fields) /
                                   sizeof(registry_inspect_fields[0]));
     {
+        yvex_deployment_compatibility compatibility = {0};
         yvex_error startup_error;
         yvex_error_clear(&startup_error);
         yvex_cli_out_writef(
             stdout, "startup_profile_status: %s\n",
-            yvex_model_registry_startup_validate(entry, &startup_error) == YVEX_OK
+            yvex_deployment_compatibility_evaluate(
+                entry, &compatibility, &startup_error) == YVEX_OK &&
+                    compatibility.current
                 ? "ready" : "unavailable");
+        yvex_cli_out_writef(
+            stdout, "deployment_compatibility: %s\n",
+            yvex_deployment_compatibility_status_name(compatibility.status));
     }
     rc = yvex_model_context_open(entry->path, &ctx, &err);
     if (rc == YVEX_OK) {
@@ -869,13 +1456,26 @@ typedef struct {
 } yvex_models_subcommand;
 
 static const yvex_models_subcommand model_subcommands[] = {
+    { "library-list", command_library_list },
+    { "library-show", command_library_show },
+    { "pull", yvex_model_pull_command },
+    { "pull-status", yvex_model_pull_lifecycle_command },
+    { "pull-stop", yvex_model_pull_lifecycle_command },
+    { "push", yvex_model_push_command },
+    { "prepare-product", yvex_model_prepare_command },
+    { "source-list", command_source_list },
+    { "source-show", command_source_show },
+    { "artifact-list", command_artifact_list },
+    { "profile-list", command_profile_list },
+    { "profile-show", command_profile_show },
     { "scan", command_models_scan },
     { "add", command_models_add },
     { "download", yvex_models_download_surface_command },
     { "artifacts", yvex_models_artifacts_surface_command },
     { "prepare", yvex_models_prepare_surface_command },
     { "check", yvex_models_check_surface_command },
-    { "list", command_models_list },
+    { "search", command_models_search },
+    { "remote", command_models_remote },
     { "verify", command_models_verify },
     { "inspect", command_models_inspect },
     { "remove", command_models_remove }
@@ -891,8 +1491,7 @@ static int command_models(int arg_count, char **args)
     }
     if (arg_count < 3) {
         yvex_cli_out_writef(stderr,
-            "yvex: models requires scan, add, download, artifacts, prepare, check, list, "
-                "verify, inspect, or remove\n");
+            "yvex: internal models adapter requires an admitted subcommand\n");
         return 2;
     }
     for (i = 0; i < sizeof(model_subcommands) / sizeof(model_subcommands[0]); ++i) {

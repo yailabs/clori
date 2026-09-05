@@ -16,6 +16,7 @@
 
 #include <yvex/artifact.h>
 #include <yvex/backend.h>
+#include <yvex/catalog.h>
 #include <yvex/gguf.h>
 #include <yvex/core.h>
 #include <yvex/internal/core.h>
@@ -25,12 +26,69 @@
 #include <yvex/source.h>
 #include <yvex/tokenizer.h>
 
+typedef const char *(*yvex_cli_engine_state_resolver)(
+    const yvex_local_package_record *package, const void *context);
+
 int yvex_context_command(int arg_count, char **args);
 void yvex_context_help(FILE *fp);
 int yvex_fullmodel_command(int arg_count, char **args);
 void yvex_fullmodel_help(FILE *fp);
 int yvex_models_command(int arg_count, char **args);
+int yvex_model_profile_create_adapter(int arg_count, char **args,
+                                      int render_result, int replace_existing);
 void yvex_models_help(FILE *fp);
+int yvex_model_catalog_list_command(int arg_count, char **args);
+int yvex_model_catalog_show_command(int arg_count, char **args);
+int yvex_model_catalog_search_local(
+    const yvex_cli_model_search_options *options);
+int yvex_model_pull_command(int arg_count, char **args);
+int yvex_model_pull_lifecycle_command(int arg_count, char **args);
+int yvex_model_push_command(int arg_count, char **args);
+int yvex_model_prepare_command(int arg_count, char **args);
+const char *yvex_cli_model_selector(const yvex_model_library_entry *model);
+int yvex_cli_model_find(const yvex_model_library *library, const char *selector,
+                        unsigned long long *model_index);
+typedef struct {
+    unsigned long long model_index, profile_index, revision_count;
+    int selected;
+    const yvex_model_library_entry *model;
+    const yvex_model_runtime_profile_fact *profile;
+    const yvex_model_artifact_fact *artifact;
+    char ordinal[16], variant[YVEX_REMOTE_PRECISION_CAP + 24u];
+    char format[YVEX_REMOTE_FORMAT_CAP], precision[YVEX_REMOTE_PRECISION_CAP], size[32];
+} yvex_cli_model_profile_candidate;
+unsigned long long yvex_cli_model_profile_candidates(
+    const yvex_model_library *library, unsigned long long model_index, int text_only,
+    yvex_cli_model_profile_candidate out[YVEX_MODELS_ARTIFACT_ROWS_CAP]);
+int model_search_options_parse(int arg_count,
+                               char **args,
+                               int start,
+                               yvex_cli_model_search_options *options);
+int model_remote_inspect_options_parse(int arg_count,
+                                       char **args,
+                                       int start,
+                                       yvex_cli_model_inspect_options *options);
+enum {
+    YVEX_MODEL_LOCAL_OPTIONS_DETAIL = 1u,
+    YVEX_MODEL_LOCAL_OPTIONS_LEGACY_OUTPUT = 2u
+};
+int model_local_list_options_parse(int arg_count,
+                                   char **args,
+                                   int start,
+                                   const char *command,
+                                   unsigned int allowed,
+                                   yvex_cli_model_list_options *options);
+int yvex_remote_catalog_render(FILE *fp,
+                               const yvex_remote_catalog *catalog,
+                               const yvex_local_catalog *local_catalog,
+                               yvex_model_catalog_output_mode mode,
+                               int representations);
+int yvex_local_catalog_render(FILE *fp,
+                              const yvex_local_catalog *catalog,
+                              yvex_cli_engine_state_resolver engine_state,
+                              const void *engine_context,
+                              int engine_host_observed,
+                              yvex_model_catalog_output_mode mode);
 int yvex_moe_command(int arg_count, char **args);
 void yvex_moe_help(FILE *fp);
 int yvex_tensor_collection_command(int arg_count, char **args);
@@ -274,7 +332,6 @@ int model_download_resolve_downloaded_target(const char *target,
                                              const yvex_operator_paths *operator_paths,
                                              yvex_model_download_resolved_target *out,
                                              yvex_error *err);
-const yvex_model_download_catalog_row *model_download_find_catalog(const char *target);
 int model_download_family_valid(const char *family);
 int model_download_local_name_valid(const char *name);
 int model_download_repo_valid(const char *repo);

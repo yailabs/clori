@@ -12,6 +12,7 @@
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/compiler.h>
+#include <yvex/internal/execution.h>
 #include <yvex/internal/gguf.h>
 #include <yvex/internal/gguf_writer.h>
 #include <yvex/internal/graph.h>
@@ -57,6 +58,7 @@ typedef struct {
     yvex_logits_family_policy logits_policy;
     yvex_speculation_family_policy speculation_policy;
     yvex_tokenizer_family_policy tokenizer_policy;
+    char artifact_imatrix_identity[YVEX_SHA256_HEX_CAP];
 } binding_compiler;
 
 static void family_runtime_binding_release(void *owner);
@@ -67,8 +69,9 @@ static int pipeline_valid(const yvex_family_compiler_adapter *adapter)
 
     return adapter && adapter->schema_version == YVEX_FAMILY_COMPILER_SCHEMA_V2 &&
            adapter->adapter_id && adapter->adapter_version && adapter->target_id &&
-           adapter->family && adapter->graph &&
-           adapter->operator_graph_build && adapter->physical_execution_policy &&
+           adapter->family && adapter->logical_transform_identity &&
+           yvex_sha256_hex_is_valid(adapter->logical_transform_identity) && adapter->graph &&
+           adapter->operator_graph_build &&
            adapter->execution_capabilities &&
            adapter->transformer_policy && adapter->logits_policy &&
            adapter->speculation_policy && adapter->tokenizer_policy &&
@@ -78,7 +81,8 @@ static int pipeline_valid(const yvex_family_compiler_adapter *adapter)
            pipeline->semantic_model_build &&
            pipeline->runtime_descriptor_build &&
            pipeline->quant_plan_default && pipeline->quant_plan_policy &&
-           pipeline->tokenizer_architecture && pipeline->tokenizer_architecture[0];
+           pipeline->tokenizer_architecture && pipeline->tokenizer_architecture[0] &&
+           pipeline->tokenizer_pre && pipeline->tokenizer_pre[0];
 }
 
 static void binding_compiler_close(binding_compiler *compiler)
@@ -108,10 +112,22 @@ static int binding_compiler_open(
     binding_compiler *compiler,
     const yvex_compilation_runtime_binding_request *request, yvex_error *err)
 {
+    const yvex_transform_ir_summary *transform;
     yvex_artifact_options options = {0};
     int rc;
 
     rc = compiler->pipeline->source_open(&compiler->source, request, err);
+    transform = rc == YVEX_OK
+                    ? yvex_transform_ir_summary_get(compiler->source.transform_ir)
+                    : NULL;
+    if (rc == YVEX_OK &&
+        (!transform || !transform->complete ||
+         strcmp(transform->transform_identity,
+                compiler->adapter->logical_transform_identity))) {
+        yvex_error_set(err, YVEX_ERR_STATE, "compilation.runtime-binding",
+                       "source transformation does not match the current execution adapter");
+        rc = YVEX_ERR_STATE;
+    }
     options.path = request->artifact_path;
     options.readonly = 1;
     if (rc == YVEX_OK) rc = yvex_artifact_open(&compiler->artifact, &options, err);
@@ -209,11 +225,78 @@ static int binding_compiler_imatrix(
     return rc == YVEX_OK ? yvex_imatrix_data_get_summary(compiler->imatrix, summary, err) : rc;
 }
 
+static int binding_compiler_artifact_imatrix(
+    binding_compiler *compiler,
+    const char **identity, yvex_error *err)
+{
+    const yvex_gguf_value *value;
+    const char *text = NULL;
+    unsigned long long count = 0ull;
+
+    if (identity) *identity = NULL;
+    if (!identity) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "compilation.runtime-binding",
+                       "artifact calibration identity output is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    value = yvex_gguf_metadata_find(compiler->gguf,
+                                    "yvex.quant.imatrix.identity");
+    if (!value) return YVEX_OK;
+    if (yvex_gguf_value_as_string(value, &text, &count) != YVEX_OK ||
+        count != YVEX_SHA256_HEX_BYTES - 1u) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "compilation.runtime-binding",
+                       "artifact calibration identity is malformed");
+        return YVEX_ERR_FORMAT;
+    }
+    memcpy(compiler->artifact_imatrix_identity, text, (size_t)count);
+    compiler->artifact_imatrix_identity[count] = '\0';
+    if (!yvex_sha256_hex_is_valid(compiler->artifact_imatrix_identity)) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "compilation.runtime-binding",
+                       "artifact calibration identity is malformed");
+        return YVEX_ERR_FORMAT;
+    }
+    *identity = compiler->artifact_imatrix_identity;
+    return YVEX_OK;
+}
+
+static int binding_compiler_creation_plan_validate(
+    const binding_compiler *compiler,
+    const yvex_quant_plan_file_summary *creation, yvex_error *err)
+{
+    const yvex_complete_artifact_admission *admission = &compiler->admission;
+
+    if (!creation || !creation->complete || !admission->complete ||
+        strcmp(creation->profile_identity, admission->profile_identity) ||
+        strcmp(creation->physical_variant_identity,
+               admission->profile_identity) ||
+        strcmp(creation->payload_plan_identity,
+               admission->payload_plan_identity) ||
+        strcmp(creation->required_payload_identity,
+               admission->payload_identity) ||
+        strcmp(creation->transform_identity, admission->transform_identity) ||
+        creation->source_snapshot_identity != admission->source_snapshot_identity ||
+        creation->mapping_identity != admission->mapping_identity ||
+        creation->decision_count != admission->tensor_count ||
+        creation->encoded_bytes != admission->payload_bytes ||
+        ((compiler->artifact_imatrix_identity[0] == '\0') !=
+         !strcmp(creation->imatrix_identity, "none")) ||
+        (compiler->artifact_imatrix_identity[0] &&
+         strcmp(creation->imatrix_identity,
+                compiler->artifact_imatrix_identity))) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "compilation.runtime-binding",
+                       "creation plan does not authenticate the immutable artifact");
+        return YVEX_ERR_FORMAT;
+    }
+    return YVEX_OK;
+}
+
 static int binding_compiler_quant(
     binding_compiler *compiler,
     const yvex_compilation_runtime_binding_request *request, yvex_error *err)
 {
     yvex_imatrix_data_summary imatrix = {0};
+    yvex_quant_plan_file_summary creation = {0};
+    const char *imatrix_identity = NULL;
     int rc = YVEX_OK;
 
     if (request->physical_variant_plan_path) {
@@ -222,24 +305,44 @@ static int binding_compiler_quant(
                            "variant preparation requires exactly one quant policy or preset");
             return YVEX_ERR_INVALID_ARG;
         }
+        if (request->rebind_existing_artifact && request->imatrix_path) {
+            yvex_error_set(err, YVEX_ERR_INVALID_ARG, "compilation.runtime-binding",
+                           "artifact rebinding derives calibration identity from the artifact");
+            return YVEX_ERR_INVALID_ARG;
+        }
         rc = request->quant_policy_path
                  ? yvex_quant_policy_open(&compiler->quant_policy,
                                           request->quant_policy_path, err)
                  : yvex_quant_policy_preset_open(&compiler->quant_policy,
                                                  request->quant_preset_name, err);
-        if (rc == YVEX_OK) rc = binding_compiler_imatrix(compiler, request, &imatrix, err);
+        if (rc == YVEX_OK && request->rebind_existing_artifact)
+            rc = binding_compiler_artifact_imatrix(
+                compiler, &imatrix_identity, err);
+        else if (rc == YVEX_OK) {
+            rc = binding_compiler_imatrix(compiler, request, &imatrix, err);
+            if (rc == YVEX_OK && imatrix.complete)
+                imatrix_identity = imatrix.imatrix_identity;
+        }
         if (rc == YVEX_OK)
             rc = compiler->pipeline->quant_plan_policy(
                 &compiler->quant, compiler->source.transform_ir,
                 compiler->source.transform_binding, compiler->source.lowering_context,
                 compiler->quant_policy,
-                imatrix.complete ? imatrix.imatrix_identity : NULL, err);
-        if (rc == YVEX_OK)
+                imatrix_identity, err);
+        if (rc == YVEX_OK && request->rebind_existing_artifact)
+            rc = yvex_quant_plan_file_validate_physical_equivalence(
+                request->physical_variant_plan_path, compiler->quant,
+                &creation, err);
+        else if (rc == YVEX_OK)
             rc = yvex_quant_plan_file_validate(
                 request->physical_variant_plan_path, compiler->quant, err);
+        if (rc == YVEX_OK && request->rebind_existing_artifact)
+            rc = binding_compiler_creation_plan_validate(
+                compiler, &creation, err);
         return rc;
     }
-    if (request->quant_policy_path || request->quant_preset_name || request->imatrix_path) {
+    if (request->quant_policy_path || request->quant_preset_name || request->imatrix_path ||
+        request->rebind_existing_artifact) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "compilation.runtime-binding",
                        "policy, preset, and imatrix require a sealed physical variant plan");
         return YVEX_ERR_INVALID_ARG;
@@ -253,8 +356,20 @@ static int binding_compiler_writer_build(
     binding_compiler *compiler, const char *required_execution_identity,
     yvex_error *err)
 {
+    const yvex_runtime_descriptor_summary *descriptor =
+        yvex_runtime_descriptor_summary_get(compiler->descriptor);
+    unsigned long long vocabulary_size =
+        compiler->source.tokenizer_vocabulary_size
+            ? compiler->source.tokenizer_vocabulary_size
+            : descriptor ? descriptor->vocabulary_size : 0ull;
     yvex_gguf_writer_plan_options options;
     yvex_gguf_writer_plan_request writer = {0};
+
+    if (!vocabulary_size) {
+        yvex_error_set(err, YVEX_ERR_STATE, "compilation.runtime-binding",
+                       "sealed runtime vocabulary is required for artifact emission");
+        return YVEX_ERR_STATE;
+    }
 
     yvex_gguf_writer_plan_options_default(&options);
     options.required_execution_identity = required_execution_identity;
@@ -264,7 +379,8 @@ static int binding_compiler_writer_build(
     writer.input.complete.lowering = yvex_gguf_writer_artifact_lowering_api();
     writer.input.complete.lowering_context = compiler->source.lowering_context;
     writer.input.complete.verification = compiler->source.verification;
-    writer.input.complete.tokenizer_architecture = compiler->pipeline->tokenizer_architecture;
+    writer.input.complete.tokenizer_architecture = compiler->pipeline->tokenizer_pre;
+    writer.input.complete.tokenizer_vocabulary_size = vocabulary_size;
     return yvex_gguf_writer_plan_build(
         &compiler->writer, &writer, &compiler->writer_failure, err);
 }
@@ -317,10 +433,10 @@ static int binding_compiler_prepare(
     }
     rc = yvex_physical_execution_ir_build(
         &compiler->physical_execution, compiler->materialization,
-        compiler->descriptor, compiler->admission.profile_identity,
-        compiler->adapter->physical_execution_policy, err);
+        compiler->descriptor, compiler->admission.profile_identity, err);
     if (rc == YVEX_OK) {
         yvex_compiled_model_plan_request plan = {
+            .semantic_model = compiler->semantic_model,
             .operator_graph = compiler->operator_graph,
             .materialization = compiler->materialization,
             .descriptor = compiler->descriptor,
@@ -535,6 +651,7 @@ static int variant_complete_open(
     source.quant_policy_path = request->quant_policy_path;
     source.quant_preset_name = request->quant_preset_name;
     source.imatrix_path = request->imatrix_path;
+    source.source_stream_count = request->worker_count;
     rc = compiler->pipeline->source_open(&compiler->source, &source, err);
     if (rc == YVEX_OK &&
         (!compiler->source.verification || !compiler->source.verification->verified))
@@ -569,12 +686,13 @@ static int variant_component_adapter_validate(
     const yvex_physical_variant_request *request, yvex_error *err)
 {
     if (!adapter ||
-        adapter->schema_version != YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 ||
+        adapter->schema_version != YVEX_COMPONENT_VARIANT_ADAPTER_SCHEMA_V2 ||
         !adapter->target_id || strcmp(adapter->target_id, request->target_id) != 0 ||
         !adapter->family || !adapter->family[0] ||
         !adapter->source_revision || !adapter->source_revision[0] ||
         !adapter->profile_name || !adapter->profile_name[0] ||
         !adapter->source_open || !adapter->physical_variant ||
+        !adapter->component_contract ||
         (!!adapter->candidate_profile_name != !!adapter->candidate_component_id) ||
         (!!adapter->candidate_profile_name !=
          !!adapter->candidate_q8_semantic_role_mask))

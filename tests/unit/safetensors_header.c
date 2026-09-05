@@ -54,7 +54,8 @@ int yvex_test_safetensors_header(void)
     yvex_error err;
     int rc;
 
-    system("rm -rf build/tests/safetensors-header");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/safetensors-header") == 0,
+                     "clear safetensors header fixture");
     YVEX_TEST_ASSERT(make_dir("build"), "make build");
     YVEX_TEST_ASSERT(make_dir("build/tests"), "make build/tests");
     YVEX_TEST_ASSERT(make_dir(root), "make fixture root");
@@ -86,28 +87,32 @@ int yvex_test_safetensors_header(void)
     YVEX_TEST_ASSERT(row->data_start == 0 && row->data_end == 12 && row->data_bytes == 12, "data offsets parse");
     yvex_native_weight_table_close(table);
 
-    system("rm -rf build/tests/safetensors-header");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/safetensors-header") == 0,
+                     "clear short safetensors fixture");
     YVEX_TEST_ASSERT(make_dir(root), "make bad short root");
     YVEX_TEST_ASSERT(write_short("build/tests/safetensors-header/model-00001.safetensors"), "write short file");
     table = NULL;
     rc = yvex_native_weight_table_open(&table, &options, &err);
     YVEX_TEST_ASSERT(rc != YVEX_OK, "bad short file rejected");
 
-    system("rm -rf build/tests/safetensors-header");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/safetensors-header") == 0,
+                     "clear malformed JSON fixture");
     YVEX_TEST_ASSERT(make_dir(root), "make bad json root");
     YVEX_TEST_ASSERT(write_safetensors("build/tests/safetensors-header/model-00001.safetensors",
         "{\"x\":{\"dtype\":\"F16\",\"shape\":[2],\"data_offsets\":[0,4]}", 4), "write bad json");
     rc = yvex_native_weight_table_open(&table, &options, &err);
     YVEX_TEST_ASSERT(rc != YVEX_OK, "bad JSON rejected");
 
-    system("rm -rf build/tests/safetensors-header");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/safetensors-header") == 0,
+                     "clear invalid offsets fixture");
     YVEX_TEST_ASSERT(make_dir(root), "make bad offsets root");
     YVEX_TEST_ASSERT(write_safetensors("build/tests/safetensors-header/model-00001.safetensors",
         "{\"x\":{\"dtype\":\"F16\",\"shape\":[2],\"data_offsets\":[4,2]}}", 4), "write bad offsets");
     rc = yvex_native_weight_table_open(&table, &options, &err);
     YVEX_TEST_ASSERT(rc != YVEX_OK, "bad offsets rejected");
 
-    system("rm -rf build/tests/safetensors-header");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/safetensors-header") == 0,
+                     "clear unknown dtype fixture");
     YVEX_TEST_ASSERT(make_dir(root), "make unknown dtype root");
     YVEX_TEST_ASSERT(write_safetensors("build/tests/safetensors-header/model-00001.safetensors",
         "{\"x\":{\"dtype\":\"WEIRD\",\"shape\":[2],\"data_offsets\":[0,2]}}", 2), "write unknown dtype");

@@ -6,6 +6,8 @@
  * primitive capability is not transformer or generation support.
  */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/component_ops.h"
+#include "src/backend/cuda/transformer_ops.h"
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +18,62 @@
 #ifdef YVEX_HAVE_CUDA_KERNEL_CUBIN
 #include <cuda_kernels_cubin.inc>
 #endif
+
+static const yvex_backend_transformer_operations transformer_operations = {
+    .initial = yvex_cuda_transformer_initial,
+    .feature_mean = yvex_cuda_transformer_feature_mean,
+    .final = yvex_cuda_transformer_final,
+    .attention_workspace_required = yvex_cuda_transformer_attention_workspace_required,
+    .attention_execute = yvex_cuda_transformer_attention_execute,
+    .gated_delta_workspace_required = yvex_cuda_gated_delta_workspace_required,
+    .gated_delta_execute = yvex_cuda_gated_delta_execute,
+    .linear_workspace_required = yvex_cuda_transformer_linear_workspace_required,
+    .linear_compile = yvex_cuda_transformer_linear_compile,
+    .linear_execute = yvex_cuda_transformer_linear_execute,
+    .linear_summary = yvex_cuda_transformer_linear_summary,
+    .linear_release = yvex_cuda_transformer_linear_release,
+    .rotary_half_f32 = yvex_cuda_transformer_rotary_half_f32,
+    .split_interleaved_two_f32 =
+        yvex_cuda_decoder_split_interleaved_two_f32,
+    .silu_product_bf16 = yvex_cuda_transformer_silu_product_bf16,
+    .sigmoid_product_bf16 = yvex_cuda_decoder_sigmoid_product_bf16,
+    .add_bf16 = yvex_cuda_transformer_add_bf16,
+    .bf16_round = yvex_cuda_transformer_bf16_round,
+    .dense_decoder_execute = yvex_cuda_transformer_dense_decoder_execute,
+};
+
+static const yvex_backend_component_operations component_operations = {
+    .text_embedding_execute = yvex_cuda_text_embedding_execute,
+    .text_encoder_execute = yvex_cuda_text_encoder_execute,
+    .text_encoder_multimodal_execute = yvex_cuda_text_encoder_multimodal_execute,
+    .joint_transformer_execute = yvex_cuda_transformer_joint_execute,
+    .joint_transformer_prepare = yvex_cuda_transformer_joint_prepare,
+    .joint_transformer_prepared_execute = yvex_cuda_transformer_joint_prepared_execute,
+    .joint_transformer_prepared_release = yvex_cuda_transformer_joint_prepared_release,
+    .alias_decoder_execute = yvex_cuda_alias_decoder_execute,
+};
+
+const yvex_backend_component_operations *yvex_cuda_component_operations_get(
+    const yvex_backend *backend)
+{
+    const yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    return backend && yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA && state &&
+                   state->kernel_bundle_state == YVEX_CUDA_KERNEL_BUNDLE_ADMITTED
+               ? &component_operations
+               : NULL;
+}
+
+const yvex_backend_transformer_operations *yvex_cuda_transformer_operations_get(
+    const yvex_backend *backend)
+{
+    const yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    return backend && yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA && state &&
+                   state->kernel_bundle_state == YVEX_CUDA_KERNEL_BUNDLE_ADMITTED &&
+                   state->encoded_row_decode_function &&
+                   state->transformer_feature_mean_function && state->transformer_final_function
+               ? &transformer_operations
+               : NULL;
+}
 typedef struct {
     const char *symbol;
     yvex_backend_operation_variant variant;
@@ -162,30 +220,30 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(rotary_half_plain_function)},
     {"yvex_gqa_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(gqa_function)},
-    {"yvex_gqa_pack_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-     CUDA_HANDLE_OFFSET(gqa_pack_value_function)},
-    {"yvex_gqa_score_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-     CUDA_HANDLE_OFFSET(gqa_score_function)},
-    {"yvex_gqa_scale_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-     CUDA_HANDLE_OFFSET(gqa_scale_function)},
+    {"yvex_gqa_wide_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(gqa_wide_function)},
     {"yvex_gqa_softmax_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(gqa_softmax_function)},
     {"yvex_gqa_softmax_warp_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(gqa_softmax_warp_function)},
-    {"yvex_gqa_value_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-     CUDA_HANDLE_OFFSET(gqa_value_function)},
-    {"yvex_gqa_unpack_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-     CUDA_HANDLE_OFFSET(gqa_unpack_function)},
+    {"yvex_attention_validate_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(attention_validate_function)},
     {"yvex_silu_product_bf16_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(silu_product_function)},
+    {"yvex_sigmoid_product_bf16_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(sigmoid_product_function)},
     {"yvex_silu_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(silu_function)},
+    {"yvex_gelu_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(gelu_function)},
     {"yvex_timestep_embedding_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(timestep_embedding_function)},
     {"yvex_split_three_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(split_three_function)},
     {"yvex_split_interleaved_three_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(split_interleaved_function)},
+    {"yvex_split_interleaved_two_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(split_interleaved_two_function)},
     {"yvex_swiglu_split_bf16_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(swiglu_split_function)},
     {"yvex_swiglu_split_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -206,6 +264,12 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(conv_scale_function)},
     {"yvex_conv1d_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(conv1d_function)},
+    {"yvex_conv1d_transposed_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(conv1d_transposed_function)},
+    {"yvex_conv2d_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(conv2d_function)},
+    {"yvex_group_norm_silu_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(group_norm_silu_function)},
     {"yvex_alias_snake_up_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(alias_up_function)},
     {"yvex_alias_snake_down_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -214,6 +278,10 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(vector_update_function)},
     {"yvex_clamp_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(clamp_function)},
+    {"yvex_gated_delta_convolution_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(gated_delta_convolution_function)},
+    {"yvex_gated_delta_recurrence_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(gated_delta_recurrence_function)},
 };
 #define CUDA_KERNEL_BINDING_COUNT (sizeof(cuda_kernel_bindings) / sizeof(cuda_kernel_bindings[0]))
 #undef CUDA_HANDLE_OFFSET

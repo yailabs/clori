@@ -169,7 +169,7 @@ int yvex_backend_render_help(FILE *fp)
 int yvex_cuda_info_render_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-                        "usage: yvex system cuda [bandwidth]\n\n"
+                        "usage: yvex inspect cuda [bandwidth]\n\n"
                         "Reports CUDA facts or runs the bounded bandwidth fixture.\n");
     return YVEX_OK;
 }

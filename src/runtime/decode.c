@@ -258,8 +258,8 @@ static int decode_structure_valid(
 {
     const yvex_runtime_session_view *session =
         yvex_runtime_session_view_get(context->session);
-    const yvex_runtime_model_view *model = session
-        ? yvex_runtime_model_view_get(session->model) : NULL;
+    const yvex_model_engine_view *model = session
+        ? yvex_model_engine_view_get(session->engine) : NULL;
     const yvex_attention_summary *attention = model
         ? yvex_attention_plan_summary(model->attention) : NULL;
     const yvex_moe_plan_summary *moe = model
@@ -391,7 +391,7 @@ static int decode_step_locked(
         result->h2d_bytes = transformer.h2d_bytes;
         result->d2h_bytes = transformer.d2h_bytes;
         result->kernel_launches = transformer.kernel_launches;
-        result->tensor_core_launches = transformer.tensor_core_launches;
+        result->accelerated_matrix_launches = transformer.accelerated_matrix_launches;
         result->graph_launches = transformer.graph_launches;
         result->graph_captures = transformer.graph_captures;
         result->graph_replays = transformer.graph_replays;
@@ -400,7 +400,7 @@ static int decode_step_locked(
         result->download_count = transformer.download_count;
         result->cache_hits = transformer.cache_hits;
         result->cache_misses = transformer.cache_misses;
-        result->stream_synchronizations = transformer.stream_synchronizations;
+        result->queue_synchronizations = transformer.queue_synchronizations;
         result->device_synchronizations = transformer.device_synchronizations;
         result->embedding_ns = transformer.embedding_ns;
         result->attention_ns = transformer.attention_ns;
@@ -482,7 +482,7 @@ static int decode_accumulate(yvex_runtime_decode_result *result,
     result->h2d_bytes += step->h2d_bytes;
     result->d2h_bytes += step->d2h_bytes;
     result->kernel_launches += step->kernel_launches;
-    result->tensor_core_launches += step->tensor_core_launches;
+    result->accelerated_matrix_launches += step->accelerated_matrix_launches;
     result->graph_launches += step->graph_launches;
     result->graph_captures += step->graph_captures;
     result->graph_replays += step->graph_replays;
@@ -491,7 +491,7 @@ static int decode_accumulate(yvex_runtime_decode_result *result,
     result->download_count += step->download_count;
     result->cache_hits += step->cache_hits;
     result->cache_misses += step->cache_misses;
-    result->stream_synchronizations += step->stream_synchronizations;
+    result->queue_synchronizations += step->queue_synchronizations;
     result->device_synchronizations += step->device_synchronizations;
     result->embedding_ns += step->embedding_ns;
     result->attention_ns += step->attention_ns;
@@ -711,20 +711,20 @@ int yvex_runtime_decode_operator_execute(
     yvex_decode_operator_result *result,
     yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err)
 {
-    yvex_runtime_model_open_request model_request = {0};
+    yvex_model_engine_open_request model_request = {0};
     yvex_runtime_session_open_request session_request = {0};
     yvex_runtime_transformer_options transformer_options = {0};
     yvex_runtime_decode_options decode_options = {0};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     yvex_runtime_cleanup_lease *cleanup = NULL;
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine *model = NULL;
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_transformer_context *transformer = NULL;
     yvex_runtime_decode_context *decode = NULL;
     yvex_transformer_input *input = NULL, *prefill_input = NULL, *decode_input = NULL;
     const yvex_transformer_input_summary *input_summary;
     const yvex_transformer_plan_summary *plan;
-    const yvex_runtime_model_view *model_view;
+    const yvex_model_engine_view *model_view;
     const unsigned int *tokens;
     yvex_transformer_input_limits limits;
     yvex_runtime_transformer_request prefill_request = {0};
@@ -779,7 +779,7 @@ int yvex_runtime_decode_operator_execute(
     tokens = yvex_transformer_input_token_ids(input);
     plan = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(transformer));
-    model_view = yvex_runtime_model_view_get(model);
+    model_view = yvex_model_engine_view_get(model);
     if (rc == YVEX_OK &&
         (!input_summary || !tokens || !plan || !model_view || input_summary->token_start ||
          request->prefill_tokens >= input_summary->token_count ||

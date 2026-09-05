@@ -6,7 +6,6 @@
  * choosing artifacts, kernels, solver steps, runtime placement, or media formats.
  */
 #include <yvex/internal/families/minimax_h3.h>
-
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -53,7 +52,6 @@ static const char *const component_names[] = {
     "pipeline", "processor", "tokenizer", "text_encoder",
     "transformer", "video_vae", "audio_vae", "latent_controller"
 };
-
 static const yvex_minimax_h3_phase_edge phase_edges[] = {
     {YVEX_MINIMAX_H3_PHASE_PREPARE, YVEX_MINIMAX_H3_PHASE_CONDITION,
      YVEX_MINIMAX_H3_DATA_TOKEN_IDS | YVEX_MINIMAX_H3_DATA_MEDIA_GRID,
@@ -72,7 +70,6 @@ static const yvex_minimax_h3_phase_edge phase_edges[] = {
     {YVEX_MINIMAX_H3_PHASE_AUDIO_DECODE, YVEX_MINIMAX_H3_PHASE_MEDIA_PUBLISH,
      YVEX_MINIMAX_H3_DATA_STEREO_SAMPLES, YVEX_MINIMAX_H3_LIFETIME_OUTPUT_TRANSACTION}
 };
-
 static const char *const role_names[] = {
     "invalid", "text-embedding", "text-output-head", "text-attention-q",
     "text-attention-k", "text-attention-v", "text-attention-out", "text-qk-norm",
@@ -90,7 +87,6 @@ static const char *const role_names[] = {
     "audio-pre-attention", "audio-pre-norm", "audio-pre-mlp", "audio-decoder-conv",
     "audio-filter", "audio-activation", "audio-output"
 };
-
 static const char *const failure_names[] = {
     "none", "invalid-argument", "source-acquisition", "source-inventory",
     "source-identity", "component-coverage", "component-cycle", "phase-order",
@@ -100,23 +96,19 @@ static const char *const failure_names[] = {
 static const yvex_minimax_h3_tokenizer_spec tokenizer_spec = {
     "FL2VA/tokenizer/tokenizer.json", "FL2VA/tokenizer/tokenizer_config.json",
     "qwen2", "verbatim-no-special-v1", 151669ull};
-
 static const char *family_component_name(yvex_minimax_h3_component_id component)
 {
     return (unsigned int)component < YVEX_MINIMAX_H3_COMPONENT_COUNT
                ? component_names[component] : "unknown";
 }
-
 static const char *family_role_name(yvex_minimax_h3_role role)
 {
     return (unsigned int)role < YVEX_MINIMAX_H3_ROLE_COUNT
                ? role_names[role] : "unknown";
 }
-
 static const char *family_failure_name(yvex_minimax_h3_failure_code code)
 {
     size_t count = sizeof(failure_names) / sizeof(failure_names[0]);
-
     return (unsigned int)code < count ? failure_names[code] : "unknown";
 }
 
@@ -846,7 +838,7 @@ int yvex_model_minimax_h3_media_target_profile(yvex_media_target_profile *out, y
     normalization = rc == YVEX_OK ? latent_normalization() : NULL;
     if (rc != YVEX_OK || !normalization) return rc != YVEX_OK ? rc : YVEX_ERR_STATE;
     *out = (yvex_media_target_profile){
-        .schema_version = YVEX_MEDIA_TARGET_PROFILE_SCHEMA_V1,
+        .schema_version = YVEX_MEDIA_TARGET_PROFILE_SCHEMA_V2,
         .target = YVEX_MINIMAX_H3_TARGET_ID, .family = "minimax-h3",
         .source_identity = YVEX_MINIMAX_H3_SOURCE_TREE_IDENTITY,
         .text_artifact = "physical-v3/text_encoder.gguf",
@@ -856,11 +848,12 @@ int yvex_model_minimax_h3_media_target_profile(yvex_media_target_profile *out, y
         .tiers = {{"preview", 192ull, 192ull, 124ull, 1},
                   {"preview-256", 256ull, 256ull, 124ull, 0},
                   {"preview-384", 384ull, 384ull, 124ull, 0},
-                  {"source-768", 768ull, 768ull, 124ull, 0},
+                  {"source-768", 768ull, 768ull, 345ull, 0},
                   {"smoke", 32ull, 32ull, 345ull, 0}}, .tier_count = 5ull,
         .fps_numerator = 24ull, .fps_denominator = 1ull,
         .audio_sample_rate = architecture.audio_vae.sample_rate, .seed = 42ull,
-        .maximum_host_bytes = 80ull << 30u, .maximum_device_bytes = 16ull << 30u,
+        .keyframe_encode_seed = 42ull,
+        .maximum_host_bytes = 96ull << 30u, .maximum_device_bytes = 64ull << 30u,
         .maximum_workspace_bytes = 16ull << 30u, .maximum_file_bytes = 2ull << 30u,
         .video_temporal_ratio = architecture.video_vae.temporal_ratio,
         .video_clip_length = architecture.video_vae.clip_length,
@@ -879,7 +872,15 @@ int yvex_model_minimax_h3_media_target_profile(yvex_media_target_profile *out, y
         .frames_per_chunk = 17ull, .frame_remainder = 5ull,
         .minimum_frames = 124ull, .maximum_frames = 345ull,
         .minimum_inference_steps = 2ull, .maximum_inference_steps = 64ull,
-        .canvas_multiple = 32ull, .maximum_canvas_pixels = 768ull * 768ull};
+        .released_sigma_grid_points = 50ull,
+        .canvas_multiple = 32ull, .canvas_short_edge = 768ull,
+        .minimum_canvas_pixels = 768ull * 768ull,
+        .maximum_canvas_pixels = 768ull * 1344ull,
+        .released_width = 1344ull, .released_height = 768ull,
+        .minimum_duration_milliseconds = 5000ull,
+        .maximum_duration_milliseconds = 15000ull,
+        .minimum_aspect_numerator = 1ull, .minimum_aspect_denominator = 4ull,
+        .maximum_aspect_numerator = 4ull, .maximum_aspect_denominator = 1ull};
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -1320,8 +1321,8 @@ static int source_identity_validate(yvex_minimax_h3_target *target,
     char inventory_identity[65];
 
     if (!facts || !facts->complete ||
-        strcmp(facts->repository, YVEX_MINIMAX_H3_REPOSITORY) != 0 ||
-        strcmp(facts->revision, YVEX_MINIMAX_H3_REVISION) != 0 ||
+        strcmp(facts->repository, YVEX_SOURCE_MINIMAX_H3_REPOSITORY) != 0 ||
+        strcmp(facts->revision, YVEX_SOURCE_MINIMAX_H3_REVISION) != 0 ||
         strcmp(facts->subtree, YVEX_MINIMAX_H3_SUBTREE) != 0 ||
         facts->file_count != YVEX_MINIMAX_H3_SOURCE_FILES ||
         facts->shard_count != YVEX_MINIMAX_H3_SHARDS ||
@@ -1391,8 +1392,8 @@ static int target_open(yvex_minimax_h3_target **out,
     yvex_core_text_copy(target->source_root, sizeof(target->source_root), options->source_root);
     yvex_source_acquisition_options_default(&acquisition_options);
     acquisition_options.source_root = target->source_root;
-    acquisition_options.expected_repository = YVEX_MINIMAX_H3_REPOSITORY;
-    acquisition_options.expected_revision = YVEX_MINIMAX_H3_REVISION;
+    acquisition_options.expected_repository = YVEX_SOURCE_MINIMAX_H3_REPOSITORY;
+    acquisition_options.expected_revision = YVEX_SOURCE_MINIMAX_H3_REVISION;
     acquisition_options.expected_subtree = YVEX_MINIMAX_H3_SUBTREE;
     acquisition_options.maximum_files = YVEX_MINIMAX_H3_SOURCE_FILES;
     acquisition_options.maximum_source_bytes = YVEX_MINIMAX_H3_SOURCE_BYTES;
@@ -1981,7 +1982,6 @@ static yvex_source_payload_session *minimax_handoff_session(
 {
     return handoff ? handoff->session : NULL;
 }
-
 static const yvex_source_payload_plan *minimax_handoff_plan(
     const yvex_minimax_h3_handoff *handoff)
 {

@@ -9,8 +9,10 @@ extern "C" {
 #endif
 
 typedef struct yvex_backend yvex_backend;
+typedef struct yvex_device_tensor yvex_device_tensor;
 typedef struct yvex_component_encoded_weight yvex_convolution_weight;
 typedef struct yvex_component_execution_failure yvex_component_execution_failure;
+typedef struct yvex_component_execution yvex_component_execution;
 typedef struct yvex_materialization_session yvex_materialization_session;
 
 #define YVEX_ALIAS_DECODER_MAX_STAGES 8u
@@ -23,6 +25,26 @@ typedef struct {
     int transposed;
 } yvex_convolution_1d_geometry;
 typedef yvex_convolution_1d_geometry yvex_graph_conv1d_geometry;
+
+typedef enum {
+    YVEX_CONVOLUTION_PADDING_ZERO = 0,
+    YVEX_CONVOLUTION_PADDING_REFLECT = 1
+} yvex_convolution_padding;
+
+typedef struct {
+    unsigned long long batch, input_channels, output_channels;
+    unsigned long long input_height, input_width;
+    unsigned long long kernel_height, kernel_width;
+    unsigned long long stride_height, stride_width;
+    unsigned long long padding_top, padding_bottom, padding_left, padding_right;
+    unsigned long long weight_temporal_extent, weight_temporal_index;
+    yvex_convolution_padding padding;
+} yvex_convolution_2d_geometry;
+
+typedef struct {
+    unsigned long long kernel_launches, output_height, output_width, output_values;
+    int complete;
+} yvex_convolution_cuda_result;
 
 typedef enum {
     YVEX_ALIAS_DECODER_INPUT_WEIGHT = 0,
@@ -77,7 +99,7 @@ typedef struct {
     unsigned long long final_channels, final_kernel;
 } yvex_alias_decoder_recipe;
 
-typedef struct {
+typedef struct yvex_alias_decoder_request {
     const yvex_alias_decoder_recipe *recipe;
     const float *input;
     unsigned long long batch, input_length, input_count;
@@ -90,20 +112,21 @@ typedef struct {
     void *cancel_context;
 } yvex_alias_decoder_request;
 
-typedef struct {
+typedef struct yvex_alias_decoder_result {
     unsigned long long output_length, output_values, weight_bindings;
     unsigned long long kernel_launches, h2d_bytes, d2h_bytes, peak_device_bytes;
     unsigned long long tensor_reads, payload_bytes_read, peak_host_bytes;
     int complete;
 } yvex_alias_decoder_result;
 
-int yvex_backend_alias_decoder_execute(
-    yvex_backend *backend, const yvex_alias_decoder_request *request,
-    yvex_alias_decoder_result *result, yvex_error *err);
 int yvex_runtime_alias_decoder_execute_cpu(
     yvex_materialization_session *session, const yvex_alias_decoder_request *request,
     yvex_alias_decoder_result *result, yvex_component_execution_failure *failure,
     yvex_error *err);
+int yvex_component_alias_decoder_execute(
+    const yvex_component_execution *execution,
+    const yvex_alias_decoder_request *request,
+    yvex_alias_decoder_result *result, yvex_error *err);
 int yvex_graph_conv1d_output_length(
     const yvex_graph_conv1d_geometry *geometry, unsigned long long *output_length,
     yvex_error *err);
@@ -113,6 +136,22 @@ int yvex_graph_conv1d_f32(
     const float *bias, unsigned long long bias_count, const float *gain,
     unsigned long long gain_count, float *output, unsigned long long output_count,
     yvex_error *err);
+int yvex_backend_conv2d_f32(
+    yvex_backend *backend, const yvex_convolution_2d_geometry *geometry,
+    const yvex_device_tensor *input, const yvex_convolution_weight *weight,
+    const yvex_convolution_weight *bias, yvex_device_tensor *output,
+    yvex_convolution_cuda_result *result, yvex_error *err);
+int yvex_backend_group_norm_silu_f32(
+    yvex_backend *backend, const yvex_device_tensor *input,
+    const yvex_convolution_weight *weight, const yvex_convolution_weight *bias,
+    unsigned long long batch, unsigned long long channels,
+    unsigned long long height, unsigned long long width,
+    unsigned long long groups, float epsilon, yvex_device_tensor *output,
+    yvex_convolution_cuda_result *result, yvex_error *err);
+int yvex_backend_add_f32(
+    yvex_backend *backend, yvex_device_tensor *destination,
+    const yvex_device_tensor *source, unsigned long long values,
+    yvex_convolution_cuda_result *result, yvex_error *err);
 int yvex_graph_alias_snake_f32(
     const float *input, unsigned long long batch, unsigned long long channels,
     unsigned long long length, const float *alpha_log, const float *beta_log,

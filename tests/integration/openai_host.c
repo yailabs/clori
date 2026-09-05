@@ -23,6 +23,16 @@ static int listener_fd = -1;
 
 static int serve_connection(int fd, yvex_error *err);
 
+static yvex_reasoning_policy
+fixture_reasoning_policy(yvex_reasoning_policy policy)
+{
+    /* The fixture engine represents DeepSeek, whose source-authored ordinary
+       mode is non-reasoning. Production resolves this from its tokenizer plan. */
+    return policy == YVEX_REASONING_SOURCE_DEFAULT
+               ? YVEX_REASONING_DISABLED
+               : policy;
+}
+
 static void stop_handler(int signal_number)
 {
     (void)signal_number;
@@ -41,12 +51,29 @@ static void message_base(yvex_client_message *message,
         message->stream_channel = YVEX_CLIENT_STREAM_ERROR;
     message->request_number = request ? request->request_number : 0u;
     if (request) {
+        unsigned long long requested = request->provider_request
+                                           ? request->provider_request->maximum_output_tokens
+                                           : request->maximum_new_tokens;
         strcpy(message->session_name, request->session_name);
+        if (kind == YVEX_CLIENT_MESSAGE_TURN_STARTED ||
+            kind == YVEX_CLIENT_MESSAGE_TURN_COMPLETE ||
+            kind == YVEX_CLIENT_MESSAGE_ERROR) {
+            message->initial_position = 5u;
+            message->requested_maximum_new_tokens = requested;
+            message->resolved_maximum_new_tokens = requested ? requested : 256u;
+            message->output_limit_explicit = requested != 0u;
+        }
         if (request->provider_request) {
             strcpy(message->provider_request_identity,
                    request->provider_request->request_identity);
             strcpy(message->external_correlation_id,
                    request->provider_request->external_correlation_id);
+        }
+        if (request->content_part_count) {
+            message->content_part_count = request->content_part_count;
+            (void)yvex_content_parts_identity(
+                request->content_parts, request->content_part_count,
+                message->input_content_identity, NULL);
         }
     }
 }
@@ -66,30 +93,90 @@ static int send_status(int fd, const yvex_client_request *request,
 {
     yvex_client_message message;
     message_base(&message, YVEX_CLIENT_MESSAGE_STATUS, request);
-    message.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V2;
+    message.runtime.metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
+    message.runtime.metrics.resources.schema_version =
+        YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
+    message.runtime.metrics.resources.available =
+        YVEX_EXECUTION_RESOURCE_PROCESS_AVAILABLE;
     message.runtime.status = YVEX_SERVER_STATUS_READY;
-    message.runtime.runtime_ready = 1;
-    message.runtime.generation_ready = 1;
-    message.runtime.explicit_reasoning_channel_supported = 1;
-    message.runtime.concurrent_sequences = 1u;
-    message.runtime.capacity_required_bytes = 4096u;
-    message.runtime.capacity_unreserved_bytes = 8192u;
-    strcpy(message.runtime.target_id, "deepseek4-v4-flash-dspark");
-    memset(message.runtime.runtime_model_identity, 'a', 64u);
-    message.runtime.runtime_model_identity[64] = '\0';
-    memset(message.runtime.runtime_binding_identity, 'b', 64u);
-    message.runtime.runtime_binding_identity[64] = '\0';
-    memset(message.runtime.artifact_identity, 'c', 64u);
-    message.runtime.artifact_identity[64] = '\0';
-    memset(message.runtime.physical_variant_identity, 'd', 64u);
-    message.runtime.physical_variant_identity[64] = '\0';
-    memset(message.runtime.capacity_plan_identity, 'e', 64u);
-    message.runtime.capacity_plan_identity[64] = '\0';
-    message.runtime.context_capacity = 4096u;
+    message.runtime.host_ready = 1;
+    message.runtime.engine_count = 1u;
+    message.runtime.loaded_engine_count = 1u;
+    message.runtime.maximum_engines = YVEX_SERVER_DEFAULT_MAXIMUM_ENGINES;
+    message.runtime.worker_count = 1u;
     message.runtime.metrics.model_open_count = 1u;
     message.runtime.metrics.artifact_open_count = 1u;
     message.runtime.metrics.materialization_count = 1u;
     return yvex_server_protocol_send(fd, &message, err);
+}
+
+static void fixture_engine(yvex_server_engine_summary *engine)
+{
+    memset(engine, 0, sizeof(*engine));
+    engine->schema_version = YVEX_SERVER_ENGINE_SCHEMA_CURRENT;
+    engine->state = YVEX_SERVER_ENGINE_LOADED;
+    engine->backend = YVEX_BACKEND_KIND_CUDA;
+    engine->engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    engine->execution_strategy = YVEX_SERVER_EXECUTION_SPECULATIVE;
+    engine->generation = 7ull;
+    engine->context_capacity = 4096u;
+    engine->prefill_chunk_tokens = 64u;
+    engine->maximum_new_tokens = 256u;
+    engine->maximum_output_bytes = 65536u;
+    engine->maximum_sessions = 8u;
+    engine->concurrent_sequences = 1u;
+    engine->mapped_package_bytes = 2ull * 1073741824ull;
+    engine->resident_device_bytes = 1073741824ull;
+    engine->execution_ready = 1;
+    engine->explicit_reasoning_channel_supported = 1;
+    engine->capacity.schema_version = YVEX_EXECUTION_CAPACITY_SCHEMA_V1;
+    engine->capacity.session_capacity = engine->maximum_sessions;
+    engine->capacity.runnable_work_capacity = 1ull;
+    engine->capacity.physical_sequence_width = 1ull;
+    engine->capabilities.schema_version = YVEX_MODEL_CAPABILITY_SCHEMA_V1;
+    engine->capabilities.input_kinds =
+        YVEX_CONTENT_KIND_MASK(YVEX_CONTENT_TEXT);
+    engine->capabilities.output_kinds =
+        YVEX_CONTENT_KIND_MASK(YVEX_CONTENT_TEXT);
+    engine->capabilities.execution_properties =
+        YVEX_MODEL_CAPABILITY_ORDERED_INPUT_PARTS |
+        YVEX_MODEL_CAPABILITY_STATEFUL_SESSION |
+        YVEX_MODEL_CAPABILITY_STREAMING_OUTPUT |
+        YVEX_MODEL_CAPABILITY_DEMAND_ACTIVATION;
+    engine->capabilities.maximum_input_parts = YVEX_CONTENT_MAX_PARTS;
+    engine->resources.schema_version = YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
+    engine->resources.placement = YVEX_EXECUTION_PLACEMENT_EXPLICIT_HOST;
+    engine->resources.available =
+        YVEX_EXECUTION_RESOURCE_MODEL_AVAILABLE |
+        YVEX_EXECUTION_RESOURCE_PHYSICAL_RESIDENCY_AVAILABLE;
+    engine->resources.component_count = 1ull;
+    engine->resources.model_mapped_bytes = engine->mapped_package_bytes;
+    engine->resources.model_explicit_device_bytes =
+        engine->resident_device_bytes;
+    strcpy(engine->alias, "deepseek4-v4-flash-dspark");
+    strcpy(engine->target_id, "deepseek4-v4-flash-dspark");
+    memset(engine->runtime_model_identity, 'a', 64u);
+    engine->runtime_model_identity[64] = '\0';
+    memset(engine->runtime_binding_identity, 'b', 64u);
+    engine->runtime_binding_identity[64] = '\0';
+    memset(engine->artifact_identity, 'c', 64u);
+    engine->artifact_identity[64] = '\0';
+    memset(engine->specialization_identity, 'd', 64u);
+    engine->specialization_identity[64] = '\0';
+    memset(engine->capacity_plan_identity, 'e', 64u);
+    engine->capacity_plan_identity[64] = '\0';
+}
+
+static int send_engine_list(int fd, const yvex_client_request *request,
+                            yvex_error *err)
+{
+    yvex_client_message message;
+    message_base(&message, YVEX_CLIENT_MESSAGE_ENGINE, request);
+    fixture_engine(&message.engine);
+    if (yvex_server_protocol_send(fd, &message, err) != YVEX_OK)
+        return yvex_error_code(err);
+    return send_ack(fd, request, err);
 }
 
 static int send_console_status(int fd, const yvex_client_request *request,
@@ -97,36 +184,33 @@ static int send_console_status(int fd, const yvex_client_request *request,
 {
     yvex_client_message message;
     message_base(&message, YVEX_CLIENT_MESSAGE_CONSOLE_STATUS, request);
-    message.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V2;
+    message.runtime.metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
+    message.runtime.metrics.resources.schema_version =
+        YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
+    message.runtime.metrics.resources.available =
+        YVEX_EXECUTION_RESOURCE_PROCESS_AVAILABLE;
     message.runtime.status = YVEX_SERVER_STATUS_READY;
-    message.runtime.runtime_ready = 1;
-    message.runtime.generation_ready = 1;
-    message.runtime.explicit_reasoning_channel_supported = 1;
-    message.runtime.concurrent_sequences = 1u;
-    message.runtime.capacity_required_bytes = 4096u;
-    message.runtime.capacity_unreserved_bytes = 8192u;
-    message.runtime.backend = YVEX_BACKEND_KIND_CUDA;
-    message.runtime.context_capacity = 4096u;
+    message.runtime.host_ready = 1;
+    message.runtime.engine_count = 1u;
+    message.runtime.loaded_engine_count = 1u;
+    message.runtime.maximum_engines = YVEX_SERVER_DEFAULT_MAXIMUM_ENGINES;
+    message.runtime.worker_count = 1u;
     message.runtime.metrics.current_rss_bytes = 3ull * 1073741824ull;
     message.runtime.metrics.mapped_artifact_bytes = 2ull * 1073741824ull;
     message.runtime.metrics.resident_device_bytes = 1073741824ull;
-    strcpy(message.runtime.target_id, "deepseek4-v4-flash-dspark");
-    memset(message.runtime.runtime_model_identity, 'a', 64u);
-    message.runtime.runtime_model_identity[64] = '\0';
-    memset(message.runtime.physical_variant_identity, 'd', 64u);
-    message.runtime.physical_variant_identity[64] = '\0';
-    memset(message.runtime.capacity_plan_identity, 'e', 64u);
-    message.runtime.capacity_plan_identity[64] = '\0';
-    message.console.schema_version = 1u;
+    message.console.schema_version = YVEX_CONSOLE_STATUS_SCHEMA_V1;
     message.console.backend = YVEX_BACKEND_KIND_CUDA;
     message.console.session_state = YVEX_SERVER_SESSION_READY;
     message.console.generation_phase = YVEX_CLIENT_PHASE_IDLE;
     message.console.context_capacity = 4096u;
+    message.console.engine_generation = 7ull;
     message.console.runtime_ready = 1;
     message.console.session_available = 1;
     message.console.attached = 1;
     message.console.explicit_reasoning_channel_supported = 1;
     message.console.reasoning_policy = YVEX_REASONING_ENABLED;
+    strcpy(message.console.model_alias, "deepseek4-v4-flash-dspark");
     strcpy(message.console.session_name, request->session_name);
     memset(message.console.live_model_identity, 'a', 64u);
     message.console.live_model_identity[64] = '\0';
@@ -150,22 +234,26 @@ static int send_native_progress(int fd, const yvex_client_request *request,
     static const char identity[] =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     server_telemetry *telemetry = NULL;
+    server_event_scope scope = {0};
     size_t index;
-    int rc = yvex_server_telemetry_open(&telemetry, 8u,
-                                        YVEX_SERVER_GENERATION_TARGET_ONLY,
-                                        identity, identity,
-                                        identity, err);
+    int rc;
+    scope.engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    scope.execution_strategy = YVEX_SERVER_EXECUTION_TARGET_ONLY;
+    strcpy(scope.runtime_model_identity, identity);
+    strcpy(scope.artifact_identity, identity);
+    strcpy(scope.specialization_identity, identity);
+    rc = yvex_server_telemetry_open(&telemetry, 8u, err);
     for (index = 0u; rc == YVEX_OK && index < event_count; ++index) {
         yvex_client_message message;
         message_base(&message, YVEX_CLIENT_MESSAGE_EVENT, request);
         message.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
         rc = yvex_server_telemetry_emit_provider(
-            telemetry, kinds[index], YVEX_SERVER_SEVERITY_INFO,
+            telemetry, &scope, kinds[index], YVEX_SERVER_SEVERITY_INFO,
             request->session_name, "fixture-request", "fixture-turn",
             phases[index], values[index][0], values[index][1], 0u,
             index >= 2u ? (double)(index - 1u) : 0.0,
             index >= 2u ? 2.0 : 0.0,
-            NULL, NULL, &message.event, err);
+            NULL, NULL, NULL, &message.event, err);
         if (rc == YVEX_OK) rc = yvex_server_protocol_send(fd, &message, err);
     }
     yvex_server_telemetry_close(&telemetry);
@@ -190,11 +278,15 @@ static int send_event_stream(int fd, const yvex_client_request *request,
     static const char identity[] =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     server_telemetry *telemetry = NULL;
+    server_event_scope scope = {0};
     size_t index;
-    int rc = yvex_server_telemetry_open(&telemetry, 8u,
-                                        YVEX_SERVER_GENERATION_DSPARK,
-                                        identity, identity,
-                                        identity, err);
+    int rc;
+    scope.engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    scope.execution_strategy = YVEX_SERVER_EXECUTION_SPECULATIVE;
+    strcpy(scope.runtime_model_identity, identity);
+    strcpy(scope.artifact_identity, identity);
+    strcpy(scope.specialization_identity, identity);
+    rc = yvex_server_telemetry_open(&telemetry, 8u, err);
     for (index = 0u; rc == YVEX_OK && index < sizeof(kinds) / sizeof(kinds[0]); ++index) {
         yvex_client_message message;
         yvex_runtime_speculation_progress speculation = {0};
@@ -220,12 +312,12 @@ static int send_event_stream(int fd, const yvex_client_request *request,
             speculation_ptr = &speculation;
         }
         rc = yvex_server_telemetry_emit_provider(
-            telemetry, kinds[index], YVEX_SERVER_SEVERITY_INFO,
+            telemetry, &scope, kinds[index], YVEX_SERVER_SEVERITY_INFO,
             index < 5u ? "fixture" : NULL, index < 5u ? "fixture-request" : NULL,
             index < 5u ? "fixture-turn" : NULL, phases[index], values[index][0],
             values[index][1], values[index][2],
             speculation_ptr ? speculation.seconds : 0.0, 0.0,
-            speculation_ptr, NULL,
+            speculation_ptr, NULL, NULL,
             &message.event, err);
         if (rc == YVEX_OK) rc = yvex_server_protocol_send(fd, &message, err);
     }
@@ -274,7 +366,11 @@ static int send_native_markdown(int fd, const yvex_client_request *request,
     static const unsigned char part_b[] = "`cuda\n__global__ void add() {\n  // ";
     static const unsigned char part_c[] = {0xf0u, 0x9fu};
     static const unsigned char part_d[] = {0x8cu, 0x8du, '\n', '}', '\n', '`', '`'};
-    static const unsigned char part_e[] = "`\nUse `int` safely.\nESC: \033[31mnot-control\n";
+    static const unsigned char part_e[] =
+        "`\nUse `int` safely.\nESC: \033[31mnot-control\n"
+        "A readable paragraph stays within the terminal prose measure while the "
+        "canonical response bytes remain unchanged for protocol consumers and "
+        "deterministic transcript identity.\n";
     const struct {
         const unsigned char *bytes;
         size_t count;
@@ -298,14 +394,27 @@ static int send_native_reasoning(int fd, const yvex_client_request *request,
     int rc = send_fragment_bytes(
         fd, request, YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING,
         YVEX_CLIENT_STREAM_EXPLICIT_REASONING,
-        (const unsigned char *)"I need to compare the constraints...\n",
-        strlen("I need to compare the constraints...\n"), NULL, NULL, err);
+        (const unsigned char *)"## Plan\n\n- **Compare** `constraints` carefully.\n",
+        strlen("## Plan\n\n- **Compare** `constraints` carefully.\n"), NULL, NULL, err);
     if (rc == YVEX_OK)
         rc = send_fragment_bytes(
             fd, request, YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
             YVEX_CLIENT_STREAM_FINAL_TEXT,
-            (const unsigned char *)"The valid result is 42.",
-            strlen("The valid result is 42."), NULL, NULL, err);
+            (const unsigned char *)"## Result\n\nThe **valid** result is `42`.",
+            strlen("## Result\n\nThe **valid** result is `42`."), NULL, NULL, err);
+    return rc;
+}
+
+static int send_native_progressive(int fd, const yvex_client_request *request,
+                                   yvex_error *err)
+{
+    const struct timespec delay = {0, 700000000L};
+    int rc = send_fragment(fd, request, YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
+                           "Letters **arrive now", NULL, NULL, err);
+    if (rc == YVEX_OK) (void)nanosleep(&delay, NULL);
+    if (rc == YVEX_OK)
+        rc = send_fragment(fd, request, YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
+                           "** and finish later.", NULL, NULL, err);
     return rc;
 }
 
@@ -462,6 +571,10 @@ static int send_generation(int fd, const yvex_client_request *request,
         (native_prompt_contains(request, "WAIT_PREFILL_CANCEL") ||
          native_prompt_contains(request, "WAIT_DECODE_CANCEL")))
         return send_native_cancellation(fd, request, err);
+    if (rc == YVEX_OK && native_prompt_contains(request, "WAIT_ASYNC_KEYS")) {
+        const struct timespec delay = {0, 500000000L};
+        (void)nanosleep(&delay, NULL);
+    }
     if (rc == YVEX_OK &&
         native_prompt_contains(request, "WAIT_REASONING_CANCEL")) {
         if (request->reasoning_policy == YVEX_REASONING_DISABLED) {
@@ -480,7 +593,8 @@ static int send_generation(int fd, const yvex_client_request *request,
         struct pollfd listener = {.fd = listener_fd, .events = POLLIN};
         int ready;
         if (request_contains(provider, "REASONING_DISCONNECT")) {
-            if (provider->reasoning_policy == YVEX_REASONING_DISABLED) {
+            if (fixture_reasoning_policy(provider->reasoning_policy) ==
+                YVEX_REASONING_DISABLED) {
                 message_base(&message, YVEX_CLIENT_MESSAGE_ERROR, request);
                 message.status = YVEX_ERR_STATE;
                 strcpy(message.reason,
@@ -519,7 +633,8 @@ static int send_generation(int fd, const yvex_client_request *request,
             has_reasoning_history = 1;
     }
     if (rc == YVEX_OK && provider &&
-        provider->reasoning_policy != YVEX_REASONING_DISABLED)
+        fixture_reasoning_policy(provider->reasoning_policy) !=
+            YVEX_REASONING_DISABLED)
         rc = send_fragment(fd, request,
                            YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING,
                            "explicit model reasoning", NULL, NULL, err);
@@ -538,6 +653,10 @@ static int send_generation(int fd, const yvex_client_request *request,
         return send_native_partial_reasoning(fd, request, err);
     }
     if (rc == YVEX_OK && !provider &&
+        native_prompt_contains(request, "PROGRESSIVE_STREAM")) {
+        rc = send_native_progressive(fd, request, err);
+        message.provider_finish = YVEX_PROVIDER_FINISH_STOP;
+    } else if (rc == YVEX_OK && !provider &&
         native_prompt_contains(request, "MARKDOWN_STREAM")) {
         rc = send_native_markdown(fd, request, err);
         message.provider_finish = YVEX_PROVIDER_FINISH_STOP;
@@ -568,6 +687,8 @@ static int send_generation(int fd, const yvex_client_request *request,
                                              : "hello from yvex";
         if (!provider && native_prompt_contains(request, "HEAD_TAIL_END"))
             text = "line editing accepted";
+        if (!provider && native_prompt_contains(request, "async-keys-"))
+            text = "INPUT_CONTAMINATED";
         if (request_contains(provider, "exactly these keys"))
             text = "{\"status\":\"ok\",\"operation_mode\":\"observe\","
                    "\"real_data\":false}";
@@ -608,7 +729,8 @@ static int send_generation(int fd, const yvex_client_request *request,
     message.completion_tokens = 3u;
     message.total_tokens = 8u;
     message.generated_tokens = 3u;
-    if ((provider ? provider->reasoning_policy : request->reasoning_policy) !=
+    if (fixture_reasoning_policy(provider ? provider->reasoning_policy
+                                         : request->reasoning_policy) !=
         YVEX_REASONING_DISABLED) {
         message.reasoning_tokens = 2u;
         message.final_tokens = 1u;
@@ -630,7 +752,9 @@ static int send_generation(int fd, const yvex_client_request *request,
     message.decode_seconds = 3.0;
     message.prefill_rate = 2.0;
     message.decode_rate = 1.0;
-    message.stop_reason = 3u;
+    message.stop_reason = !provider && request->maximum_new_tokens == 3u
+                              ? YVEX_CLIENT_STOP_MAXIMUM_TOKENS
+                              : YVEX_CLIENT_STOP_EOS;
     message.generation_phase = YVEX_CLIENT_PHASE_COMPLETE;
     message.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
     memset(message.turn_identity, 'e', 64u);
@@ -642,22 +766,28 @@ static int serve_connection(int fd, yvex_error *err)
 {
     yvex_client_request request;
     unsigned char *prompt = NULL;
+    yvex_content_part *content = NULL;
     yvex_provider_request *provider = NULL;
     yvex_client_message message;
-    int rc = yvex_server_protocol_receive(fd, &request, &prompt, &provider,
-                                          err);
+    int rc = yvex_server_protocol_receive(fd, &request, &prompt, &content,
+                                          &provider, err);
     if (rc != YVEX_OK || request.operation != YVEX_CLIENT_OP_HANDSHAKE)
         goto done;
     rc = send_ack(fd, &request, err);
     if (rc != YVEX_OK) goto done;
     free(prompt);
     prompt = NULL;
+    yvex_content_parts_close(
+        &content, content ? request.content_part_count : 0u);
     yvex_provider_request_close(&provider);
-    rc = yvex_server_protocol_receive(fd, &request, &prompt, &provider, err);
+    rc = yvex_server_protocol_receive(fd, &request, &prompt, &content,
+                                      &provider, err);
     if (rc != YVEX_OK) goto done;
     request.provider_request = provider;
     if (request.operation == YVEX_CLIENT_OP_RUNTIME_STATUS)
         rc = send_status(fd, &request, err);
+    else if (request.operation == YVEX_CLIENT_OP_ENGINE_LIST)
+        rc = send_engine_list(fd, &request, err);
     else if (request.operation == YVEX_CLIENT_OP_CONSOLE_STATUS)
         rc = send_console_status(fd, &request, err);
     else if (request.operation == YVEX_CLIENT_OP_RUNTIME_WATCH ||
@@ -690,6 +820,8 @@ static int serve_connection(int fd, yvex_error *err)
     }
 done:
     free(prompt);
+    yvex_content_parts_close(
+        &content, content ? request.content_part_count : 0u);
     yvex_provider_request_close(&provider);
     return rc;
 }

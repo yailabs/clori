@@ -1,242 +1,223 @@
-# Command and Operation Architecture
+# Command and operation architecture
 
 Status: current implemented architecture
 
-This document owns the implemented command, operation, and output-projection
-architecture. The former flat command catalog and selectable
-`normal|table|audit` layouts are retired; they are not compatibility surfaces.
-The same typed operation and protocol facts drive the interactive console,
-semantic watch, human trace, and machine JSONL projections.
+YVEX is one inference/compiler/runtime product with four distinct process
+roles: finite offline work, one persistent hosted runtime, native local
+clients, and external compatibility clients. Command spelling never changes a
+process role according to TTY state, loaded engines, or host presence.
 
-## Binary boundaries
+## Domain objects
 
-| Binary | Owner | Engine linkage | Terminal authority |
-| --- | --- | --- | --- |
-| `yvex` | unified public command and explicit foreground server mode | client lane: no; server/offline lanes: yes | server lifecycle, conversation, compact status, logs, and explicit offline evidence |
+| Object | Authority |
+| --- | --- |
+| Model | logical semantic identity shared by related representations |
+| Source | acquired payload, exact revision, provenance, and verification state |
+| Artifact | immutable compiled physical package |
+| Profile | durable deployment configuration naming an artifact, backend, and admitted runtime policy |
+| Engine | process-local loaded engine generation owned by the host |
+| Session | mutable conversation/generation state bound to one exact engine generation |
+| Host | foreground process owning engines, sessions, scheduling, execution, listeners, and logs |
 
-Runtime and model code never writes product output. It publishes typed facts or
-typed events. CLI renderers own layout; only CLI I/O owners, including the
-explicit server entrypoint, write terminal streams.
+These names are not aliases. In particular, a profile is not a loaded engine.
+They are exact plumbing authorities, but they are not peer concepts in the
+ordinary product workflow. The porcelain `model` projection joins them only by
+authenticated lineage and presents one logical model with its source and
+representation variants. Similar display names never create lineage.
 
-## Product grammar
+## Product grammar and plumbing
 
 ```text
 yvex
-yvex chat [--session NAME] [--max-new-tokens N]
-yvex run [options] TEXT
-
-yvex server MODEL [--ctx N] [server options]
-yvex server stop|status|model|memory|log [--json]
-yvex session new|list|show|attach|detach|reset|close|cancel
-yvex model list|show
-yvex compile ...
-yvex artifact show|verify|materialize
-yvex help [PATH...]
+yvex help [COMMAND...]
 yvex help --advanced
 yvex help --json
-yvex completion bash|zsh|fish
 yvex version
+
+yvex serve
+yvex chat [--model MODEL]
+
+yvex host status|logs|stop
+yvex inspect ...
+
+yvex model search|pull|prepare|load|unload|list|show|active|push
+yvex model status|stop
 ```
 
-Runtime-client controls have no dependency edge to engine execution. The
-`server MODEL` entrypoint is a separately guarded engine-linked foreground
-lane in the same ELF; it is not a client wrapper and does not execute a sibling
-binary. Direct component execution, materialization, tokenizer conformance,
-metadata, tensor-map, and target-report operations enter the finite offline
-lane. Retired top-level namespaces refuse with a migration hint and never
-execute hidden aliases.
-
-The local model registry owns complete startup profiles: artifact, runtime
-binding, target, backend, generation mode, and startup context. `model list`
-marks which entries have a complete readable profile and `model show` inspects
-one entry. `server MODEL` names that profile explicitly; no persisted selection
-is required or consulted. `server model` reads the model actually open in the
-resident server.
-
-### Hosted startup semantics
-
-There is no independent hosted `load` operation. In the normal product path,
-`yvex server MODEL` directly enters the server lifecycle and remains in the
-foreground. It resolves and authenticates the named profile, creates one
-immutable runtime model, establishes host/device residency, then publishes
-readiness. Before admission begins it prints and flushes the profile, target,
-backend, generation mode, requested context, artifact, binding, endpoint, and
-shutdown instruction. `--ctx N` overrides only the startup workload capacity;
-it does not alter the model-family semantic maximum.
-`yvex chat` and `yvex run` are protocol clients of that resident model; they do
-not link into runtime execution or open weights locally. The complete operator
-sequence and memory interpretation live in the
-[local runtime runbook](../operator-runbook.md).
-
-`yvex` and `yvex chat` require a TTY. `yvex run` is the noninteractive one-shot
-form. A missing server produces one concise refusal plus the exact
-`yvex server MODEL` hint. Unknown and duplicate options follow the product
-parser's typed refusal policy.
-
-The REPL owns bounded in-memory history, UTF-8 code-point deletion, bracketed
-multiline paste, resize redraw, and two-stage SIGINT/EOF behavior. History is
-not persisted and never becomes telemetry content.
-
-## Offline engineering grammar
-
-Direct engineering capability is grouped by semantic owner:
+The memorable lifecycle is:
 
 ```text
-yvex compile source|map|quant|emit ...
-yvex artifact show|verify|materialize
-yvex inspect source|artifact|tensor|tokenizer|target|model|context ...
-yvex inspect backend|qtype|quant|attention|moe ...
-yvex execute input|tokenizer|artifact|attention|moe|transformer|model ...
-yvex profile attention ...
-yvex system paths|accounts|cuda
+search -> pull -> prepare -> load -> chat
+                    push -> outward distribution
 ```
 
-This is a visibility-aware finite offline lane, not a renamed developer
-namespace or a second process. Its handlers may link engine owners, while
-runtime-client handlers continue to cross the local protocol. Default help
-stays compact; `yvex help --advanced` exposes supported advanced and
-engineering leaves.
+`pull` and `push` move or reference representations. `load` and `unload`
+change runtime residency. Those meanings never overlap. Exact engineering
+plumbing remains available through `help --advanced`:
+
+```text
+yvex source ...
+yvex artifact ...
+yvex profile ...
+yvex engine ...
+yvex session ...
+yvex compile ...
+yvex bench ...
+```
+
+Provider account plumbing is registry-addressable as `source accounts
+providers|status|whoami|login|logout|ensure`. These are distinct operations,
+not opaque arguments passed through one generic command row. Human tables and
+redacted JSON share the same account observations; credential ownership stays
+with the installed provider CLI.
+
+Bare `yvex` prints the compact command map and exits successfully. It never
+starts, attaches to, or probes a host and never enters chat. Interactive human
+generation requires `yvex chat`. Programmatic generation uses the private
+typed protocol through native clients or the admitted loopback provider API;
+there is no public one-shot generation command.
+
+The old `run`, `server`, `execute`, `profile`-as-a-verb, and implementation
+top-level namespaces are not aliases. Obvious retired spellings fail with a
+bounded migration hint and never dispatch their former operation.
+
+## Process roles
+
+### Foreground host
+
+`yvex serve` always attempts to become the persistent foreground host. It owns
+the private Unix socket, engine manager, scheduler, sessions, backend
+execution, telemetry, and optional loopback OpenAI listener. A one-time TTY
+boot report is followed by an ordinary line-oriented host log stream. The
+process does not read an administrative command language from stdin, own the
+alternate screen, clear scrollback, or become a client.
+
+If a healthy host already owns the socket, `yvex serve` refuses and identifies
+the socket and inspection command. It never attaches to that host. Native
+administration is performed from another process with `host`, `engine`, and
+`session` commands.
+
+### Native chat client
+
+`yvex chat` is the sole public REPL. It requires a TTY and connects to the
+private local protocol. It opens no artifacts, initializes no CUDA state,
+starts no host, and loads no engine. A missing host produces the explicit
+`yvex serve` remediation; a missing engine points to `yvex model load`.
+
+The linear editor preserves scrollback and owns bounded history, UTF-8
+deletion, bracketed paste, resize redraw, cancellation, and terminal
+restoration. Registry-derived slash operations are limited to conversation and
+session use:
+
+```text
+/help /status /context
+/new /sessions /session /use /detach /reset /cancel /close
+/attach /attachments /attachments-clear
+/think-low /think /think-max /nothink
+/quit
+```
+
+Reasoning policy persists for the attached session until changed. The client
+does not describe it as a next-turn-only setting. Load, unload, compile,
+acquire, and host-stop operations are deliberately absent from the REPL.
+`/attach PATH` seals one local media object for the next turn; repeated calls
+stage multiple ordered parts. `/attachments` lists that bounded stage and
+`/attachments-clear` discards it. Submission appends the typed text part,
+clears the stage after server acceptance, and retains the same session identity
+for later multipart turns. `/use NAME` selects an existing session; attachment
+staging never creates or replaces one.
+
+### Hosted model use and exact administration
+
+`host` addresses the already-running process. Porcelain `model load` accepts a
+logical model selector and resolves only its proven launchable
+representations. With no model on a TTY it renders a small linear model
+selector; if that model has several valid deployments it renders a second
+variant selector. Numeric rows are temporary conveniences. Before the native
+request, the CLI has resolved one exact profile identity; the host then creates
+an immutable process-local engine generation. Non-TTY ambiguity fails and
+requires `MODEL` and `--variant` rather than guessing.
+Each launchable profile also carries the same directional input/output
+capability summary later published by its engine, so an orchestrator can select
+a READY deployment before demand activation without inferring from its name.
+
+`model unload MODEL` resolves the resident exact generation and drains it
+without stopping the host. Advanced `engine load PROFILE` and `engine unload
+ENGINE` remain deterministic plumbing for qualification and exact lifecycle
+inspection, but ordinary users never need a profile alias. Session commands
+address server-owned mutable state and cross the same private protocol. None of
+these clients opens a package directly.
+
+`model active` projects loaded engine generations from the same typed engine
+catalog used by `engine list`: backend, execution mode, active/idle state,
+attached sessions/clients, model leases, directional capabilities, and H12
+resource/placement facts. Its JSON schema is `yvex.model.active.v1`; consumers
+never parse the human table.
+
+### Offline work
+
+`model search` discovers without downloading. `model pull` parses one
+deterministic source locator, pins remote provider identity before acquisition,
+and delegates to source ownership. Local pull explicitly chooses a managed copy
+or verified external reference. `model prepare` delegates verification,
+compilation, artifact emission, and deployment creation to their existing
+owners; it does not manufacture support when a family lacks a full-package
+binding. `model push` exports one exact chosen representation and never means
+runtime loading.
+
+Source commands inspect exact provenance, artifact commands inspect immutable
+compiled packages, and profile commands inspect deployment configuration.
+Specialized compiler phases remain discoverable below `compile`. Bounded
+component execution and measurement live under `bench`; read-only engineering
+evidence lives under `inspect`. Offline commands neither require nor start a
+host.
+
+## Protocol planes
+
+Native commands and chat use private local protocol v20 over a UID-owned Unix
+socket. That protocol carries YVEX engine generations, sessions, KV identity,
+lifecycle, ordered typed content/provenance, model leases and directional
+capabilities, typed progress, cancellation, resource facts, and telemetry.
+
+External compatibility consumers use the separate loopback HTTP OpenAI
+profile. The adapter owns no model, engine, session, KV, scheduler, or backend
+state and never parses CLI output. Native clients do not route through HTTP.
 
 ## Canonical operation authority
 
-`config/operator/registry.json` is the strict
-`yvex.operator.registry.v1` source for operation IDs, paths, visibility,
-arguments, flags, requirements, projections, and stable adapter IDs. A bounded
-build-time generator validates the source and emits immutable static C
-descriptors plus a content identity under `build/generated/operator/`. The
-product parses no mutable registry file at runtime.
+`config/operator/registry.json` is the strict `yvex.operator.registry.v1`
+operation authority. The build
+validates it and emits immutable descriptors plus a content identity. Those
+descriptors drive parsing, dispatch, human help, JSON discovery, shell
+completion, and the chat slash catalog. Domain owners retain capability,
+semantic validation, and typed result authority; the registry does not create
+support by naming an operation.
 
-The compiled descriptors drive path resolution, syntax admission, human help,
-`yvex.command.discovery.v1`, shell completion, and the slash catalog consumed
-by the REPL. Generated data contains no callbacks, domain logic,
-protocol serialization, allocation, or mutable runtime state. Domain owners
-retain semantic validation and defaults.
+Default help projects only the product map. `help --advanced` exposes admitted
+advanced and engineering leaves. `help --json` is a stable structured
+projection with exact operation and command identities. Human and machine
+renderers consume the same typed result and machine output contains no ANSI.
+Registry-generated shell completion applies the same projection at an empty
+top-level position: only `chat`, `help`, `host`, `inspect`, `model`, `serve`,
+and `version` are suggested. Advanced roots remain executable and regain their
+full registry-driven subcommand completion after the user explicitly types the
+root.
 
-## Canonical projections
+## Output and errors
 
-### Conversation
+Product results go to stdout and product errors to stderr. Human views respect
+TTY detection and `NO_COLOR`; redirected and structured output is
+non-decorative. Submission-time errors surface immediately. Host/backend
+failures are returned through the correct typed completion boundary rather
+than being inferred from log prose.
 
-The REPL is a linear client attached to the already resident server. A compact
-vertical attachment block separates the live target, physical variant, runtime,
-session, context, memory, and OpenAI-listener facts instead of relying on
-terminal wrapping. The complete slash catalog then projects one registry-owned
-command and summary per line before the stable `yvex>` prompt. It streams
-committed model text without role labels through a bounded incremental UTF-8
-and Markdown renderer; raw output preserves exact canonical bytes. Prefill
-progress comes from sealed server events; one inline terminal result renders
-prompt/reuse/prefill, generation, TTFT, context, stop, and session facts from
-the typed protocol result. A reasoning turn adds one bounded line with
-reasoning/final token counts and rates, TTFR, TTFF, and total completion rate.
-When DSpark is active, the result line also projects proposed, accepted,
-rejected, and target-verification counts. Candidate token text is never
-rendered. Conversation output never includes raw events, logits, tensor facts,
-or capability walls.
-
-The registry also owns `/think`, `/think-max`, and `/nothink`. They are
-admitted only when the live model advertises the source-authored explicit
-reasoning channel. The policy is request-bound and retained as the session's
-next-turn selection. A change that rewrites the encoded prefix causes a checked
-physical-state rebase and full prefill from authoritative semantic history; it
-does not silently reuse incompatible state or require transcript loss.
-Reasoning text is dim on a TTY and separate from final text; delimiter tags and
-inferred hidden reasoning never enter the projection. A terminal-bound
-`yvex run --reasoning none|high|max` uses the same typed presentation and
-flushes the final block before its completion summary. When stdout is
-redirected, `run` instead emits only canonical channel bytes there and sends
-its typed completion summary to stderr, preserving byte-faithful pipelines.
-
-The line editor owns bounded in-memory history, registry-derived slash
-completion, UTF-8 deletion, bracketed multiline paste, resize redraw, active
-screen clearing, and terminal restoration. Ctrl-L clears the visible terminal
-and redraws the current prompt and input without changing session state. Ctrl-D
-at an idle prompt exits, discarding any unfinished line. Ctrl-C cancels an
-active turn; at an idle prompt it clears the line, and a second consecutive
-Ctrl-C exits.
-
-### Compact status
-
-Human status names the runtime state, selected logical model and physical
-variant, backend, context, sessions, queue, process memory, and resident memory.
-It includes at most one blocker and one actionable hint.
-
-### Operational stream
-
-`yvex server log` first renders the current bounded runtime snapshot, then
-subscribes to retained operational history and live events. Fixed semantic
-categories make startup, readiness, sessions, requests, prefill, DSpark, and
-generation visually distinguishable. The stream retains queue events only
-when depth exceeds one and otherwise renders operator-significant tokenization,
-prefill, first-token, speculative commit, completion, cancellation, failure,
-and shutdown facts. Human units, accepted/proposed ratios, and named stop
-reasons replace opaque counters. Watch omits connection churn, fragments,
-intermediate draft/verification steps, profile rows, trace sequence, severity,
-turn, and phase detail. Content remains excluded by default.
-
-### Raw stream
-
-`yvex server log --json` serializes the event sequence as canonical JSONL.
-Without `--json`, the same public operation renders the compact operational
-view. Raw means complete event records, not tensor, hidden, logits, KV, or
-memory dumps. Text content is excluded unless `--trace-content` is explicitly
-enabled when starting the server.
-
-### Machine status
-
-`yvex server status --json` is a stable protocol-derived object. Human prose
-never shares its stdout. Developer owners may expose their own explicitly
-versioned JSON or evidence-file schemas.
-
-### Errors
-
-Product errors contain one class/reason and, where known, one remediation hint.
-Errors go to stderr. Exit `2` is parser/usage refusal; runtime and protocol
-refusals are nonzero without turning diagnostic evidence into normal output.
-
-### Application protocol
-
-The OpenAI adapter inside the foreground `yvex server` process is not a third
-terminal renderer. It returns
-the documented compatibility JSON or SSE schema over loopback HTTP. Its
-response objects project typed provider and YVEX protocol facts; they never
-scrape CLI or server-console text. The exact profile lives in
-[`openai-compatibility.md`](../openai-compatibility.md).
-
-## Typed event fan-out
-
-One event has a schema, global sequence, UTC and monotonic timestamps, severity,
-kind, process identity, model/artifact/variant identities when present, session,
-request, turn, phase, counters, timing/rate, and canonical identity.
-
-```text
-authoritative runtime owner
-    -> typed event
-       -> raw JSONL renderer
-       -> operational renderer
-       -> metrics accumulator
-       -> generation/client projection
-```
-
-Renderers do not infer state by scraping another renderer. The bounded event
-queue records overflow; low-priority progress may be coalesced or dropped,
-while lifecycle and terminal events remain explicit.
-
-## Streams
-
-- Product result: stdout.
-- Product error: stderr.
-- Daemon raw console: stdout only when selected.
-- Daemon fatal process diagnostic: stderr.
-
-Human views use one terminal-style owner: cyan for prompt and active work,
-green for readiness and completion, orange for warning or cancellation, red
-for refusal, and dim text for secondary facts. All views respect `NO_COLOR`,
-TTY detection, explicit byte lengths, and Unicode boundaries supplied by the
-execute tokenizer decoder. Redirected and machine-readable output contains no
-ANSI controls.
+The foreground host is the logging producer. `yvex host logs` projects its
+typed stream from another process; `--json` selects the machine JSONL
+projection and `--follow` makes continuous intent explicit. No second logging
+authority or administrative REPL exists.
 
 ## Non-claims
 
-The local client architecture and bounded loopback adapter do not establish
-public HTTP serving, authentication, TLS, remote security, full OpenAI API or
-Anthropic compatibility, continuous batching, model quality, benchmark
-authority, or release qualification.
+This local product architecture does not establish public HTTP serving,
+authentication, TLS, remote security, full OpenAI compatibility, distributed
+serving, model quality, benchmark authority, or release qualification.

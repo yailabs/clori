@@ -4,12 +4,10 @@ Status: maintained development reference
 
 This document owns the pinned external sources used to pressure or check YVEX
 architecture and implementation. It does not import external capability,
-project state, or release claims. The implementation-independent architecture
-is documented separately in the
-[verified-inference reference](../reference/verified-inference.md).
+project state, or release claims. Current YVEX ownership is documented in the
+[implemented system](../architecture/system.md).
 
-This record is intentionally separate from the implementation-agnostic
-architecture. It maps primary papers, specifications, and implementation
+This record maps primary papers, specifications, and implementation
 references to YVEX owners. It does not own project state, milestone state,
 dependency order, capability claims, or Active Next; those belong only to
 [`ROADMAP.md`](../../ROADMAP.md).

@@ -677,13 +677,17 @@ static int common_field(const char *key, yvex_json *json,
             return yvex_error_code(err);
         if (strcmp(effort, "none") == 0)
             request->reasoning_policy = YVEX_REASONING_DISABLED;
-        else if (strcmp(effort, "high") == 0)
+        else if (strcmp(effort, "low") == 0)
+            request->reasoning_policy = YVEX_REASONING_LOW;
+        else if (strcmp(effort, "medium") == 0 ||
+                 strcmp(effort, "high") == 0)
             request->reasoning_policy = YVEX_REASONING_ENABLED;
-        else if (strcmp(effort, "max") == 0)
+        else if (strcmp(effort, "max") == 0 ||
+                 strcmp(effort, "xhigh") == 0)
             request->reasoning_policy = YVEX_REASONING_MAXIMUM;
         else
             return json_refuse(err, YVEX_ERR_UNSUPPORTED,
-                               "reasoning_effort must be none, high, or max");
+                               "reasoning_effort must be none, low, medium, high, max, or xhigh");
         return YVEX_OK;
     }
     if (strcmp(key, "stop") == 0) return stops_parse(json, request, err);
@@ -781,7 +785,7 @@ static int responses_input(yvex_json *json, yvex_provider_request *request,
                 }
                 if (!yvex_json_skip_value(&probe)) return YVEX_ERR_FORMAT;
             }
-            *json = (yvex_json){start, json->end, json->depth};
+            *json = (yvex_json){.cursor = start, .end = json->end, .depth = json->depth};
             if (typed && strcmp(type, "function_call_output") == 0) {
                 yvex_provider_message *message = &messages[message_index];
                 seen_keys seen = {0};
@@ -832,8 +836,9 @@ static int responses_input(yvex_json *json, yvex_provider_request *request,
  *
  * Allocates, validates, and identity-seals one provider-neutral request graph.
  */
-int openai_json_admit(const openai_http_request *http, openai_endpoint endpoint, const char *selected_model,
-    yvex_reasoning_policy default_reasoning, openai_admitted_request *admitted, yvex_error *err)
+int openai_json_admit(const openai_http_request *http, openai_endpoint endpoint,
+    yvex_reasoning_policy default_reasoning, openai_admitted_request *admitted,
+    yvex_error *err)
 {
     yvex_provider_request *request = NULL;
     yvex_provider_span instruction = {0};
@@ -845,7 +850,8 @@ int openai_json_admit(const openai_http_request *http, openai_endpoint endpoint,
     int model_seen = 0, input_seen = 0, maximum_seen = 0;
     int handled, rc = YVEX_OK;
     if (admitted) memset(admitted, 0, sizeof(*admitted));
-    if (!http || !admitted || !selected_model || !http->body || default_reasoning > YVEX_REASONING_MAXIMUM ||
+    if (!http || !admitted || !http->body ||
+        !yvex_reasoning_request_policy_valid(default_reasoning) ||
         !http->body_count || http->body_count > SIZE_MAX)
         return json_refuse(err, YVEX_ERR_INVALID_ARG, "one bounded JSON request body is required");
     request = calloc(1u, sizeof(*request));
@@ -932,9 +938,6 @@ int openai_json_admit(const openai_http_request *http, openai_endpoint endpoint,
          !yvex_json_complete(&json) || !model_seen || !input_seen))
         rc = json_refuse(err, YVEX_ERR_FORMAT,
                          "model and complete input are required");
-    if (rc == YVEX_OK && strcmp(request->model, selected_model) != 0)
-        rc = json_refuse(err, YVEX_ERR_STATE,
-                         "requested model is not loaded by the YVEX server");
     if (rc == YVEX_OK && maximum_seen && !request->maximum_output_tokens)
         rc = json_refuse(err, YVEX_ERR_BOUNDS,
                          "explicit output token limit must be positive");

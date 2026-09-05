@@ -31,19 +31,21 @@ static int latent_hash_f32(yvex_sha256 *hash, float value)
 }
 
 /* Latent initialization owns Box-Muller publication while sampling owns the versioned PCG stream. */
-int yvex_runtime_latent_normal_f32(
+int yvex_runtime_latent_normal_f32_from_offset(
     float *values, unsigned long long value_capacity, unsigned long long value_count,
-    unsigned long long seed, unsigned long long maximum_workspace_bytes,
+    unsigned long long discarded_value_count, unsigned long long seed,
+    unsigned long long maximum_workspace_bytes,
     yvex_runtime_latent_normal_result *result, yvex_error *err)
 {
     yvex_runtime_latent_normal_result staged = {0};
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     uint64_t state, increment;
-    unsigned long long bytes, index = 0ull;
+    unsigned long long bytes, generated = 0ull, published = 0ull, total;
     float *output;
     if (result) memset(result, 0, sizeof(*result));
     if (!values || !result || !value_count || value_count > value_capacity ||
+        !yvex_core_u64_add(discarded_value_count, value_count, &total) ||
         !yvex_core_u64_mul(value_count, sizeof(*output), &bytes) || bytes > SIZE_MAX ||
         bytes > maximum_workspace_bytes)
         return latent_refuse(err, YVEX_ERR_BOUNDS,
@@ -52,31 +54,38 @@ int yvex_runtime_latent_normal_f32(
     if (!output)
         return latent_refuse(err, YVEX_ERR_NOMEM, "normal staging allocation failed");
     yvex_runtime_sampling_pcg_seed(seed, &state, &increment);
-    while (index < value_count) {
+    while (generated < total) {
         const double scale = 1.0 / 4294967296.0;
         double first = ((double)yvex_runtime_sampling_pcg_next(&state, increment) + 0.5) * scale;
         double second = ((double)yvex_runtime_sampling_pcg_next(&state, increment) + 0.5) * scale;
         double magnitude = sqrt(-2.0 * log(first));
         double angle = 6.283185307179586476925286766559 * second;
-        output[index++] = (float)(magnitude * cos(angle));
-        if (index < value_count) output[index++] = (float)(magnitude * sin(angle));
+        float pair[2] = {(float)(magnitude * cos(angle)), (float)(magnitude * sin(angle))};
+        unsigned int lane;
+        for (lane = 0u; lane < 2u && generated < total; ++lane, ++generated)
+            if (generated >= discarded_value_count) output[published++] = pair[lane];
     }
     staged.schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1;
     staged.rng_algorithm = YVEX_SAMPLING_RNG_PCG_XSH_RR_64_32;
     staged.rng_version = YVEX_SAMPLING_RNG_VERSION_V1;
     staged.seed = seed;
+    staged.discarded_value_count = discarded_value_count;
     staged.value_count = value_count;
-    staged.uniform_draw_count = 2ull * ((value_count + 1ull) / 2ull);
+    staged.uniform_draw_count = 2ull * ((total + 1ull) / 2ull);
     staged.workspace_bytes = bytes;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.sampling.normal-f32.v1") ||
+    if (!yvex_sha256_update_text(&hash, discarded_value_count
+                                            ? "yvex.runtime.sampling.normal-f32-offset.v1"
+                                            : "yvex.runtime.sampling.normal-f32.v1") ||
         !yvex_sha256_update_u64(&hash, staged.rng_algorithm) ||
         !yvex_sha256_update_u64(&hash, staged.rng_version) ||
         !yvex_sha256_update_u64(&hash, seed) ||
+        (discarded_value_count &&
+         !yvex_sha256_update_u64(&hash, discarded_value_count)) ||
         !yvex_sha256_update_u64(&hash, value_count))
         goto identity_failed;
-    for (index = 0ull; index < value_count; ++index)
-        if (!latent_hash_f32(&hash, output[index])) goto identity_failed;
+    for (published = 0ull; published < value_count; ++published)
+        if (!latent_hash_f32(&hash, output[published])) goto identity_failed;
     if (!yvex_sha256_final(&hash, digest)) goto identity_failed;
     yvex_sha256_hex(digest, staged.normal_identity);
     staged.completed = 1;
@@ -88,6 +97,16 @@ int yvex_runtime_latent_normal_f32(
 identity_failed:
     yvex_core_free(output);
     return latent_refuse(err, YVEX_ERR_STATE, "normal identity derivation failed");
+}
+
+int yvex_runtime_latent_normal_f32(
+    float *values, unsigned long long value_capacity, unsigned long long value_count,
+    unsigned long long seed, unsigned long long maximum_workspace_bytes,
+    yvex_runtime_latent_normal_result *result, yvex_error *err)
+{
+    return yvex_runtime_latent_normal_f32_from_offset(
+        values, value_capacity, value_count, 0ull, seed,
+        maximum_workspace_bytes, result, err);
 }
 
 static int latent_state_identity(
@@ -143,7 +162,10 @@ static int latent_request_validate(
     unsigned long long *total, unsigned long long *bytes, yvex_error *err)
 {
     unsigned long long index, peak;
-    if (!request || request->schema_version != YVEX_RUNTIME_LATENT_SCHEMA_V1 ||
+    if (!request ||
+        request->schema_version != YVEX_RUNTIME_LATENT_SCHEMA_CURRENT ||
+        (request->yield_control &&
+         (!request->yield_control->requested || !request->yield_control->resume)) ||
         !request->video_values || !request->audio_values || !request->step_count ||
         request->video_values > video_capacity || request->audio_values > audio_capacity ||
         !request->video_sigmas || !request->audio_sigmas ||
@@ -185,6 +207,8 @@ static int latent_execution_identity(
         !yvex_sha256_update_text(&hash, request->plan_identity) ||
         !yvex_sha256_update_text(&hash, request->evaluator_identity) ||
         !yvex_sha256_update_u64(&hash, request->seed) ||
+        (request->initialization_skip_values &&
+         !yvex_sha256_update_u64(&hash, request->initialization_skip_values)) ||
         !yvex_sha256_update_u64(&hash, request->video_values) ||
         !yvex_sha256_update_u64(&hash, request->audio_values) ||
         !yvex_sha256_update_u64(&hash, request->step_count) ||
@@ -468,6 +492,33 @@ int yvex_runtime_av_plan_build(
     return YVEX_OK;
 }
 
+int yvex_runtime_av_plan_add_condition_rows(
+    yvex_runtime_av_plan *plan, unsigned long long condition_rows, yvex_error *err)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long packed_rows;
+    if (!plan || plan->schema_version != YVEX_RUNTIME_AV_PLAN_SCHEMA_V1 ||
+        !plan->complete || plan->condition_rows || !condition_rows ||
+        !yvex_sha256_hex_valid(plan->identity) ||
+        !yvex_core_u64_add(plan->packed_rows, condition_rows, &packed_rows) ||
+        packed_rows > UINT_MAX)
+        return latent_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "a complete unconditioned AV plan and bounded condition rows are required");
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.av.conditioned-plan.v1") ||
+        !yvex_sha256_update_text(&hash, plan->identity) ||
+        !yvex_sha256_update_u64(&hash, condition_rows) ||
+        !yvex_sha256_final(&hash, digest))
+        return latent_refuse(err, YVEX_ERR_STATE,
+                             "conditioned AV plan identity could not be sealed");
+    plan->condition_rows = condition_rows;
+    plan->packed_rows = packed_rows;
+    yvex_sha256_hex(digest, plan->identity);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 int yvex_runtime_av_scheduler_step(
     float *output, const float *sample, const float *velocity,
     unsigned long long values, float timestep, float sigma, float sigma_next,
@@ -503,7 +554,7 @@ int yvex_runtime_av_latent_execute(
         !template || !yvex_core_u64_mul(plan->video_rows, plan->video_value_width, &video_values) ||
         !yvex_core_u64_mul(plan->audio_rows, plan->audio_value_width, &audio_values))
         return latent_refuse(err, YVEX_ERR_BOUNDS, "a complete bounded audio-video plan is required");
-    request = *template; request.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_V1;
+    request = *template; request.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_CURRENT;
     request.video_values = video_values; request.audio_values = audio_values;
     request.step_count = plan->model_evaluations; request.video_sigmas = plan->video_sigmas;
     request.audio_sigmas = plan->audio_sigmas; request.plan_identity = plan->identity;
@@ -531,8 +582,51 @@ int yvex_runtime_av_layout_from_plan(
     request.video_frames = plan->video_latent_frames;
     request.latent_height = plan->video_latent_height; request.latent_width = plan->video_latent_width;
     request.patch_height = plan->patch_height; request.patch_width = plan->patch_width;
-    request.text_start = 0ull; request.audio_start = plan->text_tokens;
+    request.text_start = 0ull; request.condition_start = 0ull;
+    request.audio_start = plan->text_tokens;
     request.video_start = plan->text_tokens + plan->audio_rows; request.packed_rows = plan->packed_rows;
+    request.audio_width_indices = audio_width_indices; request.temporal_pattern = plan->temporal_pattern;
+    request.temporal_pattern_count = plan->temporal_pattern_count;
+    request.temporal_scale = plan->temporal_scale; request.spatial_scale = plan->spatial_scale;
+    request.media_time_origin = (double)plan->text_tokens; request.plan_identity = plan->identity;
+    request.maximum_workspace_bytes = workspace_bytes;
+    return yvex_runtime_av_layout_build(&request, output, result, err);
+}
+
+int yvex_runtime_av_layout_from_conditioned_plan(
+    const yvex_runtime_av_plan *plan, const unsigned int *text_tags,
+    const double *condition_time_origins,
+    unsigned long long condition_count, const yvex_runtime_av_layout_output *output,
+    yvex_runtime_av_layout_result *result, yvex_error *err)
+{
+    unsigned long long audio_width_indices[2], frame_rows, workspace_bytes;
+    yvex_runtime_av_layout_request request = {0};
+    if (!plan || plan->schema_version != YVEX_RUNTIME_AV_PLAN_SCHEMA_V1 || !plan->complete ||
+        !condition_time_origins || !condition_count || !plan->condition_rows ||
+        plan->condition_rows % condition_count || plan->audio_channels != 2ull ||
+        !yvex_core_u64_mul(plan->video_latent_height / plan->patch_height,
+                           plan->video_latent_width / plan->patch_width, &frame_rows) ||
+        plan->condition_rows / condition_count != frame_rows ||
+        !yvex_core_u64_mul(plan->packed_rows, 5ull * sizeof(float), &workspace_bytes))
+        return latent_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "a complete condition-aware AV plan is required");
+    audio_width_indices[0] = 0ull;
+    audio_width_indices[1] = plan->video_latent_width / plan->patch_width - 1ull;
+    request.schema_version = YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V2;
+    request.text_tag = plan->text_tag; request.audio_tag = plan->audio_tag;
+    request.video_tag = plan->video_tag; request.text_rows = plan->text_tokens;
+    request.condition_rows = plan->condition_rows; request.condition_count = condition_count;
+    request.condition_rows_per_image = frame_rows;
+    request.text_tags = text_tags;
+    request.condition_time_origins = condition_time_origins;
+    request.audio_steps = plan->audio_latent_steps; request.audio_channels = plan->audio_channels;
+    request.video_frames = plan->video_latent_frames;
+    request.latent_height = plan->video_latent_height; request.latent_width = plan->video_latent_width;
+    request.patch_height = plan->patch_height; request.patch_width = plan->patch_width;
+    request.text_start = 0ull; request.condition_start = plan->text_tokens;
+    request.audio_start = request.condition_start + plan->condition_rows;
+    request.video_start = request.audio_start + plan->audio_rows;
+    request.packed_rows = plan->packed_rows;
     request.audio_width_indices = audio_width_indices; request.temporal_pattern = plan->temporal_pattern;
     request.temporal_pattern_count = plan->temporal_pattern_count;
     request.temporal_scale = plan->temporal_scale; request.spatial_scale = plan->spatial_scale;
@@ -549,15 +643,20 @@ int yvex_runtime_av_layout_matches_plan(
     yvex_runtime_av_layout_request request = {0};
     char observed_identity[YVEX_SHA256_HEX_CAP];
     if (!plan || plan->schema_version != YVEX_RUNTIME_AV_PLAN_SCHEMA_V1 || !plan->complete ||
-        !output || !result || result->schema_version != YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1 ||
+        !output || !result ||
+        (result->schema_version != YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1 &&
+         result->schema_version != YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V2) ||
         !result->complete || !yvex_sha256_hex_valid(result->layout_identity) ||
-        result->packed_rows != plan->packed_rows || result->video_rows != plan->video_rows ||
+        result->packed_rows != plan->packed_rows ||
+        result->condition_rows != plan->condition_rows ||
+        result->video_rows != plan->condition_rows + plan->video_rows ||
         result->audio_rows != plan->audio_rows || result->text_rows != plan->text_tokens ||
         !output->position_ids || !output->token_tags || !output->video_indices ||
         !output->audio_indices || !output->text_indices ||
         !yvex_core_u64_mul(plan->packed_rows, 3ull, &position_values) ||
         output->position_capacity < position_values || output->tag_capacity < plan->packed_rows ||
-        output->video_capacity < plan->video_rows || output->audio_capacity < plan->audio_rows ||
+        output->video_capacity < plan->condition_rows + plan->video_rows ||
+        output->audio_capacity < plan->audio_rows ||
         output->text_capacity < plan->text_tokens)
         return latent_refuse(err, YVEX_ERR_INVALID_ARG,
                              "layout output does not cover the admitted audio-video plan");
@@ -566,7 +665,8 @@ int yvex_runtime_av_layout_matches_plan(
     request.text_rows = plan->text_tokens;
     if (!packed_layout_identity(
             &request, output->position_ids, output->token_tags, output->video_indices,
-            output->audio_indices, output->text_indices, plan->video_rows,
+            output->audio_indices, output->text_indices,
+            plan->condition_rows + plan->video_rows,
             plan->audio_rows, observed_identity) ||
         strcmp(observed_identity, result->layout_identity) != 0)
         return latent_refuse(err, YVEX_ERR_FORMAT,
@@ -1333,9 +1433,11 @@ static int packed_layout_extents(
     unsigned long long capacities[5], unsigned long long *workspace_bytes,
     yvex_error *err)
 {
-    unsigned long long grid_height, grid_width, frame_rows, expected, values;
+    unsigned long long grid_height, grid_width, frame_rows, condition_rows, expected, values;
     unsigned long long channel;
-    if (!request || request->schema_version != YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1 ||
+    if (!request ||
+        (request->schema_version != YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1 &&
+         request->schema_version != YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V2) ||
         !request->text_rows || !request->audio_steps || !request->audio_channels ||
         !request->video_frames || !request->latent_height || !request->latent_width ||
         !request->patch_height || !request->patch_width ||
@@ -1352,14 +1454,43 @@ static int packed_layout_extents(
     grid_width = request->latent_width / request->patch_width;
     if (!yvex_core_u64_mul(grid_height, grid_width, &frame_rows) ||
         !yvex_core_u64_mul(request->video_frames, frame_rows, &capacities[2]) ||
+        !yvex_core_u64_add(capacities[2], request->condition_rows, &capacities[2]) ||
         !yvex_core_u64_mul(request->audio_steps, request->audio_channels, &capacities[3]) ||
-        !yvex_core_u64_add(request->text_rows, capacities[3], &expected) ||
-        !yvex_core_u64_add(expected, capacities[2], &expected) ||
-        request->text_start != 0ull || request->audio_start != request->text_rows ||
-        request->video_start != request->text_rows + capacities[3] ||
+        !yvex_core_u64_add(request->text_rows, request->condition_rows, &expected) ||
+        !yvex_core_u64_add(expected, capacities[3], &expected) ||
+        !yvex_core_u64_add(expected, capacities[2] - request->condition_rows, &expected) ||
+        request->text_start != 0ull ||
+        (request->schema_version == YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1 &&
+         (request->condition_start || request->audio_start != request->text_rows)) ||
+        (request->schema_version == YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V2 &&
+         (request->condition_start != request->text_rows ||
+          request->audio_start != request->text_rows + request->condition_rows)) ||
+        request->video_start != request->audio_start + capacities[3] ||
         request->packed_rows != expected || expected > UINT_MAX)
         return latent_refuse(err, YVEX_ERR_BOUNDS,
                              "packed layout geometry does not form one exact row partition");
+    if ((request->schema_version == YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1 &&
+         (request->condition_rows || request->condition_count ||
+          request->condition_rows_per_image || request->condition_time_origins)) ||
+        (request->schema_version == YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V2 &&
+         (!request->condition_rows || !request->condition_count ||
+          !request->condition_rows_per_image || !request->text_tags ||
+          !request->condition_time_origins ||
+          !yvex_core_u64_mul(request->condition_count,
+                             request->condition_rows_per_image, &condition_rows) ||
+          request->condition_rows != condition_rows ||
+          request->condition_rows_per_image != frame_rows)))
+        return latent_refuse(err, YVEX_ERR_FORMAT,
+                             "packed condition rows do not form complete image grids");
+    for (channel = 0ull; channel < request->condition_count; ++channel)
+        if (!isfinite(request->condition_time_origins[channel]))
+            return latent_refuse(err, YVEX_ERR_FORMAT,
+                                 "packed condition anchors must have finite time coordinates");
+    for (channel = 0ull; channel < request->text_rows; ++channel)
+        if (request->text_tags && request->text_tags[channel] != request->text_tag &&
+            request->text_tags[channel] != request->video_tag)
+            return latent_refuse(err, YVEX_ERR_FORMAT,
+                                 "packed text rows carry an unsupported modality tag");
     for (channel = 0ull; channel < request->audio_channels; ++channel)
         if (request->audio_width_indices[channel] >= grid_width)
             return latent_refuse(err, YVEX_ERR_BOUNDS,
@@ -1393,15 +1524,30 @@ static void packed_layout_fill(
     unsigned int *tags, unsigned int *video_indices, unsigned int *audio_indices,
     unsigned int *text_indices)
 {
-    unsigned long long text, channel, step, frame, row, height, width, video_row = 0ull;
+    unsigned long long text, condition, channel, step, frame, row, height, width;
+    unsigned long long video_row = 0ull, target_video_row = 0ull;
     double square_root_area = sqrt((double)request->latent_height * (double)request->latent_width);
     double video_time = request->media_time_origin;
     for (text = 0ull; text < request->text_rows; ++text) {
         row = request->text_start + text;
         positions[row * 3ull] = (float)text;
-        tags[row] = request->text_tag;
+        tags[row] = request->text_tags ? request->text_tags[text] : request->text_tag;
         text_indices[text] = (unsigned int)row;
     }
+    for (condition = 0ull; condition < request->condition_count; ++condition)
+        for (height = 0ull; height < request->latent_height / request->patch_height; ++height)
+            for (width = 0ull; width < request->latent_width / request->patch_width; ++width) {
+                row = request->condition_start + video_row;
+                positions[row * 3ull] = (float)request->condition_time_origins[condition];
+                positions[row * 3ull + 1ull] = (float)packed_spatial_coordinate(
+                    request->latent_height, request->patch_height, height,
+                    square_root_area, request->spatial_scale);
+                positions[row * 3ull + 2ull] = (float)packed_spatial_coordinate(
+                    request->latent_width, request->patch_width, width,
+                    square_root_area, request->spatial_scale);
+                tags[row] = request->video_tag;
+                video_indices[video_row++] = (unsigned int)row;
+            }
     for (channel = 0ull; channel < request->audio_channels; ++channel) {
         double audio_width = packed_spatial_coordinate(
             request->latent_width, request->patch_width,
@@ -1418,7 +1564,7 @@ static void packed_layout_fill(
     for (frame = 0ull; frame < request->video_frames; ++frame) {
         for (height = 0ull; height < request->latent_height / request->patch_height; ++height)
             for (width = 0ull; width < request->latent_width / request->patch_width; ++width) {
-                row = request->video_start + video_row;
+                row = request->video_start + target_video_row++;
                 positions[row * 3ull] = (float)video_time;
                 positions[row * 3ull + 1ull] = (float)packed_spatial_coordinate(
                     request->latent_height, request->patch_height, height,
@@ -1500,14 +1646,101 @@ int yvex_runtime_av_layout_build(
         memcpy(output->video_indices, video, (size_t)(capacities[2] * sizeof(unsigned int)));
         memcpy(output->audio_indices, audio, (size_t)(capacities[3] * sizeof(unsigned int)));
         memcpy(output->text_indices, text, (size_t)(capacities[4] * sizeof(unsigned int)));
-        staged.schema_version = YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1;
+        staged.schema_version = request->schema_version;
         staged.text_rows = capacities[4]; staged.audio_rows = capacities[3];
+        staged.condition_rows = request->condition_rows;
         staged.video_rows = capacities[2]; staged.packed_rows = request->packed_rows;
         staged.workspace_bytes = workspace_bytes; staged.complete = 1; *result = staged;
         yvex_error_clear(err);
     }
     yvex_core_free(storage);
     return rc;
+}
+
+typedef struct {
+    yvex_runtime_latent_result *destination, *staged;
+    float *video_output, *audio_output;
+    const float *state;
+    unsigned long long video_values, audio_values;
+} latent_transaction_publication;
+
+typedef struct {
+    const yvex_runtime_latent_request *request;
+    yvex_runtime_latent_result *staged;
+    float *state, *next, *velocity;
+} latent_transaction_execution;
+
+static int latent_transaction_publish(void *opaque, yvex_error *err)
+{
+    latent_transaction_publication *publication = opaque;
+    if (!publication || !publication->destination || !publication->staged ||
+        !publication->video_output || !publication->audio_output || !publication->state)
+        return latent_refuse(err, YVEX_ERR_STATE,
+                             "latent transaction publication state is incomplete");
+    memcpy(publication->video_output, publication->state,
+           (size_t)(publication->video_values * sizeof(float)));
+    memcpy(publication->audio_output, publication->state + publication->video_values,
+           (size_t)(publication->audio_values * sizeof(float)));
+    publication->staged->completed = 1;
+    *publication->destination = *publication->staged;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static void latent_transaction_discard(void *opaque)
+{
+    latent_transaction_publication *publication = opaque;
+    if (publication && publication->destination)
+        memset(publication->destination, 0, sizeof(*publication->destination));
+}
+
+static int latent_transaction_execute_quantum(
+    void *opaque, unsigned long long step, yvex_error *err)
+{
+    latent_transaction_execution *execution = opaque;
+    const yvex_runtime_latent_request *request;
+    float video_timestep, audio_timestep, *swap;
+    int rc;
+    if (!execution || !execution->request || !execution->staged ||
+        !execution->state || !execution->next || !execution->velocity)
+        return latent_refuse(err, YVEX_ERR_STATE,
+                             "latent transaction execution state is incomplete");
+    request = execution->request;
+    if (step >= request->step_count)
+        return latent_refuse(err, YVEX_ERR_BOUNDS,
+                             "latent transaction quantum exceeds its family schedule");
+    video_timestep = 1.0f - request->video_sigmas[step];
+    audio_timestep = 1.0f - request->audio_sigmas[step];
+    rc = request->evaluate(
+        request->execution_context, execution->state, request->video_values,
+        execution->state + request->video_values, request->audio_values,
+        video_timestep, audio_timestep, execution->velocity,
+        execution->velocity + request->video_values, err);
+    if (rc == YVEX_OK)
+        rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_EVALUATED, step,
+                            execution->state, execution->velocity,
+                            video_timestep, audio_timestep, err);
+    if (rc == YVEX_OK)
+        rc = request->advance(
+            execution->next, execution->state, execution->velocity,
+            request->video_values, video_timestep,
+            request->video_sigmas[step], request->video_sigmas[step + 1ull], err);
+    if (rc == YVEX_OK)
+        rc = request->advance(
+            execution->next + request->video_values,
+            execution->state + request->video_values,
+            execution->velocity + request->video_values,
+            request->audio_values, audio_timestep,
+            request->audio_sigmas[step], request->audio_sigmas[step + 1ull], err);
+    if (rc != YVEX_OK) return rc;
+    swap = execution->state;
+    execution->state = execution->next;
+    execution->next = swap;
+    execution->staged->completed_steps++;
+    return latent_observe(
+        request, YVEX_RUNTIME_LATENT_OBSERVATION_ADVANCED,
+        execution->staged->completed_steps, execution->state, NULL,
+        video_timestep, audio_timestep, err);
 }
 
 int yvex_runtime_latent_execute(
@@ -1517,10 +1750,19 @@ int yvex_runtime_latent_execute(
     yvex_runtime_latent_result *result, yvex_error *err)
 {
     yvex_runtime_latent_result staged = {0};
-    float *storage = NULL, *state, *next, *velocity, *swap;
+    yvex_runtime_execution_transaction *transaction = NULL;
+    yvex_execution_transaction_options transaction_options = {0};
+    yvex_execution_safe_point_action safe_point = 0;
+    yvex_execution_transaction_summary transaction_summary = {0};
+    latent_transaction_publication publication = {0};
+    latent_transaction_execution execution = {0};
+    float *storage = NULL;
     unsigned long long total = 0ull, bytes = 0ull, storage_bytes, step;
-    int rc;
+    yvex_error primary, cleanup;
+    int rc, cleanup_rc;
     if (result) memset(result, 0, sizeof(*result));
+    if (request && request->transaction_summary)
+        memset(request->transaction_summary, 0, sizeof(*request->transaction_summary));
     if (!video_output || !audio_output || !result)
         return latent_refuse(err, YVEX_ERR_INVALID_ARG,
                              "latent outputs and result storage are required");
@@ -1529,77 +1771,99 @@ int yvex_runtime_latent_execute(
     if (!yvex_core_u64_mul(bytes, 3ull, &storage_bytes) || storage_bytes > SIZE_MAX)
         return latent_refuse(err, YVEX_ERR_BOUNDS, "latent workspace extent overflowed");
     storage = yvex_core_malloc((size_t)storage_bytes);
-    if (!storage) return latent_refuse(err, YVEX_ERR_NOMEM,
-                                       "latent workspace allocation failed");
-    state = storage;
-    next = state + total;
-    velocity = next + total;
-    rc = yvex_runtime_latent_normal_f32(
-        state, total, total, request->seed, bytes, &staged.initialization, err);
+    if (!storage)
+        return latent_refuse(err, YVEX_ERR_NOMEM, "latent workspace allocation failed");
+    execution = (latent_transaction_execution){
+        request, &staged, storage, storage + total, storage + total * 2ull};
+    publication = (latent_transaction_publication){
+        result, &staged, video_output, audio_output, NULL,
+        request->video_values, request->audio_values};
+    transaction_options.request_identity = request->plan_identity;
+    transaction_options.quantum_count = request->step_count;
+    transaction_options.resource = request->execution_resource;
+    transaction_options.execute = latent_transaction_execute_quantum;
+    transaction_options.execution_context = &execution;
+    transaction_options.cancel_requested = request->cancel_requested;
+    transaction_options.cancel_context = request->cancel_context;
+    if (request->yield_control) {
+        transaction_options.yield_requested = request->yield_control->requested;
+        transaction_options.yield_context = request->yield_control->context;
+    }
+    transaction_options.publish = latent_transaction_publish;
+    transaction_options.discard = latent_transaction_discard;
+    transaction_options.publication_context = &publication;
+    rc = yvex_runtime_execution_transaction_open(&transaction, &transaction_options, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_latent_normal_f32_from_offset(
+            execution.state, total, total, request->initialization_skip_values, request->seed,
+            bytes, &staged.initialization, err);
     if (rc == YVEX_OK &&
-        !latent_state_identity("yvex.runtime.latent.initial.v1", state, total,
+        !latent_state_identity("yvex.runtime.latent.initial.v1", execution.state, total,
                                staged.initial_state_identity))
         rc = latent_refuse(err, YVEX_ERR_STATE, "initial latent identity failed");
     if (rc == YVEX_OK)
         rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_INITIAL, 0ull,
-                            state, NULL, 0.0f, 0.0f, err);
+                            execution.state, NULL, 0.0f, 0.0f, err);
     for (step = 0ull; rc == YVEX_OK && step < request->step_count; ++step) {
-        float video_timestep = 1.0f - request->video_sigmas[step];
-        float audio_timestep = 1.0f - request->audio_sigmas[step];
-        if (request->cancel_requested && request->cancel_requested(request->cancel_context)) {
-            rc = latent_refuse(err, YVEX_ERR_CANCELLED, "latent iteration was cancelled");
-            break;
+        rc = yvex_runtime_execution_transaction_execute_quantum(
+            transaction, &safe_point, err);
+        if (rc == YVEX_OK && safe_point == YVEX_EXECUTION_SAFE_POINT_CANCEL)
+            rc = latent_refuse(err, YVEX_ERR_CANCELLED,
+                               "latent iteration was cancelled at a safe point");
+        if (rc == YVEX_OK && safe_point == YVEX_EXECUTION_SAFE_POINT_YIELD) {
+            rc = request->yield_control->resume(
+                request->yield_control->context, err);
+            if (rc == YVEX_OK)
+                rc = yvex_runtime_execution_transaction_resume(transaction, err);
+            if (rc == YVEX_OK) safe_point = YVEX_EXECUTION_SAFE_POINT_CONTINUE;
         }
-        rc = request->evaluate(
-            request->execution_context, state, request->video_values,
-            state + request->video_values, request->audio_values,
-            video_timestep, audio_timestep, velocity,
-            velocity + request->video_values, err);
-        if (rc == YVEX_OK)
-            rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_EVALUATED, step,
-                                state, velocity, video_timestep, audio_timestep, err);
-        if (rc == YVEX_OK)
-            rc = request->advance(
-                next, state, velocity,
-                request->video_values, video_timestep, request->video_sigmas[step],
-                request->video_sigmas[step + 1ull], err);
-        if (rc == YVEX_OK)
-            rc = request->advance(
-                next + request->video_values,
-                state + request->video_values, velocity + request->video_values,
-                request->audio_values, audio_timestep, request->audio_sigmas[step],
-                request->audio_sigmas[step + 1ull], err);
-        if (rc == YVEX_OK) {
-            swap = state; state = next; next = swap; staged.completed_steps++;
-            rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_ADVANCED,
-                                staged.completed_steps, state, NULL,
-                                video_timestep, audio_timestep, err);
-        }
+        if (rc == YVEX_OK &&
+            ((step + 1ull == request->step_count &&
+              safe_point != YVEX_EXECUTION_SAFE_POINT_COMMIT) ||
+             (step + 1ull < request->step_count &&
+              safe_point != YVEX_EXECUTION_SAFE_POINT_CONTINUE)))
+            rc = latent_refuse(err, YVEX_ERR_STATE,
+                               "latent safe-point action does not match execution progress");
     }
-    if (rc == YVEX_OK && request->cancel_requested &&
-        request->cancel_requested(request->cancel_context))
-        rc = latent_refuse(err, YVEX_ERR_CANCELLED,
-                           "latent publication was cancelled");
     if (rc == YVEX_OK &&
-        !latent_state_identity("yvex.runtime.latent.final.v1", state, total,
+        !latent_state_identity("yvex.runtime.latent.final.v1", execution.state, total,
                                staged.final_state_identity))
         rc = latent_refuse(err, YVEX_ERR_STATE, "final latent identity failed");
     if (rc == YVEX_OK)
         rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_FINAL,
-                            staged.completed_steps, state, NULL, 0.0f, 0.0f, err);
-    staged.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_V1;
+                            staged.completed_steps, execution.state, NULL, 0.0f, 0.0f, err);
+    staged.schema_version = request->schema_version;
     staged.video_values = request->video_values;
     staged.audio_values = request->audio_values;
     staged.model_evaluations = staged.completed_steps;
     staged.peak_workspace_bytes = bytes * 4ull;
     if (rc == YVEX_OK && !latent_execution_identity(request, &staged, staged.execution_identity))
         rc = latent_refuse(err, YVEX_ERR_STATE, "latent execution identity failed");
-    if (rc == YVEX_OK) {
-        memcpy(video_output, state, (size_t)(request->video_values * sizeof(float)));
-        memcpy(audio_output, state + request->video_values,
-               (size_t)(request->audio_values * sizeof(float)));
-        staged.completed = 1;
-        *result = staged;
+    publication.state = execution.state;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_execution_transaction_commit(transaction, err);
+    if (rc != YVEX_OK && transaction) {
+        primary = err ? *err : (yvex_error){0};
+        yvex_error_clear(&cleanup);
+        (void)yvex_runtime_execution_transaction_abort(transaction, &cleanup);
+        if (err) *err = primary;
+    }
+    if (transaction &&
+        yvex_runtime_execution_transaction_summary_copy(
+            transaction, &transaction_summary, &cleanup) == YVEX_OK) {
+        if (request->transaction_summary)
+            *request->transaction_summary = transaction_summary;
+        if (rc == YVEX_OK) result->transaction = transaction_summary;
+    }
+    if (rc != YVEX_OK) primary = err ? *err : (yvex_error){0};
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_execution_transaction_close(&transaction, &cleanup);
+    if (rc != YVEX_OK) {
+        if (err) *err = primary;
+    } else if (cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    } else {
         yvex_error_clear(err);
     }
     yvex_core_free(storage);

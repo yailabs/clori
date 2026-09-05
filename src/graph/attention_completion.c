@@ -79,7 +79,7 @@ static int completion_publication_finalize(
     publication->device_completion_pending = 0;
     evidence->topk_candidates = output->valid_candidate_count;
     evidence->topk_selected = semantic_stride;
-    evidence->cuda_stream_synchronizations = output->stream_synchronizations;
+    evidence->cuda_stream_synchronizations = output->queue_synchronizations;
     evidence->cuda_device_synchronizations = output->device_synchronizations;
     evidence->cuda_device_execution_elapsed_ns = output->device_execution_elapsed_ns;
     return YVEX_OK;

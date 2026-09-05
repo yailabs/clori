@@ -32,6 +32,21 @@ from typing import Iterable, Iterator, Sequence
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_POLICY = ROOT / "config/c_policy.json"
 GROUPS = ("ownership", "layout", "architecture", "natural")
+AGGREGATE_METRICS = {
+    "code_lines",
+    "executable_lines",
+    "headers",
+    "internal_headers",
+    "library_global_symbols",
+    "nonpublic_global_symbols",
+    "physical_lines",
+    "production_files",
+    "public_function_declarations",
+    "public_headers",
+    "semantic_owners",
+    "source_headers",
+    "translation_units",
+}
 
 
 @dataclass(frozen=True)
@@ -440,6 +455,12 @@ class Audit:
         self.policy = json.loads(policy_path.read_text())
         if self.policy.get("schema_version") != 1:
             raise ValueError("unsupported C policy schema")
+        aggregate_limits = AGGREGATE_METRICS & self.policy["limits"].keys()
+        if aggregate_limits:
+            raise ValueError(
+                "aggregate repository metrics are observational, not limits: "
+                + ", ".join(sorted(aggregate_limits))
+            )
         suffixes = set(self.policy["production_suffixes"])
         self.files = sorted(
             path
@@ -850,11 +871,19 @@ class Audit:
         }
 
     def private_declarations(self) -> set[str]:
-        return {
+        declared = {
             symbol
             for name, unit in self.headers.items()
             if self.header_tier(name) in {"internal", "source"}
             for symbol in declarations(unit) | data_declarations(unit)
+        }
+        return declared | self.family_descriptor_entrypoints()
+
+    def family_descriptor_entrypoints(self) -> set[str]:
+        return {
+            f"yvex_graph_family_descriptor_{Path(row[0]).stem}"
+            for row in self.manifest_rows
+            if row[0].startswith("src/graph/families/") and row[0].endswith(".c")
         }
 
     def symbol_snapshot(self) -> dict[str, object]:
@@ -1010,29 +1039,7 @@ class Audit:
             if path.parent.name and path.parent.name in stem.split("_"):
                 errors.append(f"basename repeats immediate directory: {name}")
 
-        metrics = self.metrics()
-        for key in (
-            "production_files",
-            "translation_units",
-            "headers",
-            "physical_lines",
-            "code_lines",
-            "executable_lines",
-            "semantic_owners",
-        ):
-            if int(metrics[key]) > limits[key]:
-                errors.append(f"{key} exceeds policy: {metrics[key]} > {limits[key]}")
-
         tier_counts = Counter(self.header_tier(path) or "invalid" for path in self.headers)
-        for tier, limit_key in (
-            ("public", "public_headers"),
-            ("internal", "internal_headers"),
-            ("source", "source_headers"),
-        ):
-            if tier_counts[tier] > limits[limit_key]:
-                errors.append(
-                    f"{tier} header count exceeds policy: {tier_counts[tier]} > {limits[limit_key]}"
-                )
         if tier_counts["invalid"]:
             invalid = [path for path in self.headers if self.header_tier(path) is None]
             errors.append(f"headers outside admitted tiers: {invalid}")
@@ -1242,24 +1249,18 @@ class Audit:
 
     def stale_path_violations(self) -> list[str]:
         errors: list[str] = []
-        with (ROOT / "config/documentation_owners.tsv").open(
-            encoding="utf-8", newline=""
-        ) as stream:
-            frozen_documents = {
-                row["path"]
-                for row in csv.DictReader(stream, delimiter="\t")
-                if row["authority_mode"] == "frozen"
-            }
         documents = [
             ROOT / name
             for name in ("AGENTS.md", "ROADMAP.md", "CONTRIBUTING.md", "README.md")
         ]
-        documents.extend((ROOT / "docs").rglob("*.md"))
+        documents.extend(
+            document
+            for document in (ROOT / "docs").rglob("*.md")
+            if "worklog" not in document.parts
+        )
         expression = re.compile(r"`((?:src|include|tests|config)/[^` ]+)`")
         for document in documents:
             if not document.is_file():
-                continue
-            if relative(document) in frozen_documents:
                 continue
             for number, line in enumerate(document.read_text(errors="ignore").splitlines(), 1):
                 for reference in expression.findall(line):
@@ -1309,7 +1310,10 @@ class Audit:
             for name in tuple(family_tokens)
             if (token := re.sub(r"_v?[0-9].*$", "", name))
         )
-        allowed_family_symbols = set(self.policy["symbols"]["family_entrypoints"])
+        allowed_family_symbols = (
+            set(self.policy["symbols"]["family_entrypoints"])
+            | self.family_descriptor_entrypoints()
+        )
         for name, unit in self.headers.items():
             row = self.manifest.get(name)
             if row and row[3] == "family":
@@ -1347,12 +1351,6 @@ class Audit:
         public = self.public_declarations()
         private = self.private_declarations()
         defined = set(definitions)
-        limits = self.policy["limits"]
-        if len(public) > limits["public_function_declarations"]:
-            errors.append(
-                f"public declaration count increased: {len(public)} > "
-                f"{limits['public_function_declarations']}"
-            )
         for symbol in sorted(public):
             count = len(definitions.get(symbol, []))
             if count != 1:
@@ -1375,15 +1373,7 @@ class Audit:
             errors.append(f"duplicate global definitions: {duplicates}")
         if foreign:
             errors.append(f"globally visible symbols lack YVEX namespace: {foreign}")
-        if len(defined) > limits["library_global_symbols"]:
-            errors.append(f"library globals exceed policy: {len(defined)}")
-
         nonpublic = defined - public
-        if len(nonpublic) > limits["nonpublic_global_symbols"]:
-            errors.append(
-                f"non-public globals exceed policy: {len(nonpublic)} > "
-                f"{limits['nonpublic_global_symbols']}"
-            )
         undeclared = sorted(nonpublic - private)
         if undeclared:
             errors.append(f"non-public globals lack internal/private declarations: {undeclared}")
@@ -1404,6 +1394,7 @@ class Audit:
         required_entrypoints = (
             self.policy["symbols"]["family_entrypoints"]
             + self.policy["symbols"]["required_internal_entrypoints"]
+            + sorted(self.family_descriptor_entrypoints())
         )
         for entrypoint in required_entrypoints:
             if len(definitions.get(entrypoint, [])) != 1:

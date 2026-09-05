@@ -42,7 +42,8 @@ int yvex_test_native_weights(void)
     yvex_error err;
     int rc;
 
-    system("rm -rf build/tests/native-weights-fixture");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/native-weights-fixture") == 0,
+                     "clear native weights fixture");
     YVEX_TEST_ASSERT(make_dir("build"), "make build");
     YVEX_TEST_ASSERT(make_dir("build/tests"), "make build/tests");
     YVEX_TEST_ASSERT(make_dir(root), "make native fixture root");
@@ -75,7 +76,8 @@ int yvex_test_native_weights(void)
     rc = yvex_native_weight_table_open(&table, &(yvex_native_weight_options){ "build/tests/missing-native-source", 1, 0 }, &err);
     YVEX_TEST_ASSERT(rc != YVEX_OK, "missing source dir fails");
 
-    system("rm -rf build/tests/native-weights-fixture");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/native-weights-fixture") == 0,
+                     "clear duplicate native weights fixture");
     YVEX_TEST_ASSERT(make_dir(root), "make duplicate root");
     YVEX_TEST_ASSERT(write_safetensors("build/tests/native-weights-fixture/model-00001.safetensors",
         "{\"dup.weight\":{\"dtype\":\"F16\",\"shape\":[1],\"data_offsets\":[0,2]}}", 2), "write dup shard 1");

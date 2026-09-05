@@ -93,7 +93,7 @@ runtime_aggregate=$(awk '
 ' Makefile)
 focused_runtime_filters=$(awk '
   /^test-runtime-[[:alnum:]_-]+: \$\(TEST_RUNNER\)$/ { focused = 1; next }
-  focused && /^\tYVEX_TEST_FILTER=runtime_[[:alnum:]_-]+ \$\(TEST_RUNNER\)$/ {
+  focused && /^\tYVEX_TEST_FILTER=(runtime_[[:alnum:]_-]+|unit[.]runtime_binding) \$\(TEST_RUNNER\)$/ {
     line = $0
     sub(/^\tYVEX_TEST_FILTER=/, "", line)
     sub(/ \$\(TEST_RUNNER\)$/, "", line)

@@ -46,11 +46,12 @@ void yvex_provider_request_default(yvex_provider_request *request)
     if (!request)
         return;
     memset(request, 0, sizeof(*request));
-    request->schema_version = YVEX_PROVIDER_SCHEMA_V3;
+    request->schema_version = YVEX_PROVIDER_SCHEMA_V4;
     request->response_format = YVEX_PROVIDER_RESPONSE_TEXT;
     request->tool_choice.kind = YVEX_PROVIDER_TOOL_CHOICE_AUTO;
-    request->reasoning_policy = YVEX_REASONING_DISABLED;
-    request->drop_thinking = 1;
+    request->reasoning_policy = YVEX_REASONING_SOURCE_DEFAULT;
+    request->reasoning_history_policy =
+        YVEX_REASONING_HISTORY_SOURCE_DEFAULT;
     yvex_provider_sampling_default(&request->sampling);
 }
 
@@ -223,7 +224,8 @@ static int request_fields_validate(const yvex_provider_request *request,
     unsigned long long index, other, total = 0u;
     int named_found = 0;
     if (!request ||
-        (request->schema_version < YVEX_PROVIDER_SCHEMA_V1 || request->schema_version > YVEX_PROVIDER_SCHEMA_V3) ||
+        (request->schema_version < YVEX_PROVIDER_SCHEMA_V1 ||
+         request->schema_version > YVEX_PROVIDER_SCHEMA_V4) ||
         !identifier_valid(request->model, sizeof(request->model), 0) ||
         !request->messages || !request->message_count ||
         request->message_count > YVEX_PROVIDER_MAX_MESSAGES ||
@@ -237,11 +239,18 @@ static int request_fields_validate(const yvex_provider_request *request,
         (request->schema_version == YVEX_PROVIDER_SCHEMA_V1 &&
          request->tool_choice.parallel_calls) ||
         request->response_format > YVEX_PROVIDER_RESPONSE_JSON_OBJECT ||
-        request->reasoning_policy > YVEX_REASONING_MAXIMUM ||
+        (request->schema_version == YVEX_PROVIDER_SCHEMA_V4
+             ? !yvex_reasoning_request_policy_valid(request->reasoning_policy)
+             : !yvex_reasoning_policy_valid(request->reasoning_policy)) ||
+        request->reasoning_history_policy >
+            YVEX_REASONING_HISTORY_PRESERVE ||
+        (request->schema_version != YVEX_PROVIDER_SCHEMA_V4 &&
+         request->reasoning_history_policy !=
+             YVEX_REASONING_HISTORY_SOURCE_DEFAULT) ||
         (request->drop_thinking != 0 && request->drop_thinking != 1) ||
         (request->schema_version == YVEX_PROVIDER_SCHEMA_V1 &&
          request->reasoning_policy != YVEX_REASONING_DISABLED) ||
-        (request->schema_version != YVEX_PROVIDER_SCHEMA_V3 &&
+        (request->schema_version < YVEX_PROVIDER_SCHEMA_V3 &&
          !request->maximum_output_tokens) ||
         request->maximum_output_tokens > UINT32_MAX ||
         (request->stream != 0 && request->stream != 1) ||
@@ -348,8 +357,10 @@ static int request_identity(yvex_provider_request *request)
     unsigned long long index, call;
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(
-            &hash, request->schema_version == YVEX_PROVIDER_SCHEMA_V3
-                       ? "yvex.provider.request.v3"
+            &hash, request->schema_version == YVEX_PROVIDER_SCHEMA_V4
+                       ? "yvex.provider.request.v4"
+                       : request->schema_version == YVEX_PROVIDER_SCHEMA_V3
+                             ? "yvex.provider.request.v3"
                        : request->schema_version == YVEX_PROVIDER_SCHEMA_V2
                              ? "yvex.provider.request.v2"
                              : "yvex.provider.request.v1") ||
@@ -394,6 +405,9 @@ static int request_identity(yvex_provider_request *request)
         (request->schema_version != YVEX_PROVIDER_SCHEMA_V1 &&
          (!yvex_sha256_update_u64_be(&hash, request->reasoning_policy) ||
           !yvex_sha256_update_u64_be(&hash, request->drop_thinking))) ||
+        (request->schema_version == YVEX_PROVIDER_SCHEMA_V4 &&
+         !yvex_sha256_update_u64_be(
+             &hash, request->reasoning_history_policy)) ||
         !yvex_sha256_update_u64_be(&hash, request->sampling.stochastic) ||
         !yvex_sha256_update_u64_be(&hash, request->sampling.seed_present) ||
         !yvex_sha256_update_u64_be(&hash, request->sampling.seed) ||
@@ -628,12 +642,12 @@ static int write_text(provider_writer *writer, const char *text, size_t capacity
 
 static unsigned int request_wire_schema(unsigned int request_schema)
 {
-    return request_schema <= YVEX_PROVIDER_SCHEMA_V3 ? request_schema : 0u;
+    return request_schema <= YVEX_PROVIDER_SCHEMA_V4 ? request_schema : 0u;
 }
 
 static unsigned int wire_request_schema(unsigned int wire_schema)
 {
-    return wire_schema <= YVEX_PROVIDER_WIRE_SCHEMA_V3 ? wire_schema : 0u;
+    return wire_schema <= YVEX_PROVIDER_WIRE_SCHEMA_V4 ? wire_schema : 0u;
 }
 
 /* Encode one sealed provider request in deterministic field order. */
@@ -700,6 +714,8 @@ int yvex_provider_request_wire_encode(const yvex_provider_request *request,
         !W32(request->response_format) ||
         (request->schema_version != YVEX_PROVIDER_SCHEMA_V1 &&
          (!W32(request->reasoning_policy) || !W32(request->drop_thinking))) ||
+        (request->schema_version == YVEX_PROVIDER_SCHEMA_V4 &&
+         !W32(request->reasoning_history_policy)) ||
         !W32(request->sampling.stochastic) ||
         !W32(request->sampling.seed_present) || !W64(request->sampling.seed) ||
         !W64(request->sampling.top_k) ||
@@ -824,7 +840,8 @@ int yvex_provider_request_wire_decode(const unsigned char *input,
     if (!request) goto no_memory;
     if (!read_u32(&reader, &magic) || !read_u32(&reader, &schema) ||
         magic != PROVIDER_WIRE_MAGIC ||
-        (schema < YVEX_PROVIDER_WIRE_SCHEMA_V1 || schema > YVEX_PROVIDER_WIRE_SCHEMA_V3) ||
+        (schema < YVEX_PROVIDER_WIRE_SCHEMA_V1 ||
+         schema > YVEX_PROVIDER_WIRE_SCHEMA_V4) ||
         !read_text(&reader, request->model, sizeof(request->model)) ||
         !read_u32(&reader, &count32) || count32 > YVEX_PROVIDER_MAX_MESSAGES)
         goto malformed;
@@ -909,12 +926,23 @@ int yvex_provider_request_wire_decode(const unsigned char *input,
     request->response_format = (yvex_provider_response_format)value32;
     if (schema != YVEX_PROVIDER_WIRE_SCHEMA_V1) {
         if (!read_u32(&reader, &value32) ||
-            value32 > YVEX_REASONING_MAXIMUM)
+            (schema == YVEX_PROVIDER_WIRE_SCHEMA_V4
+                 ? !yvex_reasoning_request_policy_valid(
+                       (yvex_reasoning_policy)value32)
+                 : !yvex_reasoning_policy_valid(
+                       (yvex_reasoning_policy)value32)))
             goto malformed;
         request->reasoning_policy = (yvex_reasoning_policy)value32;
         if (!read_u32(&reader, &value32) || value32 > 1u)
             goto malformed;
         request->drop_thinking = (int)value32;
+    }
+    if (schema == YVEX_PROVIDER_WIRE_SCHEMA_V4) {
+        if (!read_u32(&reader, &value32) ||
+            value32 > YVEX_REASONING_HISTORY_PRESERVE)
+            goto malformed;
+        request->reasoning_history_policy =
+            (yvex_reasoning_history_policy)value32;
     }
     if (!read_u32(&reader, &value32) || value32 > 1u) goto malformed;
     request->sampling.stochastic = (int)value32;

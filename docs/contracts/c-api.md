@@ -24,7 +24,7 @@ External consumers may include the convenience umbrella:
 ```
 
 Production YVEX code includes the exact domain header it consumes. The umbrella
-contains these twelve installed domain headers:
+contains these fifteen installed domain headers:
 
 | Header | Stable domain |
 | --- | --- |
@@ -32,11 +32,14 @@ contains these twelve installed domain headers:
 | `<yvex/source.h>` | source provenance, accounts, manifests, native tensor inventory |
 | `<yvex/gguf.h>` | bounded GGUF v3 parsing, metadata, tensor directory, layout facts |
 | `<yvex/artifact.h>` | immutable file snapshots, identity, integrity and admission |
-| `<yvex/model.h>` | dtypes, tensor roles, descriptors, materialized-weight views |
+| `<yvex/model.h>` | artifact-neutral dtypes, tensor roles and model descriptors |
+| `<yvex/catalog.h>` | remote-provider, acquired-source and local-package catalog records |
+| `<yvex/materialization.h>` | backend-owned materialized-weight lifecycle and views |
 | `<yvex/qtype.h>` | canonical GGUF qtype identity and storage geometry |
 | `<yvex/quant.h>` | quantization policy, job and calibration manifests |
 | `<yvex/graph.h>` | generic graph, planning and memory-plan contracts |
 | `<yvex/backend.h>` | backend admission, device tensors and primitive dispatch |
+| `<yvex/provider.h>` | transport-neutral application request and result semantics |
 | `<yvex/tokenizer.h>` | tokenizer views, tokenization and prompt rendering |
 | `<yvex/registry.h>` | local model registry and typed reference resolution |
 | `<yvex/server.h>` | local protocol, runtime host, sessions, telemetry and thin client lifecycle |
@@ -59,6 +62,40 @@ All public headers are independently includable in C and C++. Public option
 structures borrow pointer fields for the duration of a call. An opaque object
 returned through an output pointer is caller-owned until its matching close or
 release function runs.
+
+## Installed ABI Versioning
+
+A versioned installed record is identified by its C type and schema value.
+One such pair names one field layout and semantic contract. A binary layout or
+incompatible semantic change advances that record's schema; it does not advance
+the private local protocol unless the wire contract also changes. Internal
+records rebuilt with the binary do not acquire public schema versions merely
+because their implementation changes.
+
+`yvex_server_options` schema v4 is the current host-options contract. It adds
+`maximum_engines` between worker capacity and listener policy, preserving the
+separate implementation ceiling, configured engine capacity, and actual
+resource admission. The public v3 constant remains as historical source
+identity, but `yvex_server_create` refuses v3 before reading any field absent
+from its legacy layout. Repository callers use
+`YVEX_SERVER_OPTIONS_SCHEMA_CURRENT`; there is no binary v3 reinterpretation.
+
+`yvex_tokenizer_plan_summary` schema v5 identifies prompt composition with
+family-neutral `conversation` and `verbatim` values, separates tokenizer
+architecture from pre-tokenizer behavior, and carries source-authored reasoning
+capabilities/defaults. Schema v3 and v4 remain historical identities; newly
+sealed plans publish v5. `yvex_prompt_message` schema v1 makes typed assistant
+reasoning history an explicit, rejectable input layout rather than an unchecked
+extension of the earlier pre-v0.1 prompt record.
+
+The installed catalog split introduced unversioned pre-v0.1 source/API
+migrations rather than assigning an existing schema identity to new layouts:
+remote records, local source records, local package records, and live engine
+observations now have distinct owners. Graph and materialization declarations
+moved to their installed domain headers without changing their layouts. The
+public ABI guard binds every explicitly versioned installed record to a
+comment-insensitive declaration signature and compiler-checked 64-bit C/C++
+layout facts. Changing one requires an explicit schema and migration decision.
 
 ## Status, Failure, And Publication
 
@@ -102,18 +139,33 @@ artifact is still not a supported artifact.
 ## Model Registry And Startup Profiles
 
 `<yvex/registry.h>` owns the local model catalog and typed reference
-resolution. Registry schema `yvex.models.local.v4` may bind a catalog entry to
-one complete startup profile: absolute artifact path, exact runtime-binding
-path, runtime target, admitted backend and generation-mode choices, and
-positive context capacity. Older v1/v2/v3 catalogs remain readable; v1/v2
-contain no complete startup profile, while v3 startup profiles are interpreted
-as explicit `target-only` mode.
+resolution. Registry schema `yvex.models.local.v6` binds a catalog entry to one
+typed startup profile. Every profile records engine kind independently from
+execution strategy. `single-artifact` text profiles carry the absolute
+artifact, exact runtime-binding path, runtime target, backend, semantic
+`target-only` or `speculative` strategy, and positive context capacity.
+`composite` media profiles carry an installed component root, target and
+backend with a `not-applicable` execution strategy; they do not manufacture a
+singular artifact or runtime binding. Older v1 through v5 catalogs remain
+readable. The importer maps the former `target-only`, `dspark`, and `media`
+mode values onto the two current axes; current writers never emit the mixed
+legacy mode.
 
-`yvex_model_registry_startup_validate` checks that all startup facts are
-present and that the two local files are readable. It does not authenticate
-either identity, materialize weights, initialize a backend, or establish
-runtime support. The explicit `yvex server MODEL` entrypoint performs full
-artifact and binding admission when the model is opened.
+The installed in-process `yvex_model_registry_entry` contract is explicitly
+versioned at schema v1. Callers set `schema_version` to
+`YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT`; mutation and startup validation
+reject any other value before reading the remaining fields. The former
+unversioned layout is not a binary compatibility surface. Model-library
+projections expose the separately versioned
+`yvex_model_runtime_profile_fact` v1 record.
+
+`yvex_model_registry_startup_validate` checks the facts required by the profile
+kind and the corresponding local file or installation accessibility. It does
+not authenticate identities, materialize weights, initialize a backend, or
+establish runtime support. After the persistent host is running,
+the engine-load operation performs full singular or composite admission and
+publishes one new engine generation. The TTY CLI selects a profile
+interactively; API and noninteractive clients always supply its exact identity.
 
 A composite media target follows the same readiness rule. Before publishing
 `READY`, the server opens the tokenizer and every component artifact, reconciles
@@ -130,8 +182,14 @@ profile, and live runtime model are three distinct facts.
 ## Model, Materialization, And Backend
 
 `<yvex/model.h>` exposes canonical dtype, tensor-role and model-descriptor
-facts. Materialized-weight objects describe bounded backend-owned storage; their
-presence does not imply complete runtime-model residency.
+facts. `<yvex/materialization.h>` separately owns materialized-weight objects
+that describe bounded backend-owned storage; their presence does not imply
+complete runtime-model residency.
+
+`<yvex/catalog.h>` keeps provider records, acquired local sources, and admitted
+local packages as separate record types. A CLI or future GUI may join those
+records with live engine observations, but no catalog record acquires server or
+engine authority.
 
 `<yvex/backend.h>` exposes backend discovery, capability facts, device tensor
 lifecycle and admitted primitives. Backend code consumes typed operations and
@@ -162,42 +220,44 @@ architecture and aggregate identity. It does not add installed API.
 
 ## Common Internal Runtime
 
-The common runtime model and execution session are deliberately non-installed
+The model engine and execution session are deliberately non-installed
 contracts consumed through `<yvex/internal/runtime.h>` by the operator binary.
 The internal runtime is family-neutral. Its main objects are:
 
 | Object | Ownership |
 | --- | --- |
-| `yvex_runtime_binding` | immutable content-addressed bridge from an admitted artifact to runtime identities and executable requirements |
+| `yvex_runtime_binding` | immutable content-addressed package bridge from an admitted artifact to compiled model/operator truth |
 | `yvex_family_compiler_adapter` | compilation-only family projection that seals policy into the binding and never enters runtime model state |
-| `yvex_runtime_model` | immutable verified artifact handle, binding, imported target/draft/verification plans and read-only resident weights |
+| `yvex_model_engine` | one opened package generation with mappings, imported plans, backend specializations, engine resources, scheduler, and attached sessions |
+| engine specialization | process-local mapping from PEIR package decisions to implementation classes admitted by one backend/device |
 | `yvex_runtime_execution_session` | mutable backend context, reusable workspace, committed target state, bounded speculative candidate state, cancellation and CUDA Graph registry |
-| execution descriptor | canonical pointer-free identity over phase, mode, scope, geometry, residency, workspace, state and device facts |
+| execution profile | generation-bound selection of one engine specialization, workload, kernel bundle, mode, evidence class, and typed operation resolutions |
 
 Model-execution descriptor schema v1 is a non-installed fieldwise projection
 of source/family context, attention, MoE, output, DSpark and state facts.
-Runtime binding v14 persists and authenticates it together with the canonical
-operator graph identity, Physical Execution IR v4, compiled model plan, and
-pointer-free tokenizer/conversation policy. Bindings v7 through v13 are refused
-because they cannot represent that complete execution authority, including the
-compiled expert-worklist width policy and any admitted Tensor Core regime.
+Runtime binding v15 persists and authenticates it together with the canonical
+operator graph identity, Physical Execution IR v5 package decisions, compiled
+model plan, and pointer-free tokenizer/conversation policy. The explicit v14
+reader authenticates legacy bytes and normalizes only canonical package records
+to PEIR v5; an unsupported legacy derived-layout requirement refuses. Bindings
+v7 through v13 remain explicit rebuild boundaries.
 Hardware-profile,
 workload-profile, capacity-plan and phase-roofline schemas begin at v1 as
-internal contracts. The installed server construction entrypoints and public
-function-declaration count remain unchanged. Server options schema v2 adds the
-explicit concurrent-sequence request consumed by startup capacity admission;
-schema v1 cannot represent that fact and refuses after an atomic pre-v0.1
-product rebuild.
+internal contracts. Server options schema v4 owns host/listener policy
+independently from `yvex_server_engine_options`; engine schema v2 separates
+engine kind from text execution strategy while retaining alias, package,
+backend, capacity, memory, and generation facts. Engine schema v1 is refused
+before the added fields are read.
 The source-authored conversation boundary admits provider request/wire schema
-v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v11.
-Runtime event schema v3, Physical Execution IR v4 and compiled profile v2
-remain unchanged. Generation plan ABI v5 adds the workload-profile identity
+v4, tokenizer plan v5, tokenizer provider result v2, and local protocol v20.
+Runtime event schema v6, generation plan schema v7, and generation result
+schema v5 are current. Generation plan ABI v5 added the workload-profile identity
 required to bind phase evidence to the compiled workload. Generation result
 schema v5 adds the identity-bearing committed-token extent of a
 source-output-channel boundary; the target-only continuation extent is derived
-from the final committed extent. This internal ABI change does not
-alter local protocol v11 or runtime event schema v3; the existing typed profile
-event projects the new facts without serializing the C result layout.
+from the final committed extent. Runtime event schema v5 projects those facts,
+engine lifecycle, rolling committed progress and aggregate telemetry pressure
+without serializing the C result layout.
 
 Phase-roofline v1 accepts both its original complete record and an additive
 availability mask. A zero mask retains the original all-facts meaning; new
@@ -469,9 +529,9 @@ decode, tokenize, stop, detokenize, or generate.
 ### Internal DeepSeek Attention Operator Boundary
 
 `yvex_graph_attention_operator_execute` is the non-installed typed adapter used
-by the offline `yvex execute attention ...` lane. Inspection and profiling of
+by the offline `yvex bench attention ...` lane. Inspection and profiling of
 the same owner use the `yvex inspect attention ...` and
-`yvex profile attention ...` projections. The adapter consumes a runtime
+`yvex bench attention ...` projections. The adapter consumes a runtime
 binding, common runtime model/session, admitted external artifact, and either a
 canonical diagnostic probe or admitted tensor-file activation input. It never
 calls Make, a test executable, another process or the test-only oracle.
@@ -540,25 +600,48 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v11
+## Execution Truth ABI
+
+`<yvex/execution.h>` owns three pointer-free schema-v1 records shared by typed
+runtime reports, the private protocol, and clients. Capacity separates resident
+sessions, scheduler-visible runnable work, physical sequence width,
+cooperative scheduling, compatible-operation batching, and dynamic continuous
+batching. Measurement binds scope, clock, composition, unit, availability,
+duration, explicit denominator, and independent cumulative/rolling rates.
+Resource truth separates model, typed session state, arena, workspace,
+transient, process, placement, current/peak, and movement facts.
+
+The records do not expose a scheduler queue, CUDA object, family type, profiler,
+or benchmark policy. Availability distinguishes unknown from measured zero;
+overlapping spans and timing scopes remain non-additive. Protocol codecs reject
+unknown enums, inconsistent availability, impossible rate denominators, invalid
+current/peak relations, and UMA claims that confuse device addressability with
+measured physical page residency.
+
+## Application Provider And Local Protocol v20
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
-result ABI. Provider schema v3 additionally represents an omitted completion
+result ABI. Provider schema v3 represents an omitted completion
 limit as adaptive while binding separate assistant reasoning content,
 reasoning policy, source-authored drop behavior, field-presence facts, and a
 bounded ordered tool-call set in addition to the v1 request facts. Provider wire
-v3 carries those fields and the adaptive limit. V1 remains readable and writable only with disabled
+v3 carries those fields and the adaptive limit. Provider schema/wire v4 adds a
+source-default reasoning request and a separate source-default/drop/preserve
+history policy, so model-family conversation policy remains authoritative when
+the application omits either choice. V1 remains readable and writable only with disabled
 reasoning, at most one assistant tool call, and its original field semantics.
 Clone and wire-decode publish only a complete owned request graph. The provider
 owner neither parses HTTP nor renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v11 carries the sealed provider request through the
+`<yvex/server.h>` protocol v20 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 explicit reasoning, function calls, usage, terminal completion, and failure.
 Typed events bind the provider adapter, provider-request identity, and external
 correlation ID while excluding prompt and output content.
 
-Protocol v11 carries selected generation mode, speculative lifecycle events,
+Protocol v20 carries host status/stop, engine load/list/unload, exact
+alias/generation routing, separate engine kind and semantic execution strategy,
+speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn
 timing and cancellation classes, an exact partial-turn schema, source-authored
 reasoning policy, typed reasoning/final/tool/error channels, and separate
@@ -574,9 +657,51 @@ model-state checkpoint save/restore operations with an explicit file bound and
 typed digest/identity evidence. Version 9 adds the startup capacity-plan
 identity, required and unreserved bytes, admitted concurrent sequences, and
 separate independent-session-scheduling and continuous-batching readiness.
-Provider v3's adaptive limit is not executable by a v10 peer, so every non-v11
-frame refuses during the handshake;
+Provider v4's source-default reasoning/history semantics and generation-bound
+routing are not executable by an older peer, so every non-v20 frame refuses during the handshake;
 there is no private pre-v0.1 compatibility decoder.
+
+Version 12 added the typed terminal media result. Version 13 separates host
+lifetime from engine lifetime and adds typed engine summaries plus exact
+generation routing. A successful media turn binds
+its absolute publication path, geometry, frame/audio facts, seed, byte extent,
+hosted-preset identity, execution identity, file identity, and publication
+identity without reclassifying runtime control text as model output. Media
+progress remains server-authored telemetry. Text-generation request and result
+semantics are unchanged.
+
+Version 14 added typed first/last image conditions to hosted media requests.
+Version 15 removes the mixed public generation-mode axis while retaining those
+conditions. Engine records identify text versus media independently from
+target-only versus speculative text execution. DSpark remains a DeepSeek
+implementation of the semantic speculative strategy below the server boundary.
+The incompatible engine and event layouts advance to schemas v2 and v4; v14
+frames and legacy record schemas fail closed rather than being reinterpreted.
+Version 16 added typed image-conditioning and media execution selection without
+changing text routing. Version 17 adds engine load/unload lifecycle kinds,
+runtime-event schema v5, and explicit versus server-resolved completion-envelope
+facts. The event identity binds those new kinds and v16 frames fail closed.
+Version 18 carries provider request/wire v4 so omitted reasoning and reasoning
+history are resolved by the admitted source conversation policy; v17 frames
+fail closed.
+Version 19 adds fixed, validated execution-capacity, scoped-measurement, and
+resource-summary subrecords. Runnable work, physical sequence width,
+compatible-operation batching, and dynamic continuous batching remain separate
+facts. Measurements bind scope, clock, overlap/composition, work unit, exact
+denominators, and cumulative or bounded rolling rates. Resources bind model,
+session, arena, workspace, transient, process, placement, and availability
+without treating UMA addressability as measured physical device residency.
+Event, engine, metric, and host-summary schemas advance with those incompatible
+facts; v18 frames fail closed.
+
+Version 20 adds ordered typed content with stable per-part identity and
+derived-from provenance, local-file media references that avoid JSON/base64
+expansion, directional input/output capability facts, attached-client and
+model-lease counts, and explicit ensure-active/release lease operations. Engine
+schema v4 carries those capabilities and occupancy facts. V19 peers fail closed
+rather than interpreting the new request and engine layouts.
+The runtime-profile catalog record advances to schema v2 so a launchable READY
+deployment and its later active engine expose one capability shape.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map
 queue capacity, timeout, incompatible state and unsupported input without
@@ -592,19 +717,23 @@ owners directly. The exact HTTP profile is documented in
 
 ## Physical Execution And Candidate-State ABI
 
-`<yvex/internal/execution.h>` owns Physical Execution IR schema v4, compiled
-execution profiles, device-value views, explicit host-materialization policy,
-and the execution-shape registry. These are non-installed cross-subsystem
-contracts. They bind semantic identities and extents but never durable pointers
-or process state. Materialization consumes terminal decisions; runtime consumes
-one sealed profile; backend consumers receive typed values rather than an
-implicit host `float *` contract. An expert decision seals legal worklist
-widths, the narrow kernel family, and an optional numerically admitted Tensor
-Core minimum and family. Runtime geometry cannot widen that policy.
+`<yvex/internal/execution.h>` owns Physical Execution IR schema v5 package
+decisions, hardware/workload/capacity records, physical evidence records, and
+device-value views. PEIR binds canonical terminal role, qtype, row geometry,
+encoded range, consumer, stable layout, and sharing; it contains no selected
+backend, activation, kernel family, request width, or live resource fact.
+
+Runtime specialization maps each PEIR decision to a typed implementation
+record for one backend/device. It owns activation representation, admitted real
+widths, equivalent fallback class, and hardware crossover. The non-persisted
+execution profile binds that specialization to one engine generation and
+workload. The removed execution-shape registry is not a compatibility surface;
+transient compatibility keys carry only the facts needed to form real batches.
 
 `<yvex/internal/execution_batch.h>` owns the typed execution-batch and expert-
-worklist contracts. The compiled policy contains only stable physical facts;
-one runtime instance binds actual sources, rows, provenance, expert buckets,
+worklist contracts. The specialization contains only deployment-stable
+implementation facts; one runtime instance binds actual sources, rows,
+provenance, expert buckets,
 offsets, populations and route weights. A bucket contains rows for exactly one
 compatible expert. CUDA may select an equivalent microkernel and execute a
 bounded tail, but it cannot regroup routes, merge sessions, or fabricate width.
@@ -624,7 +753,7 @@ accepted-prefix transaction, stop reasons, incremental committed-text
 publication, partial progress, and result validation. Its implementation is
 split among the admitted runtime generation, session, speculation, context,
 and result owners rather than exposing another ABI. It borrows one admitted
-runtime model and one execution session; it does not reopen artifacts or
+model engine and one execution session; it does not reopen artifacts or
 duplicate tokenizer, Transformer, logits, sampling, or KV semantics.
 
 The speculative boundary consumes a family-projected draft plan and generic
@@ -635,12 +764,15 @@ publish one accepted prefix together; rejection and cancellation abort every
 uncommitted participant. Existing generated-token and completion-usage counts
 remain committed-target counts.
 
-`<yvex/server.h>` exposes the local protocol, one-model host, server session,
-typed event, metrics snapshot, and thin protocol-client lifecycles. The
-engine-linked `yvex server` entrypoint owns one host and bounded keyed scheduler. Server sessions retain
-independent execution state, exact token ledgers, transcripts, and turn records
-across client detach. The next turn reuses KV only after exact token-prefix
-admission and prefills only the new suffix.
+`<yvex/server.h>` exposes the local protocol, persistent host, engine manager,
+engine generations, server session, typed event, metrics snapshot, and thin
+protocol-client lifecycles. `yvex serve` starts with zero engines;
+`yvex_server_engine_load`, `yvex_server_engine_unload`, and
+`yvex_server_engine_snapshot` own the in-process lifecycle. Server sessions
+retain independent execution state, exact token ledgers, transcripts, and turn
+records across client detach and are bound to one exact generation. The next
+turn reuses state only after exact token-prefix admission and prefills only the
+new suffix.
 
 Streaming sends a fragment after model, decoder, and internal text commit.
 Client delivery failure preserves committed state and reports a partial turn.
@@ -653,20 +785,21 @@ routes in the same ELF have separately guarded engine dependencies.
 The offline command lane provides the direct production consumer for the internal ABI:
 
 ```text
-yvex execute attention prepare
+yvex bench attention prepare
 yvex inspect attention describe
 yvex inspect attention capabilities
 yvex inspect attention plan
-yvex execute attention run
-yvex execute attention compare
-yvex inspect attention state|validate|exercise
+yvex bench attention execute
+yvex bench attention compare
+yvex inspect attention state
+yvex bench attention state validate|exercise
 yvex inspect attention residency
-yvex execute attention capture|replay
-yvex profile attention cuda-graph list|inspect|warmup|update|invalidate|release
-yvex profile attention trace|profile|benchmark|qualify
-yvex profile attention compare
-yvex execute moe
-yvex execute transformer run
+yvex bench attention capture|replay
+yvex bench attention graph list|inspect|warmup|update|invalidate|release
+yvex bench attention trace|profile|component|qualify
+yvex bench attention benchmark compare
+yvex bench moe
+yvex bench transformer execute
 ```
 
 `prepare` is the compiler-side producer for an external runtime binding.
@@ -686,12 +819,12 @@ input, not prompt text. Production activation prefill instead selects
 reports `activation_prefill_ready` separately from
 `full_model_prefill_ready`.
 
-`execute moe` requires explicit artifact and runtime-binding paths,
+`bench moe` requires explicit artifact and runtime-binding paths,
 `--backend cpu|cuda`, `--input tensor-file`, `--input-file FILE`, `--scope
 full`, and `--progress off`. It calls the production runtime MoE API directly;
 it does not run a fixture, test executable, Make target, or second process.
 
-`execute transformer run` requires explicit artifact, runtime binding, and a
+`bench transformer execute` requires explicit artifact, runtime binding, and a
 schema-v1 `--input token-ids --input-file FILE`. It accepts `--backend
 cpu|cuda`, `--phase prefill`, positive chunk/context capacities, and
 `--progress off`. It calls the production transformer API directly and reports

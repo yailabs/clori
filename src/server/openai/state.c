@@ -39,6 +39,7 @@ openai_response_record *openai_state_find(openai_gateway *gateway,
 
 int openai_state_store(openai_gateway *gateway, const char *response_id,
                        const char *session_name,
+                       unsigned long long engine_generation,
                        const yvex_provider_request *context,
                        unsigned long long now, yvex_error *err)
 {
@@ -46,7 +47,8 @@ int openai_state_store(openai_gateway *gateway, const char *response_id,
     openai_response_record *slot = NULL;
     unsigned long long index;
     if (!gateway || !response_id || !response_id[0] || !session_name ||
-        !session_name[0] || yvex_provider_request_validate(context, err) != YVEX_OK)
+        !session_name[0] || !engine_generation ||
+        yvex_provider_request_validate(context, err) != YVEX_OK)
         return YVEX_ERR_INVALID_ARG;
     if (yvex_provider_request_clone(context, &clone, err) != YVEX_OK)
         return yvex_error_code(err);
@@ -67,6 +69,7 @@ int openai_state_store(openai_gateway *gateway, const char *response_id,
     yvex_core_text_copy(slot->response_id, sizeof(slot->response_id), response_id);
     yvex_core_text_copy(slot->session_name, sizeof(slot->session_name), session_name);
     yvex_core_text_copy(slot->model, sizeof(slot->model), context->model);
+    slot->engine_generation = engine_generation;
     slot->context = clone;
     slot->created_seconds = now;
     slot->last_used_sequence = ++gateway->request_count;
@@ -77,12 +80,13 @@ int openai_state_store(openai_gateway *gateway, const char *response_id,
 int openai_state_replace(openai_gateway *gateway,
                          openai_response_record *record,
                          const char *response_id,
+                         unsigned long long engine_generation,
                          const yvex_provider_request *context,
                          unsigned long long now, yvex_error *err)
 {
     yvex_provider_request *clone = NULL;
     if (!gateway || !record || !record->occupied || !response_id ||
-        !response_id[0] ||
+        !response_id[0] || !engine_generation ||
         yvex_provider_request_validate(context, err) != YVEX_OK)
         return YVEX_ERR_INVALID_ARG;
     if (yvex_provider_request_clone(context, &clone, err) != YVEX_OK)
@@ -92,6 +96,7 @@ int openai_state_replace(openai_gateway *gateway,
     yvex_core_text_copy(record->response_id, sizeof(record->response_id),
                         response_id);
     yvex_core_text_copy(record->model, sizeof(record->model), context->model);
+    record->engine_generation = engine_generation;
     record->created_seconds = now;
     record->last_used_sequence = ++gateway->request_count;
     yvex_error_clear(err);

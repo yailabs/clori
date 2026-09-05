@@ -7,14 +7,13 @@
 #include "src/cli/render/private.h"
 #include "src/cli/model_artifacts/private.h"
 #include "src/cli/io/private.h"
-
+#include <yvex/internal/model.h>
+#include <stdlib.h>
 #include <string.h>
-
 typedef struct {
     const char *key;
     const char *role;
 } fullmodel_role_projection;
-
 static const fullmodel_role_projection family_runtime_roles[] = {
     {"token_embedding_role", "token_embedding"},
     {"attention_norm_role", "attention_norm"},
@@ -31,7 +30,6 @@ static const fullmodel_role_projection family_runtime_roles[] = {
     {"output_head_role", "output_head"},
     {"tokenizer_metadata_role", "tokenizer_metadata"},
 };
-
 static const yvex_render_field_spec prepare_identity_fields[] = {
     {"target_id", YVEX_RENDER_FIELD_TEXT_ARRAY,
      offsetof(yvex_models_prepare_source_report, target_id), "unknown"},
@@ -88,7 +86,6 @@ static const yvex_render_field_spec prepare_identity_fields[] = {
     {"downloaded_target_resolved", YVEX_RENDER_FIELD_BOOL,
      offsetof(yvex_models_prepare_source_report, downloaded_target_resolved), NULL},
 };
-
 static const yvex_render_field_spec prepare_result_fields[] = {
     {"reason", YVEX_RENDER_FIELD_TEXT,
      offsetof(yvex_models_prepare_source_report, reason), "unknown"},
@@ -97,7 +94,6 @@ static const yvex_render_field_spec prepare_result_fields[] = {
     {"status", YVEX_RENDER_FIELD_TEXT,
      offsetof(yvex_models_prepare_source_report, final_status), "unknown"},
 };
-
 #define MATERIALIZE_REPORT_FIELD(key_, kind_, member_, fallback_) \
     {key_, kind_, offsetof(fullmodel_materialize_report, member_), fallback_}
 
@@ -170,43 +166,27 @@ static const yvex_render_field_spec materialize_accounting_fields[] = {
 };
 
 #undef MATERIALIZE_REPORT_FIELD
-
 static const char *const literal_pair_0[] = { "family: unknown", "family_detected: unknown"};
-
 static const char *const literal_pair_1[] = { "family_runtime: report", "status: fullmodel-family-runtime-fail"};
-
 static const char *const literal_pair_2[] = { "fullmodel: descriptor", "status: fullmodel-descriptor-fail"};
-
 static const char *const literal_pair_3[] = { "family: unknown", "family_detected: unknown"};
-
 static const char *const literal_pair_4[] = { "family_runtime: report", "status: fullmodel-family-runtime-fail"};
-
 static const char *const literal_pair_5[] = { "fullmodel: descriptor", "status: fullmodel-descriptor-fail"};
-
 static const char *const literal_pair_6[] = { "family: glm", "family_detected: glm"};
-
 static const char *const literal_pair_7[] = {
     "family_runtime: report", "status: fullmodel-family-runtime-unsupported"};
-
 static const char *const literal_pair_8[] = { "fullmodel: descriptor", "status: fullmodel-descriptor-unsupported"};
-
 static const char *const literal_pair_9[] = {
     "plan_kind: full-model-materialization", "plan_source: source-target-without-YVEX-GGUF"};
-
 static const char *const literal_pair_10[] = {
     "fullmodel: materialization-plan", "status: fullmodel-materialization-plan-unsupported"};
-
 static const char *const literal_pair_11[] = { "fullmodel: report", "status: fullmodel-report-unsupported"};
-
 static const char *const literal_pair_12[] = {
     "boundary: descriptor report-only, no runtime execution", "status: fullmodel-descriptor"};
-
 static const char *const literal_pair_13[] = {
     "boundary: plan-only, no materialization", "status: fullmodel-materialization-plan"};
-
 static const char *const literal_pair_14[] = {
     "graph_requirement_status: blocked", "runtime_blocker_status: blocked"};
-
 static const char *const literal_lines_0[] = {
     "prefill_ready: false", "decode_ready: false", "logits_ready: false", "sampling_ready: false",
     "full_model_execution: unsupported", "full_model_materialization: planned", "full_runtime_descriptor: planned",
@@ -1534,7 +1514,6 @@ static int fullmodel_print_failure(const yvex_cli_fullmodel_options *options,
     yvex_cli_out_writef(stdout, "reason: %s\n", reason);
     return exit_for_status(rc);
 }
-
 int print_fullmodel_missing_report(const yvex_cli_fullmodel_options *options,
                                           const char *resolved_path)
 {
@@ -1548,12 +1527,10 @@ int print_fullmodel_parse_failure_report(const yvex_cli_fullmodel_options *optio
                                                 int rc)
 {
     unsigned long long artifact_bytes = 0ull;
-
     fullmodel_file_size(ref && ref->path ? ref->path : "", &artifact_bytes);
     return fullmodel_print_failure(options, ref, ref && ref->path ? ref->path : "", reason,
                                    artifact_bytes, rc, 1u);
 }
-
 void yvex_fullmodel_help(FILE *fp)
 {
     yvex_cli_out_lines(fp, fullmodel_usage_lines,

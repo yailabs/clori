@@ -9,40 +9,40 @@
 #include <yvex/internal/logits.h>
 #include <yvex/internal/sampling.h>
 static const char *const literal_lines_0[] = {
-    "usage: yvex execute attention prepare --target TARGET",
+    "usage: yvex bench attention prepare --target TARGET",
     "           [--source DIR --source-manifest FILE]",
     "           [--physical-variant-plan FILE --quant-preset NAME|--quant-policy FILE]",
     "           [--imatrix-manifest FILE]",
     "       yvex inspect attention describe --target TARGET",
     "       yvex inspect attention capabilities --target TARGET --backend cpu|cuda",
     "       yvex inspect attention plan --target TARGET --backend cpu|cuda",
-    "       yvex execute attention run --target TARGET --backend cpu|cuda",
-    "       yvex execute attention compare --target TARGET",
+    "       yvex bench attention execute --target TARGET --backend cpu|cuda",
+    "       yvex bench attention compare --target TARGET",
     "       yvex inspect attention state|validate|exercise --target TARGET",
     "       yvex inspect attention residency --target TARGET --backend cpu|cuda",
-    "       yvex execute attention capture|replay --target TARGET",
-    "       yvex profile attention cuda-graph list|inspect|warmup|update|invalidate|release --target TARGET",
-    "       yvex profile attention trace|profile|benchmark|qualify --target TARGET --backend cpu|cuda",
-    "       yvex profile attention compare --baseline FILE --current FILE",
-    "       yvex execute moe --target TARGET --artifact FILE --runtime-binding FILE",
+    "       yvex bench attention capture|replay --target TARGET",
+    "       yvex bench attention graph list|inspect|warmup|update|invalidate|release --target TARGET",
+    "       yvex bench attention trace|profile|benchmark|qualify --target TARGET --backend cpu|cuda",
+    "       yvex bench attention benchmark compare --baseline FILE --current FILE",
+    "       yvex bench moe --target TARGET --artifact FILE --runtime-binding FILE",
     "           --backend cpu|cuda --input tensor-file --input-file FILE --scope full",
     "           token IDs are numeric routing input; they do not establish tokenizer support",
-    "       yvex execute transformer run --target TARGET --artifact FILE --runtime-binding FILE",
+    "       yvex bench transformer execute --target TARGET --artifact FILE --runtime-binding FILE",
     "           --backend cpu|cuda --phase prefill --input token-ids --input-file FILE",
     "           --chunk-tokens N --context-capacity N --progress off",
     "           numeric token IDs do not establish tokenizer, logits, decode, or generation support",
-    "       yvex execute transformer decode --target TARGET --artifact FILE --runtime-binding FILE",
+    "       yvex bench transformer decode --target TARGET --artifact FILE --runtime-binding FILE",
     "           --backend cpu|cuda --input token-ids --input-file FILE",
     "           --prefill-tokens N --prefill-chunk-tokens N --context-capacity N --progress off",
     "           teacher-forced numeric tokens do not establish logits, sampling, or generation",
-    "       yvex execute transformer logits --target TARGET --artifact FILE --runtime-binding FILE",
+    "       yvex bench transformer logits --target TARGET --artifact FILE --runtime-binding FILE",
     "           --backend cpu|cuda --input token-ids --input-file FILE",
     "           --prefill-tokens N --prefill-chunk-tokens N --context-capacity N --progress off",
     "           complete raw vocabulary logits do not establish sampling or generation",
-    "       yvex execute transformer sample --target TARGET --artifact FILE --runtime-binding FILE",
+    "       yvex bench transformer sample --target TARGET --artifact FILE --runtime-binding FILE",
     "           --strategy greedy | --strategy stochastic --seed N [sampling filters]",
     "           selected token IDs are not appended, decoded, detokenized, or generated",
-    "       yvex execute transformer generate --target TARGET --artifact FILE --runtime-binding FILE",
+    "       yvex bench transformer generate --target TARGET --artifact FILE --runtime-binding FILE",
     "           --backend cpu|cuda --user TEXT --max-new-tokens N --prefill-chunk-tokens N",
     "           [--models-root DIR] [--artifact FILE] [--runtime-binding FILE] [--runtime-binding-dir DIR]",
     "           [--backend cpu|cuda] [--phase prefill|decode|mixed|verify]",
@@ -62,7 +62,7 @@ static const char *const literal_lines_0[] = {
     "       reserved controls refuse until their typed runtime owners exist: [multi-layer ranges]",
     "           [--local-capacity N] [--compressed-capacity N] [--indexer-capacity N]",
     "",
-    "example: yvex execute attention run --target deepseek4-v4-flash-dspark --backend cpu --scope quick",
+    "example: yvex bench attention execute --target deepseek4-v4-flash-dspark --backend cpu --scope quick",
     "boundary: attention commands execute canonical activations over admitted weights and session-persistent "
         "state; they are not prompt execution, transformer composition, or generation"
 };
@@ -400,7 +400,7 @@ static const yvex_cli_field_spec sampling_fields[] = {
     SAMPLE_BOOL(token_append_ready), SAMPLE_BOOL(tokenizer_runtime_ready),
     SAMPLE_BOOL(eos_policy_ready), SAMPLE_BOOL(stop_policy_ready),
     SAMPLE_BOOL(detokenization_ready), SAMPLE_BOOL(generation_ready),
-    SAMPLE_BOOL(cuda_sampling_ready), SAMPLE_BOOL(model_behavior_evaluation_ready),
+    SAMPLE_BOOL(device_sampling_ready), SAMPLE_BOOL(model_behavior_evaluation_ready),
     SAMPLE_BOOL(full_model_benchmark_ready), SAMPLE_BOOL(release_qualification_ready),
     SAMPLE_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
     SAMPLE_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
@@ -531,10 +531,6 @@ static const yvex_cli_field_spec attention_runtime_fields[] = {
     ATTENTION_FIELD("runtime_transform_plans_built", YVEX_CLI_FIELD_U64, runtime_transform_plans_built),
     ATTENTION_FIELD("runtime_quant_plans_built", YVEX_CLI_FIELD_U64, runtime_quant_plans_built),
     ATTENTION_FIELD("runtime_writer_plans_built", YVEX_CLI_FIELD_U64, runtime_writer_plans_built),
-    ATTENTION_FIELD("runtime_model_builds", YVEX_CLI_FIELD_U64, runtime_model_builds),
-    ATTENTION_FIELD("runtime_descriptor_builds", YVEX_CLI_FIELD_U64, runtime_descriptor_builds),
-    ATTENTION_FIELD("semantic_graph_builds", YVEX_CLI_FIELD_U64, semantic_graph_builds),
-    ATTENTION_FIELD("executable_graph_builds", YVEX_CLI_FIELD_U64, executable_graph_builds),
 };
 static const yvex_cli_field_spec attention_timing_fields[] = {
     ATTENTION_TIMING("artifact_open_seconds", YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN),
@@ -1357,11 +1353,11 @@ int yvex_graph_sampling_render(FILE *fp, yvex_graph_report_mode mode,
 static const char *const generation_roofline_names[] = {
     "prefill-layer", "decode-layer", "verify-sweep", "draft-sweep",
     "output-head", "state-promotion", "batched-decode"};
-static int graph_generation_roofline_json(FILE *fp, const yvex_runtime_generation_result *run)
+static int graph_generation_roofline_json(FILE *fp, const yvex_runtime_generation_evidence *evidence)
 {
-    const yvex_execution_roofline_ledger *ledger = &run->roofline;
+    const yvex_execution_roofline_ledger *ledger = &evidence->roofline;
     unsigned long long index;
-    if (!run->roofline_available)
+    if (!evidence->roofline_available)
         return yvex_cli_out_puts(fp, "  \"roofline\": null,\n") < 0 ? YVEX_ERR_IO : YVEX_OK;
     if (yvex_cli_out_writef(
             fp, "  \"roofline\": {\"schema\":%u,\"identity\":\"%s\","
@@ -1400,11 +1396,11 @@ static int graph_generation_roofline_json(FILE *fp, const yvex_runtime_generatio
     }
     return yvex_cli_out_puts(fp, "  ]},\n") < 0 ? YVEX_ERR_IO : YVEX_OK;
 }
-static int graph_generation_roofline_audit(FILE *fp, const yvex_runtime_generation_result *run)
+static int graph_generation_roofline_audit(FILE *fp, const yvex_runtime_generation_evidence *evidence)
 {
-    const yvex_execution_roofline_ledger *ledger = &run->roofline;
+    const yvex_execution_roofline_ledger *ledger = &evidence->roofline;
     unsigned long long index;
-    if (!run->roofline_available) return YVEX_OK;
+    if (!evidence->roofline_available) return YVEX_OK;
     if (yvex_cli_out_writef(
             fp, "roofline: identity=%s measured=%llu missing=%llu rooflined=%llu provisional=%s\n",
             ledger->identity, ledger->measured_phase_mask, ledger->missing_phase_mask,
@@ -1436,9 +1432,12 @@ static int graph_generation_roofline_audit(FILE *fp, const yvex_runtime_generati
 int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
                                  const yvex_generation_operator_result *result)
 {
-    const yvex_runtime_generation_result *run; unsigned long long index;
+    const yvex_runtime_generation_result *run;
+    const yvex_runtime_generation_evidence *evidence;
+    unsigned long long index;
     if (!fp || !result || (result->token_count && !result->tokens)) return YVEX_ERR_INVALID_ARG;
     run = &result->execution;
+    evidence = &result->evidence;
     if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {
         yvex_cli_json_begin(fp);
         yvex_cli_json_field_str(fp, "command", result->command, 1);
@@ -1452,7 +1451,7 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
         yvex_cli_json_field_str(fp, "prompt_identity", run->prompt_identity, 1);
         yvex_cli_json_field_str(
             fp, "execution_mode",
-            run->execution_mode == YVEX_GENERATION_MODE_DSPARK
+            run->execution_mode == YVEX_GENERATION_MODE_SPECULATIVE
                 ? "dspark" : "target-only",
             1);
         yvex_cli_json_field_str(fp, "speculation_policy_identity",
@@ -1511,24 +1510,26 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
         yvex_cli_json_field_bool(fp, "cli_generate_ready", result->cli_generate_ready, 1);
         if (yvex_cli_out_writef(fp,
                 "  \"profile\": {\"schema\":%u,\"mode\":\"%s\",\"identity\":\"%s\","
-                "\"phases_ns\":{", run->profile.schema_version,
-                runtime_profile_mode_name(run->profile.mode),
-                run->profile.profile_identity) < 0) return YVEX_ERR_IO;
+                "\"phases_ns\":{", evidence->profile.schema_version,
+                yvex_runtime_profile_mode_name(evidence->profile.mode),
+                evidence->profile.profile_identity) < 0) return YVEX_ERR_IO;
         for (index = 0ull; index < YVEX_RUNTIME_PROFILE_PHASE_COUNT; ++index)
             if (yvex_cli_out_writef(fp, "\"%s\":%llu%s",
-                    runtime_profile_phase_name((yvex_runtime_profile_phase)index),
-                    run->profile.phase_ns[index],
+                    yvex_runtime_profile_phase_name(
+                        (yvex_runtime_profile_phase)index),
+                    evidence->profile.phase_ns[index],
                     index + 1ull == YVEX_RUNTIME_PROFILE_PHASE_COUNT ? "" : ",") < 0)
                 return YVEX_ERR_IO;
         yvex_cli_out_puts(fp, "},\"counters\":{");
         for (index = 0ull; index < YVEX_RUNTIME_PROFILE_COUNTER_COUNT; ++index)
             if (yvex_cli_out_writef(fp, "\"%s\":%llu%s",
-                    runtime_profile_counter_name((yvex_runtime_profile_counter)index),
-                    run->profile.counters[index],
+                    yvex_runtime_profile_counter_name(
+                        (yvex_runtime_profile_counter)index),
+                    evidence->profile.counters[index],
                     index + 1ull == YVEX_RUNTIME_PROFILE_COUNTER_COUNT ? "" : ",") < 0)
                 return YVEX_ERR_IO;
         yvex_cli_out_puts(fp, "}},\n");
-        if (graph_generation_roofline_json(fp, run) != YVEX_OK) return YVEX_ERR_IO;
+        if (graph_generation_roofline_json(fp, evidence) != YVEX_OK) return YVEX_ERR_IO;
         yvex_cli_out_puts(fp, "  \"generated_tokens\": [\n");
         for (index = 0ull; index < result->token_count; ++index) {
             const yvex_runtime_generation_token_result *token = &result->tokens[index];
@@ -1554,13 +1555,13 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
                 "generated_text_digest: %s\nstop_reason: %s\nreason: %s\n",
                 result->status, run->prompt_token_count, run->sampled_token_count,
                 run->model_committed_token_count,
-                run->execution_mode == YVEX_GENERATION_MODE_DSPARK
+                run->execution_mode == YVEX_GENERATION_MODE_SPECULATIVE
                     ? "dspark" : "target-only",
                 run->generated_text_bytes, run->generated_text_digest,
                 yvex_runtime_generation_stop_reason_name(run->stop_reason),
                 result->reason[0] ? result->reason : "none") < 0)
             return YVEX_ERR_IO;
-        if (run->execution_mode == YVEX_GENERATION_MODE_DSPARK &&
+        if (run->execution_mode == YVEX_GENERATION_MODE_SPECULATIVE &&
             yvex_cli_out_writef(
                 fp, "speculation: proposed=%llu accepted=%llu rejected=%llu "
                     "verifications=%llu max_prefix=%llu confidence=%llu "
@@ -1573,8 +1574,8 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
                 run->confidence_logit_maximum,
                 run->confidence_logit_mean) < 0)
             return YVEX_ERR_IO;
-        if (mode == YVEX_GRAPH_REPORT_MODE_AUDIT &&
-            graph_generation_roofline_audit(fp, run) != YVEX_OK) return YVEX_ERR_IO;
+        if (mode == YVEX_GRAPH_REPORT_MODE_AUDIT && graph_generation_roofline_audit(fp, evidence) != YVEX_OK)
+            return YVEX_ERR_IO;
         for (index = 0ull; index < result->token_count; ++index)
             if (yvex_cli_out_writef(fp, "token.%llu: id=%u committed=%s terminal=%s text_bytes=%llu\n",
                     index, result->tokens[index].sampled_token_id,

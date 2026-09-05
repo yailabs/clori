@@ -82,7 +82,7 @@ static int sampling_device_row(
     row->device_logits.kind = YVEX_EXECUTION_DEVICE_LOGITS;
     row->device_logits.backend = backend;
     row->device_logits.tensor = tensor;
-    row->device_logits.model_generation = row->device_logits.session_generation =
+    row->device_logits.resource_generation = row->device_logits.session_generation =
         row->device_logits.state_generation = 1ull;
     row->device_logits.rows = 1ull;
     row->device_logits.columns = plan->vocabulary_size;
@@ -105,7 +105,7 @@ static int sampling_device_row(
         !yvex_sha256_update_text(&hash, row->output_head_residency_identity) ||
         !yvex_sha256_update_text(&hash, row->backend_execution_identity) ||
         !yvex_sha256_update_text(&hash, row->device_logits.execution_profile_identity) ||
-        !yvex_sha256_update_u64(&hash, row->device_logits.model_generation) ||
+        !yvex_sha256_update_u64(&hash, row->device_logits.resource_generation) ||
         !yvex_sha256_update_u64(&hash, row->device_logits.session_generation) ||
         !yvex_sha256_update_u64(&hash, row->device_logits.state_generation) ||
         !yvex_sha256_update_u64(&hash, row->device_logits.element_offset) ||
@@ -178,7 +178,7 @@ static int sampling_greedy_rows(
         -1.0f, 0.0f, 2.0f, 1.0f, 2.0f, 2.0f, 0.0f};
     yvex_backend_tensor_desc descriptor;
     yvex_device_tensor *device = NULL;
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     unsigned long long ties[3] = {0ull};
     unsigned int tokens[3] = {UINT_MAX, UINT_MAX, UINT_MAX};
     float selected[3] = {0.0f};
@@ -196,7 +196,7 @@ static int sampling_greedy_rows(
         tokens[0] == 1u && selected[0] == 3.5f && ties[0] == 2ull &&
             tokens[1] == 0u && selected[1] == 9.0f && ties[1] == 1ull &&
             tokens[2] == 2u && selected[2] == 2.0f && ties[2] == 3ull &&
-            facts.kernel_launches == 1ull && facts.stream_synchronizations == 1ull &&
+            facts.kernel_launches == 1ull && facts.queue_synchronizations == 1ull &&
             facts.device_synchronizations == 0ull &&
             facts.d2h_bytes == sizeof(int) + sizeof(tokens) + sizeof(selected) + sizeof(ties),
         "batched CUDA argmax preserves lowest-token tie policy and aggregate physical facts");
@@ -214,7 +214,7 @@ static int sampling_full_vocabulary(
     yvex_backend_tensor_desc descriptor;
     yvex_runtime_sampling_policy policy = sampling_policy();
     yvex_backend_sampling_result result;
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     yvex_error err;
     unsigned long long workspace_bytes;
     float *uniform = calloc((size_t)vocabulary, sizeof(*uniform));
@@ -293,7 +293,7 @@ static int sampling_speculation_device(
     yvex_speculation_acceptance_request request = {0};
     yvex_speculation_acceptance_result reference = {0};
     yvex_backend_speculation_result result = {0};
-    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_backend_operation_facts facts = {0};
     yvex_backend_tensor_desc descriptor;
     yvex_device_tensor *draft = NULL, *target = NULL, *workspace = NULL;
     unsigned long long workspace_bytes, row, case_index;
@@ -400,7 +400,7 @@ static int sampling_speculation_device(
                 facts.h2d_bytes ==
                     sizeof(candidates) + sizeof(uniform_cases[case_index]) &&
                 facts.d2h_bytes <= 128ull && facts.kernel_launches == 1ull &&
-                facts.stream_synchronizations == 1ull &&
+                facts.queue_synchronizations == 1ull &&
                 facts.device_synchronizations == 0ull &&
                 facts.activation_bytes ==
                     sizeof(draft_logits) + sizeof(target_cases[case_index]) &&
@@ -425,7 +425,7 @@ int yvex_cuda_test_sampling(void)
     const yvex_backend_sampling_operations *operations;
     yvex_runtime_sampling_policy policy = sampling_policy();
     yvex_backend_sampling_result result;
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     yvex_error err;
     unsigned long long workspace_bytes = 0ull;
     double denominator = 1.0 + exp(1.0) + exp(2.0) + exp(3.0);
@@ -486,7 +486,7 @@ int yvex_cuda_test_sampling(void)
             result.candidates_after_typical_p == 4ull &&
             result.candidates_after_top_p == 4ull &&
             fabs(result.selected_probability - 1.0 / denominator) < 1.0e-14 &&
-            facts.kernel_launches == 1ull && facts.stream_synchronizations == 1ull &&
+            facts.kernel_launches == 1ull && facts.queue_synchronizations == 1ull &&
             facts.device_synchronizations == 0ull &&
             facts.download_count == 5ull && facts.d2h_bytes == 100ull &&
             facts.activation_bytes == sizeof(logits) &&

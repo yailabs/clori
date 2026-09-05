@@ -62,7 +62,7 @@ snapshot but may not claim upstream verification. The ordered aggregate
 payload identity and per-shard trust facts are published atomically in the
 canonical source manifest outside the repository.
 
-The canonical operator projection is `yvex compile source verify --source DIR
+The canonical operator projection is `yvex source verify --source DIR
 --models-root DIR --source-manifest FILE`. It is finite, reads every shard on
 first publication, refuses missing provider SHA-256 authority, and never
 materializes or hosts a model. Reopening an unchanged upstream-verified v3
@@ -124,6 +124,23 @@ verification plans refuse admission instead of selecting target-only mode.
 A supported artifact additionally requires the runtime, generation,
 evaluation, benchmark, and release gates in
 [Release Doctrine](../releases/doctrine.md).
+
+## Verified Reopen
+
+Complete byte authentication may publish a rebuildable local verified-reopen
+receipt. The receipt binds the expected artifact identity to one stable
+filesystem snapshot and records that full byte verification previously
+completed. A later open may skip the full payload hash only when both identities
+still match. Structural GGUF, tensor, qtype, catalog, role, and family admission
+remain mandatory.
+
+Composite runtimes consume the same artifact-owned mechanism independently for
+each component. Missing, stale, malformed, or unreadable receipt state falls
+back to full byte verification. A successful fallback safely repairs the
+receipt; a byte mismatch fails closed and publishes no trusted evidence. One
+component fallback does not invalidate unrelated warm component hits. The
+cache root is deployment/runtime policy, never family semantics, and verified
+reopen is not materialization or residency evidence.
 
 ## Existing Proof Files
 

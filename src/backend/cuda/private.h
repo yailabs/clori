@@ -6,17 +6,14 @@
 #include <yvex/backend.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/execution.h>
 #include <yvex/internal/quant_numeric.h>
-#include <yvex/internal/transformer.h>
 #include "src/backend/private.h"
 #define YVEX_CUDA_Q8_K_BLOCK 256ull
 #define YVEX_CUDA_Q8_K_BYTES 292ull
 #ifdef __cplusplus
 extern "C" {
 #endif
-typedef int CUresult;
-typedef int CUdevice;
+typedef int CUresult, CUdevice;
 typedef void *CUcontext, *CUmodule, *CUfunction, *CUstream, *CUevent, *CUgraph;
 typedef void *CUgraphExec, *CUgraphNode;
 typedef unsigned long long CUdeviceptr;
@@ -275,16 +272,19 @@ typedef struct {
     CUfunction moe_accumulate_function;
     CUfunction mlp_function;
     CUfunction attention_function;
-    CUfunction rotary_half_function, rotary_half_plain_function, gqa_function;
-    CUfunction gqa_pack_value_function, gqa_score_function, gqa_scale_function, gqa_softmax_function;
-    CUfunction gqa_softmax_warp_function, gqa_value_function, gqa_unpack_function;
-    CUfunction silu_product_function, silu_function, timestep_embedding_function;
-    CUfunction split_three_function, split_interleaved_function;
-    CUfunction swiglu_split_function, swiglu_split_f32_function;
+    CUfunction rotary_half_function, rotary_half_plain_function, gqa_function,
+        gqa_wide_function;
+    CUfunction gqa_softmax_function, gqa_softmax_warp_function, attention_validate_function;
+    CUfunction silu_product_function, sigmoid_product_function, silu_function, gelu_function;
+    CUfunction timestep_embedding_function, split_three_function, split_interleaved_function;
+    CUfunction split_interleaved_two_function, swiglu_split_function, swiglu_split_f32_function;
     CUfunction modulation_function, gated_residual_function, bias_function, add_bf16_function;
     CUfunction scaled_residual_f32_function, layer_norm_f32_function;
-    CUfunction conv_scale_function, conv1d_function, alias_up_function, alias_down_function;
+    CUfunction conv_scale_function, conv1d_function, conv1d_transposed_function;
+    CUfunction conv2d_function, group_norm_silu_function;
+    CUfunction alias_up_function, alias_down_function;
     CUfunction vector_update_function, clamp_function;
+    CUfunction gated_delta_convolution_function, gated_delta_recurrence_function;
     yvex_cuda_kernel_bundle_state kernel_bundle_state;
     yvex_backend_capability_reason kernel_bundle_reason;
     yvex_backend_operation_variant kernel_bundle_failure_variant;
@@ -411,9 +411,6 @@ int yvex_cuda_refresh_memory_info(yvex_backend *backend, yvex_error *err);
 CUdeviceptr yvex_cuda_tensor_ptr(const yvex_device_tensor *tensor);
 int yvex_cuda_blas_bind_launch_stream(yvex_backend *backend, const char *where, yvex_error *err);
 CUstream yvex_cuda_launch_stream(const yvex_backend *backend);
-int yvex_cuda_moe_derived_layout_plan(const yvex_physical_execution_decision *, unsigned long long *, yvex_error *);
-int yvex_cuda_moe_derived_layout_build(const yvex_physical_execution_decision *, const unsigned char *,
-                                       unsigned long long, unsigned char *, unsigned long long, yvex_error *);
 int yvex_cuda_resident_alloc(yvex_backend *, const yvex_backend_tensor_desc *,
                              yvex_device_tensor **, unsigned char **, yvex_error *);
 int yvex_cuda_resident_map_supported(const yvex_backend *);
@@ -542,6 +539,14 @@ typedef struct {
                        const yvex_cuda_attention_state_sources *, size_t *, int *, yvex_error *);
 } yvex_cuda_attention_operations;
 const yvex_cuda_attention_operations *yvex_cuda_attention_operations_get(void);
+const struct yvex_backend_sampling_operations *yvex_cuda_sampling_operations_get(
+    const yvex_backend *);
+const struct yvex_backend_moe_operations *yvex_cuda_moe_operations_get(
+    const yvex_backend *);
+const struct yvex_backend_transformer_operations *yvex_cuda_transformer_operations_get(
+    const yvex_backend *);
+const struct yvex_backend_encoded_operations *yvex_cuda_encoded_operations_get(
+    const yvex_backend *);
 int yvex_cuda_kernel_bundle_admit(yvex_backend *backend, yvex_error *err);
 const char *yvex_cuda_kernel_function_identity(const yvex_cuda_backend_state *, CUfunction);
 int yvex_cuda_kernel_bundle_close(yvex_backend *backend, yvex_error *err);
@@ -581,7 +586,6 @@ int yvex_cuda_op_attention(yvex_backend *backend, const yvex_device_tensor *quer
                            int causal, yvex_device_tensor *score_scratch,
                            yvex_device_tensor *probability_scratch, yvex_device_tensor *out,
                            yvex_error *err);
-/* Qtype. */
 int yvex_cuda_quant_row_dot(yvex_backend *backend,
                             unsigned int qtype,
                             const unsigned char *encoded,
@@ -589,8 +593,7 @@ int yvex_cuda_quant_row_dot(yvex_backend *backend,
                             const float *vector,
                             unsigned long long elements,
                             float *out,
-                            yvex_quant_failure *failure,
-                            yvex_error *err);
+                            yvex_quant_failure *failure, yvex_error *err);
 #ifdef __cplusplus
 }
 #endif

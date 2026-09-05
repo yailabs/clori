@@ -18,7 +18,7 @@ fail() {
 yvex_test_cleanup "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-"$YVEX_BIN" compile emit artifact controlled \
+"$YVEX_BIN" compile artifact emit \
     --out "$OUT" \
     --model-name yvex-owned-gguf-test \
     --arch llama \
@@ -53,5 +53,5 @@ grep 'bytes_materialized: 128' "$OUT_DIR/materialize-cpu.out" >/dev/null || fail
 grep 'execution_ready: false' "$OUT_DIR/materialize-cpu.out" >/dev/null || fail "missing execution false"
 grep 'status: weights-materialized' "$OUT_DIR/materialize-cpu.out" >/dev/null || fail "missing weights status"
 
-"$YVEX_BIN" compile emit artifact --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" || fail "help failed"
-grep 'usage: yvex compile emit artifact' "$OUT_DIR/help.out" >/dev/null || fail "missing help usage"
+"$YVEX_BIN" compile artifact emit --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" || fail "help failed"
+grep 'usage: yvex compile artifact emit' "$OUT_DIR/help.out" >/dev/null || fail "missing help usage"

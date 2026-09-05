@@ -661,6 +661,19 @@ static int tokenizer_config_bool(tokenizer_json *json, int *out) {
     return 0;
 }
 
+static int tokenizer_config_optional_bool(tokenizer_json *json, int *out,
+                                          int *declared) {
+    tokenizer_json_space(json);
+    if (json->cursor < json->end && *json->cursor == 'n') {
+        *declared = 0;
+        return tokenizer_json_literal(json, "null");
+    }
+    if (!tokenizer_config_bool(json, out))
+        return 0;
+    *declared = 1;
+    return 1;
+}
+
 static int tokenizer_parse_config(yvex_gguf_tokenizer_metadata *metadata,
                                   yvex_gguf_tokenizer_failure *failure, yvex_error *err) {
     tokenizer_json json;
@@ -684,14 +697,18 @@ static int tokenizer_parse_config(yvex_gguf_tokenizer_metadata *metadata,
         if (json.cursor >= json.end || *json.cursor++ != ':')
             goto malformed;
         if (strcmp(key, "add_bos_token") == 0) {
-            if ((seen & 1u) || !tokenizer_config_bool(&json, &metadata->summary.add_bos_token))
+            if ((seen & 1u) ||
+                !tokenizer_config_optional_bool(
+                    &json, &metadata->summary.add_bos_token,
+                    &metadata->summary.add_bos_token_declared))
                 goto malformed;
-            metadata->summary.add_bos_token_declared = 1;
             seen |= 1u;
         } else if (strcmp(key, "add_eos_token") == 0) {
-            if ((seen & 2u) || !tokenizer_config_bool(&json, &metadata->summary.add_eos_token))
+            if ((seen & 2u) ||
+                !tokenizer_config_optional_bool(
+                    &json, &metadata->summary.add_eos_token,
+                    &metadata->summary.add_eos_token_declared))
                 goto malformed;
-            metadata->summary.add_eos_token_declared = 1;
             seen |= 2u;
         } else if (strcmp(key, "bos_token") == 0) {
             if ((seen & 4u) || !tokenizer_config_special(metadata, &json, &metadata->config_bos))

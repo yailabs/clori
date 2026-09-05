@@ -4,6 +4,7 @@
  * Component identities and typed global bindings determine one ordered immutable plan. Reusable
  * family-neutral composition from embedding values to normalized hidden values.
  */
+#include <yvex/internal/joint_transformer.h>
 #include <yvex/internal/transformer.h>
 
 #include "src/graph/private.h"
@@ -57,23 +58,110 @@ static int transformer_hash_f64(yvex_sha256 *hash, double value)
     return yvex_sha256_update_u64(hash, bits);
 }
 
+int yvex_transformer_linear_requirement_validate(
+    const yvex_transformer_linear_requirement *requirement, yvex_error *err)
+{
+    int output_projection = requirement &&
+        requirement->operation >= YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT &&
+        requirement->operation <= YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT;
+    int compiled_dense = requirement &&
+        requirement->operation >= YVEX_TRANSFORMER_LINEAR_OPERATION_MODULATION &&
+        requirement->operation <= YVEX_TRANSFORMER_LINEAR_OPERATION_PROJECTION;
+    if (!requirement || !requirement->input_width || !requirement->output_width ||
+        (output_projection &&
+         (requirement->publication_contract != YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT ||
+          requirement->source_dtype != YVEX_DTYPE_F32 ||
+          requirement->input_dtype != YVEX_DTYPE_UNKNOWN ||
+          requirement->accumulation_dtype != YVEX_DTYPE_UNKNOWN ||
+          requirement->output_dtype != YVEX_DTYPE_UNKNOWN ||
+          requirement->publication_dtype != YVEX_DTYPE_UNKNOWN || requirement->bias != 1)) ||
+        (compiled_dense &&
+         (requirement->publication_contract !=
+              YVEX_TRANSFORMER_LINEAR_NUMERIC_BF16_F32_ACCUMULATION ||
+          requirement->source_dtype != YVEX_DTYPE_BF16 ||
+          requirement->input_dtype != YVEX_DTYPE_F32 ||
+          requirement->accumulation_dtype != YVEX_DTYPE_F32 ||
+          requirement->output_dtype != YVEX_DTYPE_F32 ||
+          (requirement->publication_dtype != YVEX_DTYPE_F32 &&
+           requirement->publication_dtype != YVEX_DTYPE_BF16) || requirement->bias != 0)) ||
+        (!output_projection && !compiled_dense))
+        return transformer_refuse(err, YVEX_ERR_FORMAT,
+                                  "linear semantic requirement is malformed");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_transformer_joint_linear_requirement(
+    const yvex_transformer_joint_recipe *recipe,
+    yvex_transformer_joint_linear_slot slot,
+    yvex_transformer_linear_requirement *requirement, yvex_error *err)
+{
+    unsigned long long output_width = 0ull;
+    if (requirement) memset(requirement, 0, sizeof(*requirement));
+    if (!recipe || !requirement || slot >= YVEX_TRANSFORMER_JOINT_LINEAR_COUNT)
+        return transformer_refuse(err, YVEX_ERR_INVALID_ARG,
+                                  "one joint dense semantic slot is required");
+    requirement->operation = (yvex_transformer_linear_operation)(
+        YVEX_TRANSFORMER_LINEAR_OPERATION_MODULATION + slot);
+    requirement->publication_contract = recipe->linear_numeric_contract;
+    requirement->source_dtype = recipe->linear_source_dtype;
+    requirement->input_dtype = recipe->linear_input_dtype;
+    requirement->accumulation_dtype = recipe->linear_accumulation_dtype;
+    requirement->output_dtype = recipe->linear_output_dtype;
+    requirement->publication_dtype = recipe->linear_publication_dtype;
+    switch (slot) {
+    case YVEX_TRANSFORMER_JOINT_LINEAR_MODULATION:
+        requirement->input_width = recipe->timestep_width;
+        if (!yvex_core_u64_mul(recipe->modality_count, recipe->modulation_parameters,
+                               &output_width) ||
+            !yvex_core_u64_mul(output_width, recipe->hidden_width, &output_width))
+            return transformer_refuse(err, YVEX_ERR_BOUNDS,
+                                      "joint modulation geometry overflowed");
+        requirement->publication_dtype = recipe->linear_output_dtype;
+        break;
+    case YVEX_TRANSFORMER_JOINT_LINEAR_QKV:
+        requirement->input_width = recipe->hidden_width;
+        if (!yvex_core_u64_mul(3ull, recipe->attention_width, &output_width))
+            return transformer_refuse(err, YVEX_ERR_BOUNDS,
+                                      "joint QKV geometry overflowed");
+        break;
+    case YVEX_TRANSFORMER_JOINT_LINEAR_ATTENTION_OUTPUT:
+        requirement->input_width = recipe->attention_width;
+        output_width = recipe->hidden_width;
+        break;
+    case YVEX_TRANSFORMER_JOINT_LINEAR_GATE_UP:
+        requirement->input_width = recipe->hidden_width;
+        if (!yvex_core_u64_mul(2ull, recipe->ffn_width, &output_width))
+            return transformer_refuse(err, YVEX_ERR_BOUNDS,
+                                      "joint gate/up geometry overflowed");
+        break;
+    case YVEX_TRANSFORMER_JOINT_LINEAR_DOWN:
+        requirement->input_width = recipe->ffn_width;
+        output_width = recipe->hidden_width;
+        break;
+    default:
+        return transformer_refuse(err, YVEX_ERR_INVALID_ARG,
+                                  "unknown joint dense semantic slot");
+    }
+    requirement->output_width = output_width;
+    return yvex_transformer_linear_requirement_validate(requirement, err);
+}
+
 static int linear_physical_facts_valid(const yvex_transformer_linear_physical_plan *plan)
 {
     size_t domain_length;
     if (!plan) return 0;
     domain_length = strnlen(plan->semantic_domain, sizeof(plan->semantic_domain));
-    return plan->schema_version == YVEX_TRANSFORMER_LINEAR_PHYSICAL_SCHEMA_V1 &&
+    return plan->schema_version == YVEX_TRANSFORMER_LINEAR_PHYSICAL_SCHEMA_V3 &&
            domain_length > 0u && domain_length < sizeof(plan->semantic_domain) &&
            plan->operation >= YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT &&
            plan->operation <= YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT &&
+           plan->numeric_contract == YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT &&
+           plan->source_dtype == YVEX_DTYPE_F32 && plan->bias == 1 &&
            plan->implementation ==
-               YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_CUBLAS_LT_F32_BIAS &&
-           plan->reduction >= YVEX_TRANSFORMER_LINEAR_REDUCTION_INPLACE &&
-           plan->reduction <= YVEX_TRANSFORMER_LINEAR_REDUCTION_COMPUTE_TYPE &&
-           plan->stages <= YVEX_TRANSFORMER_LINEAR_STAGES_8X5 &&
-           plan->backend == YVEX_BACKEND_KIND_CUDA && plan->algorithm_id &&
-           plan->tile_rows && plan->tile_columns && plan->split_k > 1u &&
-           plan->compute_capability_major && plan->input_width && plan->output_width &&
+               YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_DEVICE_F32_BIAS &&
+           plan->backend != YVEX_BACKEND_KIND_CPU &&
+           plan->backend <= YVEX_BACKEND_KIND_ROCM && plan->input_width && plan->output_width &&
            plan->workspace_bytes && plan->deterministic == 1 && plan->exact == 1;
 }
 
@@ -82,9 +170,12 @@ static int linear_operation_identity(yvex_transformer_linear_physical_plan *plan
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.transformer.linear.operation.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.transformer.linear.operation.v3") ||
         !yvex_sha256_update_text(&hash, plan->semantic_domain) ||
         !yvex_sha256_update_u64(&hash, plan->operation) ||
+        !yvex_sha256_update_u64(&hash, plan->numeric_contract) ||
+        !yvex_sha256_update_u64(&hash, plan->source_dtype) ||
+        !yvex_sha256_update_u64(&hash, (unsigned long long)plan->bias) ||
         !yvex_sha256_update_u64(&hash, plan->input_width) ||
         !yvex_sha256_update_u64(&hash, plan->output_width) ||
         !yvex_sha256_final(&hash, digest))
@@ -98,18 +189,10 @@ static int linear_physical_identity(yvex_transformer_linear_physical_plan *plan)
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.transformer.linear.physical.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.transformer.linear.physical.v3") ||
         !yvex_sha256_update_text(&hash, plan->operation_identity) ||
         !yvex_sha256_update_u64(&hash, plan->implementation) ||
-        !yvex_sha256_update_u64(&hash, plan->reduction) ||
-        !yvex_sha256_update_u64(&hash, plan->stages) ||
         !yvex_sha256_update_u64(&hash, plan->backend) ||
-        !yvex_sha256_update_u64(&hash, plan->algorithm_id) ||
-        !yvex_sha256_update_u64(&hash, plan->tile_rows) ||
-        !yvex_sha256_update_u64(&hash, plan->tile_columns) ||
-        !yvex_sha256_update_u64(&hash, plan->split_k) ||
-        !yvex_sha256_update_u64(&hash, plan->compute_capability_major) ||
-        !yvex_sha256_update_u64(&hash, plan->compute_capability_minor) ||
         !yvex_sha256_update_u64(&hash, plan->input_width) ||
         !yvex_sha256_update_u64(&hash, plan->output_width) ||
         !yvex_sha256_update_u64(&hash, plan->workspace_bytes) ||
@@ -137,80 +220,6 @@ int yvex_transformer_linear_physical_seal(
                                   "linear physical plan identity derivation failed");
     yvex_error_clear(err);
     return YVEX_OK;
-}
-
-static int linear_physical_compile(
-    const yvex_transformer_linear_physical_request *request,
-    yvex_transformer_linear_physical_plan *plan, yvex_error *err)
-{
-    size_t domain_length;
-    if (!request || !plan || !request->semantic_domain)
-        return transformer_refuse(err, YVEX_ERR_INVALID_ARG,
-                                  "linear physical compiler facts are required");
-    domain_length = strnlen(request->semantic_domain, YVEX_TRANSFORMER_LINEAR_DOMAIN_CAP);
-    if (!domain_length || domain_length >= YVEX_TRANSFORMER_LINEAR_DOMAIN_CAP)
-        return transformer_refuse(err, YVEX_ERR_BOUNDS,
-                                  "linear physical semantic domain exceeds its bound");
-    memset(plan, 0, sizeof(*plan));
-    plan->schema_version = request->schema_version;
-    memcpy(plan->semantic_domain, request->semantic_domain, domain_length);
-    plan->operation = request->operation;
-    plan->implementation = request->implementation;
-    plan->reduction = request->reduction;
-    plan->stages = request->stages;
-    plan->backend = request->backend;
-    plan->algorithm_id = request->algorithm_id;
-    plan->tile_rows = request->tile_rows;
-    plan->tile_columns = request->tile_columns;
-    plan->split_k = request->split_k;
-    plan->compute_capability_major = request->compute_capability_major;
-    plan->compute_capability_minor = request->compute_capability_minor;
-    plan->input_width = request->input_width;
-    plan->output_width = request->output_width;
-    plan->workspace_bytes = request->workspace_bytes;
-    plan->deterministic = request->deterministic;
-    plan->exact = request->exact;
-    return yvex_transformer_linear_physical_seal(plan, err);
-}
-
-int yvex_transformer_linear_physical_profile_compile(
-    const char *semantic_domain, yvex_transformer_linear_operation operation,
-    unsigned long long input_width, unsigned long long output_width,
-    yvex_transformer_linear_profile profile, yvex_transformer_linear_physical_plan *plan,
-    yvex_error *err)
-{
-    yvex_transformer_linear_physical_request request = {
-        .schema_version = YVEX_TRANSFORMER_LINEAR_PHYSICAL_SCHEMA_V1,
-        .semantic_domain = semantic_domain,
-        .operation = operation,
-        .implementation = YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_CUBLAS_LT_F32_BIAS,
-        .backend = YVEX_BACKEND_KIND_CUDA,
-        .compute_capability_major = 12u,
-        .compute_capability_minor = 1u,
-        .input_width = input_width,
-        .output_width = output_width,
-        .workspace_bytes = 1024ull * 1024ull,
-        .deterministic = 1,
-        .exact = 1,
-    };
-    if (profile == YVEX_TRANSFORMER_LINEAR_PROFILE_CUBLAS_LT_SM121_ALGORITHM_10) {
-        request.algorithm_id = 10u;
-        request.tile_rows = request.tile_columns = 32u;
-        request.split_k = 10u;
-        request.reduction = YVEX_TRANSFORMER_LINEAR_REDUCTION_INPLACE;
-        request.stages = YVEX_TRANSFORMER_LINEAR_STAGES_DEFAULT;
-    } else if (profile == YVEX_TRANSFORMER_LINEAR_PROFILE_CUBLAS_LT_SM121_ALGORITHM_20) {
-        request.algorithm_id = 20u;
-        request.tile_rows = 128u;
-        request.tile_columns = 32u;
-        request.split_k = 3u;
-        request.reduction = YVEX_TRANSFORMER_LINEAR_REDUCTION_COMPUTE_TYPE;
-        request.stages = YVEX_TRANSFORMER_LINEAR_STAGES_8X5;
-    } else {
-        return transformer_refuse(err, YVEX_ERR_UNSUPPORTED,
-                                  "linear physical profile is not admitted");
-    }
-    return linear_physical_compile(&request, plan, err);
 }
 
 int yvex_transformer_linear_physical_validate(
@@ -285,12 +294,10 @@ static int transformer_binding_project(
         binding->expert_count > 1ull || !binding->backend_compatible)
         return transformer_refuse(err, YVEX_ERR_FORMAT,
                                   "transformer global binding is unavailable");
-    if (!capability || !capability->reference_decoder_available ||
-        !capability->dedicated_cpu_compute_available ||
-        !capability->dedicated_cuda_compute_available)
+    if (!capability || !capability->reference_decoder_available)
         return transformer_refuse(
             err, YVEX_ERR_UNSUPPORTED,
-            "transformer global binding qtype lacks CPU/CUDA execution");
+            "transformer global binding qtype lacks admitted encoded semantics");
     *out = (yvex_transformer_weight_binding){
         .tensor_id = binding->tensor_id,
         .row_width = binding->row_width,

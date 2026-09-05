@@ -8,6 +8,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+typedef struct yvex_component_text_recipe yvex_component_text_recipe;
+typedef struct yvex_backend_component_operations yvex_backend_component_operations;
+typedef struct yvex_backend_encoded_operations yvex_backend_encoded_operations;
+typedef struct yvex_backend_moe_operations yvex_backend_moe_operations;
+typedef struct yvex_backend_sampling_operations yvex_backend_sampling_operations;
+typedef struct yvex_backend_transformer_operations yvex_backend_transformer_operations;
 /* Encoded attention is a private graph/backend ABI, never installed capability surface. */
 #define YVEX_BACKEND_ATTENTION_JOB_SCHEMA 3u
 typedef enum {
@@ -66,7 +72,7 @@ typedef enum {
     YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
 } yvex_backend_attention_scope;
 /* Values mirror the cross-subsystem execution phase ABI; correction and reset are not backend
- * attention phases and remain invalid gaps. CUDA admission asserts every shared value. */
+ * attention phases and remain invalid gaps. Backend admission asserts every shared value. */
 typedef enum {
     YVEX_BACKEND_ATTENTION_PHASE_PREFILL = 0, YVEX_BACKEND_ATTENTION_PHASE_DECODE = 1,
     YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT = 2,
@@ -127,9 +133,10 @@ typedef struct {
     unsigned long long tokens_executed, compressed_count, indexer_count;
     unsigned long long topk_count, valid_candidate_count;
     unsigned long long host_bytes, peak_host_bytes, device_bytes, peak_device_bytes;
-    unsigned long long kernel_launches, tensor_core_launches, h2d_bytes, d2h_bytes, d2d_bytes;
+    unsigned long long kernel_launches, accelerated_matrix_launches;
+    unsigned long long h2d_bytes, d2h_bytes, d2d_bytes;
     unsigned long long device_state_staged_bytes;
-    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long queue_synchronizations, device_synchronizations;
     unsigned long long device_execution_elapsed_ns, host_workspace_capacity;
     unsigned long long host_workspace_used, host_workspace_peak, host_workspace_allocation_count;
     int host_workspace_reused, device_state_staged;
@@ -190,62 +197,6 @@ int yvex_backend_attention_complete(yvex_backend *backend,
                                     yvex_backend_attention_completion *completion,
                                     int barrier_observed, yvex_error *err);
 
-/* A family compiler supplies this complete text-stack geometry and semantic identity. The CUDA
- * operation executes it without recovering a source architecture or selecting family policy. */
-#define YVEX_BACKEND_TEXT_ENCODER_SCHEMA_V1 1u
-typedef struct {
-    unsigned int schema_version;
-    const char *semantic_identity;
-    const char *embedding_identity_domain;
-    const char *encoder_identity_domain;
-    unsigned long long layer_capacity, hidden_width, ffn_width;
-    unsigned long long query_heads, kv_heads, head_dimension;
-    unsigned long long vocabulary_size, rope_theta;
-    float normalization_epsilon;
-} yvex_backend_text_encoder_geometry;
-typedef enum {
-    YVEX_BACKEND_TEXT_EMBEDDING = 0,
-    YVEX_BACKEND_TEXT_INPUT_NORM,
-    YVEX_BACKEND_TEXT_Q_PROJECTION,
-    YVEX_BACKEND_TEXT_K_PROJECTION,
-    YVEX_BACKEND_TEXT_V_PROJECTION,
-    YVEX_BACKEND_TEXT_O_PROJECTION,
-    YVEX_BACKEND_TEXT_Q_NORM,
-    YVEX_BACKEND_TEXT_K_NORM,
-    YVEX_BACKEND_TEXT_POST_NORM,
-    YVEX_BACKEND_TEXT_GATE_PROJECTION,
-    YVEX_BACKEND_TEXT_UP_PROJECTION,
-    YVEX_BACKEND_TEXT_DOWN_PROJECTION,
-    YVEX_BACKEND_TEXT_WEIGHT_COUNT,
-    YVEX_BACKEND_TEXT_LAYER_WEIGHT_COUNT = YVEX_BACKEND_TEXT_WEIGHT_COUNT - 1
-} yvex_backend_text_weight_slot;
-typedef struct {
-    const unsigned char *encoded;
-    unsigned long long encoded_bytes, row_count, row_width, row_bytes;
-    unsigned int qtype;
-} yvex_backend_text_weight;
-typedef struct {
-    unsigned long long token_count, hidden_width, layer_count, resident_bytes;
-    unsigned long long kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
-    char residency_identity[YVEX_SHA256_HEX_BYTES];
-    char execution_identity[YVEX_SHA256_HEX_BYTES];
-    int complete;
-} yvex_backend_text_execution_result;
-int yvex_backend_text_embedding_execute(
-    yvex_backend *backend, const yvex_backend_text_encoder_geometry *geometry,
-    const unsigned char *encoded, unsigned long long encoded_bytes,
-    unsigned int qtype, unsigned long long row_count, unsigned long long row_width,
-    unsigned long long row_bytes, const char *residency_identity,
-    unsigned long long resident_bytes, const unsigned int *token_ids,
-    unsigned long long token_count, float *output, unsigned long long output_capacity,
-    yvex_backend_text_execution_result *result, yvex_error *err);
-int yvex_backend_text_encoder_execute(
-    yvex_backend *backend, const yvex_backend_text_encoder_geometry *geometry,
-    const yvex_backend_text_weight *weights, unsigned long long layer_count,
-    const char *residency_identity, unsigned long long resident_bytes,
-    const unsigned int *token_ids, unsigned long long token_count, float *output,
-    unsigned long long output_capacity, yvex_backend_text_execution_result *result,
-    yvex_error *err);
 typedef int (*yvex_backend_state_resolve_fn)(
     const void *context, const void *host, unsigned long long bytes,
     unsigned long long *device_address);
@@ -253,6 +204,14 @@ int yvex_backend_close_admit(yvex_backend *backend, yvex_error *err);
 /* Admission failure publishes only a FAILED cleanup owner when checked rollback also fails. */
 int yvex_backend_open_shared_cuda(yvex_backend **out, yvex_backend *context_owner,
                                   unsigned long long memory_limit_bytes, yvex_error *err);
+const yvex_backend_sampling_operations *yvex_backend_sampling_operations_get(
+    const yvex_backend *backend);
+const yvex_backend_moe_operations *yvex_backend_moe_operations_get(
+    const yvex_backend *backend);
+const yvex_backend_transformer_operations *yvex_backend_transformer_operations_get(
+    const yvex_backend *backend);
+const yvex_backend_component_operations *yvex_backend_component_operations_get(
+    const yvex_backend *backend);
 struct yvex_device_tensor {
     yvex_backend *owner;
     unsigned long long owner_id;
@@ -322,44 +281,45 @@ int yvex_backend_resident_attach(yvex_backend *, const unsigned char *, unsigned
 int yvex_backend_resident_detach(yvex_backend *backend, yvex_error *err);
 int yvex_backend_resident_resolve(const yvex_backend *backend, const unsigned char *host,
                                   unsigned long long bytes, unsigned long long *device_address);
-typedef struct yvex_backend_cuda_operation_facts {
+typedef struct yvex_backend_operation_facts {
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, kernel_launches, upload_count;
-    unsigned long long download_count, stream_synchronizations, device_synchronizations;
+    unsigned long long download_count, queue_synchronizations, device_synchronizations;
     unsigned long long active_weight_bytes, state_bytes;
-    unsigned long long activation_bytes, temporary_bytes, tensor_core_launches;
+    unsigned long long activation_bytes, temporary_bytes, accelerated_matrix_launches;
     int compulsory_memory_facts_available;
-} yvex_backend_cuda_operation_facts;
-typedef struct yvex_transformer_linear_physical_plan yvex_transformer_linear_physical_plan;
-int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char *resident_encoded,
+} yvex_backend_operation_facts;
+struct yvex_backend_encoded_operations {
+    int (*matvec)(yvex_backend *backend, const unsigned char *resident_encoded,
+        unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
+        unsigned long long row_width, unsigned long long row_bytes,
+        unsigned long long input_rows, const yvex_device_tensor *input,
+        const yvex_device_tensor *input_tail, unsigned long long input_head_width,
+        const yvex_device_tensor *additive, yvex_device_tensor *output, int activation_q8,
+        yvex_backend_operation_facts *facts, yvex_error *err);
+    int (*gather)(yvex_backend *backend, const unsigned char *resident_encoded,
+        unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
+        unsigned long long row_width, unsigned long long row_bytes,
+        const unsigned int *row_ids, unsigned long long selected_rows,
+        yvex_device_tensor *output, yvex_backend_operation_facts *facts,
+        yvex_error *err);
+};
+int yvex_backend_encoded_matvec(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
     unsigned long long row_width, unsigned long long row_bytes, unsigned long long input_rows,
     const yvex_device_tensor *input, const yvex_device_tensor *input_tail, unsigned long long input_head_width,
     const yvex_device_tensor *additive, yvex_device_tensor *output, int activation_q8,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_backend_cuda_encoded_linear_bf16(
-    yvex_backend *backend, const unsigned char *resident_weight,
-    unsigned long long weight_bytes, const unsigned char *resident_bias,
-    unsigned long long bias_bytes, unsigned long long output_width,
-    unsigned long long input_width, unsigned long long input_rows,
-    const yvex_device_tensor *input, yvex_device_tensor *output,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_backend_cuda_encoded_linear_f32(
-    yvex_backend *backend, const unsigned char *resident_weight,
-    unsigned long long weight_bytes, const unsigned char *resident_bias,
-    unsigned long long bias_bytes, unsigned long long output_width,
-    unsigned long long input_width, unsigned long long input_rows,
-    const yvex_device_tensor *input, yvex_device_tensor *output,
-    const yvex_transformer_linear_physical_plan *physical_plan,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_backend_cuda_encoded_gather(yvex_backend *backend, const unsigned char *resident_encoded,
+    yvex_backend_operation_facts *facts, yvex_error *err);
+int yvex_backend_encoded_gather(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
     unsigned long long row_width, unsigned long long row_bytes, const unsigned int *row_ids,
     unsigned long long selected_rows, yvex_device_tensor *output,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+    yvex_backend_operation_facts *facts, yvex_error *err);
 int yvex_backend_state_residency_attach(yvex_backend *backend, const void *context,
     yvex_backend_state_resolve_fn resolve, unsigned long long generation, yvex_error *err);
-int yvex_backend_state_residency_publish_generation(
+int yvex_backend_state_residency_validate_generation(
     yvex_backend *backend, unsigned long long generation, yvex_error *err);
+void yvex_backend_state_residency_publish_generation(
+    yvex_backend *backend, unsigned long long generation);
 void yvex_backend_state_residency_detach(yvex_backend *backend);
 int yvex_backend_state_residency_resolve(const yvex_backend *backend, const void *host,
     unsigned long long bytes, unsigned long long *device_address);

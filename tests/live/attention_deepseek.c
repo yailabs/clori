@@ -12,6 +12,7 @@
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/model.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_operator.h>
 #include "tests/reference/deepseek_attention.h"
 
 #include <stdio.h>
@@ -1846,14 +1847,14 @@ static void runtime_oracle_graph_failure_report(
  * Lifecycle, capture, publication, oracle, or cleanup disagreement refuses the mode.
  */
 static int run_runtime_oracle_mode(
-    yvex_runtime_model *model, yvex_runtime_execution_session *runtime_session,
+    yvex_model_engine *model, yvex_runtime_execution_session *runtime_session,
     const yvex_graph_attention_capacity_plan *capacity,
     const yvex_deepseek_v4_ir *ir, yvex_runtime_execution_mode mode,
     unsigned long long swa_layer, unsigned long long csa_layer,
     unsigned long long hca_layer, runtime_oracle_mode_result *result,
     yvex_error *err)
 {
-    const yvex_runtime_model_view *model_view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *model_view = yvex_model_engine_view_get(model);
     const yvex_runtime_session_view *session_view =
         yvex_runtime_session_view_get(runtime_session);
     const yvex_attention_plan *plan = model_view ? model_view->attention : NULL;
@@ -1861,7 +1862,7 @@ static int run_runtime_oracle_mode(
     const yvex_graph_attention_capacity_summary *capacity_summary =
         yvex_graph_attention_capacity_plan_summary(capacity);
     const unsigned long long layers[] = {swa_layer, csa_layer, hca_layer};
-    yvex_runtime_model_failure model_failure;
+    yvex_model_engine_failure model_failure;
     yvex_attention_probe_request request;
     yvex_attention_probe_result probe;
     yvex_runtime_session_summary session_summary;
@@ -2043,10 +2044,10 @@ static int run_runtime_oracle_mode(
     return rc;
 }
 
-static int run_runtime_residency_close_order(yvex_runtime_model *model,
+static int run_runtime_residency_close_order(yvex_model_engine *model,
                                              yvex_error *err)
 {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
     yvex_runtime_residency *borrowed;
     yvex_runtime_residency_summary before, after;
     yvex_error refusal;
@@ -2060,17 +2061,19 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
         !before.cuda_ready || !before.binding_count ||
         before.cuda_upload_bytes || before.cuda_upload_count ||
         !((before.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
-           before.artifact_backed_bytes &&
+           before.mapped_package_bytes && !before.prepared_bytes &&
            !before.host_resident_bytes &&
            !before.device_resident_bytes &&
-           before.cuda_addressable_bytes == before.artifact_backed_bytes &&
-           before.cuda_pageable_map_bytes == before.artifact_backed_bytes &&
+           before.cuda_addressable_bytes == before.mapped_package_bytes &&
+           before.cuda_pageable_map_bytes == before.mapped_package_bytes &&
            before.cuda_pageable_map_count == 1ull &&
            before.cuda_host_registration_count == 1ull &&
            !before.cuda_pageable_prefetch_bytes && !before.cuda_pageable_prefetch_count &&
            !before.cuda_managed_bytes && !before.cuda_managed_allocation_count &&
            !before.cuda_managed_prefetch_bytes && !before.cuda_managed_prefetch_count) ||
           (before.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
+           !before.mapped_package_bytes &&
+           before.prepared_bytes == before.encoded_bytes &&
            !before.host_resident_bytes &&
            before.device_resident_bytes == before.encoded_bytes &&
            before.cuda_addressable_bytes == before.encoded_bytes &&
@@ -2123,7 +2126,8 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
         after.accelerator_encoded_bytes != before.accelerator_encoded_bytes ||
         after.host_resident_bytes != before.host_resident_bytes ||
         after.device_resident_bytes != before.device_resident_bytes ||
-        after.artifact_backed_bytes != before.artifact_backed_bytes ||
+        after.mapped_package_bytes != before.mapped_package_bytes ||
+        after.prepared_bytes != before.prepared_bytes ||
         after.cuda_upload_bytes != before.cuda_upload_bytes ||
         after.cuda_upload_count != before.cuda_upload_count ||
         after.cuda_host_registration_count != before.cuda_host_registration_count ||
@@ -2226,10 +2230,10 @@ static int run_runtime_graph_oracle_suite(
     unsigned long long csa_layer, unsigned long long hca_layer,
     yvex_error *err)
 {
-    yvex_runtime_model_open_request model_request;
+    yvex_model_engine_open_request model_request;
     yvex_runtime_session_open_request session_request;
-    yvex_runtime_model_failure failure;
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine_failure failure;
+    yvex_model_engine *model = NULL;
     yvex_runtime_execution_session *runtime_session = NULL;
     yvex_graph_attention_capacity_plan *capacity = NULL;
     yvex_graph_attention_capacity_request capacity_request;
@@ -2255,11 +2259,11 @@ static int run_runtime_graph_oracle_suite(
     model_request.artifact_path = artifact_path;
     model_request.runtime_binding_path = runtime_binding_path;
     model_request.target_id = "deepseek4-v4-flash-dspark";
-    rc = yvex_runtime_model_open(&model, &model_request, &failure, err);
+    rc = yvex_model_engine_open(&model, &model_request, &failure, err);
     session_request.backend = YVEX_BACKEND_KIND_CUDA;
     session_request.attention_state_factory = &state_factory;
     if (rc == YVEX_OK) {
-        const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+        const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
 
         if (!view || !view->binding ||
             strcmp(view->binding->attention_plan_identity,
@@ -2275,7 +2279,7 @@ static int run_runtime_graph_oracle_suite(
     capacity_request.token_count = 1ull;
     capacity_request.execution_count = 2ull;
     if (rc == YVEX_OK) {
-        const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+        const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
 
         rc = yvex_graph_attention_capacity_plan_build(
             &capacity, view ? view->attention : NULL, &capacity_request, err);
@@ -2388,7 +2392,7 @@ static int run_runtime_graph_oracle_suite(
         }
     }
     yvex_graph_attention_capacity_plan_close(&capacity);
-    yvex_runtime_model_close(&model);
+    yvex_model_engine_close(&model);
     if (rc == YVEX_OK && model) {
         yvex_error_set(err, YVEX_ERR_STATE, "attention.runtime_residency.close_order",
                        "model residency did not complete checked teardown");

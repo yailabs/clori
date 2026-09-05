@@ -39,14 +39,14 @@ grep '"status": "in-progress"' "$MANIFEST" >/dev/null || fail "missing status"
 grep 'model-00001.safetensors' "$MANIFEST" >/dev/null || fail "missing safetensors file"
 grep 'status: source-manifest-written' "$OUT_DIR/create.out" >/dev/null || fail "missing CLI status"
 
-"$YVEX_BIN" help compile source verify > "$OUT_DIR/verify-help.out"
-grep 'compile source verify' "$OUT_DIR/verify-help.out" >/dev/null || fail "payload verification help is unreachable"
+"$YVEX_BIN" help source verify > "$OUT_DIR/verify-help.out"
+grep 'source verify' "$OUT_DIR/verify-help.out" >/dev/null || fail "payload verification help is unreachable"
 
 set +e
-"$YVEX_BIN" compile source verify --source "$MODEL_DIR" \
+"$YVEX_BIN" source verify --source "$MODEL_DIR" \
   > "$OUT_DIR/verify-missing.out" 2> "$OUT_DIR/verify-missing.err"
 verify_missing_rc=$?
-"$YVEX_BIN" compile source verify --source "$MODEL_DIR" \
+"$YVEX_BIN" source verify --source "$MODEL_DIR" \
   --models-root "$OUT_DIR/models" --source-manifest "$MANIFEST" \
   --target deepseek4-v4-flash \
   > "$OUT_DIR/verify-old-target.out" 2> "$OUT_DIR/verify-old-target.err"

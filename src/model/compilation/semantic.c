@@ -18,6 +18,8 @@ struct yvex_semantic_model_ir {
     unsigned long long attention_layer_count;
     yvex_semantic_attention_layer *draft_attention_layers;
     unsigned long long draft_attention_layer_count;
+    yvex_semantic_decoder_layer *decoder_layers;
+    unsigned long long decoder_layer_count;
     yvex_semantic_component *components;
     unsigned long long component_count;
     yvex_semantic_phase_edge *phase_edges;
@@ -117,6 +119,43 @@ static int semantic_topology_identity(
     return 1;
 }
 
+static int semantic_decoder_identity(
+    yvex_sha256 *hash, const yvex_semantic_decoder_layer *layers,
+    unsigned long long count)
+{
+    unsigned long long index;
+
+    if (!yvex_sha256_update_text(hash, "decoder") ||
+        !yvex_sha256_update_u64(hash, count)) return 0;
+    for (index = 0ull; index < count; ++index) {
+        const yvex_semantic_decoder_layer *layer = &layers[index];
+        char identity[YVEX_SHA256_HEX_BYTES];
+        const char *mixer_identity = "full-causal-attention";
+
+        if (layer->mixer == YVEX_SEMANTIC_DECODER_MIXER_GATED_DELTA) {
+            if (!yvex_semantic_gated_delta_requirement_identity(
+                    &layer->gated_delta, identity))
+                return 0;
+            mixer_identity = identity;
+        }
+        if (!yvex_sha256_update_u64(hash, layer->ordinal) ||
+            !yvex_sha256_update_u64(hash, layer->layer_index) ||
+            !yvex_sha256_update_u64(hash, layer->tensor_scope) ||
+            !yvex_sha256_update_u64(hash, layer->mixer) ||
+            !yvex_sha256_update_u64(hash, layer->feed_forward) ||
+            !yvex_sha256_update_u64(hash, layer->hidden_width) ||
+            !yvex_sha256_update_u64(hash, layer->intermediate_width) ||
+            !yvex_sha256_update_u64(
+                hash, layer->normalization_weight_convention) ||
+            !semantic_hash_f64(hash, layer->normalization_epsilon) ||
+            !yvex_sha256_update_u64(hash,
+                                    (unsigned int)layer->mixer_output_gate) ||
+            !yvex_sha256_update_text(hash, mixer_identity))
+            return 0;
+    }
+    return 1;
+}
+
 static int semantic_composite_identity(
     yvex_sha256 *hash, const yvex_semantic_model_ir *model)
 {
@@ -170,7 +209,10 @@ static int semantic_identity(yvex_semantic_model_ir *model)
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.semantic-model-ir.v1") ||
+    if (!yvex_sha256_update_text(
+            &hash, summary->schema_version == YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2
+                       ? "yvex.semantic-model-ir.v2"
+                       : "yvex.semantic-model-ir.v1") ||
         !yvex_sha256_update_u64(&hash, summary->schema_version) ||
         !yvex_sha256_update_u64(&hash, summary->family_adapter_id) ||
         !yvex_sha256_update_u64(&hash, summary->family_adapter_version) ||
@@ -196,6 +238,9 @@ static int semantic_identity(yvex_semantic_model_ir *model)
         !semantic_topology_identity(
             &hash, "draft", model->draft_attention_layers,
             model->draft_attention_layer_count) ||
+        (summary->schema_version == YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2 &&
+         !semantic_decoder_identity(
+             &hash, model->decoder_layers, model->decoder_layer_count)) ||
         !semantic_composite_identity(&hash, model) ||
         !yvex_sha256_final(&hash, digest))
         return 0;
@@ -261,6 +306,101 @@ static int semantic_layers_build(
                 "semantic attention topology projection failed");
         }
     }
+    return YVEX_OK;
+}
+
+static int semantic_decoder_layers_build(
+    yvex_semantic_decoder_layer **out, const void *context,
+    yvex_semantic_decoder_layer_fn project,
+    unsigned long long layer_count, yvex_error *err)
+{
+    unsigned long long index;
+
+    *out = NULL;
+    if (!layer_count) return YVEX_OK;
+    if (!context || !project || layer_count > SIZE_MAX / sizeof(**out))
+        return semantic_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "semantic decoder topology exceeds platform capacity");
+    *out = calloc((size_t)layer_count, sizeof(**out));
+    if (!*out)
+        return semantic_refuse(
+            err, YVEX_ERR_NOMEM,
+            "semantic decoder topology allocation failed");
+    for (index = 0ull; index < layer_count; ++index) {
+        if (!project(context, index, &(*out)[index]) ||
+            (*out)[index].ordinal != index) {
+            free(*out);
+            *out = NULL;
+            return semantic_refuse(
+                err, YVEX_ERR_FORMAT,
+                "semantic decoder topology projection failed");
+        }
+    }
+    return YVEX_OK;
+}
+
+static int semantic_decoder_validate(
+    const yvex_semantic_model_ir *model, yvex_error *err)
+{
+    const yvex_model_execution_descriptor *execution =
+        &model->summary.execution_descriptor;
+    unsigned long long index, attention = 0ull, recurrent = 0ull;
+
+    if (model->summary.schema_version != YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2 ||
+        execution->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2 ||
+        model->decoder_layer_count != execution->layer_count)
+        return semantic_refuse(
+            err, YVEX_ERR_FORMAT,
+            "versioned decoder topology and execution geometry disagree");
+    for (index = 0ull; index < model->decoder_layer_count; ++index) {
+        const yvex_semantic_decoder_layer *layer = &model->decoder_layers[index];
+        char identity[YVEX_SHA256_HEX_BYTES];
+
+        if (layer->layer_index != index ||
+            layer->tensor_scope != YVEX_TENSOR_SCOPE_MAIN_LAYER ||
+            layer->feed_forward !=
+                YVEX_SEMANTIC_DECODER_FFN_DENSE_SILU_GATED ||
+            layer->hidden_width != execution->hidden_width ||
+            layer->intermediate_width != execution->dense_ffn_width ||
+            (layer->normalization_weight_convention !=
+                 YVEX_NORMALIZATION_WEIGHT_DIRECT &&
+             layer->normalization_weight_convention !=
+                 YVEX_NORMALIZATION_WEIGHT_ONE_PLUS) ||
+            !isfinite(layer->normalization_epsilon) ||
+            layer->normalization_epsilon <= 0.0 ||
+            (layer->mixer_output_gate != 0 && layer->mixer_output_gate != 1))
+            return semantic_refuse(
+                err, YVEX_ERR_FORMAT,
+                "one semantic decoder layer has invalid geometry");
+        if (layer->mixer ==
+            YVEX_SEMANTIC_DECODER_MIXER_FULL_CAUSAL_ATTENTION) {
+            if (layer->gated_delta.schema_version != 0u ||
+                attention >= model->attention_layer_count ||
+                model->attention_layers[attention].layer_index != index)
+                return semantic_refuse(
+                    err, YVEX_ERR_FORMAT,
+                    "full-causal decoder layer has no matching attention semantics");
+            attention++;
+        } else if (layer->mixer ==
+                   YVEX_SEMANTIC_DECODER_MIXER_GATED_DELTA) {
+            if (!yvex_semantic_gated_delta_requirement_identity(
+                    &layer->gated_delta, identity))
+                return semantic_refuse(
+                    err, YVEX_ERR_FORMAT,
+                    "stateful decoder layer has invalid gated-delta semantics");
+            recurrent++;
+        } else {
+            return semantic_refuse(
+                err, YVEX_ERR_FORMAT,
+                "semantic decoder token mixer is unsupported");
+        }
+    }
+    if (attention != model->attention_layer_count ||
+        recurrent != execution->sequence_mixer_layers)
+        return semantic_refuse(
+            err, YVEX_ERR_FORMAT,
+            "decoder mixer populations disagree with semantic execution facts");
     return YVEX_OK;
 }
 
@@ -363,6 +503,7 @@ static void semantic_model_release(yvex_semantic_model_ir *model)
     if (!model) return;
     free(model->attention_layers);
     free(model->draft_attention_layers);
+    free(model->decoder_layers);
     free(model->components);
     free(model->phase_edges);
     free(model->references);
@@ -377,7 +518,8 @@ int yvex_semantic_model_ir_seal(
     yvex_semantic_model_ir *model;
     if (out) *out = NULL;
     if (!out || !request ||
-        request->schema_version != YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1 ||
+        (request->schema_version != YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1 &&
+         request->schema_version != YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2) ||
         !request->family_adapter_id || !request->family_adapter_version ||
         !request->target_id || !request->target_id[0] ||
         strlen(request->target_id) >=
@@ -388,7 +530,13 @@ int yvex_semantic_model_ir_seal(
         (!!request->attention_layer != !!request->attention_layer_count) ||
         (!!request->draft_attention_layer != !!request->draft_attention_layer_count) ||
         ((request->attention_layer_count || request->draft_attention_layer_count) &&
-         !request->attention_context))
+         !request->attention_context) ||
+        (!!request->decoder_layer != !!request->decoder_layer_count) ||
+        (request->decoder_layer_count && !request->decoder_context) ||
+        (request->schema_version == YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1 &&
+         request->decoder_layer_count) ||
+        (request->schema_version == YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2 &&
+         !request->decoder_layer_count))
         return semantic_refuse(
             err, YVEX_ERR_INVALID_ARG,
             "complete immutable semantic facts and balanced payload ownership are required");
@@ -397,11 +545,12 @@ int yvex_semantic_model_ir_seal(
     model = calloc(1u, sizeof(*model));
     if (!model)
         return semantic_refuse(err, YVEX_ERR_NOMEM, "semantic model allocation failed");
-    model->summary.schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1;
+    model->summary.schema_version = request->schema_version;
     model->summary.family_adapter_id = request->family_adapter_id;
     model->summary.family_adapter_version = request->family_adapter_version;
     model->summary.attention_layer_count = request->attention_layer_count;
     model->summary.draft_attention_layer_count = request->draft_attention_layer_count;
+    model->summary.decoder_layer_count = request->decoder_layer_count;
     if (request->execution_descriptor)
         model->summary.execution_descriptor = *request->execution_descriptor;
     if (request->numeric_contract)
@@ -426,6 +575,16 @@ int yvex_semantic_model_ir_seal(
             &model->draft_attention_layers, request->attention_context,
             request->draft_attention_layer,
             request->draft_attention_layer_count, err);
+    if (rc == YVEX_OK)
+        rc = semantic_decoder_layers_build(
+            &model->decoder_layers, request->decoder_context,
+            request->decoder_layer, request->decoder_layer_count, err);
+    model->attention_layer_count = request->attention_layer_count;
+    model->draft_attention_layer_count = request->draft_attention_layer_count;
+    model->decoder_layer_count = request->decoder_layer_count;
+    if (rc == YVEX_OK && request->schema_version ==
+                             YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2)
+        rc = semantic_decoder_validate(model, err);
     if (rc == YVEX_OK)
         rc = semantic_composite_build(model, request->composite, err);
     if (rc == YVEX_OK)
@@ -465,6 +624,21 @@ int yvex_semantic_model_ir_attention_view(
         *layer_count = model->draft_attention_layer_count;
     }
     return *layers != NULL && *layer_count != 0ull;
+}
+
+int yvex_semantic_model_ir_decoder_view(
+    const yvex_semantic_model_ir *model,
+    const yvex_semantic_decoder_layer **layers,
+    unsigned long long *layer_count)
+{
+    if (layers) *layers = NULL;
+    if (layer_count) *layer_count = 0ull;
+    if (!model || !layers || !layer_count || !model->decoder_layers ||
+        !model->decoder_layer_count)
+        return 0;
+    *layers = model->decoder_layers;
+    *layer_count = model->decoder_layer_count;
+    return 1;
 }
 
 int yvex_semantic_model_ir_composite_view(

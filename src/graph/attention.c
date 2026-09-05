@@ -833,20 +833,23 @@ int yvex_attention_rolling_state_step_cpu(const yvex_attention_layer_plan *layer
 int yvex_attention_history_validate(const yvex_attention_layer_plan *layer,
                                     const yvex_attention_history_view *history,
                                     yvex_attention_failure *failure, yvex_error *err) {
+    unsigned long long local_width;
     int rc;
     if (!layer || !history)
         return attention_refuse(failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT,
                                 layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER, 1ull, 0ull,
                                 err, YVEX_ERR_INVALID_ARG,
-                                "DeepSeek attention history validation requires layer and history");
+                                "attention history validation requires layer and history");
     if (!history->immutable)
         return attention_history_refuse(layer, 1ull, 0ull, failure, err, YVEX_ERR_STATE,
-                                        "DeepSeek attention history view must be immutable");
+                                        "attention history view must be immutable");
+    rc = yvex_attention_layer_local_state_width(layer, &local_width, err);
+    if (rc != YVEX_OK) return rc;
     if (history->local_tail_count && (!history->local_kv || !history->local_positions ||
-                                      history->local_kv_stride < layer->head_dimension))
+                                      history->local_kv_stride < local_width))
         return attention_history_refuse(
-            layer, layer->head_dimension, history->local_kv_stride, failure, err, YVEX_ERR_FORMAT,
-            "DeepSeek attention local history lacks raw KV storage");
+            layer, local_width, history->local_kv_stride, failure, err,
+            YVEX_ERR_FORMAT, "attention local history lacks exact KV storage");
     if (history->compressed_entry_count &&
         (!history->compressed_kv || !history->compressed_positions ||
          history->compressed_kv_stride < layer->head_dimension))
@@ -1347,9 +1350,9 @@ static int attention_probe_backend_execute(
         !yvex_core_u64_add(context->candidate.kernel_launches,
                            run->evidence.cuda_kernel_launches,
                            &context->candidate.kernel_launches) ||
-        !yvex_core_u64_add(context->candidate.tensor_core_launches,
+        !yvex_core_u64_add(context->candidate.accelerated_matrix_launches,
                            run->evidence.cuda_tensor_core_launches,
-                           &context->candidate.tensor_core_launches) ||
+                           &context->candidate.accelerated_matrix_launches) ||
         !yvex_core_u64_add(context->candidate.h2d_bytes,
                            run->evidence.cuda_h2d_bytes,
                            &context->candidate.h2d_bytes) ||
@@ -1359,9 +1362,9 @@ static int attention_probe_backend_execute(
         !yvex_core_u64_add(context->candidate.d2d_bytes,
                            run->evidence.cuda_d2d_bytes,
                            &context->candidate.d2d_bytes) ||
-        !yvex_core_u64_add(context->candidate.stream_synchronizations,
+        !yvex_core_u64_add(context->candidate.queue_synchronizations,
                            run->evidence.cuda_stream_synchronizations,
-                           &context->candidate.stream_synchronizations) ||
+                           &context->candidate.queue_synchronizations) ||
         !yvex_core_u64_add(context->candidate.device_synchronizations,
                            run->evidence.cuda_device_synchronizations,
                            &context->candidate.device_synchronizations) ||
@@ -1599,9 +1602,9 @@ static int attention_probe_pending_complete(
                                          run->publication.layer_index) ||
                  !yvex_sha256_update_text(&context->metrics.committed_state_hash,
                                           state_identity) ||
-                 !yvex_core_u64_add(context->candidate.stream_synchronizations,
+                 !yvex_core_u64_add(context->candidate.queue_synchronizations,
                                     run->evidence.cuda_stream_synchronizations,
-                                    &context->candidate.stream_synchronizations) ||
+                                    &context->candidate.queue_synchronizations) ||
                  !yvex_core_u64_add(context->candidate.device_synchronizations,
                                     run->evidence.cuda_device_synchronizations,
                                     &context->candidate.device_synchronizations))) {

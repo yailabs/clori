@@ -27,7 +27,7 @@ static const char *const literal_pair_2[] = { "       yvex compile quant imatrix
 };
 
 static const char *const literal_pair_3[] = {
-    "       yvex compile emit template compare --template FILE --native-source DIR",
+    "       yvex compile artifact template compare --template FILE --native-source DIR",
     "\nGGUF template validates metadata, tokenizer metadata, tensor directory, tensor roles, and optional "
         "exact-name native inventory comparison."
 };
@@ -127,7 +127,7 @@ static int command_gguf_template(int arg_count, char **args)
     }
     if (arg_count < 3) {
         yvex_cli_out_writef(stderr, "yvex: gguf-template requires inspect, validate, or compare\n");
-        yvex_cli_out_writef(stderr, "usage: yvex compile emit template inspect|validate --template FILE\n");
+        yvex_cli_out_writef(stderr, "usage: yvex compile artifact template inspect|validate --template FILE\n");
         return 2;
     }
     if (strcmp(args[2], "inspect") != 0 && strcmp(args[2], "validate") != 0 &&
@@ -222,7 +222,7 @@ static int command_gguf_emit(int arg_count, char **args)
     if (arg_count < 3 || strcmp(args[2], "controlled") != 0) {
         yvex_cli_out_writef(stderr, "yvex: gguf-emit requires subcommand controlled\n");
         yvex_cli_out_writef(stderr,
-            "usage: yvex compile emit artifact controlled --out FILE [--template FILE] [--model-name NAME] [--arch "
+            "usage: yvex compile artifact emit --out FILE [--template FILE] [--model-name NAME] [--arch "
                 "ARCH] [--target-qtype F32|F16] [--overwrite]\n");
         return 2;
     }
@@ -268,7 +268,7 @@ static int command_gguf_emit(int arg_count, char **args)
     if (!options.out_path) {
         yvex_cli_out_writef(stderr, "yvex: gguf-emit controlled requires --out FILE\n");
         yvex_cli_out_writef(stderr,
-            "usage: yvex compile emit artifact controlled --out FILE [--template FILE] [--model-name NAME] [--arch "
+            "usage: yvex compile artifact emit --out FILE [--template FILE] [--model-name NAME] [--arch "
                 "ARCH] [--target-qtype F32|F16] [--overwrite]\n");
         return 2;
     }
@@ -807,7 +807,7 @@ static int command_tensor_map(int arg_count, char **args)
         return 0;
     }
 
-    yvex_cli_out_writef(stdout, "compile map: %s\n", options.architecture);
+    yvex_cli_out_writef(stdout, "compile tensor map: %s\n", options.architecture);
     yvex_cli_out_writef(stdout, "native_source: %s\n", options.native_source_dir);
     if (options.template_path) {
         yvex_cli_out_writef(stdout, "template: %s\n", options.template_path);
@@ -1204,14 +1204,14 @@ void yvex_convert_help(FILE *fp)
 
 void yvex_gguf_template_help(FILE *fp)
 {
-    yvex_cli_out_writef(fp, "usage: yvex compile emit template inspect|validate --template FILE\n");
+    yvex_cli_out_writef(fp, "usage: yvex compile artifact template inspect|validate --template FILE\n");
     yvex_cli_out_lines(fp, literal_pair_3, sizeof(literal_pair_3) / sizeof(literal_pair_3[0]));
 }
 
 void yvex_gguf_emit_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex compile emit artifact controlled --out FILE [--template FILE] [--model-name NAME] [--arch ARCH] [-"
+        "usage: yvex compile artifact emit --out FILE [--template FILE] [--model-name NAME] [--arch ARCH] [-"
             "-target-qtype F32|F16] [--overwrite]\n\nGGUF emit writes a controlled YVEX-owned tensor artifact "
             "and validates the emitted file.\n");
 }
@@ -1227,14 +1227,14 @@ void yvex_imatrix_help(FILE *fp)
 void yvex_native_weights_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex inspect source --source DIR [--limit N] [--tensor NAME] [--json]\n\nNative weights "
+        "usage: yvex inspect source tensors --source DIR [--limit N] [--tensor NAME] [--json]\n\nNative weights "
             "reads safetensors headers and reports metadata only.\n");
 }
 
 void yvex_tensor_map_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex compile map --arch NAME --native-source DIR [--template FILE] [--tensor NAME] [--limit "
+        "usage: yvex compile tensor map --arch NAME --native-source DIR [--template FILE] [--tensor NAME] [--limit "
             "N] [--json]\n\nTensor map maps native safetensors names to canonical YVEX roles and proposed GGUF/"
             "template names.\n");
 }

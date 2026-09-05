@@ -10,6 +10,67 @@
 extern "C" {
 #endif
 
+#define YVEX_GRAPH_MAX_DIMS 4u
+
+typedef enum {
+    YVEX_VALUE_TOKEN_IDS = 0,
+    YVEX_VALUE_ACTIVATION,
+    YVEX_VALUE_WEIGHT,
+    YVEX_VALUE_KV_CACHE,
+    YVEX_VALUE_LOGITS,
+    YVEX_VALUE_TEMPORARY,
+    YVEX_VALUE_UNKNOWN
+} yvex_value_kind;
+
+typedef enum {
+    YVEX_RESIDENCY_HOST = 0,
+    YVEX_RESIDENCY_DEVICE,
+    YVEX_RESIDENCY_BACKEND_DECIDES
+} yvex_residency;
+
+typedef struct {
+    unsigned int id;
+    yvex_value_kind kind;
+    const char *name;
+    unsigned int rank;
+    unsigned long long dims[YVEX_GRAPH_MAX_DIMS];
+    yvex_dtype dtype;
+    yvex_residency residency;
+    const char *source_tensor_name;
+} yvex_graph_value_info;
+
+typedef enum {
+    YVEX_OP_EMBED = 0,
+    YVEX_OP_RMS_NORM,
+    YVEX_OP_MATMUL,
+    YVEX_OP_ROPE,
+    YVEX_OP_ATTENTION_PREFILL,
+    YVEX_OP_ATTENTION_DECODE,
+    YVEX_OP_KV_WRITE,
+    YVEX_OP_KV_READ,
+    YVEX_OP_SWIGLU,
+    YVEX_OP_RESIDUAL_ADD,
+    YVEX_OP_LOGITS,
+    YVEX_OP_SAMPLER,
+    YVEX_OP_UNSUPPORTED
+} yvex_op_kind;
+
+typedef enum {
+    YVEX_OP_STATUS_PLANNED = 0,
+    YVEX_OP_STATUS_MISSING_INPUT,
+    YVEX_OP_STATUS_UNSUPPORTED,
+    YVEX_OP_STATUS_INVALID_SHAPE
+} yvex_op_status;
+
+typedef struct {
+    unsigned int id;
+    yvex_op_kind kind;
+    yvex_op_status status;
+    const char *name;
+    unsigned int input_count, output_count;
+    const char *reason;
+} yvex_graph_op_info;
+
 /* Graph descriptors. */
 typedef struct yvex_graph yvex_graph;
 

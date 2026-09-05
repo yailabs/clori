@@ -13,9 +13,11 @@ extern "C" {
 #define YVEX_PROVIDER_SCHEMA_V1 1u
 #define YVEX_PROVIDER_SCHEMA_V2 2u
 #define YVEX_PROVIDER_SCHEMA_V3 3u
+#define YVEX_PROVIDER_SCHEMA_V4 4u
 #define YVEX_PROVIDER_WIRE_SCHEMA_V1 1u
 #define YVEX_PROVIDER_WIRE_SCHEMA_V2 2u
 #define YVEX_PROVIDER_WIRE_SCHEMA_V3 3u
+#define YVEX_PROVIDER_WIRE_SCHEMA_V4 4u
 #define YVEX_PROVIDER_MODEL_CAP 128u
 #define YVEX_PROVIDER_ID_CAP 65u
 #define YVEX_PROVIDER_ADAPTER_CAP 32u
@@ -87,8 +89,32 @@ typedef enum {
 typedef enum {
     YVEX_REASONING_DISABLED = 0,
     YVEX_REASONING_ENABLED,
-    YVEX_REASONING_MAXIMUM
+    YVEX_REASONING_MAXIMUM,
+    YVEX_REASONING_LOW,
+    YVEX_REASONING_SOURCE_DEFAULT,
+    YVEX_REASONING_POLICY_COUNT
 } yvex_reasoning_policy;
+
+static inline int yvex_reasoning_policy_valid(yvex_reasoning_policy policy)
+{
+    return policy == YVEX_REASONING_DISABLED ||
+           policy == YVEX_REASONING_ENABLED ||
+           policy == YVEX_REASONING_MAXIMUM ||
+           policy == YVEX_REASONING_LOW;
+}
+
+static inline int yvex_reasoning_request_policy_valid(
+    yvex_reasoning_policy policy)
+{
+    return yvex_reasoning_policy_valid(policy) ||
+           policy == YVEX_REASONING_SOURCE_DEFAULT;
+}
+
+typedef enum {
+    YVEX_REASONING_HISTORY_SOURCE_DEFAULT = 0,
+    YVEX_REASONING_HISTORY_DROP,
+    YVEX_REASONING_HISTORY_PRESERVE
+} yvex_reasoning_history_policy;
 
 typedef struct {
     int stochastic, seed_present;
@@ -108,6 +134,7 @@ typedef struct {
     yvex_provider_tool_choice tool_choice;
     yvex_provider_response_format response_format;
     yvex_reasoning_policy reasoning_policy;
+    yvex_reasoning_history_policy reasoning_history_policy;
     yvex_provider_sampling sampling;
     unsigned long long maximum_output_tokens;
     int stream, include_usage, drop_thinking;

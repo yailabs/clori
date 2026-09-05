@@ -1,12 +1,15 @@
 /* Exercise the complete staged media transaction with tiny admitted fixtures. */
 #define _POSIX_C_SOURCE 200809L
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <yvex/internal/image.h>
 #include <yvex/internal/media.h>
 
 #include "tests/test.h"
@@ -16,18 +19,31 @@
 #define FIXTURE_WIDTH 32ull
 #define FIXTURE_HEIGHT 32ull
 #define FIXTURE_AUDIO_STEPS 207ull
+#define FIXTURE_BYTES 928ull
+#define FIXTURE_IDENTITY "32da281a901bbee03982e7f6d9743fa43b6b9c50ae8e5393d93bf0a3be0a5d99"
+
+static const unsigned char condition_png[] = {
+    0x89u,0x50u,0x4eu,0x47u,0x0du,0x0au,0x1au,0x0au,0x00u,0x00u,0x00u,0x0du,
+    0x49u,0x48u,0x44u,0x52u,0x00u,0x00u,0x00u,0x04u,0x00u,0x00u,0x00u,0x03u,
+    0x08u,0x02u,0x00u,0x00u,0x00u,0x3bu,0x96u,0x39u,0x91u,0x00u,0x00u,0x00u,
+    0x1au,0x49u,0x44u,0x41u,0x54u,0x78u,0x9cu,0x63u,0x64u,0x60u,0x60u,0x30u,
+    0xe5u,0x4eu,0x84u,0x20u,0x16u,0x41u,0x77u,0x59u,0x41u,0x6eu,0x28u,0x42u,
+    0xe1u,0x00u,0x00u,0x59u,0xdfu,0x04u,0x2du,0x56u,0xb0u,0x81u,0x9du,0x00u,
+    0x00u,0x00u,0x00u,0x49u,0x45u,0x4eu,0x44u,0xaeu,0x42u,0x60u,0x82u,
+};
 
 typedef struct {
     unsigned long long condition_calls, latent_calls, video_calls, audio_calls;
+    unsigned long long token_count, condition_count, progress_mask;
+    unsigned int token_ids[256];
+    yvex_media_condition_role roles[YVEX_RUNTIME_MEDIA_CONDITION_CAP];
     int fail_condition, cancel;
 } media_fixture_context;
 
 static media_fixture_context *active_fixture_context;
 
 static int fixture_plan(
-    yvex_runtime_av_plan *out, unsigned long long text_tokens,
-    unsigned long long width, unsigned long long height,
-    unsigned long long frames, unsigned int inference_steps, yvex_error *err)
+    yvex_runtime_av_plan *out, const yvex_media_plan_request *request, yvex_error *err)
 {
     static const yvex_runtime_av_plan_policy policy = {
         .schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1,
@@ -58,24 +74,49 @@ static int fixture_plan(
             "1111111111111111111111111111111111111111111111111111111111111111",
         .source_revision = "fixture",
     };
-    return yvex_runtime_av_plan_build(
-        &policy, text_tokens, width, height, frames, inference_steps, out, err);
+    if (!request || request->condition_count > YVEX_RUNTIME_MEDIA_CONDITION_CAP ||
+        (!!request->condition_count != !!request->condition_rows)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "test.runtime-media.plan",
+                       "fixture plan condition extent is inconsistent");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    int rc = yvex_runtime_av_plan_build(
+        &policy, request->text_tokens, request->width, request->height,
+        request->frames, request->inference_steps, out, err);
+    if (rc == YVEX_OK && request->condition_rows)
+        rc = yvex_runtime_av_plan_add_condition_rows(out, request->condition_rows, err);
+    return rc;
 }
 
 static int fixture_layout(
-    const yvex_runtime_av_plan *plan, const yvex_runtime_av_layout_output *output,
+    const yvex_media_layout_request *request, const yvex_runtime_av_layout_output *output,
     yvex_runtime_av_layout_result *result, yvex_error *err)
 {
-    return yvex_runtime_av_layout_from_plan(plan, output, result, err);
+    double times[YVEX_RUNTIME_MEDIA_CONDITION_CAP];
+    unsigned long long index;
+    if (!request || request->condition_count > YVEX_RUNTIME_MEDIA_CONDITION_CAP)
+        return YVEX_ERR_INVALID_ARG;
+    if (!request->condition_count)
+        return yvex_runtime_av_layout_from_plan(request->plan, output, result, err);
+    for (index = 0ull; index < request->condition_count; ++index)
+        times[index] = request->conditions[index].role == YVEX_MEDIA_CONDITION_FIRST
+                           ? (double)request->plan->text_tokens
+                           : (double)(request->plan->text_tokens + request->plan->video_latent_frames - 1ull);
+    return yvex_runtime_av_layout_from_conditioned_plan(
+        request->plan, request->text_tags, times, request->condition_count,
+        output, result, err);
 }
 
 static int fixture_admit(
     const char *component, const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
+    const yvex_tensor_table *tensors, const yvex_artifact_admission_options *options,
+    yvex_complete_artifact_admission *out, yvex_artifact_admission_evidence *evidence,
     yvex_artifact_admission_failure *failure, yvex_error *err)
 {
     const char *admission_identity = NULL;
+    yvex_artifact_admission_evidence local_evidence;
     (void)gguf;
+    (void)options;
     if (failure) memset(failure, 0, sizeof(*failure));
     if (component && strcmp(component, "text_encoder") == 0)
         admission_identity =
@@ -105,7 +146,7 @@ static int fixture_admit(
     yvex_core_text_copy(out->artifact_path, sizeof(out->artifact_path),
                         yvex_artifact_path(artifact));
     yvex_core_text_copy(out->artifact_identity, sizeof(out->artifact_identity),
-                        "2222222222222222222222222222222222222222222222222222222222222222");
+                        FIXTURE_IDENTITY);
     yvex_core_text_copy(out->profile_identity, sizeof(out->profile_identity),
                         "fixture-profile");
     yvex_core_text_copy(out->writer_plan_identity, sizeof(out->writer_plan_identity),
@@ -117,43 +158,70 @@ static int fixture_admit(
                         admission_identity);
     if (yvex_artifact_snapshot_get(artifact, &out->file_snapshot, err) != YVEX_OK)
         return yvex_error_code(err);
-    yvex_error_clear(err);
-    return YVEX_OK;
+    return yvex_artifact_admission_authenticate(
+        artifact, out, options, evidence ? evidence : &local_evidence,
+        failure, err);
 }
 
 static int fixture_condition(
-    const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors, const unsigned int *tokens,
-    unsigned long long token_count, unsigned long long layer_count,
-    float *output, unsigned long long output_capacity,
-    unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
+    const yvex_media_conditioning_request *request,
     yvex_runtime_av_conditioning_result *result, yvex_error *err)
 {
     media_fixture_context *context = active_fixture_context;
+    unsigned int tokens[256];
+    unsigned long long token_count;
     unsigned long long index, expected;
-    (void)artifact;
-    (void)gguf;
-    (void)tensors;
-    (void)maximum_device_bytes;
+    if (!request || !request->tokenizer || !request->prompt || !request->text_component ||
+        request->condition_count > YVEX_RUNTIME_MEDIA_CONDITION_CAP ||
+        (request->condition_count &&
+         (!request->conditions || !request->condition_images))) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "test.runtime-media.condition",
+                       "fixture conditioning request is inconsistent");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    token_count = strlen(request->prompt);
+    if (!token_count || token_count > request->maximum_prompt_tokens ||
+        token_count > sizeof(tokens) / sizeof(tokens[0])) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "test.runtime-media.condition",
+                       "fixture prompt exceeds its bounded byte-token projection");
+        return YVEX_ERR_BOUNDS;
+    }
+    for (index = 0ull; index < token_count; ++index)
+        tokens[index] = (unsigned char)request->prompt[index];
     context->condition_calls++;
+    context->condition_count = request->condition_count;
+    for (index = 0ull; index < request->condition_count; ++index) {
+        if (!request->condition_images[index].complete) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "test.runtime-media.condition",
+                           "fixture requires decoded condition images");
+            return YVEX_ERR_FORMAT;
+        }
+        context->roles[index] = request->conditions[index].role;
+    }
+    if (token_count <= sizeof(context->token_ids) / sizeof(context->token_ids[0])) {
+        context->token_count = token_count;
+        memcpy(context->token_ids, tokens, (size_t)token_count * sizeof(tokens[0]));
+    }
     if (context->fail_condition) {
         yvex_error_set(err, YVEX_ERR_STATE, "test.runtime-media.condition",
                        "requested conditioning refusal");
         return YVEX_ERR_STATE;
     }
-    if (!tokens || !token_count || layer_count != 1ull ||
+    if (!token_count || request->layer_count != 1ull ||
         !yvex_core_u64_mul(token_count, 5120ull, &expected) ||
-        expected != output_capacity || maximum_host_bytes < expected * sizeof(float)) {
+        expected > request->conditioning_capacity) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "test.runtime-media.condition",
                        "fixture conditioning extent is inconsistent");
         return YVEX_ERR_BOUNDS;
     }
-    for (index = 0ull; index < output_capacity; ++index)
-        output[index] = (float)((index + tokens[0]) % 17ull) / 16.0f;
+    for (index = 0ull; index < expected; ++index)
+        request->conditioning[index] = (float)((index + tokens[0]) % 17ull) / 16.0f;
+    for (index = 0ull; index < token_count; ++index) request->text_tags[index] = 1u;
     memset(result, 0, sizeof(*result));
     result->token_count = token_count;
     result->hidden_width = 5120ull;
     result->layer_count = 1ull;
+    result->condition_count = request->condition_count;
     result->resident_bytes = 128ull;
     result->kernel_launches = 2ull;
     result->device_bytes = 128ull;
@@ -161,7 +229,57 @@ static int fixture_condition(
                         "4444444444444444444444444444444444444444444444444444444444444444");
     yvex_core_text_copy(result->execution_identity, sizeof(result->execution_identity),
                         "5555555555555555555555555555555555555555555555555555555555555555");
+    yvex_core_text_copy(result->prompt_identity, sizeof(result->prompt_identity),
+                        "9999999999999999999999999999999999999999999999999999999999999999");
+    yvex_core_text_copy(result->processor_identity, sizeof(result->processor_identity),
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     result->complete = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int fixture_keyframe(const yvex_media_keyframe_request *request,
+                            yvex_runtime_av_keyframe_result *result, yvex_error *err)
+{
+    unsigned long long index, latent_height, latent_width, values;
+    if (!request || !result || !request->video_component ||
+        request->condition_count > YVEX_RUNTIME_MEDIA_CONDITION_CAP)
+        return YVEX_ERR_INVALID_ARG;
+    memset(result, 0, sizeof(*result));
+    if (!request->condition_count) {
+        result->complete = 1;
+        yvex_core_text_copy(result->execution_identity, sizeof(result->execution_identity),
+                            "8888888888888888888888888888888888888888888888888888888888888888");
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    latent_height = request->height / 16ull;
+    latent_width = request->width / 16ull;
+    if (!latent_height || !latent_width ||
+        !yvex_core_u64_mul(request->condition_count, request->latent_channels, &values) ||
+        !yvex_core_u64_mul(values, latent_height, &values) ||
+        !yvex_core_u64_mul(values, latent_width, &values) ||
+        values != request->condition_latent_capacity)
+        return YVEX_ERR_BOUNDS;
+    for (index = 0ull; index < values; ++index)
+        request->condition_latents[index] = (float)(index % 29ull) / 29.0f;
+    result->condition_count = request->condition_count;
+    result->condition_rows = request->condition_count * (latent_height / 2ull) *
+                             (latent_width / 2ull);
+    result->latent_channels = request->latent_channels;
+    result->latent_height = latent_height;
+    result->latent_width = latent_width;
+    result->latent_values = values;
+    for (index = 0ull; index < request->condition_count; ++index) {
+        yvex_core_text_copy(result->media_identities[index], YVEX_SHA256_HEX_CAP,
+                            request->condition_images[index].content_identity);
+        yvex_core_text_copy(result->latent_identities[index], YVEX_SHA256_HEX_CAP,
+                            index ? "7777777777777777777777777777777777777777777777777777777777777777"
+                                  : "6666666666666666666666666666666666666666666666666666666666666666");
+    }
+    result->complete = 1;
+    yvex_core_text_copy(result->execution_identity, sizeof(result->execution_identity),
+                        "8888888888888888888888888888888888888888888888888888888888888888");
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -175,13 +293,17 @@ static int fixture_latent(
     yvex_runtime_latent_evaluator_result *evaluator_result, yvex_error *err)
 {
     media_fixture_context *context = active_fixture_context;
+    yvex_runtime_latent_observation observation = {0};
     unsigned long long index;
     context->latent_calls++;
-    if (!execution || !execution->transformer_session || !plan || !execution->conditioning ||
+    if (!execution || !execution->transformer_component || !plan ||
+        !execution->conditioning ||
         !execution->conditioning_capacity ||
         !yvex_sha256_hex_valid(execution->conditioning_identity) || !execution->layout ||
         !execution->layout_result || !execution->layout_result->complete ||
         !execution->timestep_indices || execution->timestep_capacity != plan->packed_rows ||
+        !execution->yield_control || !execution->yield_control->requested ||
+        !execution->yield_control->resume ||
         execution->block_count != 50ull || seed != 42ull ||
         maximum_workspace_bytes < (1ull << 20u) ||
         video_capacity != plan->video_rows * plan->video_value_width ||
@@ -190,10 +312,19 @@ static int fixture_latent(
                        "fixture latent execution inputs are inconsistent");
         return YVEX_ERR_INVALID_ARG;
     }
+    if (execution->condition_count != context->condition_count ||
+        (execution->condition_count &&
+         (!execution->condition_latents || !execution->keyframes)) ||
+        (!execution->condition_count && execution->condition_latents) ||
+        plan->condition_rows != execution->condition_count) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "test.runtime-media.latent",
+                       "fixture condition-aware latent context is inconsistent");
+        return YVEX_ERR_FORMAT;
+    }
     for (index = 0ull; index < video_capacity; ++index) video[index] = 0.0f;
     for (index = 0ull; index < audio_capacity; ++index) audio[index] = 0.0f;
     memset(latent_result, 0, sizeof(*latent_result));
-    latent_result->schema_version = YVEX_RUNTIME_LATENT_SCHEMA_V1;
+    latent_result->schema_version = YVEX_RUNTIME_LATENT_SCHEMA_CURRENT;
     latent_result->video_values = video_capacity;
     latent_result->audio_values = audio_capacity;
     latent_result->completed_steps = 1ull;
@@ -218,12 +349,23 @@ static int fixture_latent(
                         sizeof(evaluator_result->execution_chain_identity),
                         "9999999999999999999999999999999999999999999999999999999999999999");
     evaluator_result->complete = 1;
+    if (execution->observe) {
+        observation.schema_version = YVEX_RUNTIME_LATENT_OBSERVATION_SCHEMA_V1;
+        observation.stage = YVEX_RUNTIME_LATENT_OBSERVATION_ADVANCED;
+        observation.completed_steps = 1ull;
+        observation.video_values = video_capacity;
+        observation.audio_values = audio_capacity;
+        observation.video_state = video;
+        observation.audio_state = audio;
+        if (execution->observe(execution->observer_context, &observation, err) != YVEX_OK)
+            return yvex_error_code(err);
+    }
     yvex_error_clear(err);
     return YVEX_OK;
 }
 
 static int fixture_video(
-    yvex_runtime_component_session *session,
+    const yvex_component_execution *component,
     const yvex_runtime_av_video_decode_options *options,
     yvex_runtime_av_video_decode_result *result,
     yvex_component_execution_failure *failure, yvex_error *err)
@@ -232,7 +374,7 @@ static int fixture_video(
     unsigned long long index;
     (void)failure;
     context->video_calls++;
-    if (!session || !options || !options->output || !options->output_capacity ||
+    if (!component || !options || !options->output || !options->output_capacity ||
         options->max_workspace_bytes < (1ull << 20u) ||
         (options->cancelled && options->cancelled(options->cancellation_context))) {
         yvex_error_set(err, YVEX_ERR_CANCELLED, "test.runtime-media.video",
@@ -253,20 +395,16 @@ static int fixture_video(
 }
 
 static int fixture_audio(
-    const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors, const yvex_runtime_av_audio_decode_options *options,
-    unsigned long long maximum_device_bytes, yvex_runtime_av_audio_decode_result *result,
+    const yvex_component_execution *component,
+    const yvex_runtime_av_audio_decode_options *options,
+    yvex_runtime_av_audio_decode_result *result,
     yvex_component_execution_failure *failure, yvex_error *err)
 {
     media_fixture_context *context = active_fixture_context;
     unsigned long long index, samples;
-    (void)artifact;
-    (void)gguf;
-    (void)tensors;
-    (void)maximum_device_bytes;
     (void)failure;
     context->audio_calls++;
-    if (!options || !options->latent || options->batch != 2ull ||
+    if (!component || !options || !options->latent || options->batch != 2ull ||
         options->latent_steps != FIXTURE_AUDIO_STEPS ||
         !yvex_core_u64_mul(options->latent_steps, 800ull, &samples) ||
         options->output_capacity != options->batch * samples ||
@@ -298,6 +436,22 @@ static int fixture_cancelled(void *opaque)
     return ((media_fixture_context *)opaque)->cancel;
 }
 
+static int fixture_progress(void *opaque, const yvex_runtime_media_progress *progress,
+                            yvex_error *err)
+{
+    media_fixture_context *context = opaque;
+    if (!context || !progress ||
+        progress->schema_version != YVEX_RUNTIME_MEDIA_PROGRESS_SCHEMA_V1 ||
+        progress->kind > YVEX_RUNTIME_MEDIA_PROGRESS_PUBLICATION_COMPLETE) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "test.runtime-media.progress",
+                       "typed media progress is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    context->progress_mask |= 1ull << progress->kind;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static yvex_runtime_av_generation_request fixture_request(
     media_fixture_context *context, const char *path,
     float video_mean[24], float video_std[24],
@@ -318,7 +472,7 @@ static yvex_runtime_av_generation_request fixture_request(
         pixel_mean[index] = 0.0f;
         pixel_std[index] = 1.0f;
     }
-    request.schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1;
+    request.schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V2;
     request.target = "fixture-av";
     request.prompt = "hello";
     request.output_path = path;
@@ -338,6 +492,7 @@ static yvex_runtime_av_generation_request fixture_request(
     request.conditioning_layers = 1ull;
     request.transformer_blocks = 50ull;
     request.seed = 42ull;
+    request.keyframe_encode_seed = 42ull;
     request.maximum_prompt_tokens = 256ull;
     request.maximum_packed_rows = 2048ull;
     request.maximum_host_bytes = 64ull << 20u;
@@ -367,11 +522,14 @@ static yvex_runtime_av_generation_request fixture_request(
     request.layout_build = fixture_layout;
     request.component_admit = fixture_admit;
     request.condition = fixture_condition;
+    request.keyframe_encode = fixture_keyframe;
     request.latent = fixture_latent;
     request.video_decode = fixture_video;
     request.audio_decode = fixture_audio;
     request.cancel_requested = fixture_cancelled;
     request.cancel_context = context;
+    request.observe_progress = fixture_progress;
+    request.progress_context = context;
     return request;
 }
 
@@ -399,8 +557,193 @@ static int read_file(const char *path, unsigned char **bytes, size_t *count)
     return 1;
 }
 
+static int condition_fixture_write(char path[])
+{
+    int descriptor = mkstemp(path);
+    size_t offset = 0u;
+    if (descriptor < 0) return 0;
+    while (offset < sizeof(condition_png)) {
+        ssize_t count = write(descriptor, condition_png + offset,
+                              sizeof(condition_png) - offset);
+        if (count <= 0) {
+            close(descriptor);
+            unlink(path);
+            return 0;
+        }
+        offset += (size_t)count;
+    }
+    return close(descriptor) == 0;
+}
+
+static int fixture_copy(const char *destination)
+{
+    unsigned char buffer[4096];
+    int input = -1, output = -1, result = 0;
+    ssize_t count;
+    input = open(FIXTURE_PATH, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    output = open(destination, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (input < 0 || output < 0) goto done;
+    while ((count = read(input, buffer, sizeof(buffer))) > 0) {
+        size_t offset = 0u;
+        while (offset < (size_t)count) {
+            ssize_t written = write(output, buffer + offset, (size_t)count - offset);
+            if (written <= 0) goto done;
+            offset += (size_t)written;
+        }
+    }
+    result = count == 0 && fsync(output) == 0;
+done:
+    if (input >= 0) (void)close(input);
+    if (output >= 0 && close(output) != 0) result = 0;
+    return result;
+}
+
+static int fixture_lease_path(const char *path, const char *cache_root,
+                              char output[YVEX_ARTIFACT_PATH_CAP])
+{
+    yvex_artifact_options options = {0};
+    yvex_artifact_reopen_lease lease;
+    yvex_artifact *artifact = NULL;
+    yvex_error err;
+    int rc;
+    options.path = path;
+    options.readonly = 1;
+    rc = yvex_artifact_open(&artifact, &options, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_artifact_reopen_lease_check(
+            artifact, FIXTURE_IDENTITY, cache_root, &lease, &err);
+    if (rc == YVEX_OK && lease.verified)
+        yvex_core_text_copy(output, YVEX_ARTIFACT_PATH_CAP, lease.path);
+    else
+        rc = YVEX_ERR_STATE;
+    yvex_artifact_close(artifact);
+    return rc == YVEX_OK;
+}
+
+static unsigned long long summary_mode_count(
+    const yvex_runtime_media_model_summary *summary,
+    yvex_artifact_verification_mode mode)
+{
+    unsigned long long count = 0ull, index;
+    for (index = 0ull; summary && index < summary->component_count; ++index)
+        count += summary->components[index].evidence.verification_mode == mode;
+    return count;
+}
+
+static int test_composite_verified_reopen(void)
+{
+    static const char *const names[] = {"text.gguf", "transformer.gguf",
+                                        "video.gguf", "audio.gguf"};
+    media_fixture_context context = {0};
+    float video_mean[24], video_std[24], audio_mean[32], audio_std[32];
+    float pixel_mean[3], pixel_std[3];
+    char root[] = "/tmp/yvex-media-reopen-XXXXXX";
+    char paths[4][YVEX_ARTIFACT_PATH_CAP], cache_root[YVEX_ARTIFACT_PATH_CAP];
+    char leases[5][YVEX_ARTIFACT_PATH_CAP] = {{0}};
+    char artifact_dir[YVEX_ARTIFACT_PATH_CAP], receipt_root[YVEX_ARTIFACT_PATH_CAP];
+    yvex_runtime_av_generation_request request;
+    yvex_runtime_media_model_open_options options = {0};
+    yvex_runtime_media_model_summary summary;
+    yvex_runtime_media_model *model = NULL;
+    yvex_error err;
+    struct timespec times[2] = {{0, UTIME_NOW}, {0, UTIME_NOW}};
+    unsigned char changed = 0u;
+    unsigned long long index;
+    int descriptor, rc;
+
+    YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "composite reopen root");
+    YVEX_TEST_ASSERT(snprintf(cache_root, sizeof(cache_root), "%s/cache", root) > 0,
+                     "composite reopen cache root");
+    for (index = 0ull; index < 4ull; ++index) {
+        YVEX_TEST_ASSERT(snprintf(paths[index], sizeof(paths[index]), "%s/%s", root,
+                                  names[index]) > 0 && fixture_copy(paths[index]),
+                         "composite component fixture copy");
+    }
+    request = fixture_request(&context, "/tmp/not-generated.avi", video_mean, video_std,
+                              audio_mean, audio_std, pixel_mean, pixel_std);
+    request.text_artifact_path = paths[0];
+    request.transformer_artifact_path = paths[1];
+    request.video_artifact_path = paths[2];
+    request.audio_artifact_path = paths[3];
+    options.schema_version = YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_CURRENT;
+    options.artifact_reopen_cache_root = cache_root;
+    rc = yvex_runtime_media_model_open(&model, &request, &options, &summary, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && model && summary.component_count == 4ull &&
+                         summary.engine_generation &&
+                         summary.resource_count == 4ull &&
+                         summary.resource_generation == 4ull &&
+                         summary.mapped_package_bytes == summary.artifact_bytes &&
+                         !summary.prepared_bytes && !summary.resident_host_bytes &&
+                         !summary.resident_device_bytes &&
+                         summary.artifact_bytes_hashed == 4ull * FIXTURE_BYTES &&
+                         summary_mode_count(&summary, YVEX_ARTIFACT_VERIFICATION_FULL_HASH) == 4ull,
+                     "four-component cold admission hashes and leases every component");
+    yvex_runtime_media_model_close(&model);
+    for (index = 0ull; index < 4ull; ++index)
+        YVEX_TEST_ASSERT(fixture_lease_path(paths[index], cache_root, leases[index]),
+                         "cold component lease is independently valid");
+    rc = yvex_runtime_media_model_open(&model, &request, &options, &summary, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && model && !summary.artifact_bytes_hashed &&
+                         summary_mode_count(
+                             &summary, YVEX_ARTIFACT_VERIFICATION_VERIFIED_REOPEN) == 4ull,
+                     "four unchanged components reopen without full byte hashing");
+    yvex_runtime_media_model_close(&model);
+
+    YVEX_TEST_ASSERT(utimensat(AT_FDCWD, paths[1], times, 0) == 0,
+                     "one component snapshot changes without changing bytes");
+    rc = yvex_runtime_media_model_open(&model, &request, &options, &summary, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && model && summary.artifact_bytes_hashed == FIXTURE_BYTES &&
+                         summary_mode_count(&summary, YVEX_ARTIFACT_VERIFICATION_FULL_HASH) == 1ull &&
+                         summary_mode_count(
+                             &summary, YVEX_ARTIFACT_VERIFICATION_VERIFIED_REOPEN) == 3ull,
+                     "one stale component falls back without invalidating three warm hits");
+    yvex_runtime_media_model_close(&model);
+    YVEX_TEST_ASSERT(fixture_lease_path(paths[1], cache_root, leases[4]),
+                     "selective fallback publishes one replacement snapshot lease");
+
+    descriptor = open(leases[2], O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    YVEX_TEST_ASSERT(descriptor >= 0 && pwrite(descriptor, &changed, 1u, 0) == 1 &&
+                         fsync(descriptor) == 0 && close(descriptor) == 0,
+                     "one component receipt is malformed independently");
+    rc = yvex_runtime_media_model_open(&model, &request, &options, &summary, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && model && summary.artifact_bytes_hashed == FIXTURE_BYTES &&
+                         summary_mode_count(
+                             &summary, YVEX_ARTIFACT_VERIFICATION_FALLBACK_FULL_HASH) == 1ull &&
+                         summary.components[2].evidence.lease_repaired &&
+                         summary_mode_count(
+                             &summary, YVEX_ARTIFACT_VERIFICATION_VERIFIED_REOPEN) == 3ull,
+                     "malformed component receipt repairs after full verification");
+    yvex_runtime_media_model_close(&model);
+
+    descriptor = open(paths[3], O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    changed = 0xffu;
+    YVEX_TEST_ASSERT(descriptor >= 0 && pwrite(descriptor, &changed, 1u, 927) == 1 &&
+                         fsync(descriptor) == 0 && close(descriptor) == 0,
+                     "component mismatch fixture changes bytes without changing extent");
+    YVEX_TEST_ASSERT(yvex_runtime_media_model_open(
+                         &model, &request, &options, &summary, &err) != YVEX_OK && !model,
+                     "changed component bytes fail closed instead of publishing a lease");
+
+    for (index = 0ull; index < 5ull; ++index)
+        YVEX_TEST_ASSERT(unlink(leases[index]) == 0, "component receipt cleanup");
+    for (index = 0ull; index < 4ull; ++index)
+        YVEX_TEST_ASSERT(unlink(paths[index]) == 0, "component fixture cleanup");
+    YVEX_TEST_ASSERT(snprintf(artifact_dir, sizeof(artifact_dir),
+                              "%s/artifact-reopen/%s", cache_root,
+                              FIXTURE_IDENTITY) > 0 &&
+                         snprintf(receipt_root, sizeof(receipt_root),
+                                  "%s/artifact-reopen", cache_root) > 0 &&
+                         rmdir(artifact_dir) == 0 && rmdir(receipt_root) == 0 &&
+                         rmdir(cache_root) == 0 && rmdir(root) == 0,
+                     "composite reopen fixtures clean up narrowly");
+    return 0;
+}
+
 static int test_generation_transaction(void)
 {
+    static const char creative_prompt[] =
+        "HD stars over a high desert, a seed falling near 20 draft horses, "
+        "5 seconds later the MOVimento della camera begins";
     media_fixture_context first_context = {0}, second_context = {0};
     float first_video_mean[24], first_video_std[24], first_audio_mean[32];
     float first_audio_std[32], first_pixel_mean[3], first_pixel_std[3];
@@ -427,32 +770,50 @@ static int test_generation_transaction(void)
     second = fixture_request(&second_context, second_path, second_video_mean, second_video_std,
                              second_audio_mean, second_audio_std,
                              second_pixel_mean, second_pixel_std);
-    rc = yvex_runtime_media_model_open(&model, &first, &model_summary, &err);
+    first.prompt = creative_prompt;
+    second.prompt = creative_prompt;
+    rc = yvex_runtime_media_model_open(&model, &first, NULL, &model_summary, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && model && model_summary.complete &&
                          model_summary.component_count == 4ull &&
                          yvex_sha256_hex_valid(model_summary.model_identity),
                      "persistent media model admits four components once");
     rc = yvex_runtime_media_model_open(
-        &repeated_model, &second, &repeated_summary, &err);
+        &repeated_model, &second, NULL, &repeated_summary, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && repeated_model &&
                          strcmp(model_summary.model_identity,
-                                repeated_summary.model_identity) == 0,
-                     "media model identity is deterministic across independent opens");
+                                repeated_summary.model_identity) == 0 &&
+                         model_summary.engine_generation !=
+                             repeated_summary.engine_generation &&
+                         model_summary.resource_count == 4ull &&
+                         repeated_summary.resource_count == 4ull,
+                     "package identity is stable while engine generations remain distinct");
     yvex_runtime_media_model_close(&repeated_model);
     active_fixture_context = &first_context;
     rc = yvex_runtime_media_model_generate(model, &first, &first_result, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && first_result.complete,
+    YVEX_TEST_ASSERT(rc == YVEX_OK && first_result.complete &&
+                         first_result.schema_version ==
+                             YVEX_RUNTIME_AV_GENERATION_RESULT_SCHEMA_V3 &&
+                         first_result.activation_arena_observed,
                      "complete staged media transaction");
     YVEX_TEST_ASSERT(first_result.frames == FIXTURE_FRAMES &&
                          first_result.width == FIXTURE_WIDTH &&
                          first_result.height == FIXTURE_HEIGHT &&
-                         first_result.audio_samples == 165333ull,
-                     "exact synchronized media geometry");
+                         first_result.audio_samples == 165333ull &&
+                         first_result.peak_device_bytes == 1024ull &&
+                         first_result.peak_workspace_bytes >= 8192ull &&
+                         first_result.peak_workspace_bytes <=
+                             first.maximum_workspace_bytes,
+                     "exact synchronized media geometry and bounded execution peaks");
     YVEX_TEST_ASSERT(first_context.condition_calls == 1ull &&
                          first_context.latent_calls == 1ull &&
                          first_context.video_calls == 7ull &&
                          first_context.audio_calls == 1ull,
                      "all staged component phases executed once per admitted schedule");
+    YVEX_TEST_ASSERT(first_context.token_count &&
+                         first_context.progress_mask ==
+                             ((1ull << (YVEX_RUNTIME_MEDIA_PROGRESS_PUBLICATION_COMPLETE + 1u)) -
+                              1ull),
+                     "opaque creative prompt reaches conditioning and every real phase is visible");
     active_fixture_context = &second_context;
     rc = yvex_runtime_media_model_generate(model, &second, &second_result, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && second_result.complete,
@@ -461,6 +822,10 @@ static int test_generation_transaction(void)
                            "deterministic end-to-end execution identity");
     YVEX_TEST_ASSERT_STREQ(first_result.file_identity, second_result.file_identity,
                            "deterministic end-to-end file identity");
+    YVEX_TEST_ASSERT(first_context.token_count == second_context.token_count &&
+                         memcmp(first_context.token_ids, second_context.token_ids,
+                                (size_t)first_context.token_count * sizeof(unsigned int)) == 0,
+                     "submitted creative prompt reaches conditioning byte-for-byte deterministically");
     YVEX_TEST_ASSERT(read_file(first_path, &first_bytes, &first_count) &&
                          read_file(second_path, &second_bytes, &second_count) &&
                          first_count == second_count &&
@@ -477,6 +842,103 @@ static int test_generation_transaction(void)
     return 0;
 }
 
+static int run_conditioned_transaction(
+    yvex_runtime_media_model *model, media_fixture_context *context,
+    yvex_runtime_av_generation_request *request,
+    yvex_runtime_media_condition *conditions, unsigned long long condition_count,
+    yvex_runtime_av_generation_result *result, yvex_error *err)
+{
+    request->conditions = conditions;
+    request->condition_count = condition_count;
+    active_fixture_context = context;
+    return yvex_runtime_media_model_generate(model, request, result, err);
+}
+
+static int test_conditioned_transactions(void)
+{
+    media_fixture_context first_context = {0}, last_context = {0}, both_context = {0};
+    float video_mean[24], video_std[24], audio_mean[32], audio_std[32];
+    float pixel_mean[3], pixel_std[3];
+    char first_image[] = "/tmp/yvex-media-first.XXXXXX";
+    char last_image[] = "/tmp/yvex-media-last.XXXXXX";
+    char first_path[160], last_path[160], both_path[160];
+    yvex_runtime_media_condition first = {
+        .schema_version = YVEX_RUNTIME_MEDIA_CONDITION_SCHEMA_V1,
+        .kind = YVEX_RUNTIME_MEDIA_CONDITION_IMAGE,
+        .role = YVEX_RUNTIME_MEDIA_CONDITION_FIRST,
+    };
+    yvex_runtime_media_condition last = {
+        .schema_version = YVEX_RUNTIME_MEDIA_CONDITION_SCHEMA_V1,
+        .kind = YVEX_RUNTIME_MEDIA_CONDITION_IMAGE,
+        .role = YVEX_RUNTIME_MEDIA_CONDITION_LAST,
+    };
+    yvex_runtime_media_condition both[2];
+    yvex_runtime_av_generation_request request;
+    yvex_runtime_av_generation_result first_result, last_result, both_result;
+    yvex_runtime_media_model_summary summary;
+    yvex_runtime_media_model *model = NULL;
+    yvex_error err;
+    int rc;
+
+    YVEX_TEST_ASSERT(condition_fixture_write(first_image) &&
+                         condition_fixture_write(last_image),
+                     "create two real PNG condition inputs");
+    first.source_path = first_image;
+    last.source_path = last_image;
+    both[0] = first;
+    both[1] = last;
+    snprintf(first_path, sizeof(first_path),
+             "build/tests/tmp/runtime-media-%ld-first.avi", (long)getpid());
+    snprintf(last_path, sizeof(last_path),
+             "build/tests/tmp/runtime-media-%ld-last.avi", (long)getpid());
+    snprintf(both_path, sizeof(both_path),
+             "build/tests/tmp/runtime-media-%ld-both.avi", (long)getpid());
+    unlink(first_path);
+    unlink(last_path);
+    unlink(both_path);
+    request = fixture_request(&first_context, first_path, video_mean, video_std,
+                              audio_mean, audio_std, pixel_mean, pixel_std);
+    request.prompt = "Il cielo è limpido — 中文";
+    rc = yvex_runtime_media_model_open(&model, &request, NULL, &summary, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && model && summary.complete,
+                     "conditioned fixture opens one persistent media engine");
+    rc = run_conditioned_transaction(
+        model, &first_context, &request, &first, 1ull, &first_result, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && first_result.complete &&
+                         first_context.condition_count == 1ull &&
+                         first_context.roles[0] == YVEX_RUNTIME_MEDIA_CONDITION_FIRST,
+                     "first-frame request reaches condition-aware production transaction");
+    request.output_path = last_path;
+    request.cancel_context = &last_context;
+    request.progress_context = &last_context;
+    rc = run_conditioned_transaction(
+        model, &last_context, &request, &last, 1ull, &last_result, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && last_result.complete &&
+                         last_context.condition_count == 1ull &&
+                         last_context.roles[0] == YVEX_RUNTIME_MEDIA_CONDITION_LAST &&
+                         strcmp(first_result.layout_identity, last_result.layout_identity) != 0,
+                     "last-frame request has a distinct typed temporal anchor");
+    request.output_path = both_path;
+    request.cancel_context = &both_context;
+    request.progress_context = &both_context;
+    rc = run_conditioned_transaction(
+        model, &both_context, &request, both, 2ull, &both_result, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && both_result.complete &&
+                         both_context.condition_count == 2ull &&
+                         both_context.roles[0] == YVEX_RUNTIME_MEDIA_CONDITION_FIRST &&
+                         both_context.roles[1] == YVEX_RUNTIME_MEDIA_CONDITION_LAST &&
+                         strcmp(both_result.layout_identity, first_result.layout_identity) != 0 &&
+                         strcmp(both_result.layout_identity, last_result.layout_identity) != 0,
+                     "first-plus-last request executes one dual-anchor transaction");
+    yvex_runtime_media_model_close(&model);
+    unlink(first_path);
+    unlink(last_path);
+    unlink(both_path);
+    unlink(first_image);
+    unlink(last_image);
+    return 0;
+}
+
 static int test_generation_refusals(void)
 {
     media_fixture_context context = {0};
@@ -487,6 +949,16 @@ static int test_generation_refusals(void)
     yvex_runtime_av_generation_result result;
     yvex_runtime_media_model_summary model_summary;
     yvex_runtime_media_model *model = NULL;
+    yvex_runtime_media_condition invalid_conditions[2] = {
+        {.schema_version = YVEX_RUNTIME_MEDIA_CONDITION_SCHEMA_V1,
+         .kind = YVEX_RUNTIME_MEDIA_CONDITION_IMAGE,
+         .role = YVEX_RUNTIME_MEDIA_CONDITION_FIRST,
+         .source_path = "/tmp/yvex-runtime-media-missing.png"},
+        {.schema_version = YVEX_RUNTIME_MEDIA_CONDITION_SCHEMA_V1,
+         .kind = YVEX_RUNTIME_MEDIA_CONDITION_IMAGE,
+         .role = YVEX_RUNTIME_MEDIA_CONDITION_FIRST,
+         .source_path = "/tmp/yvex-runtime-media-missing.png"},
+    };
     yvex_error err;
     int rc;
     snprintf(path, sizeof(path), "build/tests/tmp/runtime-media-%ld-refuse.avi", (long)getpid());
@@ -494,7 +966,7 @@ static int test_generation_refusals(void)
     request = fixture_request(&context, path, video_mean, video_std, audio_mean, audio_std,
                               pixel_mean, pixel_std);
     active_fixture_context = &context;
-    rc = yvex_runtime_media_model_open(&model, &request, &model_summary, &err);
+    rc = yvex_runtime_media_model_open(&model, &request, NULL, &model_summary, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && model, "refusal fixture media model opens");
     request.maximum_device_bytes++;
     rc = yvex_runtime_media_model_generate(model, &request, &result, &err);
@@ -502,6 +974,17 @@ static int test_generation_refusals(void)
                      "request cannot mutate the opened media model contract");
     request.maximum_device_bytes--;
     yvex_runtime_media_model_close(&model);
+    request.conditions = invalid_conditions;
+    request.condition_count = 2ull;
+    rc = yvex_runtime_av_generate(&request, &result, &err);
+    YVEX_TEST_ASSERT(rc != YVEX_OK && !result.complete && access(path, F_OK) != 0,
+                     "duplicate first-frame conditions fail before media publication");
+    request.condition_count = 1ull;
+    rc = yvex_runtime_av_generate(&request, &result, &err);
+    YVEX_TEST_ASSERT(rc != YVEX_OK && !result.complete && access(path, F_OK) != 0,
+                     "unreadable condition image fails without partial publication");
+    request.conditions = NULL;
+    request.condition_count = 0ull;
     request.component_backend = YVEX_BACKEND_KIND_METAL;
     rc = yvex_runtime_av_generate(&request, &result, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !result.complete,
@@ -526,7 +1009,9 @@ static int test_generation_refusals(void)
 
 int yvex_test_runtime_media(void)
 {
+    if (test_composite_verified_reopen() != 0) return 1;
     if (test_generation_transaction() != 0) return 1;
+    if (test_conditioned_transactions() != 0) return 1;
     if (test_generation_refusals() != 0) return 1;
     return 0;
 }

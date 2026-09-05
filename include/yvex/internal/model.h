@@ -7,18 +7,29 @@
 #ifndef INCLUDE_YVEX_INTERNAL_MODEL_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_MODEL_H_INCLUDED
 
+#include <yvex/catalog.h>
 #include <yvex/model.h>
 #include <yvex/source.h>
 #include <yvex/internal/core.h>
 
 #define YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 1u
+#define YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2 2u
 #define YVEX_MODEL_EXECUTION_IDENTITY_CAP (YVEX_SHA256_HEX_BYTES + 1u)
 #define YVEX_MODEL_EXECUTION_FEATURE_LAYER_CAP 8u
-#define YVEX_MODEL_EXECUTION_SCALAR_COUNT 56u
+#define YVEX_MODEL_EXECUTION_SCALAR_COUNT_V1 56u
+#define YVEX_MODEL_EXECUTION_SCALAR_COUNT_V2 58u
+#define YVEX_MODEL_EXECUTION_SCALAR_COUNT YVEX_MODEL_EXECUTION_SCALAR_COUNT_V2
 #define YVEX_MODEL_EXECUTION_IDENTITY_COUNT 4u
+#define YVEX_MODEL_EXECUTION_WIRE_BYTES_V1                                                \
+    (8u + YVEX_MODEL_EXECUTION_SCALAR_COUNT_V1 * 8u +                                   \
+     (YVEX_MODEL_EXECUTION_IDENTITY_COUNT + 1u) * YVEX_SHA256_HEX_BYTES)
 #define YVEX_MODEL_EXECUTION_WIRE_BYTES                                                   \
     (8u + YVEX_MODEL_EXECUTION_SCALAR_COUNT * 8u +                                      \
      (YVEX_MODEL_EXECUTION_IDENTITY_COUNT + 1u) * YVEX_SHA256_HEX_BYTES)
+
+unsigned long long yvex_remote_catalog_provider_count(const yvex_remote_catalog *catalog);
+const char *yvex_remote_catalog_query(const yvex_remote_catalog *catalog);
+const char *yvex_remote_model_kind_name(yvex_remote_model_kind kind);
 
 typedef enum {
     YVEX_MODEL_ROPE_SCALING_NONE = 0,
@@ -37,9 +48,12 @@ typedef enum {
     YVEX_MODEL_STATE_DRAFT_PERSISTENT,
     YVEX_MODEL_STATE_CANDIDATE_DELTA,
     YVEX_MODEL_STATE_PREFIX_CHECKPOINT,
+    YVEX_MODEL_STATE_RECURRENT_SEQUENCE,
     YVEX_MODEL_STATE_CLASS_COUNT
 } yvex_model_state_class;
 
+#define YVEX_MODEL_STATE_CLASS_COUNT_V1 \
+    ((unsigned int)YVEX_MODEL_STATE_RECURRENT_SEQUENCE)
 #define YVEX_MODEL_STATE_CLASS_BIT(state_class) (1ull << (unsigned int)(state_class))
 
 /*
@@ -58,14 +72,15 @@ typedef struct {
     unsigned long long rope_beta_fast, rope_beta_slow;
     unsigned long long layer_count, hidden_width, vocabulary_size;
     unsigned long long attention_heads, kv_heads, head_width;
-    unsigned long long swa_layers, csa_layers, hca_layers, sliding_window;
+    unsigned long long swa_layers, csa_layers, hca_layers, sequence_mixer_layers;
+    unsigned long long sliding_window;
     unsigned long long minimum_compression_ratio, maximum_compression_ratio;
     unsigned long long index_heads, index_head_width, index_topk;
     unsigned long long residual_streams, mhc_sinkhorn_iterations;
     double mhc_epsilon, normalization_epsilon;
     unsigned long long routed_experts, experts_per_row;
     unsigned long long shared_experts, routed_ffn_width, shared_ffn_width;
-    unsigned long long hash_router_layer_count;
+    unsigned long long hash_router_layer_count, dense_ffn_width;
     double routed_scaling_factor, activation_limit;
     unsigned long long output_input_width, output_vocabulary_size;
     unsigned long long proposal_width, verification_width_maximum;
@@ -84,14 +99,15 @@ typedef struct yvex_model_execution_descriptor {
     unsigned long long rope_beta_fast, rope_beta_slow;
     unsigned long long layer_count, hidden_width, vocabulary_size;
     unsigned long long attention_heads, kv_heads, head_width;
-    unsigned long long swa_layers, csa_layers, hca_layers, sliding_window;
+    unsigned long long swa_layers, csa_layers, hca_layers, sequence_mixer_layers;
+    unsigned long long sliding_window;
     unsigned long long minimum_compression_ratio, maximum_compression_ratio;
     unsigned long long index_heads, index_head_width, index_topk;
     unsigned long long residual_streams, mhc_sinkhorn_iterations;
     double mhc_epsilon, normalization_epsilon;
     unsigned long long routed_experts, experts_per_row;
     unsigned long long shared_experts, routed_ffn_width, shared_ffn_width;
-    unsigned long long hash_router_layer_count;
+    unsigned long long hash_router_layer_count, dense_ffn_width;
     double routed_scaling_factor, activation_limit;
     unsigned long long output_input_width, output_vocabulary_size;
     unsigned long long proposal_width, verification_width_maximum;

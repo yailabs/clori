@@ -19,8 +19,13 @@ verified source snapshot
   -> artifact admission
   -> canonical Operator Graph IR
   -> canonicalization and validation
-  -> Physical Execution IR, compiled execution envelope and materialization
+  -> Physical Execution IR package decisions and materialization
   -> content-addressed runtime binding
+
+deployment:
+  runtime binding + admitted backend/device
+  -> engine specialization
+  -> model-engine generation
 ```
 
 ![Physical model compilation resolves each terminal tensor through sealed policy and capability authorities before artifact construction.](../diagrams/physical_compilation.svg)
@@ -39,7 +44,7 @@ The retained source snapshot is immutable and indexed. Downstream owners
 consume typed facts and exact bounded ranges; they do not rescan source headers
 or infer semantics from filenames.
 
-Payload admission has an explicit bootstrap boundary. `compile source verify`
+Payload admission has an explicit bootstrap boundary. `source verify`
 promotes verified metadata/header provenance to source-manifest v3 only after
 reading every shard and matching its authoritative provider SHA-256. The v3
 manifest lives outside the source snapshot, binds the ordered aggregate payload
@@ -94,18 +99,26 @@ physical-policy decision.
 Writer and runtime owners consume the resolved variant. They do not pick a
 different representation for convenience.
 
-The physical variant owns canonical encoded representation. The versioned
-Physical Execution IR separately projects each terminal tensor into its
-consumer class, execution layout, placement, activation representation,
-supported widths, backend and hardware requirement, kernel family, evidence
-depth, and explicit fallback class. Schema v4 seals the legal expert-worklist
-widths and any numerically admitted Tensor Core minimum separately from the
-request's dynamic row population. The backend may choose an equivalent
-microkernel for the sealed regime, but it cannot infer semantic compatibility
-from total rows or manufacture missing width. This separation lets a backend derive a
-kernel-consumable layout without changing the canonical artifact identity.
-Physical decisions bind terminal and variant identities; they never include
-process pointers, local paths, timestamps, or transient residency.
+The physical variant owns canonical encoded representation. Physical Execution
+IR schema v5 is the package projection for each terminal tensor: canonical role,
+scope, coordinates, qtype, row geometry, encoded range, alignment, consumer,
+stable layout, sharing, and terminal identity. It deliberately contains no
+backend, device, activation, kernel-family, width-crossover, evidence, fallback,
+or live-resource policy.
+
+At model-engine open, the runtime combines these authenticated package decisions
+with one real backend/device and seals an engine specialization. That
+specialization owns the admitted implementation class, activation
+representation, legal real widths, fallback-equivalence class, and any
+hardware crossover. Actual compatible rows and routed populations still belong
+to executable batches and expert worklists. CUDA may select an equivalent
+microkernel inside the admitted class, but it cannot infer semantic
+compatibility, manufacture width, or select a numerically different class.
+
+Package identities therefore change with model/storage meaning. Specialization
+identity changes with deployment-significant implementation facts. Equivalent
+warp, tile, grid, stream, and launch geometry stays backend-local and does not
+rebuild the package or binding.
 
 ## Artifact emission and admission
 
@@ -118,22 +131,22 @@ facts, every required tensor role, qtype support, source/derivation/variant
 identities, and exact file identity. Structural GGUF validity is necessary but
 not sufficient.
 
-Materialization consumes terminal roles and Physical Execution IR decisions to
-produce checked file-backed, host-canonical, CUDA-addressable-host, device, or
-staged resources. It does not import a concrete model family, infer consumers
-from tensor names, execute a graph, or establish support for a model. A future
-derived execution asset must be rebuilt deterministically and authenticated by
-both artifact and Physical Execution IR identities.
+Materialization consumes terminal roles and package decisions to produce checked
+file-backed, host-canonical, CUDA-addressable-host, device, or staged resources.
+It does not import a concrete model family, choose a deployment implementation,
+infer consumers from tensor names, execute a graph, or establish support for a
+model. A derived representation remains a typed engine resource unless its
+bytes are intentionally published as a separately authenticated package asset.
 
 ## Runtime binding
 
-The runtime binding is a separate content-addressed object. It bridges the
-admitted artifact and physical-execution decisions to runtime descriptors,
-physical tensor locations, executable requirements, numerical identities, and
-compatibility constraints. A compiled execution profile then binds that chain
-to the kernel bundle, hardware, context capacity, mode, workload, evidence
-profile, and portable or device-native adapter class. The warm runtime reopens
-and authenticates admitted facts rather than rebuilding compiler plans.
+The runtime binding is a separate content-addressed package object. It bridges
+the admitted artifact and package physical decisions to runtime descriptors,
+physical tensor locations, compiled model/operator plans, tokenizer policy,
+numerical identities, and compatibility constraints. It does not serialize a
+selected machine, resident population, kernel cache, request shape, or backend
+microkernel. The warm runtime reopens and authenticates these admitted package
+facts rather than rebuilding compiler plans.
 
 Context has two authorities at this boundary. The Semantic Model IR owns the
 source-authored maximum. The immutable compiled model plan projects that fact
@@ -144,19 +157,25 @@ capacity planner evaluates state geometry, artifact bytes, hardware facts and
 resource reserve. The current 4096-token DeepSeek profile is one such selected
 workload, not the model's semantic limit.
 
-Runtime binding v14 persists the canonical operator graph identity, Physical Execution IR v4 and
-the pointer-free compiled tokenizer and conversation policy beside the model/operator execution
-records. Source-owned syntax and exact tokenizer component identities enter through the family
-compiler adapter; tokenizer, runtime and server consume the authenticated record without
-enumerating a concrete family. Bindings v7 through v13 are refused because none can represent the
-current complete compilation authority. For MoE, compilation seals legal worklist widths,
-representations, the narrow kernel and any admitted Tensor Core alternative. Runtime supplies the
-actual compatible rows and expert populations; the backend executes the typed worklist without
-rebuilding grouping semantics or inventing width. Compiled execution
-profile v2 replaces three fallback booleans with identity-bearing attention,
-MoE, and sampling resolutions; this is an incompatible internal contract change
-because v1 cannot represent why an admitted execution differs from the exact
-path.
+Runtime binding v15 persists the canonical operator graph identity, Physical
+Execution IR v5 package records, and pointer-free compiled tokenizer,
+conversation, and model/operator plans. Source-owned syntax and exact tokenizer
+component identities enter through the family compiler adapter; tokenizer,
+runtime, and server consume the authenticated record without enumerating a
+concrete family.
+
+The v15 reader also authenticates accepted v14 bindings. It imports a v14
+physical record only when the legacy record names canonical package storage and
+does not require its retired derived-layout/runtime-policy fields; the importer
+then normalizes that package truth to PEIR v5 before engine specialization.
+Unsupported legacy derived assets fail closed. Bindings v7 through v13 remain
+explicit rebuild boundaries because they predate the canonical operator graph.
+Old bytes are never reinterpreted as v15.
+
+The non-persisted runtime execution profile binds an exact engine generation
+and specialization to workload, kernel bundle, generation mode, evidence class,
+and typed operation resolutions. It is built inside the opened engine/session
+lifetime. It is not a second permanent execution plan.
 
 Artifact drift, binding drift, unsupported qtypes, missing roles, resource
 overflow, or incompatible runtime requirements refuse before model execution.
@@ -166,10 +185,14 @@ overflow, or incompatible runtime requirements refuse before model execution.
 The CPU-only tiny vertical is the fast composition oracle for this pipeline. Its focused test
 owner deterministically generates an untracked GGUF, admits it through the production artifact
 contract, compiles the semantic model, operator graph, Physical Execution IR and runtime binding,
-then launches the real foreground server. The production `server status`, `run`, `server log` and
-`server stop` paths must return the expected context, text, typed completion event and clean
-lifecycle. A second build must reproduce the artifact and binding identities, while a corrupted
-artifact must refuse before model-open.
+then launches the real foreground host with zero engines, loads the fixture,
+serves it, unloads it without stopping the host, reloads it as a new generation,
+and admits two fitting engines concurrently. The production `host status`,
+`engine list`, `engine load`, native generation, `engine unload`, `host logs`, and
+`host stop` paths must return the expected context, text, identities, typed
+completion event, routing refusals, and clean lifecycle. A second build must
+reproduce artifact and binding identities, while a corrupted artifact must
+refuse without terminating the host.
 
 The fixture adds no production model family and does not establish support, quality, CUDA or
 performance for a real model. Its generated artifact and binding remain temporary build evidence,

@@ -84,6 +84,32 @@ static const size_t source_sidecar_valid_offsets[] = {
     offsetof(yvex_source_verification, inference_config_valid),
 };
 
+static unsigned int source_sidecar_bit(source_sidecar_kind kind)
+{
+    return kind >= SOURCE_SIDECAR_CONFIG && kind <= SOURCE_SIDECAR_INFERENCE_CONFIG
+               ? 1u << (unsigned int)kind
+               : 0u;
+}
+
+int yvex_source_verification_required_sidecars_valid(
+    const yvex_source_target_identity *identity,
+    const yvex_source_verification *verification)
+{
+    unsigned int required;
+
+    if (!identity || !verification) return 0;
+    required = identity->required_sidecars;
+    return (!(required & YVEX_SOURCE_SIDECAR_CONFIG) || verification->config_valid) &&
+           (!(required & YVEX_SOURCE_SIDECAR_TOKENIZER) ||
+            verification->tokenizer_json_valid) &&
+           (!(required & YVEX_SOURCE_SIDECAR_TOKENIZER_CONFIG) ||
+            verification->tokenizer_config_valid) &&
+           (!(required & YVEX_SOURCE_SIDECAR_GENERATION_CONFIG) ||
+            verification->generation_config_valid) &&
+           (!(required & YVEX_SOURCE_SIDECAR_INFERENCE_CONFIG) ||
+            verification->inference_config_valid);
+}
+
 int yvex_source_path_join(char *out, size_t cap, const char *left, const char *right) {
     int n;
 
@@ -194,6 +220,9 @@ static int source_verify_sidecar(const yvex_source_verify_options *options,
     size_t cap = kind == SOURCE_SIDECAR_TOKENIZER ? SOURCE_TOKENIZER_CAP : SOURCE_CONFIG_CAP;
     int rc;
 
+    if (!(options->identity->required_sidecars & source_sidecar_bit(kind)))
+        return YVEX_OK;
+
     if (!yvex_source_path_join(path, sizeof(path), options->source_path, name) ||
         !yvex_source_regular_file(path, NULL)) {
         yvex_source_verification_add_blocker(out, rule->missing);
@@ -301,7 +330,9 @@ int yvex_source_verify_with_snapshot(const yvex_source_verify_options *options,
         if (rc != YVEX_OK)
             goto cleanup;
     }
-    if (out->config_valid && out->generation_config_valid &&
+    if (options->identity->config_validation ==
+            YVEX_SOURCE_CONFIG_VALIDATION_DEEPSEEK_V4 &&
+        out->config_valid && out->generation_config_valid &&
         (out->bos_token_id != out->generation_bos_token_id ||
          out->eos_token_id != out->generation_eos_token_id)) {
         yvex_source_verification_add_blocker(out, "generation-config-token-mismatch");
@@ -355,9 +386,8 @@ int yvex_source_verify_with_snapshot(const yvex_source_verify_options *options,
                                                  : "source-manifest-incomplete");
     }
     out->verified = out->blocker_count == 0u && out->path_verified && out->repository_verified &&
-                    out->revision_verified && out->config_valid && out->tokenizer_json_valid &&
-                    out->tokenizer_config_valid && out->generation_config_valid &&
-                    out->inference_config_valid &&
+                    out->revision_verified &&
+                    yvex_source_verification_required_sidecars_valid(options->identity, out) &&
                     out->shard_index_headers_match && out->header_scan_count == 1u &&
                     out->manifest_verified &&
                     (strcmp(out->inventory_authority, "header-derived") == 0 ||
@@ -592,6 +622,14 @@ static const source_json_field source_config_fields[] = {
      offsetof(yvex_source_verification, swiglu_limit), sizeof(((yvex_source_verification *)0)->swiglu_limit), 0u, 0u},
     {"use_cache", CONFIG_USE_CACHE, SOURCE_JSON_BOOL,
      offsetof(yvex_source_verification, use_cache), 0u, 0u, 0u},
+};
+
+static const source_json_field source_identity_config_fields[] = {
+    {"model_type", CONFIG_MODEL_TYPE, SOURCE_JSON_TEXT,
+     offsetof(yvex_source_verification, model_type),
+     sizeof(((yvex_source_verification *)0)->model_type), 0u, 0u},
+    {"architectures", CONFIG_ARCHITECTURES, SOURCE_JSON_ARCHITECTURES,
+     0u, 0u, 0u, 0u},
 };
 
 static const source_json_field source_rope_fields[] = {
@@ -855,7 +893,40 @@ static int source_parse_config_json(const char *data,
     yvex_json json;
     source_config_parse_state state = {0};
 
+    if (!identity || !identity->config_model_type ||
+        !identity->config_architecture)
+        return 0;
+
     yvex_json_init(&json, data, length);
+    if (identity->config_validation ==
+        YVEX_SOURCE_CONFIG_VALIDATION_FAMILY_SEMANTIC) {
+        /* Some Python-exported model configs contain positive Infinity bounds.
+         * This identity-only pass does not admit their numerical semantics: the family
+         * must validate each used bound before producing a compiled execution contract. */
+        json.extensions = YVEX_JSON_EXTENSION_POSITIVE_INFINITY;
+        if (!source_json_object_parse(
+                &json, source_identity_config_fields,
+                sizeof(source_identity_config_fields) /
+                    sizeof(source_identity_config_fields[0]),
+                0u, identity, out, &state, 1))
+            return 0;
+        if ((state.seen & (CONFIG_MODEL_TYPE | CONFIG_ARCHITECTURES)) !=
+            (CONFIG_MODEL_TYPE | CONFIG_ARCHITECTURES))
+            yvex_source_verification_add_blocker(
+                out, "missing-source-config-identity");
+        if (strcmp(out->model_type, identity->config_model_type) != 0)
+            yvex_source_verification_add_blocker(
+                out, "wrong-source-model-type");
+        if (!state.architecture_matches)
+            yvex_source_verification_add_blocker(
+                out, "wrong-source-architecture");
+        out->config_valid =
+            (state.seen & (CONFIG_MODEL_TYPE | CONFIG_ARCHITECTURES)) ==
+                (CONFIG_MODEL_TYPE | CONFIG_ARCHITECTURES) &&
+            strcmp(out->model_type, identity->config_model_type) == 0 &&
+            state.architecture_matches;
+        return 1;
+    }
     if (!source_json_object_parse(&json,
                                   source_config_fields,
                                   sizeof(source_config_fields) / sizeof(source_config_fields[0]),
@@ -875,6 +946,23 @@ static int source_parse_config_json(const char *data,
     out->config_valid = strcmp(out->model_type, identity->config_model_type) == 0 &&
                         state.architecture_matches && out->compress_ratio_count > 0u;
     return 1;
+}
+
+static int source_parse_json_object(const char *data, size_t length)
+{
+    char key[YVEX_JSON_KEY_CAP];
+    yvex_json json;
+    yvex_json_iter iter;
+    yvex_json_item item;
+
+    yvex_json_init(&json, data, length);
+    if (!yvex_json_iter_begin(&json, &iter, YVEX_JSON_COLLECTION_OBJECT))
+        return 0;
+    while ((item = yvex_json_object_member(&iter, key, sizeof(key))) ==
+           YVEX_JSON_ITEM_READY)
+        if (!yvex_json_skip_value(&json)) return 0;
+    return item == YVEX_JSON_ITEM_END && !iter.trailing_separator &&
+           yvex_json_complete(&json);
 }
 
 static int
@@ -1051,7 +1139,11 @@ static int source_parse_sidecar(source_sidecar_kind kind,
     if (kind < SOURCE_SIDECAR_TOKENIZER || kind > SOURCE_SIDECAR_INFERENCE_CONFIG)
         return 0;
     parser_index = (size_t)kind - (size_t)SOURCE_SIDECAR_TOKENIZER;
-    valid = source_sidecar_parsers[parser_index](data, length, out);
+    valid = identity->config_validation ==
+                        YVEX_SOURCE_CONFIG_VALIDATION_FAMILY_SEMANTIC &&
+                    kind != SOURCE_SIDECAR_TOKENIZER
+                ? source_parse_json_object(data, length)
+                : source_sidecar_parsers[parser_index](data, length, out);
     *(int *)(void *)((unsigned char *)out + source_sidecar_valid_offsets[parser_index]) = valid;
     return valid;
 }

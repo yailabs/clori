@@ -5,9 +5,13 @@
 
 #include <yvex/artifact.h>
 #include <yvex/backend.h>
+#include <yvex/catalog.h>
 #include <yvex/core.h>
+#include <yvex/content.h>
+#include <yvex/execution.h>
 #include <yvex/gguf.h>
 #include <yvex/graph.h>
+#include <yvex/materialization.h>
 #include <yvex/model.h>
 #include <yvex/provider.h>
 #include <yvex/qtype.h>

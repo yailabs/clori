@@ -20,6 +20,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+extern const yvex_family_descriptor yvex_graph_family_descriptor_deepseek_v4;
+
 static int graph_recipe_project(const yvex_deepseek_v4_layer_spec *layer,
                                 unsigned long long ordinal, yvex_tensor_scope scope,
                                 unsigned long long predictor,
@@ -272,15 +275,25 @@ static int deepseek_tokenizer_policy(yvex_tokenizer_family_policy *out, yvex_err
         YVEX_TOKENIZER_MODEL_BPE_BYTELEVEL, YVEX_TOKENIZER_PROMPT_CONVERSATION, err) == YVEX_OK;
 }
 static const yvex_family_compiler_adapter deepseek_compiler;
+static const yvex_model_deployment_defaults deepseek_deployment_defaults = {
+    .schema_version = YVEX_MODEL_DEPLOYMENT_DEFAULTS_SCHEMA_CURRENT,
+    .logical_family = "deepseek4",
+    .logical_model = "v4-flash-dspark",
+    .quant_preset = YVEX_DEEPSEEK_QUANT_RELEASE_PROFILE_NAME,
+    .backend = "cuda",
+    .engine_kind = "text",
+    .execution_strategy = "speculative",
+    .rebind_artifact_identity = YVEX_DEEPSEEK_REBIND_ARTIFACT_IDENTITY};
 static const yvex_graph_execution_binding deepseek_execution = {
     .schema_version = YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1,
     .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
     .adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
     .target_id = "deepseek4-v4-flash-dspark", .family_name = "deepseek-v4-flash-dspark",
-    .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
+    .logical_transform_identity = YVEX_DEEPSEEK_CURRENT_LOGICAL_TRANSFORM_IDENTITY,
     .operator_family_key = "deepseek",
     .operator_artifact_filename = YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME,
     .source_manifest_filename = YVEX_SOURCE_RELEASE_MANIFEST_LEAF,
+    .deployment_defaults = &deepseek_deployment_defaults,
     .model = yvex_model_register_deepseek_v4,
     .compiler = &deepseek_compiler,
     .api = &yvex_attention_execution_api};
@@ -304,22 +317,6 @@ static int deepseek_compilation_quant_policy(
     const yvex_transform_binding *binding, const void *lowering_context,
     const yvex_quant_policy *policy, const char *imatrix_identity,
     yvex_error *err);
-static const yvex_physical_execution_policy deepseek_physical_execution_policy = {
-    .schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V4,
-    .activation = YVEX_EXECUTION_ACTIVATION_DEVICE_F32,
-    .encoded_activation_consumer_mask =
-        (1ull << YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP) |
-        (1ull << YVEX_EXECUTION_CONSUMER_ROUTED_DOWN) |
-        (1ull << YVEX_EXECUTION_CONSUMER_SHARED_EXPERT),
-    .required_backend = YVEX_EXECUTION_BACKEND_ANY,
-    .evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION,
-    .fallback = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE,
-    .derived_asset_qtype_mask = 0ull,
-    .dense_kernel_family = YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW,
-    .expert_kernel_family = YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT,
-    .expert_worklist_width_mask = 0x1feull,
-    .expert_tensor_core_minimum = 0ull,
-    .expert_tensor_core_kernel_family = NULL};
 static const yvex_family_binding_pipeline deepseek_binding_pipeline = {
     .schema_version = YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1,
     .source_open = deepseek_compilation_source_open,
@@ -329,7 +326,7 @@ static const yvex_family_binding_pipeline deepseek_binding_pipeline = {
     .runtime_descriptor_build = deepseek_compilation_descriptor,
     .quant_plan_default = deepseek_compilation_quant_default,
     .quant_plan_policy = deepseek_compilation_quant_policy,
-    .tokenizer_architecture = "deepseek-v3",
+    .tokenizer_architecture = "deepseek-v3", .tokenizer_pre = "deepseek-v3",
     .imatrix_source_identity = YVEX_DEEPSEEK_QUANT_IMATRIX_SOURCE_IDENTITY,
     .imatrix_dataset_identity = YVEX_DEEPSEEK_QUANT_IMATRIX_DATASET_IDENTITY,
     .imatrix_producer = "llama.cpp-imatrix",
@@ -340,8 +337,7 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
     .adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
     .target_id = "deepseek4-v4-flash-dspark",
     .family = "deepseek-v4",
-    .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
-    .physical_execution_policy = &deepseek_physical_execution_policy,
+    .logical_transform_identity = YVEX_DEEPSEEK_CURRENT_LOGICAL_TRANSFORM_IDENTITY,
     .graph = deepseek_graph_compile,
     .operator_graph_build = yvex_operator_graph_ir_build_transformer,
     .execution_capabilities = deepseek_execution_capabilities,
@@ -355,7 +351,7 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
 const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void) {
     return &deepseek_compiler;
 }
-const yvex_graph_execution_binding *yvex_graph_deepseek_v4_execution_binding(void)
+static const yvex_graph_execution_binding *deepseek_execution_binding(void)
 {
     return &deepseek_execution;
 }
@@ -1158,6 +1154,8 @@ static int deepseek_compilation_source_open(
     out->artifact_lowering = payload->map(handoff);
     out->source_summary = payload->summary(handoff);
     out->lowering_context = payload->map(handoff);
+    out->tokenizer_vocabulary_size =
+        out->verification ? out->verification->tokenizer_effective_vocab_size : 0ull;
     if (!out->verification || !out->transform_ir || !out->transform_binding ||
         !out->artifact_lowering || !out->source_summary || !out->lowering_context) {
         payload->close(handoff);
@@ -1595,7 +1593,7 @@ static int deepseek_quant_preset_open(
     return yvex_quant_policy_create_definition(out, &definition, err);
 }
 
-const yvex_quant_preset_catalog *yvex_graph_deepseek_v4_quant_presets(void)
+static const yvex_quant_preset_catalog *deepseek_quant_presets(void)
 {
     static const yvex_quant_preset_catalog catalog = {
         YVEX_QUANT_PRESET_CATALOG_SCHEMA_V1,
@@ -1607,6 +1605,12 @@ const yvex_quant_preset_catalog *yvex_graph_deepseek_v4_quant_presets(void)
     return &catalog;
 }
 
+const yvex_family_descriptor yvex_graph_family_descriptor_deepseek_v4 = {
+    .schema_version = YVEX_FAMILY_DESCRIPTOR_SCHEMA_V1,
+    .target_id = "deepseek4-v4-flash-dspark", .family = "deepseek-v4",
+    .tokenizer_architecture = "deepseek-v3", .tokenizer_pre = "deepseek-v3",
+    .execution = deepseek_execution_binding,
+    .quant_presets = deepseek_quant_presets};
 typedef struct {
     unsigned long long payload_bytes, file_bytes;
     const char *transform, *profile, *name, *quant, *payload_plan;
@@ -1615,7 +1619,7 @@ typedef struct {
 
 static const deepseek_artifact_variant deepseek_artifact_catalog[] = {
     {108274154488ull, YVEX_SELECTED_DEEPSEEK_FILE_BYTES,
-     YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
+     YVEX_DEEPSEEK_LEGACY_ARTIFACT_TRANSFORM_IDENTITY,
      "a48d43c8594999a1af3a5b1f572b34a5823042cb767832d558642bb804b036c5",
      "deepseek-v4-flash-dspark-bootstrap-q2-v1",
      "777559149e4e8421c34299da78f63f6b0d296a91005d7670196164c3c72b62af",
@@ -1623,7 +1627,7 @@ static const deepseek_artifact_variant deepseek_artifact_catalog[] = {
      "6dce1edb82810715687d40c6d62273e992cfe9e0aa610cb9598447e06fb7099f",
      "1ba1ceaa709862145b1a145e938cf03327cd58da27bca42ade2f884e2b2fc635",
      "bf80bd7372e9ff754cd61d8f6e849ca8eff2177fad40840a2dad8e840b35690a"},
-    {98006498296ull, 98018204640ull, YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
+    {98006498296ull, 98018204640ull, YVEX_DEEPSEEK_LEGACY_ARTIFACT_TRANSFORM_IDENTITY,
      "6a99e9f7c374e3f718cce705002bf2b799db9cc1b86f65091631857f52c1c587",
      "deepseek-v4-flash-dspark-native-drafter-candidate",
      "35002244d5854a2d51b877ea31614cd985c9795d11c7e0904ed3475fec7fcb77",
@@ -1632,7 +1636,7 @@ static const deepseek_artifact_variant deepseek_artifact_catalog[] = {
      "2d4694925c02c04811ea846f389a94dbf524d26809a292c93f2c46ca8f05a025",
      "59c4649b19bb9f3eb7c01559e12ae52c3d4fbd067957e35de0a1a851759c7cc1"},
     {95038503928ull, 95050210304ull,
-     "f1fca7b4ec04d1b0de2a0f0707b3f78c5600e9a6486a83c6fc9f3a4bd70f88e8",
+     YVEX_DEEPSEEK_CURRENT_LOGICAL_TRANSFORM_IDENTITY,
      "b9825a070028a66af28cdb25614f7a86c6ad1ec396eed6ae961039db1507ce0e",
      "deepseek-v4-flash-dspark-compact-selective-mxfp4-candidate",
      "ca591438ac7296fa9b3d1ad74415508d57d92835ab783d01b7da9bfec561e8d7",

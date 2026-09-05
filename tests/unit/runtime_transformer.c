@@ -90,7 +90,8 @@ static int transformer_test_family(void)
     YVEX_TEST_ASSERT(adapter && adapter->transformer_policy &&
                          adapter->transformer_policy(&runtime, &policy),
                      "DeepSeek transformer policy is adapter-projected");
-    YVEX_TEST_ASSERT(adapter->adapter_version == 7ull && policy.residual_streams == 4ull &&
+    YVEX_TEST_ASSERT(adapter->adapter_version == YVEX_DEEPSEEK_V4_ADAPTER_VERSION &&
+                         policy.residual_streams == 4ull &&
                          policy.hidden_width == 4096ull && policy.expanded_width == 16384ull &&
                          policy.mhc_epsilon == 1e-6 &&
                          policy.output_norm_epsilon == 1e-6 &&
@@ -106,7 +107,8 @@ static int transformer_test_family(void)
 static int transformer_test_context_envelope(void)
 {
     yvex_compiled_context_envelope envelope = {
-        .schema_version = YVEX_COMPILED_CONTEXT_ENVELOPE_SCHEMA_V1,
+        .schema_version = YVEX_COMPILED_CONTEXT_ENVELOPE_SCHEMA_V2,
+        .target_kind = YVEX_EXECUTION_PLAN_TRANSFORMER,
         .semantic_maximum_context = 1048576ull,
         .target_maximum_context = 1048576ull};
     yvex_error err;
@@ -126,6 +128,16 @@ static int transformer_test_context_envelope(void)
         yvex_compiled_context_envelope_admit(
             &envelope, 4096ull, 1, &err) == YVEX_ERR_UNSUPPORTED,
         "target-only compiled envelope does not invent draft capacity");
+    memset(envelope.target_transformer_identity, 0,
+           sizeof(envelope.target_transformer_identity));
+    envelope.target_kind = YVEX_EXECUTION_PLAN_DECODER;
+    transformer_test_identity(envelope.target_decoder_identity, 12u);
+    YVEX_TEST_ASSERT(
+        yvex_compiled_context_envelope_admit(
+            &envelope, 8192ull, 0, &err) == YVEX_OK &&
+            yvex_compiled_context_envelope_admit(
+                &envelope, 8192ull, 1, &err) == YVEX_ERR_UNSUPPORTED,
+        "hybrid decoder context is exact without fabricated draft identity");
     return 0;
 }
 

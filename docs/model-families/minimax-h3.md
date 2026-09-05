@@ -1,12 +1,13 @@
 # MiniMax-H3 FL2VA Family Record
 
 Status: exact FL2VA source and four component artifacts verified; architecture,
-tensor roles, and Transformation IR admitted; Audio VAE, Visual VAE, text-only
-Qwen3-VL conditioning, Omni-Transformer latent iteration, staged GB10 residency,
-and native synchronized-media publication execute through one operator workflow.
-The admitted bounded profile produces a deterministic playable AVI from an
-ASCII text prompt; it is not a quality, useful-resolution, performance, release,
-or complete upstream-feature claim.
+tensor roles, and Transformation IR admitted. The production path accepts
+Unicode prompts and executes all four released FL2VA task forms: text-only,
+first-frame, last-frame, and first-plus-last-frame conditioning. Conditioned
+requests execute the released Qwen3-VL vision path, Visual VAE encoder,
+condition-aware Omni trajectory, both VAE decoders, and native synchronized-media
+publication. The qualified bounded profile is not a quality, useful-resolution,
+performance, release, Ref2VA, or complete hosted-system claim.
 
 This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now admits
 the complete immutable FL2VA source through its production source owner and
@@ -18,33 +19,32 @@ identified Audio VAE, Visual VAE, and Text Encoder component GGUF files without
 changing source dtype. The graph-family recipe binds each file to the exact component, source
 snapshot, physical plan, aggregate payload, and whole-file identities before
 materialization. The graph and CUDA backend owners execute the complete Audio
-VAE decoder and all 36 Visual VAE decoder blocks for checked latent geometries, with
-independent numerical conformance evidence for both. A staged Text Encoder
-residency registers the exact BF16 component with CUDA, tokenizes an ASCII
-`t2va` prompt from artifact-bound Qwen2 metadata, and executes the selected
-50-layer causal text stack against an independent Transformers oracle. The same
-operator transaction unloads each large component at its phase boundary,
-executes one exact paired latent update through all 50 Omni blocks, reconstructs
-124 RGB frames and stereo PCM, and atomically publishes a native AVI. It does
-not add a family runtime, multimodal Qwen vision conditioning, source-default or
+VAE decoder, all 36 Visual VAE decoder blocks, the Visual VAE encoder, and the
+Qwen3-VL text and 27-layer vision stacks for checked geometries. Valid UTF-8 is
+normalized to NFC before the artifact-bound Qwen2 tokenizer executes. A
+conditioned request inserts source-derived visual tokens and deep-stack features
+into the selected 50-layer language path, encodes first and/or last images into
+keyframe latents, and packs immutable condition rows beside mutable target
+audio/video rows. The same operator transaction unloads each large component at
+its phase boundary, executes one exact paired target update through all 50 Omni
+blocks, reconstructs 124 RGB frames and stereo PCM, and atomically publishes a
+native AVI. It does not add a family-specific runtime, source-default or
 full-scale generation, model-quality evidence, or a release obligation. The
-frozen quantitative intake evidence is the
-[FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
+current family record retains the admitted quantitative facts; the common
 promotion rules remain in the [family integration contract](integration.md).
 
-## Implementation branch lifecycle
+## Shared development lifecycle
 
 | Fact | Value |
 | --- | --- |
-| Implementation branch | `feature/minimax-h3` |
-| Branch status | end-to-end completion condition satisfied; retained for hardening and optimization |
-| Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
-| Current wave | `R011.MINIMAX.H3.RECANONICALIZE.CHAT.MEDIA.RUNTIME.0` |
-| Current boundary | the canonical `yvex server MODEL` and `yvex chat` path negotiates one bounded request, executes all admitted FL2VA components with staged GB10 residency, and returns the atomically published playable AVI path |
-| Next expected boundary | PASS 2 correctness and ownership hardening for the admitted bounded vertical; no new macro milestone is activated by this family record |
+| Active development line | `models1` shared with the other admitted families |
+| Historical feature ref | `feature/minimax-h3` retains published provenance only |
+| Current status | bounded hosted execution admitted for T2VA and first/last/both keyframe FL2VA; quality, scale, performance and release remain unclaimed |
+| Current boundary | one composite engine generation accepts a prompt plus typed optional `first` and `last` image conditions; `yvex chat --model ...` executes the staged GB10 request and returns the atomically published AVI path |
+| Shared-substrate obligation | every generic compiler, runtime, server or backend change qualifies both MiniMax and DeepSeek consumers |
 
-The branch preserves the accepted intake and implementation history. Its
-original completion condition is now satisfied by the live evidence below;
+Git history and the historical feature ref preserve the accepted intake and
+implementation sequence. Current source truth is the shared development line;
 later correctness, scale, optimization, evaluation, and generalization work may
 continue without weakening the bounded end-to-end claim.
 
@@ -55,7 +55,7 @@ continue without weakening the bounded end-to-end claim.
 | Repository | `MiniMaxAI/MiniMax-H3` |
 | Immutable revision | `b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08` |
 | Admitted subtree | `FL2VA/` only |
-| Initial task | `t2va`, text-to-audio-video |
+| Admitted tasks | `t2va`, first-frame FL2VA, last-frame FL2VA, and first-plus-last-frame FL2VA |
 | Source-tree identity | `91972f8e4e6562562456c339b43eed1fba5f7b9d7fb13987f495b416a5109b5e` |
 | External evidence identity | `1e7db0167eafc1e43ecaad37897198cd54f838398907b686211886dbc288b662` |
 | Model-index SHA-256 | `d1113e0f123c69f79cd0de35ca1771606ebc3ec924270d257b771f96f584aa6b` |
@@ -67,7 +67,7 @@ continue without weakening the bounded end-to-end claim.
 | Tensor-role-map identity | `61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013` |
 | Transformation IR identity | `bd941103d754df8c1eb02ff9b90db4ba86b7e389691f2d0c4027343eccbc0b0b` |
 | Aggregate derivation identity | `cc2886a388a475c2df246558dfb41c8d66e549afd4c4e34d19e2bbd3b70a3ff5` |
-| Evidence stage | exact source and all four weighted artifacts verified; architecture, tensor roles, and Transformation IR admitted; bounded component numerical conformance established; one ASCII prompt executes through Qwen conditioning, one 50-block Omni latent update, both VAE decoders, and synchronized native AVI publication on GB10 |
+| Evidence stage | exact source and all four weighted artifacts verified; architecture, tensor roles, and Transformation IR admitted; independent bounded text, multimodal Qwen, Visual VAE encoder/decoder, Audio VAE decoder, T2VA Omni, and conditioned Omni conformance established; all four FL2VA request forms execute through the normal product path and synchronized AVI publication on GB10 |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -114,11 +114,9 @@ operator authorization question outside this engineering intake.
 
 ## Component inventory
 
-The audit’s [`components.tsv`](../audits/minimax-h3-fl2va-b8b09e3/components.tsv)
-retains bounded file counts, inputs, outputs, lifetimes, reference owners, and
-blockers. Exact metadata and shard file lists plus the ten largest tensors per
-weighted component remain in the external `component-summary.json`, whose
-SHA-256 is frozen by the audit.
+The table below retains bounded file counts, inputs, outputs, lifetimes,
+reference owners, and blockers. Exact metadata and shard file lists plus the
+ten largest tensors per weighted component remain external operator evidence.
 
 | Component | Declared class | Shards | Tensors | Elements | Tensor payload bytes | Source dtype | Initial `t2va` role |
 | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
@@ -223,14 +221,20 @@ last text row. Video and audio use terminal-zero sigma grids shifted by 12 and
 3, respectively, and one model evaluation advances both candidate domains
 transactionally. There is no classifier-free guidance pass.
 
+Image-conditioned FL2VA packs `[text-with-visual-tokens | condition-video |
+target-audio | target-video]`. First and last roles own distinct temporal
+anchors. Each image is source-preprocessed, consumed by the Qwen3-VL vision
+tower, and independently encoded by the Visual VAE posterior. The condition
+latent is noised at source timestep `.999`, remains immutable through the
+trajectory, and contributes to full attention while only target audio/video
+rows are committed by each paired update. Zero conditions retain the
+target-only layout and do not execute the vision or encoder paths.
+
 ### Unknowns and deliberately unadmitted defaults
 
 - equivalence between the explicit YVEX seed stream and an upstream PyTorch
-  seed value;
-- source-default inference count, output frame count, frame rate, width, height,
-  and duration; the bounded operator path requires each material value instead
-  of inventing a default;
-- multimodal Qwen3-VL vision-conditioning semantics for `fl2va` input media;
+  seed value; YVEX preserves the released draw ordering without claiming
+  byte-identical framework generators;
 - numerical acceptability of weight quantization, modulation caching, or other
   derived execution assets beyond the admitted source-dtype artifacts;
 - useful-resolution quality, speed, and memory behavior outside the exact live
@@ -258,15 +262,15 @@ loop. The production logical target now binds seven typed phase edges from
 preparation through media publication; the final RGB-frame and stereo-sample
 edges both have output-transaction lifetime. The staged runtime and native AVI
 writer now execute this complete dependency graph for the admitted bounded
-text-only profile.
+text-only and image-conditioned FL2VA profiles.
 
 | Edge | Shape/dtype evidence | Owner and lifetime | Placement/serialization | Failure rule |
 | --- | --- | --- | --- | --- |
 | request -> processor | UTF-8 text; optional RGB/media tensors; source metadata only | request-owned, discard after encoding | host preprocessing; no serialization | invalid media or template publishes no request |
 | processor -> Qwen3-VL | token IDs plus patch/grid descriptors | encoder input, immutable for one context phase | staged host/device | token/grid refusal releases encoder stage |
 | Qwen3-VL -> conditioning | F32 width 5,120 after source BF16 layer 49 | immutable request cache, retained through DiT | GB10 device execution, host staging between component phases | failed encoding publishes no conditioning identity |
-| controller -> latent initialization | exact video rows x 96 and channel-major audio rows x 32 in F32 | mutable paired request candidates | one identity-bound seed stream initializes video then audio | cancellation rolls RNG and both latent candidates back |
-| latents -> Omni input | `[text | audio | video]`; video width 96 and audio width 32 projected to 5,376 | mutable candidate plus immutable condition and layout | same execution device; staged component residency | shape, tag, index, timestep, or rotary refusal starts no iteration |
+| controller -> latent initialization | optional keyframe posterior/noise followed by exact target video rows x 96 and channel-major audio rows x 32 in F32 | immutable conditions plus mutable paired request candidates | explicit source-order request-bound streams | cancellation rolls target candidates back and publishes nothing |
+| latents -> Omni input | target-only `[text | audio | video]` or conditioned `[text | condition-video | audio | video]`; video width 96 and audio width 32 projected to 5,376 | mutable targets plus immutable condition and layout | same execution device; staged component residency | shape, role, tag, index, timestep, or rotary refusal starts no iteration |
 | iteration `i` -> `i+1` | separate shifted video/audio timesteps and exact rectified-flow blend | one candidate transaction per step | no serialization; persistent Transformer residency | audio and video advance together or neither advances |
 | committed video -> visual VAE | 24-channel latent; source F32 weights | discard latent after successful frame decode | VAE may be late staged; tiled workspace | partial frames remain unpublished |
 | committed audio -> audio VAE | 32-channel latent to two 32 kHz channels | discard latent after successful waveform decode | VAE may be late staged | partial samples remain unpublished |
@@ -274,9 +278,8 @@ text-only profile.
 
 ## Intake operation-gap baseline
 
-The complete 46-row map is in
-[`operation-gap.tsv`](../audits/minimax-h3-fl2va-b8b09e3/operation-gap.tsv).
-At intake it found 2 available generic mechanisms, 14 bounded extensions, 22 new generic
+The intake inventory found 2 available generic mechanisms, 14 bounded
+extensions, 22 new generic
 primitives, 3 backend-fusion candidates, 4 family-specific compositions, and
 1 unknown schedule boundary.
 
@@ -295,11 +298,11 @@ compositions over those generic mechanisms. Generic F32 Conv1D, transposed
 Conv1D, and alias-free SnakeBeta now have bounded CPU implementations consumed
 by the exact Audio VAE recipe; no CUDA admission follows from that evidence.
 
-That frozen map remains the historical intake oracle. The current branch has
+That intake map remains recoverable in Git history. The current branch has
 closed the concrete target-only attention, MM-RoPE, patching, modulation, VAE,
 paired scheduler, phase-residency, and media-transaction requirements consumed
 by the bounded end-to-end path. It does not retroactively promote unused modes
-or hypothetical consumers in the frozen audit.
+or hypothetical consumers from the original intake.
 
 ## Single-GB10 memory feasibility
 
@@ -362,7 +365,7 @@ acceptable generation speed, 768p practicality, or any 2K path.
 
 | Alternative | Identity/artifact and reuse | Runtime/residency/output | Disposition |
 | --- | --- | --- | --- |
-| A. Existing target plus several artifacts and one program | preserves individual artifacts but the existing target/Physical Execution IR is decoder- and single-model-shaped; phase identity would be implicit | cannot represent component release, latent request state, or synchronized media output without hidden conventions | reject |
+| A. Pre-composite target plus several artifacts and one program | preserved individual artifacts but the then-current decoder-shaped target/Physical Execution IR left phase identity implicit | could not represent component release, latent request state, or synchronized media output without hidden conventions | reject |
 | B. Composite logical model target with component manifest | binds source derivation, roles, phase DAG, lifetime, and output domain while preserving later independent component artifacts | one common runtime remains the future owner of request/session transitions; graph and backend remain unimplemented | **adopt for the logical boundary only** |
 | C. Monolithic GGUF | one byte identity but destroys natural component lifetimes, selective reuse, and staged residency; no evidence supports one GGUF schema for media/codecs | forces 144 GB source payload into one artificial lifecycle and couples unrelated failures | reject |
 | D. Generic execution package above artifacts | could generalize to image/audio/video and encoder-decoder models | useful only after the concrete composite target proves which package invariants are common; premature now | defer |
@@ -548,7 +551,7 @@ decode. `production_api_available: true` through the internal family graph ABI.
 through:
 
 ```sh
-yvex execute component audio-vae \
+yvex bench component audio-vae \
   --target minimax-h3-fl2va --artifact <AUDIO_VAE_GGUF> --backend cuda \
   --input-file <LATENT_F32> --batch 1 --latent-steps 1 \
   --max-device-bytes <CUDA_BUDGET> --out <OUTPUT_F32>
@@ -641,7 +644,7 @@ ABI. `internal_live_runner_available: true`. `operator_command_available: true`
 through:
 
 ```sh
-yvex execute component video-vae \
+yvex bench component video-vae \
   --target minimax-h3-fl2va --artifact <VIDEO_VAE_GGUF> --backend cpu|cuda \
   --input-file <LATENT_F32> --batch 1 \
   --latent-frames <T> --latent-height <H> --latent-width <W> \
@@ -752,7 +755,7 @@ backend family ABIs. `internal_live_runner_available: true`.
 tokenizer/processor projection and multi-token conditioning output remain
 downstream consumers.
 
-## Qwen3-VL 50-layer text conditioning boundary
+## Historical Qwen3-VL text-only conditioning boundary
 
 The same component residency now executes the source-selected unnormalized
 `hidden_states[50]`: embedding followed by decoder layers 0 through 49, without
@@ -786,7 +789,7 @@ backend family ABIs. `internal_live_runner_available: true`.
 `operator_command_available: false` for this historical one-token boundary and
 `end_user_path_available: false`.
 
-## Exact tokenizer and multi-token prompt conditioning
+## Exact tokenizer and Unicode prompt conditioning
 
 The Text Encoder artifact now retains the verified source `tokenizer.json` and
 `tokenizer_config.json` bytes and their SHA-256 identities
@@ -795,22 +798,23 @@ and `a07e942ac874baa13758de8d1fbdb186683cc03416b5589e1b6671c6b3057c68`.
 Its deterministic tokenizer plan identity is
 `7811376a0a0b3f4e33e5ba1f122a885b522c80c13df0e4af6a9e213aa226fafb`.
 The admitted Qwen2 byte-level BPE has 151,643 base tokens, 151,387 merges,
-26 added tokens, and 14 special tokens. FL2VA `t2va` encodes the prompt
-verbatim with no BOS, chat template, or other inserted special token; EOS is
-151,645 and padding is 151,643.
+26 added tokens, and 14 special tokens. Valid UTF-8 is normalized with the
+Unicode 15 NFC contract before byte-level tokenization. FL2VA encodes the
+prompt verbatim after normalization with no BOS, chat template, or other
+inserted special token; EOS is 151,645 and padding is 151,643.
 
 The operator command
 
 ```text
-yvex execute tokenizer encode TEXT_ENCODER_GGUF --text 'A red fox jumps over a blue river.'
+yvex inspect tokenizer encode TEXT_ENCODER_GGUF --text 'A red fox jumps over a blue river.'
 ```
 
 produces the exact nine-token sequence
 `32 2518 38835 34208 916 264 6303 14796 13`. Repeated executions are
 byte-identical, and focused vectors cover contractions, digit splitting,
-whitespace runs, and adjacent letter/number runs. Non-ASCII input remains
-fail-closed until the generic tokenizer owner admits exact source-declared NFC
-normalization; this limitation is not silently treated as ASCII equivalence.
+whitespace runs, adjacent letter/number runs, composed/decomposed Latin,
+Hangul composition, Chinese, and Japanese. Malformed UTF-8 fails closed;
+canonically equivalent NFC inputs produce identical token sequences.
 
 For those nine tokens, the bounded layer-zero residency agrees with the
 independent causal Transformers CUDA oracle at maximum absolute error 0.0625
@@ -840,13 +844,42 @@ execution identity is
 `e151f9e4bb1db707c9990413c7d33a8aa597845efa6f5d0c929b4cd40068d96b`.
 These are correctness-run facts, not a performance benchmark.
 
-`production_capability_available: true` for exact admitted ASCII prompt to
-multi-token text-only conditioning. `production_api_available: true` through
-the tokenizer, graph, and CUDA backend owners. `internal_live_runner_available:
-true`. `operator_command_available: true` for tokenizer inspection and
-encoding; conditioning remains an internal live runner.
-`end_user_path_available: false`: Omni latent execution and synchronized media
-publication remain downstream.
+`production_capability_available: true` for admitted Unicode prompts through
+multi-token text-only and multimodal conditioning. `production_api_available:
+true` through the tokenizer, graph, and CUDA backend owners.
+`internal_live_runner_available: true`. `operator_command_available: true` for
+tokenizer inspection and for complete hosted generation; `end_user_path_available:
+true` through the typed media request.
+
+## Multimodal FL2VA keyframe boundary
+
+The same Text Encoder component now consumes image-conditioned processor
+records. Source-faithful preprocessing uses the released first/only-frame
+stretch and subsequent-frame cover-crop rules, Lanczos image resizing, RGB
+conversion, Qwen smart-size admission, bicubic vision resizing, block-major
+patch packing, and the exact `grid_thw` and framing-token contract. The
+27-layer vision tower publishes merger output and deep-stack states from
+layers 8, 16, and 24; the language path inserts those states after language
+layers 0, 1, and 2 and retains the source-selected `hidden_states[50]`
+conditioning boundary at width 5,120.
+
+The independent RGB/Unicode oracle matched processor token IDs, token classes,
+tags, positions, and grids exactly. Patch values differed by maximum
+`5.91389835e-8`; merger relative L2 was `0.0431341` with cosine `0.999091`;
+deep-stack relative L2 was `0.026254` with cosine `0.999658`; and selected
+conditioning relative L2 was `0.00921249` with cosine `0.999958`.
+
+The Visual VAE encoder executes the released causal encoder, posterior clamp,
+request-bound posterior sampling, F16 round trip, and latent normalization.
+Against the independent fixture, posterior moments differed by maximum
+`6.66379929e-5` and normalized sampled latents by maximum `0.00115990639`.
+
+First, last, and dual-anchor requests then create condition noise in the
+released RNG order, preserve condition rows through the target trajectory, and
+commit only target audio/video rows. Independent conditioned first-evaluation
+oracles closed for all three layouts. Their video relative L2 errors were
+`9.31833116e-5`, `3.51886138e-5`, and `6.64326257e-5`; their audio relative L2
+errors were `5.72668571e-6`, `4.65925275e-6`, and `3.37019462e-5`.
 
 ## Complete Omni-Transformer component boundary
 
@@ -1011,7 +1044,7 @@ preroll and end-of-stream playback through independent fake audio/video sinks.
 The operator command is:
 
 ```sh
-yvex execute media publish \
+yvex bench media publish \
   --video-file <PLANAR_RGB_F32> --frames <FRAMES> \
   --width <WIDTH> --height <HEIGHT> \
   --fps-numerator 24 --fps-denominator 1 \
@@ -1047,7 +1080,7 @@ The exact bounded command was:
 ROOT=<EXTERNAL_MINIMAX_ROOT>/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08
 systemd-run --user --scope --quiet \
   -p MemoryHigh=76G -p MemoryMax=88G -p MemorySwapMax=0 \
-  ionice -c2 -n7 nice -n 10 yvex execute media generate \
+  ionice -c2 -n7 nice -n 10 yvex bench media generate \
   --target minimax-h3-fl2va \
   --prompt 'A red fox running through a snowy forest' \
   --text-artifact "$ROOT/physical-v3/text_encoder.gguf" \
@@ -1098,36 +1131,85 @@ The audit projection truthfully reports
 `cli_applicability: applicable`. The roughly 9 minute 40 second correctness
 runs are not benchmarks and establish no useful generation speed.
 
-## Conversational media projection
+## Direct hosted media projection
 
-The common persistent server now admits MiniMax-H3 as generation mode `media`.
-`yvex server minimax-h3-fl2va-runtime-media` accepts the immutable
-component-artifact root and an owned absolute output directory, while `yvex
-chat` owns the creative prompt and asks for missing resolution profile,
-duration, explicit sigma-grid count, AVI format, and optional seed. The model
-registry family selects the typed media adapter, so the operator does not choose
-family callbacks or reconstruct the offline execution command. A complete turn
-invokes the same staged native runtime transaction described above and returns
-the atomically published file path. The server does not load any component or
-create a CUDA context while it is only negotiating those parameters.
+The common persistent server now admits MiniMax-H3 as engine kind `media`.
+`yvex model load minimax-h3-fl2va` resolves the immutable component
+installation, CUDA backend, and media kind from its composite startup profile
+and creates one engine generation; the default owned publication
+directory comes from the common YVEX data path. Protocol v20 carries zero, one,
+or two typed image conditions with distinct `first` and `last` roles. The
+normal product surfaces are:
 
-Server readiness nevertheless requires a real process-lifetime model open. Startup opens the
-tokenizer and all four component GGUF views, performs exact component admission, seals one
-composite runtime-model identity, and retains those immutable views until shutdown. It does not
-claim that the roughly 144 GB component population is simultaneously resident. Conditioning,
-Transformer, Visual VAE, and Audio VAE payload residency remains staged at request phase
-boundaries so the GB10 unified-memory envelope remains bounded.
+```text
+yvex chat --model minimax-h3-fl2va
+yvex chat --model minimax-h3-fl2va --first-image IMAGE
+yvex chat --model minimax-h3-fl2va --last-image IMAGE
+yvex chat --model minimax-h3-fl2va \
+  --first-image FIRST --last-image LAST
+yvex chat --model minimax-h3-fl2va \
+  --trajectory released --width 1344 --height 768 \
+  --duration 5 --seed 42
+```
 
-The conversational projection has focused dialogue, refusal, deterministic
-profile-identity, model-open startup, and missing-component refusal tests. It admits `preview` at
-192x192, `preview-256` at 256x256, and `preview-384` at 384x384, all for exactly
-124 frames, plus `smoke` at 32x32 for 124 through 345 frames. The server validates each profile against
-the exact worst-case 256-token plan before publishing readiness; runtime
-independently refuses any plan above the 8,192-row Omni execution bound before
-latent or component materialization. Source, draft, HD, FHD, 2K, and 4K
-requests are not advertised and fail closed.
+The creative prompt is entered in the linear client and immediately invokes
+the staged native runtime transaction.
+It does not ask for missing execution parameters,
+and MiniMax-H3 is not presented as a conversational assistant. The model
+registry profile selects the typed media adapter, so the operator does not
+choose family callbacks, component paths, or reconstruct the offline execution
+command. Explicit component/output roots remain engineering overrides.
 
-On 2026-08-14 an operator-reachable `yvex server` -> `yvex chat` transaction
+Normal hosted execution resolves to identity-bearing `released-fl2va-v1`:
+50 sigma points and 49 paired model evaluations, terminal zero, video shift 12,
+audio shift 3, 24 fps, stereo 32 kHz audio, a 1344x768 default canvas, 124
+frames, and seed 42. The product accepts explicit paired width/height, duration,
+and seed fields; it aligns duration upward to the released `17n+5` frame rule
+and reports the resolved frame, duration, and audio extents. `--trajectory
+preview` retains the separate identity-bearing `interactive-preview-v1` YVEX
+test policy at 192x192, 124 frames, two sigma points, and AVI publication.
+Prompt bytes remain opaque input to tokenizer/conditioning; words, numbers,
+and format-like substrings in the scene do not select execution settings. There
+is no keyword rule engine, secondary LLM, agent loop, or Context-IR substitute.
+
+One stable persistent engine generation completed all four request forms with
+Unicode prompts. T2VA, first, last, and dual-anchor requests completed in
+`177.751307`, `190.494415`, `185.529224`, and `187.360994` seconds. Every result
+was a 14,381,024-byte AVI with 124 RGB frames at 192x192 and 24 fps, stereo
+32 kHz non-silent audio, successful end-of-stream decode, and no partial
+publication residue. Conditioned telemetry bound each input-media identity to
+processor, Qwen vision, Visual VAE latent, packed condition, Omni execution,
+and final result identities. This is reachability and correctness evidence for
+the admitted preview policy, not a visual-quality or throughput benchmark.
+
+Host readiness is independent of MiniMax. Engine load opens the tokenizer and
+all four component GGUF views, performs exact component admission, seals one
+composite engine identity, and retains those immutable views until engine
+unload. The generic artifact owner authenticates each component independently:
+a cold open performs full byte verification and publishes a snapshot-bound
+verified-reopen receipt; an unchanged warm open uses that receipt without
+rereading the full payload. Missing, stale, malformed, or unavailable receipt
+evidence falls back to full verification and cannot admit mismatched bytes.
+Reopen neither materializes payload nor claims that the component population is
+simultaneously resident. Conditioning, Transformer, Visual VAE, and Audio VAE
+payload residency remains staged at request phase boundaries so the GB10
+unified-memory envelope remains bounded. Engine unload releases the component
+views while the host remains ready.
+
+The direct projection has focused opaque-prompt, preset-identity, model-open,
+reopen, progress/result, cancellation, and missing-component refusal tests. The
+underlying engine retains `preview` at 192x192, `preview-256` at 256x256,
+`preview-384` at 384x384, and `smoke` at 32x32. Released execution admits
+canvases whose dimensions are multiples of 32, area is between 768x768 and
+768x1344, and aspect ratio is between 1:4 and 4:1. The exact maximum 1344x768,
+345-frame, dual-anchor plan contains 106,238 packed rows; the generic CUDA
+implementation admits 131,072 rows, its exact chunked-attention workspace is
+15,230,279,684 bytes, and the family caps workspace at 16 GiB and peak device
+resources at 64 GiB. Requests outside these semantic or resource envelopes fail
+before silent canvas, duration, or trajectory reduction.
+
+Historical evidence from 2026-08-14 predates the direct hosted policy and used
+the explicit interactive spelling that is now retired. That hosted transaction
 accepted “Genera un video dell'eclissi di ieri sera”, asked for the missing
 choices, then executed `smoke`, five seconds, two sigma-grid points, AVI, and
 seed 42. It completed in 560.36 seconds and returned the atomically published
@@ -1142,9 +1224,9 @@ residency after the turn; the systemd scope enforced 76 GiB memory high, 88 GiB
 memory max, and zero swap for the workload. A sampled frame remained colored
 blocks rather than a recognizable eclipse. This is native execution,
 container, synchronization, and product-path evidence only; it does not
-establish conditioning, scheduler, or model-quality correctness. The exact
-startup and chat workflow is owned by the
-[operator runbook](../operator-runbook.md#conversational-minimax-h3-media-host).
+establish conditioning, scheduler, or model-quality correctness. The current
+direct startup and chat workflow is owned by the
+[operator runbook](../operator-runbook.md#direct-minimax-h3-media-host).
 
 ## Iterative latent conformance
 
@@ -1157,14 +1239,13 @@ YVEX completed in 3 minutes 13 seconds with 65,318,864 KiB peak RSS, 205,342,208
 bytes, and zero swap under a 100 GiB hard memory limit.
 
 This evidence covers initialization, two paired scheduler advances, two complete resident
-Transformer evaluations, and final latent publication. It does not establish the full 49-step
+Transformer evaluations, and final latent publication. It did not establish the full 49-step
 trajectory or useful media quality. The released checkpoint targets a 768-pixel short edge:
-768x768 needs about 21,741 packed rows and 1344x768 about 37,725 for 124 frames and 15 text rows,
-versus the current 8,192-row admission maximum. The unrecognizable 192x192 output is therefore no
-longer attributed to an observed early recurrent mismatch; useful-resolution capacity and longer
-trajectory evidence remain separate downstream work.
+768x768 needs about 21,741 packed rows and 1344x768 about 37,725 for 124 frames and 15 text rows.
+The former 8,192-row admission ceiling has since been replaced by the exact 106,238-row released
+envelope; this older two-step result remains numerical evidence, not current scale qualification.
 
-The next admitted spatial envelope is `preview-384`: 384x384 for 124 frames. Its exact
+The subsequent historical spatial envelope was `preview-384`: 384x384 for 124 frames. Its exact
 fifty-block, 5,757-row request passed the independent manual BF16 oracle with video relative L2
 `0.004785907` and cosine `0.999988564`, plus audio relative L2 `0.013636469` and cosine
 `0.999907030`. YVEX reached 65,760,132 KiB peak RSS and 2,522,884,864 device bytes with zero swap.
@@ -1191,8 +1272,7 @@ The first 21,741-row source-square block failed the independent video contract: 
 `0.0385166827` against `0.02`, cosine was `0.99927958` against `0.9998`, and scaled maximum
 absolute error was about `0.0701` against `0.02`. YVEX therefore does not register or execute
 this profile in the media runtime, and no complete Q8 trajectory was attempted. The semantic
-record and exact candidate identities are retained in the
-[selective-Q8 worklog](../worklog/2026-08-16-minimax-selective-q8-candidate.md).
+record and exact candidate identities remain recoverable from Git history.
 
 ## Reusable source-scale attention workspace
 
@@ -1211,10 +1291,10 @@ are 3,430,740,740 bytes at 5,757 rows and 12,952,601,348 bytes at 21,741 rows.
 
 This proves source-square one-block numerical conformance, exact workspace ownership, reuse, and
 cleanup. It does not yet prove a complete 49-evaluation 768x768 trajectory, recognizable video,
-or practical generation time. The durable semantic and memory evidence is retained in the
-[reusable-workspace worklog](../worklog/2026-08-16-minimax-reusable-attention-workspace.md).
+or practical generation time. The exact experiment record remains recoverable
+from Git history.
 
-## Source-square media qualification
+## Historical source-square media qualification
 
 The source-faithful path completed a 768x768, 124-frame request with 49 model evaluations and all
 50 Omni blocks per evaluation. It executed 942,556 CUDA kernels in 2 hours 30 minutes 28 seconds,
@@ -1242,34 +1322,35 @@ same-boundary semantic repair.
 
 `branch_completion_condition_satisfied: true`
 
-`progression_decision: repair_same_boundary`
+`progression_decision: proceed`
 
-`downstream_safe: false`
+`downstream_safe: true for H3.CANONICAL.2 trajectory, canvas, and duration work`
 
-The accepted bounded executable vertical remains intact, so its first playable synchronized-file
-completion condition remains true. The current downstream consumer is useful source-square
-prompt-conditioned video. The regular tiled mosaic at the fully admitted 768x768 geometry is a
-gate blocker for that consumer; its exact owner among latent interpretation, Visual VAE
-reconstruction, and their interface requires independent upstream numerical localization before
-another full media qualification. Source-scale memory capacity and transactional publication are
-no longer evidence gaps. Exact Unicode NFC normalization, multimodal vision input, compressed
-codecs, and hosted serving remain deferred depth with explicit later consumers. Runtime and
-kernel efficiency and generation latency are optimization debt for PASS 3 and PASS 4. A second
-complete media family consumer is generalization debt for PASS 6. None weakens the admitted
-bounded identities or operator path.
-License review remains an external authorization prerequisite for any use that
-requires an eligibility conclusion.
+H3.CANONICAL.1 closes the released FL2VA task-selection and keyframe-conditioning
+boundary at the admitted bounded execution profile. Unicode NFC normalization,
+Qwen3-VL vision conditioning, Visual VAE encoding, first/last anchor semantics,
+condition-aware Omni composition, typed product requests, and four normal product
+executions are now present. No required mode is scaffolded or routed through a
+test-only implementation.
+
+The next consumer is the released production trajectory, canvas, duration, and
+resource envelope. The historical regular tiled mosaic at 768x768 remains
+negative behavior evidence and prevents any useful-quality or release claim; it
+does not invalidate the independent bounded multimodal and condition-layout
+oracles. Full-scale scheduler/default resolution, PyTorch seed equivalence,
+practical 768p execution, and model-quality evaluation have the explicit later
+H3.CANONICAL.2 owner. Runtime and kernel efficiency remain separately measured
+optimization debt. License review remains an external authorization prerequisite
+for any use that requires an eligibility conclusion.
 
 This implementation boundary does not prove:
 
-- multimodal Qwen3-VL vision conditioning or source-default/full-scale latent generation;
-- complete composite-artifact support or Physical Execution IR;
+- source-default or full-scale latent generation;
 - simultaneous multi-component residency or useful prompt-conditioned GB10 output;
-- PyTorch seed-stream parity or model-quality usefulness of the bounded latent run;
-- numerically correct source-square Visual VAE reconstruction or recognizable 768p output;
-- compressed-codec output or hosted serving;
-- Diffusers, SGLang, or vLLM parity;
-- model quality, generation speed, practical 768p, or 2K generation;
+- PyTorch seed-stream parity or model-quality usefulness of the bounded run;
+- numerically correct source-square reconstruction or recognizable 768p output;
+- compressed-codec output or Diffusers, SGLang, or vLLM parity;
+- model quality, generation throughput, practical 768p, or 2K generation;
 - Ref2VA, H3-Context-IR, H3-Regenerate-2K, or the complete hosted system;
 - commercial or redistribution eligibility;
-- evaluation, benchmark, release support, or a second complete family vertical.
+- evaluation, benchmark, release support, or a second complete media-family vertical.

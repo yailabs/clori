@@ -504,10 +504,11 @@ static int core_file_unlink_owned(int directory_fd, const char *name)
     return rc == 0 || errno == ENOENT;
 }
 
-int yvex_core_file_publish_noreplace(
+static int core_file_publish(
     const char *path, const void *data, size_t count,
-    const yvex_core_file_faults *faults, yvex_core_file_validator validator,
-    void *validator_context, yvex_core_file_result *result, yvex_error *err)
+    const yvex_core_file_faults *faults, int replace,
+    yvex_core_file_validator validator, void *validator_context,
+    yvex_core_file_result *result, yvex_error *err)
 {
     char name[CORE_FILE_NAME_CAP], temporary[CORE_FILE_NAME_CAP];
     int directory_fd = -1, file_fd = -1, validation_fd = -1, destination_exists = 0;
@@ -593,7 +594,15 @@ int yvex_core_file_publish_noreplace(
             goto done;
         }
     }
-    if (linkat(directory_fd, temporary, directory_fd, name, 0) != 0) {
+    if (replace) {
+        if (renameat(directory_fd, temporary, directory_fd, name) != 0) {
+            rc = core_file_fail(result, YVEX_CORE_FILE_STAGE_PUBLISH, errno,
+                                1ull, 0ull, YVEX_ERR_IO,
+                                "atomic file replacement failed", err);
+            goto done;
+        }
+        temporary_exists = 0;
+    } else if (linkat(directory_fd, temporary, directory_fd, name, 0) != 0) {
         int saved = errno;
         rc = core_file_fail(result,
                             saved == EEXIST ? YVEX_CORE_FILE_STAGE_CONFLICT
@@ -604,9 +613,9 @@ int yvex_core_file_publish_noreplace(
                                             : "atomic file publication failed", err);
         goto done;
     }
-    destination_exists = 1;
-    if ((faults && faults->inject_temporary_unlink_failure) ||
-        !core_file_unlink_owned(directory_fd, temporary)) {
+    destination_exists = !replace;
+    if (!replace && ((faults && faults->inject_temporary_unlink_failure) ||
+                     !core_file_unlink_owned(directory_fd, temporary))) {
         int saved = errno;
         if (faults && faults->inject_temporary_unlink_failure) saved = EIO;
         rc = core_file_fail(result, YVEX_CORE_FILE_STAGE_TEMPORARY_UNLINK, saved, 1ull, 0ull,
@@ -663,6 +672,24 @@ done:
         (void)close(directory_fd);
     }
     return rc;
+}
+
+int yvex_core_file_publish_noreplace(
+    const char *path, const void *data, size_t count,
+    const yvex_core_file_faults *faults, yvex_core_file_validator validator,
+    void *validator_context, yvex_core_file_result *result, yvex_error *err)
+{
+    return core_file_publish(path, data, count, faults, 0, validator,
+                             validator_context, result, err);
+}
+
+int yvex_core_file_publish_replace(
+    const char *path, const void *data, size_t count,
+    yvex_core_file_validator validator, void *validator_context,
+    yvex_core_file_result *result, yvex_error *err)
+{
+    return core_file_publish(path, data, count, NULL, 1, validator,
+                             validator_context, result, err);
 }
 
 /*

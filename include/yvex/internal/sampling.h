@@ -9,6 +9,7 @@
 #define INCLUDE_YVEX_INTERNAL_SAMPLING_H_INCLUDED
 
 #include <stdint.h>
+#include <yvex/internal/backend.h>
 #include <yvex/internal/logits.h>
 
 #ifdef __cplusplus
@@ -44,7 +45,8 @@ typedef struct yvex_runtime_sampling_source {
     unsigned int schema_version;
     int host_values_available, device_values_available;
     yvex_logits_source_phase source_phase;
-    unsigned long long source_position, vocabulary_size, logits_capacity;
+    unsigned long long source_position, vocabulary_size, logits_stride;
+    unsigned long long logits_capacity;
     const float *logits;
     yvex_execution_device_view device_logits;
     char raw_logits_digest[YVEX_SHA256_HEX_CAP];
@@ -70,7 +72,7 @@ typedef struct yvex_runtime_sampling_result {
     double temperature, selected_probability, selected_log_probability;
     unsigned long long tied_maximum_count, effective_top_k, rng_draw_count;
     unsigned long long d2h_bytes, kernel_launches;
-    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long queue_synchronizations, device_synchronizations;
     unsigned long long full_array_host_scan_bytes;
     double effective_top_p, effective_min_p, effective_typical_p;
     double min_p_threshold, entropy, typical_retained_mass, top_p_retained_mass;
@@ -95,7 +97,8 @@ typedef struct {
 } yvex_runtime_sampling_execution;
 
 typedef struct {
-    unsigned long long maximum_vocabulary_size, maximum_rows, maximum_host_bytes;
+    unsigned long long maximum_vocabulary_size, selection_vocabulary_size;
+    unsigned long long maximum_rows, maximum_host_bytes;
     int device_selection;
     int (*cancel_requested)(void *context);
     void *cancel_context;
@@ -120,7 +123,7 @@ typedef struct {
 } yvex_backend_speculation_result;
 
 /* Device sampling owns full-row numerical selection; runtime retains transactional RNG publish. */
-typedef struct {
+struct yvex_backend_sampling_operations {
     int (*workspace_required)(unsigned long long vocabulary_size,
                               unsigned long long *bytes, yvex_error *err);
     int (*speculation_workspace_required)(unsigned long long vocabulary_size,
@@ -134,7 +137,7 @@ typedef struct {
                               unsigned int *selected_tokens,
                               float *selected_values,
                               unsigned long long *tie_counts,
-                              yvex_backend_cuda_operation_facts *facts,
+                              yvex_backend_operation_facts *facts,
                               yvex_error *err);
     int (*select_stochastic)(yvex_backend *backend,
                              const yvex_device_tensor *logits,
@@ -142,7 +145,7 @@ typedef struct {
                              const yvex_runtime_sampling_policy *policy,
                              unsigned int random_value,
                              yvex_backend_sampling_result *result,
-                             yvex_backend_cuda_operation_facts *facts,
+                             yvex_backend_operation_facts *facts,
                              yvex_error *err);
     int (*accept_stochastic)(
         yvex_backend *backend, const yvex_device_tensor *draft_logits,
@@ -155,11 +158,8 @@ typedef struct {
         unsigned int *committed_tokens,
         unsigned long long committed_capacity,
         yvex_backend_speculation_result *result,
-        yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-} yvex_backend_sampling_operations;
-
-const yvex_backend_sampling_operations *yvex_backend_sampling_operations_get(
-    const yvex_backend *backend);
+        yvex_backend_operation_facts *facts, yvex_error *err);
+};
 
 typedef struct {
     unsigned int schema_version;
@@ -284,7 +284,7 @@ typedef struct {
     int sampling_real_logits_ready, sampling_partial_progress_ready, sampling_ready;
     int persistent_state_unchanged;
     int token_append_ready, tokenizer_runtime_ready, eos_policy_ready, stop_policy_ready;
-    int detokenization_ready, generation_ready, cuda_sampling_ready;
+    int detokenization_ready, generation_ready, device_sampling_ready;
     int model_behavior_evaluation_ready, full_model_benchmark_ready;
     int release_qualification_ready;
 } yvex_sampling_operator_result;

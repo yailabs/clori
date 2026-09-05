@@ -7,8 +7,13 @@
 
 #include <yvex/api.h>
 #include <yvex/internal/compiler.h>
+#include <yvex/internal/core.h>
+#include <yvex/internal/decoder_plan.h>
+#include <yvex/internal/graph.h>
 #include <yvex/internal/model.h>
+#include <yvex/internal/operator_graph.h>
 
+#include "src/runtime/private.h"
 #include "tests/test.h"
 
 static int open_gguf(const char *path, yvex_artifact **artifact, yvex_gguf **gguf)
@@ -196,6 +201,17 @@ static int semantic_attention_layer(
     return 1;
 }
 
+static int semantic_decoder_layer(
+    const void *context, unsigned long long index,
+    yvex_semantic_decoder_layer *output)
+{
+    const yvex_semantic_decoder_layer *layers = context;
+
+    if (!layers || !output || index >= 2ull) return 0;
+    *output = layers[index];
+    return 1;
+}
+
 static int test_semantic_model_ir(void)
 {
     static const char source[] =
@@ -305,6 +321,311 @@ static int test_semantic_model_ir(void)
     return 0;
 }
 
+static int test_hybrid_decoder_semantics(void)
+{
+    static const char source[] =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    static const char logical[] =
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    static const char schedule[] =
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    static const char state[] =
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    yvex_model_execution_descriptor_request execution_request = {
+        .schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V2,
+        .logical_model_identity = logical,
+        .source_model_identity = source,
+        .attention_schedule_identity = schedule,
+        .persistent_state_identity = state,
+        .maximum_context = 32ull,
+        .original_context = 32ull,
+        .rope_scaling = YVEX_MODEL_ROPE_SCALING_NONE,
+        .rope_theta = 10000ull,
+        .rope_scaling_factor = 1ull,
+        .layer_count = 2ull,
+        .hidden_width = 4ull,
+        .vocabulary_size = 8ull,
+        .attention_heads = 1ull,
+        .kv_heads = 1ull,
+        .head_width = 4ull,
+        .swa_layers = 1ull,
+        .sequence_mixer_layers = 1ull,
+        .sliding_window = 32ull,
+        .normalization_epsilon = 1e-6,
+        .dense_ffn_width = 8ull,
+        .output_input_width = 4ull,
+        .output_vocabulary_size = 8ull,
+        .persistent_state_class_mask =
+            YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_SWA_RING) |
+            YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_RECURRENT_SEQUENCE)};
+    yvex_model_execution_descriptor execution = {0}, roundtrip = {0};
+    yvex_semantic_attention_layer attention = {
+        .ordinal = 0ull,
+        .layer_index = 1ull,
+        .predictor_index = YVEX_ATTENTION_NO_TENSOR_INDEX,
+        .tensor_scope = YVEX_TENSOR_SCOPE_MAIN_LAYER,
+        .attention_class = YVEX_ATTENTION_CLASS_SWA,
+        .compute_contract = YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
+        .sliding_window = 32ull,
+        .query_heads = 1ull,
+        .kv_heads = 1ull,
+        .head_dimension = 4ull,
+        .rope_head_dimension = 4ull,
+        .hidden_dimension = 4ull,
+        .rms_norm_epsilon = 1e-6};
+    yvex_semantic_decoder_layer decoder[2] = {{0}};
+    yvex_semantic_model_ir_request request = {0};
+    yvex_semantic_model_ir *model = NULL;
+    yvex_operator_graph_ir *graph = NULL;
+    yvex_decoder_plan *plan = NULL, *reopened = NULL;
+    yvex_decoder_plan_summary plan_summary;
+    yvex_decoder_layer_plan plan_layers[2];
+    yvex_sequence_state_plan sequence_plan;
+    yvex_model_engine runtime_model = {0};
+    yvex_runtime_execution_session runtime_session = {0};
+    yvex_model_engine_failure state_failure = {0};
+    const yvex_semantic_decoder_layer *view = NULL;
+    const yvex_semantic_model_ir_summary *summary;
+    yvex_core_bytes encoded = {0};
+    unsigned char wire[YVEX_MODEL_EXECUTION_WIRE_BYTES];
+    unsigned long long count = 0ull, state_budget = 1024ull;
+    unsigned long long admitted_state_bytes = 0ull;
+    size_t consumed = 0u;
+    yvex_error err;
+
+    decoder[0] = (yvex_semantic_decoder_layer){
+        .ordinal = 0ull,
+        .layer_index = 0ull,
+        .tensor_scope = YVEX_TENSOR_SCOPE_MAIN_LAYER,
+        .mixer = YVEX_SEMANTIC_DECODER_MIXER_GATED_DELTA,
+        .feed_forward = YVEX_SEMANTIC_DECODER_FFN_DENSE_SILU_GATED,
+        .hidden_width = 4ull,
+        .intermediate_width = 8ull,
+        .normalization_weight_convention = YVEX_NORMALIZATION_WEIGHT_DIRECT,
+        .normalization_epsilon = 1e-6,
+        .mixer_output_gate = 1,
+        .gated_delta = {
+            .schema_version = YVEX_SEQUENCE_MIXER_GATED_DELTA_SCHEMA_V2,
+            .output_normalization_weight_convention =
+                YVEX_NORMALIZATION_WEIGHT_DIRECT,
+            .query_heads = 1ull,
+            .key_heads = 1ull,
+            .value_heads = 1ull,
+            .key_head_dimension = 2ull,
+            .value_head_dimension = 2ull,
+            .convolution_kernel = 2ull,
+            .projected_dtype = YVEX_DTYPE_F32,
+            .convolution_state_dtype = YVEX_DTYPE_F32,
+            .recurrent_state_dtype = YVEX_DTYPE_F32,
+            .accumulation_dtype = YVEX_DTYPE_F32,
+            .output_dtype = YVEX_DTYPE_F32,
+            .numeric_contract = YVEX_SEQUENCE_MIXER_NUMERIC_F32_RECURRENCE,
+            .qk_normalization_epsilon = 1e-6,
+            .output_normalization_epsilon = 1e-6,
+            .query_scale = 0.5,
+            .deterministic = 1}};
+    decoder[1] = (yvex_semantic_decoder_layer){
+        .ordinal = 1ull,
+        .layer_index = 1ull,
+        .tensor_scope = YVEX_TENSOR_SCOPE_MAIN_LAYER,
+        .mixer = YVEX_SEMANTIC_DECODER_MIXER_FULL_CAUSAL_ATTENTION,
+        .feed_forward = YVEX_SEMANTIC_DECODER_FFN_DENSE_SILU_GATED,
+        .hidden_width = 4ull,
+        .intermediate_width = 8ull,
+        .normalization_weight_convention = YVEX_NORMALIZATION_WEIGHT_DIRECT,
+        .normalization_epsilon = 1e-6,
+        .mixer_output_gate = 1};
+    YVEX_TEST_ASSERT(
+        yvex_model_execution_descriptor_seal(
+            &execution_request, &execution, &err) == YVEX_OK &&
+            execution.sequence_mixer_layers == 1ull &&
+            execution.dense_ffn_width == 8ull &&
+            yvex_model_execution_descriptor_encode(
+                &execution, wire, &err) == YVEX_OK &&
+            yvex_model_execution_descriptor_decode(
+                wire, sizeof(wire), &roundtrip, &err) == YVEX_OK &&
+            strcmp(execution.identity, roundtrip.identity) == 0,
+        "v2 execution descriptor preserves hybrid decoder geometry");
+    request = (yvex_semantic_model_ir_request){
+        .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V2,
+        .family_adapter_id = 9ull,
+        .family_adapter_version = 1ull,
+        .target_id = "hybrid-test",
+        .source_model_identity = source,
+        .logical_model_identity = logical,
+        .semantic_payload_identity = execution.identity,
+        .execution_descriptor = &execution,
+        .attention_context = &attention,
+        .attention_layer = semantic_attention_layer,
+        .attention_layer_count = 1ull,
+        .decoder_context = decoder,
+        .decoder_layer = semantic_decoder_layer,
+        .decoder_layer_count = 2ull};
+    YVEX_TEST_ASSERT(
+        yvex_semantic_model_ir_seal(&model, &request, &err) == YVEX_OK &&
+            (summary = yvex_semantic_model_ir_summary_get(model)) != NULL &&
+            summary->decoder_layer_count == 2ull &&
+            yvex_semantic_model_ir_decoder_view(model, &view, &count) &&
+            count == 2ull &&
+            view[0].mixer == YVEX_SEMANTIC_DECODER_MIXER_GATED_DELTA &&
+            view[1].mixer ==
+                YVEX_SEMANTIC_DECODER_MIXER_FULL_CAUSAL_ATTENTION,
+        "hybrid semantic decoder seals exact heterogeneous mixer topology");
+    YVEX_TEST_ASSERT(
+        yvex_operator_graph_ir_build_decoder(
+            &graph, model, NULL, NULL, &err) == YVEX_OK &&
+            yvex_operator_graph_ir_summary(graph)->node_count == 7ull &&
+            yvex_operator_graph_ir_summary(graph)->target_layer_count == 2ull &&
+            yvex_operator_graph_ir_summary(graph)->state_class_mask ==
+                execution.persistent_state_class_mask &&
+            yvex_operator_graph_ir_node_at(graph, 1ull)->kind ==
+                YVEX_OPERATOR_STATEFUL_SEQUENCE_MIXER &&
+            yvex_operator_graph_ir_node_at(graph, 1ull)->state_write_mask ==
+                YVEX_MODEL_STATE_CLASS_BIT(
+                    YVEX_MODEL_STATE_RECURRENT_SEQUENCE) &&
+            yvex_operator_graph_ir_node_at(graph, 2ull)->kind ==
+                YVEX_OPERATOR_DENSE_FEED_FORWARD &&
+            yvex_operator_graph_ir_node_at(graph, 3ull)->kind ==
+                YVEX_OPERATOR_ATTENTION &&
+            yvex_operator_graph_ir_node_at(graph, 3ull)->state_write_mask ==
+                YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_SWA_RING),
+        "hybrid operator graph preserves dense, KV, and recurrent ownership");
+    YVEX_TEST_ASSERT(
+        yvex_decoder_plan_compile(&plan, model, graph, &err) == YVEX_OK &&
+            yvex_decoder_plan_summary_get(plan)->layer_count == 2ull &&
+            yvex_decoder_plan_summary_get(plan)->attention_layer_count == 1ull &&
+            yvex_decoder_plan_summary_get(plan)->recurrent_layer_count == 1ull &&
+            yvex_decoder_plan_summary_get(plan)->convolution_state_bytes == 24ull &&
+            yvex_decoder_plan_summary_get(plan)->recurrent_state_bytes == 16ull &&
+            yvex_decoder_plan_layer_at(plan, 0ull)->attention_ordinal ==
+                YVEX_DECODER_NO_ATTENTION &&
+            yvex_decoder_plan_layer_at(plan, 1ull)->attention_ordinal == 0ull &&
+            yvex_decoder_plan_sequence_state(plan, &sequence_plan, &err) ==
+                YVEX_OK && sequence_plan.binding_count == 1ull &&
+            sequence_plan.bindings[0].layer_index == 0ull,
+        "hybrid decoder plan authenticates topology and recurrent state economics");
+    plan_summary = *yvex_decoder_plan_summary_get(plan);
+    plan_layers[0] = *yvex_decoder_plan_layer_at(plan, 0ull);
+    plan_layers[1] = *yvex_decoder_plan_layer_at(plan, 1ull);
+    YVEX_TEST_ASSERT(
+        yvex_decoder_plan_import(
+            &reopened, &plan_summary, plan_layers, &err) == YVEX_OK &&
+            strcmp(yvex_decoder_plan_summary_get(reopened)->decoder_plan_identity,
+                   plan_summary.decoder_plan_identity) == 0,
+        "hybrid decoder plan reopens from pointer-free authenticated records");
+    yvex_decoder_plan_close(&reopened);
+    encoded.maximum = 65536u;
+    encoded.initial_capacity = 4096u;
+    YVEX_TEST_ASSERT(
+        yvex_decoder_plan_encode(plan, &encoded, &err) == YVEX_OK &&
+            yvex_decoder_plan_decode(
+                &reopened, encoded.data, encoded.count, &consumed, &err) ==
+                YVEX_OK &&
+            consumed == encoded.count &&
+            strcmp(yvex_decoder_plan_summary_get(reopened)->decoder_plan_identity,
+                   plan_summary.decoder_plan_identity) == 0,
+        "hybrid decoder plan roundtrips through its canonical wire encoding");
+    yvex_decoder_plan_close(&reopened);
+    encoded.data[encoded.count - 1u] ^= 1u;
+    YVEX_TEST_ASSERT(
+        yvex_decoder_plan_decode(
+            &reopened, encoded.data, encoded.count, &consumed, &err) ==
+                YVEX_ERR_FORMAT &&
+            reopened == NULL && consumed == 0u,
+        "hybrid decoder wire rejects mutated authenticated content");
+    plan_layers[0].identity[0] = plan_layers[0].identity[0] == '0' ? '1' : '0';
+    YVEX_TEST_ASSERT(
+        yvex_decoder_plan_import(
+            &reopened, &plan_summary, plan_layers, &err) == YVEX_ERR_FORMAT &&
+            reopened == NULL,
+        "hybrid decoder plan rejects a mutated layer identity");
+    runtime_model.view.decoder = plan;
+    runtime_session.engine = &runtime_model;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_session_sequence_state_open(
+            &runtime_session, NULL, 1, &state_budget, &admitted_state_bytes,
+            &state_failure, &err) == YVEX_OK &&
+            runtime_session.sequence_state != NULL &&
+            runtime_session.summary.sequence_state_binding_count == 1ull &&
+            admitted_state_bytes == 80ull && state_budget == 944ull,
+        "runtime session derives mixed decoder state from the admitted model");
+    yvex_sequence_state_close(&runtime_session.sequence_state);
+    yvex_decoder_plan_close(&plan);
+    yvex_operator_graph_ir_close(&graph);
+    yvex_semantic_model_ir_close(&model);
+    decoder[1].layer_index = 0ull;
+    YVEX_TEST_ASSERT(
+        yvex_semantic_model_ir_seal(&model, &request, &err) ==
+                YVEX_ERR_FORMAT &&
+            !model,
+        "hybrid decoder refuses mismatched full-attention lineage");
+    free(encoded.data);
+    return 0;
+}
+
+static void model_test_identity(char output[YVEX_SHA256_HEX_CAP], char value)
+{
+    memset(output, value, YVEX_SHA256_HEX_CAP - 1u);
+    output[YVEX_SHA256_HEX_CAP - 1u] = '\0';
+}
+
+static int test_decoder_output_head_identity(void)
+{
+    yvex_runtime_logits_plan_summary summary = {
+        .schema_version = YVEX_OUTPUT_HEAD_PLAN_SCHEMA_CURRENT,
+        .producer_kind = YVEX_EXECUTION_PLAN_DECODER,
+        .family_adapter_id = 9ull,
+        .family_adapter_version = 1ull,
+        .output_head_tensor_id = 7ull,
+        .row_width = 4ull,
+        .row_count = 8ull,
+        .row_bytes = 8ull,
+        .encoded_bytes = 64ull,
+        .vocabulary_size = 8ull,
+        .hidden_width = 4ull,
+        .role = YVEX_TENSOR_ROLE_OUTPUT_HEAD,
+        .qtype = YVEX_GGUF_QTYPE_BF16,
+        .separate_output_head = 1};
+    yvex_runtime_logits_plan_summary mutated;
+    yvex_error err;
+    model_test_identity(summary.artifact_identity, '1');
+    model_test_identity(summary.materialization_identity, '2');
+    model_test_identity(summary.logical_model_identity, '3');
+    model_test_identity(summary.runtime_numeric_identity, '4');
+    model_test_identity(summary.runtime_descriptor_identity, '5');
+    model_test_identity(summary.decoder_plan_identity, '6');
+    YVEX_TEST_ASSERT(
+        yvex_output_head_plan_seal(&summary, &err) == YVEX_OK &&
+            yvex_output_head_plan_validate(&summary, &err) == YVEX_OK &&
+            !summary.transformer_plan_identity[0],
+        "decoder output head seals exact non-Transformer producer lineage");
+    mutated = summary;
+    model_test_identity(mutated.transformer_plan_identity, '7');
+    YVEX_TEST_ASSERT(
+        yvex_output_head_plan_validate(&mutated, &err) == YVEX_ERR_FORMAT,
+        "output head refuses simultaneous Transformer and decoder producers");
+    mutated = summary;
+    mutated.decoder_plan_identity[0] =
+        mutated.decoder_plan_identity[0] == '0' ? '1' : '0';
+    YVEX_TEST_ASSERT(
+        yvex_output_head_plan_validate(&mutated, &err) == YVEX_ERR_STATE,
+        "output head identity authenticates decoder producer lineage");
+    memset(summary.decoder_plan_identity, 0,
+           sizeof(summary.decoder_plan_identity));
+    summary.producer_kind = YVEX_EXECUTION_PLAN_TRANSFORMER;
+    model_test_identity(summary.transformer_plan_identity, '8');
+    YVEX_TEST_ASSERT(
+        yvex_output_head_plan_seal(&summary, &err) == YVEX_OK &&
+            yvex_output_head_plan_validate(&summary, &err) == YVEX_OK,
+        "current output head also seals exact Transformer producer lineage");
+    summary.schema_version = YVEX_OUTPUT_HEAD_PLAN_SCHEMA_V1;
+    YVEX_TEST_ASSERT(
+        yvex_output_head_plan_seal(&summary, &err) == YVEX_OK &&
+            yvex_output_head_plan_validate(&summary, &err) == YVEX_OK,
+        "legacy Transformer output-head identity remains admissible");
+    return 0;
+}
+
 int yvex_test_model_descriptor(void)
 {
     if (test_descriptor_from_c1_fixture() != 0) {
@@ -317,5 +638,7 @@ int yvex_test_model_descriptor(void)
         return 1;
     }
     if (test_semantic_model_ir() != 0) return 1;
+    if (test_hybrid_decoder_semantics() != 0) return 1;
+    if (test_decoder_output_head_identity() != 0) return 1;
     return 0;
 }

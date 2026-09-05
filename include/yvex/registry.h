@@ -9,10 +9,18 @@
 extern "C" {
 #endif
 
+#define YVEX_MODEL_REGISTRY_SCHEMA_V5 "yvex.models.local.v5"
+#define YVEX_MODEL_REGISTRY_SCHEMA_V6 "yvex.models.local.v6"
+#define YVEX_MODEL_REGISTRY_SCHEMA_CURRENT YVEX_MODEL_REGISTRY_SCHEMA_V6
+#define YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_V1 1u
+#define YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT \
+    YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_V1
+
 /* Model registry. */
 typedef struct yvex_model_registry yvex_model_registry;
 
 typedef struct {
+    unsigned int schema_version;
     const char *alias;
     const char *family;
     const char *model;
@@ -21,7 +29,7 @@ typedef struct {
     const char *qprofile;
     const char *calibration;
     const char *producer;
-    const char *schema_version;
+    const char *artifact_schema;
     const char *path;
     const char *sha256;
     unsigned long long file_size;
@@ -42,10 +50,13 @@ typedef struct {
     unsigned long long selected_embedding_output_count;
     unsigned long long selected_embedding_slice_bytes;
     int execution_ready;
+    const char *runtime_profile;
+    const char *runtime_installation;
     const char *runtime_binding;
     const char *runtime_target;
     const char *runtime_backend;
-    const char *runtime_mode;
+    const char *runtime_engine_kind;
+    const char *runtime_execution_strategy;
     unsigned long long runtime_context;
 } yvex_model_registry_entry;
 
@@ -123,8 +134,9 @@ int yvex_model_registry_default_path(char *out,
                                      unsigned long long out_size,
                                      yvex_error *err);
 
-/* A startup profile is runnable only when its artifact, binding, target, backend, and startup
- * context form one complete local configuration. Admission still occurs inside the server. */
+/* A startup profile names either one artifact plus binding or one installed composite model.
+ * Validation proves that local deployment facts are complete; admission still occurs inside the
+ * server and does not imply payload materialization or device residency. */
 int yvex_model_registry_startup_validate(const yvex_model_registry_entry *entry,
                                          yvex_error *err);
 

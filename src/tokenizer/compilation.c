@@ -10,7 +10,21 @@ typedef struct {
     size_t count, offset;
 } policy_cursor;
 
-static const char *const policy_domain = "yvex.tokenizer.family-policy.v1";
+static const char *const policy_domain_v1 = "yvex.tokenizer.family-policy.v1";
+static const char *const policy_domain_v2 = "yvex.tokenizer.family-policy.v2";
+
+static const char *policy_domain(unsigned int schema_version)
+{
+    return schema_version == YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V1
+               ? policy_domain_v1 : policy_domain_v2;
+}
+
+static unsigned int policy_text_count(unsigned int schema_version)
+{
+    return schema_version == YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V1
+               ? YVEX_TOKENIZER_POLICY_TEXT_COUNT_V1
+               : YVEX_TOKENIZER_POLICY_TEXT_COUNT;
+}
 
 static int bytes_u64(yvex_core_bytes *bytes, unsigned long long value)
 {
@@ -75,7 +89,7 @@ static int policy_identity_build(const yvex_tokenizer_family_policy *policy,
     const char *fixed[] = {
         policy->architecture, policy->tokenizer_model, policy->tokenizer_pre,
         policy->tokenizer_json_identity, policy->tokenizer_config_identity};
-    unsigned long long values[] = {
+    const unsigned long long values[] = {
         policy->schema_version, policy->family_adapter_id, policy->family_adapter_version,
         policy->tokenizer_kind, policy->model_policy, policy->prompt_policy,
         policy->vocabulary_size, policy->base_vocabulary_size, policy->merge_count,
@@ -88,13 +102,18 @@ static int policy_identity_build(const yvex_tokenizer_family_policy *policy,
         policy->tool_results_merge_into_user};
     size_t index;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, policy_domain)) return 0;
+    if (!yvex_sha256_update_text(&hash, policy_domain(policy->schema_version))) return 0;
     for (index = 0u; index < sizeof(values) / sizeof(values[0]); ++index)
         if (!yvex_sha256_update_u64_be(&hash, values[index])) return 0;
+    if (policy->schema_version == YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V2 &&
+        (!yvex_sha256_update_u64_be(&hash, policy->grammar) ||
+         !yvex_sha256_update_u64_be(&hash, policy->tool_grammar) ||
+         !yvex_sha256_update_u64_be(&hash, policy->default_reasoning_policy)))
+        return 0;
     for (index = 0u; index < sizeof(fixed) / sizeof(fixed[0]); ++index)
         if (!yvex_sha256_update_text(&hash, fixed[index])) return 0;
     if (policy->prompt_policy == YVEX_TOKENIZER_PROMPT_CONVERSATION) {
-        for (index = 0u; index < YVEX_TOKENIZER_POLICY_TEXT_COUNT; ++index) {
+        for (index = 0u; index < policy_text_count(policy->schema_version); ++index) {
             const char *text = policy_text(policy, (yvex_tokenizer_policy_text)index);
             if (!text || !yvex_sha256_update_u64_be(&hash, strlen(text)) ||
                 !yvex_sha256_update(&hash, text, strlen(text)))
@@ -118,13 +137,15 @@ int yvex_tokenizer_family_policy_validate(
 {
     char identity[YVEX_SHA256_HEX_CAP];
     unsigned int index;
-    if (!policy || policy->schema_version != YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V1 ||
+    if (!policy ||
+        (policy->schema_version != YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V1 &&
+         policy->schema_version != YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V2) ||
         !policy->family_adapter_id || !policy->family_adapter_version ||
         policy->tokenizer_kind <= YVEX_TOKENIZER_KIND_UNKNOWN ||
         policy->tokenizer_kind > YVEX_TOKENIZER_KIND_FIXTURE_SIMPLE ||
         policy->model_policy > YVEX_TOKENIZER_MODEL_BPE_BYTELEVEL ||
         (policy->prompt_policy != YVEX_TOKENIZER_PROMPT_CONVERSATION &&
-         policy->prompt_policy != YVEX_TOKENIZER_PROMPT_MINIMAX_H3_FL2VA) ||
+         policy->prompt_policy != YVEX_TOKENIZER_PROMPT_VERBATIM) ||
         !policy->vocabulary_size || !policy->base_vocabulary_size ||
         policy->base_vocabulary_size > policy->vocabulary_size ||
         !policy->architecture[0] || !policy->tokenizer_model[0] ||
@@ -140,6 +161,14 @@ int yvex_tokenizer_family_policy_validate(
         !policy_boolean(policy->drop_prior_reasoning_by_default) ||
         !policy_boolean(policy->tools_preserve_reasoning) ||
         !policy_boolean(policy->tool_results_merge_into_user) ||
+        (policy->schema_version == YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V1 &&
+         (policy->grammar != YVEX_CONVERSATION_GRAMMAR_SEGMENTED ||
+          policy->tool_grammar != YVEX_CONVERSATION_TOOL_GRAMMAR_TYPED_ATTRIBUTES ||
+          policy->default_reasoning_policy != YVEX_REASONING_DISABLED)) ||
+        (policy->schema_version == YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V2 &&
+         (policy->grammar > YVEX_CONVERSATION_GRAMMAR_ROLE_ENVELOPED ||
+          policy->tool_grammar > YVEX_CONVERSATION_TOOL_GRAMMAR_XML_ELEMENTS ||
+          !yvex_reasoning_policy_valid(policy->default_reasoning_policy))) ||
         (policy->prompt_policy == YVEX_TOKENIZER_PROMPT_CONVERSATION &&
          policy->direct_prompt_name[0]) ||
         (policy->prompt_policy != YVEX_TOKENIZER_PROMPT_CONVERSATION &&
@@ -148,7 +177,7 @@ int yvex_tokenizer_family_policy_validate(
           policy->tool_results_merge_into_user)))
         goto invalid;
     if (policy->prompt_policy == YVEX_TOKENIZER_PROMPT_CONVERSATION)
-        for (index = 0u; index < YVEX_TOKENIZER_POLICY_TEXT_COUNT; ++index)
+        for (index = 0u; index < policy_text_count(policy->schema_version); ++index)
             if (!policy_text(policy, (yvex_tokenizer_policy_text)index)) goto invalid;
     if (!policy_identity_build(policy, identity) ||
         strcmp(identity, policy->policy_identity) != 0)
@@ -184,7 +213,9 @@ int yvex_tokenizer_family_policy_compile(
     const char *texts[YVEX_TOKENIZER_POLICY_TEXT_COUNT];
     char identity[YVEX_SHA256_HEX_CAP];
     unsigned int index;
-    if (!out || !source || source->schema_version != YVEX_CONVERSATION_PROTOCOL_SCHEMA_V1 ||
+    if (!out || !source ||
+        (source->schema_version != YVEX_CONVERSATION_PROTOCOL_SCHEMA_V1 &&
+         source->schema_version != YVEX_CONVERSATION_PROTOCOL_SCHEMA_V2) ||
         !source->family_adapter_id || !source->family_adapter_version ||
         !source->architecture || !source->tokenizer_model || !source->tokenizer_pre ||
         !source->tokenizer_json_identity || !source->tokenizer_config_identity) {
@@ -218,8 +249,18 @@ int yvex_tokenizer_family_policy_compile(
     texts[YVEX_TOKENIZER_POLICY_TOOLS_PREFIX] = source->tools_prefix;
     texts[YVEX_TOKENIZER_POLICY_TOOLS_SUFFIX] = source->tools_suffix;
     texts[YVEX_TOKENIZER_POLICY_RESPONSE_FORMAT_PREFIX] = source->response_format_prefix;
+    texts[YVEX_TOKENIZER_POLICY_SYSTEM] = source->system;
+    texts[YVEX_TOKENIZER_POLICY_MESSAGE_END] = source->message_end;
+    texts[YVEX_TOKENIZER_POLICY_THINKING_START_SUFFIX] = source->thinking_start_suffix;
+    texts[YVEX_TOKENIZER_POLICY_THINKING_END_PREFIX] = source->thinking_end_prefix;
+    texts[YVEX_TOKENIZER_POLICY_THINKING_END_SUFFIX] = source->thinking_end_suffix;
+    texts[YVEX_TOKENIZER_POLICY_REASONING_EFFORT_LOW] = source->reasoning_effort_low;
+    texts[YVEX_TOKENIZER_POLICY_TOOL_RESULT_GROUP_START] =
+        source->tool_result_group_start;
     memset(out, 0, sizeof(*out));
-    out->schema_version = YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V1;
+    out->schema_version = source->schema_version == YVEX_CONVERSATION_PROTOCOL_SCHEMA_V1
+                              ? YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V1
+                              : YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V2;
     out->family_adapter_id = source->family_adapter_id;
     out->family_adapter_version = source->family_adapter_version;
     out->tokenizer_kind = tokenizer_kind;
@@ -244,6 +285,9 @@ int yvex_tokenizer_family_policy_compile(
     out->drop_prior_reasoning_by_default = source->drop_prior_reasoning_by_default;
     out->tools_preserve_reasoning = source->tools_preserve_reasoning;
     out->tool_results_merge_into_user = source->tool_results_merge_into_user;
+    out->grammar = source->grammar;
+    out->tool_grammar = source->tool_grammar;
+    out->default_reasoning_policy = source->default_reasoning_policy;
     yvex_core_text_copy(out->architecture, sizeof(out->architecture), source->architecture);
     yvex_core_text_copy(out->tokenizer_model, sizeof(out->tokenizer_model),
                         source->tokenizer_model);
@@ -252,7 +296,7 @@ int yvex_tokenizer_family_policy_compile(
                         sizeof(out->tokenizer_json_identity), source->tokenizer_json_identity);
     yvex_core_text_copy(out->tokenizer_config_identity,
                         sizeof(out->tokenizer_config_identity), source->tokenizer_config_identity);
-    for (index = 0u; index < YVEX_TOKENIZER_POLICY_TEXT_COUNT; ++index)
+    for (index = 0u; index < policy_text_count(out->schema_version); ++index)
         if (!policy_text_copy(out, (yvex_tokenizer_policy_text)index, texts[index]))
             goto invalid;
     if (!policy_identity_build(out, identity)) goto invalid;
@@ -364,9 +408,14 @@ int yvex_tokenizer_family_policy_encode(
     size_t index;
     if (!bytes || yvex_tokenizer_family_policy_validate(policy, err) != YVEX_OK)
         return YVEX_ERR_INVALID_ARG;
-    if (!bytes_text(bytes, policy_domain)) goto allocation;
+    if (!bytes_text(bytes, policy_domain(policy->schema_version))) goto allocation;
     for (index = 0u; index < sizeof(values) / sizeof(values[0]); ++index)
         if (!bytes_u64(bytes, values[index])) goto allocation;
+    if (policy->schema_version == YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V2 &&
+        (!bytes_u64(bytes, policy->grammar) ||
+         !bytes_u64(bytes, policy->tool_grammar) ||
+         !bytes_u64(bytes, policy->default_reasoning_policy)))
+        goto allocation;
     if (!bytes_text(bytes, policy->architecture) ||
         !bytes_text(bytes, policy->tokenizer_model) ||
         !bytes_text(bytes, policy->tokenizer_pre) ||
@@ -374,8 +423,9 @@ int yvex_tokenizer_family_policy_encode(
         !bytes_text(bytes, policy->tokenizer_config_identity) ||
         !bytes_text(bytes, policy->policy_identity)) goto allocation;
     if (policy->prompt_policy == YVEX_TOKENIZER_PROMPT_CONVERSATION) {
-        if (!bytes_u64(bytes, YVEX_TOKENIZER_POLICY_TEXT_COUNT)) goto allocation;
-        for (index = 0u; index < YVEX_TOKENIZER_POLICY_TEXT_COUNT; ++index)
+        unsigned int count = policy_text_count(policy->schema_version);
+        if (!bytes_u64(bytes, count)) goto allocation;
+        for (index = 0u; index < count; ++index)
             if (!bytes_text(bytes, policy_text(policy, (yvex_tokenizer_policy_text)index)))
                 goto allocation;
     } else if (!bytes_text(bytes, policy->direct_prompt_name) || !bytes_u64(bytes, 0u)) {
@@ -396,11 +446,18 @@ int yvex_tokenizer_family_policy_decode(
     policy_cursor cursor = {data, count, 0u};
     char domain[64], identity[YVEX_SHA256_HEX_CAP];
     unsigned long long values[25], text_count;
+    unsigned int schema_version;
     char text[YVEX_TOKENIZER_POLICY_TEXT_CAP];
     size_t index;
     if (!policy || (!data && count)) return YVEX_ERR_INVALID_ARG;
     memset(policy, 0, sizeof(*policy));
-    if (!cursor_text(&cursor, domain, sizeof(domain)) || strcmp(domain, policy_domain) != 0)
+    if (!cursor_text(&cursor, domain, sizeof(domain)))
+        goto invalid;
+    if (strcmp(domain, policy_domain_v1) == 0)
+        schema_version = YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V1;
+    else if (strcmp(domain, policy_domain_v2) == 0)
+        schema_version = YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V2;
+    else
         goto invalid;
     for (index = 0u; index < sizeof(values) / sizeof(values[0]); ++index)
         if (!cursor_u64(&cursor, &values[index])) goto invalid;
@@ -423,6 +480,17 @@ int yvex_tokenizer_family_policy_decode(
     policy->drop_prior_reasoning_by_default = (int)values[22];
     policy->tools_preserve_reasoning = (int)values[23];
     policy->tool_results_merge_into_user = (int)values[24];
+    if (policy->schema_version != schema_version) goto invalid;
+    if (schema_version == YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V2) {
+        unsigned long long grammar, tool_grammar, reasoning;
+        if (!cursor_u64(&cursor, &grammar) ||
+            !cursor_u64(&cursor, &tool_grammar) ||
+            !cursor_u64(&cursor, &reasoning))
+            goto invalid;
+        policy->grammar = (yvex_conversation_grammar)grammar;
+        policy->tool_grammar = (yvex_conversation_tool_grammar)tool_grammar;
+        policy->default_reasoning_policy = (yvex_reasoning_policy)reasoning;
+    }
     if (!cursor_text(&cursor, policy->architecture, sizeof(policy->architecture)) ||
         !cursor_text(&cursor, policy->tokenizer_model, sizeof(policy->tokenizer_model)) ||
         !cursor_text(&cursor, policy->tokenizer_pre, sizeof(policy->tokenizer_pre)) ||
@@ -434,9 +502,9 @@ int yvex_tokenizer_family_policy_decode(
         goto invalid;
     if (policy->prompt_policy == YVEX_TOKENIZER_PROMPT_CONVERSATION) {
         if (!cursor_u64(&cursor, &text_count) ||
-            text_count != YVEX_TOKENIZER_POLICY_TEXT_COUNT)
+            text_count != policy_text_count(policy->schema_version))
             goto invalid;
-        for (index = 0u; index < YVEX_TOKENIZER_POLICY_TEXT_COUNT; ++index) {
+        for (index = 0u; index < (size_t)text_count; ++index) {
             if (!cursor_text(&cursor, text, sizeof(text)) ||
                 !policy_text_copy(policy, (yvex_tokenizer_policy_text)index, text))
                 goto invalid;
@@ -464,7 +532,10 @@ int yvex_tokenizer_family_policy_conversation(
         policy->prompt_policy != YVEX_TOKENIZER_PROMPT_CONVERSATION)
         return 0;
     memset(conversation, 0, sizeof(*conversation));
-    conversation->schema_version = YVEX_CONVERSATION_PROTOCOL_SCHEMA_V1;
+    conversation->schema_version =
+        policy->schema_version == YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V1
+            ? YVEX_CONVERSATION_PROTOCOL_SCHEMA_V1
+            : YVEX_CONVERSATION_PROTOCOL_SCHEMA_V2;
     conversation->family_adapter_id = policy->family_adapter_id;
     conversation->family_adapter_version = policy->family_adapter_version;
     conversation->architecture = policy->architecture;
@@ -493,7 +564,28 @@ int yvex_tokenizer_family_policy_conversation(
     VIEW(tools_prefix, YVEX_TOKENIZER_POLICY_TOOLS_PREFIX);
     VIEW(tools_suffix, YVEX_TOKENIZER_POLICY_TOOLS_SUFFIX);
     VIEW(response_format_prefix, YVEX_TOKENIZER_POLICY_RESPONSE_FORMAT_PREFIX);
+    if (policy->schema_version == YVEX_TOKENIZER_FAMILY_POLICY_SCHEMA_V2) {
+        VIEW(system, YVEX_TOKENIZER_POLICY_SYSTEM);
+        VIEW(message_end, YVEX_TOKENIZER_POLICY_MESSAGE_END);
+        VIEW(thinking_start_suffix, YVEX_TOKENIZER_POLICY_THINKING_START_SUFFIX);
+        VIEW(thinking_end_prefix, YVEX_TOKENIZER_POLICY_THINKING_END_PREFIX);
+        VIEW(thinking_end_suffix, YVEX_TOKENIZER_POLICY_THINKING_END_SUFFIX);
+        VIEW(reasoning_effort_low, YVEX_TOKENIZER_POLICY_REASONING_EFFORT_LOW);
+        VIEW(tool_result_group_start,
+             YVEX_TOKENIZER_POLICY_TOOL_RESULT_GROUP_START);
+    } else {
+        conversation->system = "";
+        conversation->message_end = conversation->eos;
+        conversation->thinking_start_suffix = "";
+        conversation->thinking_end_prefix = "";
+        conversation->thinking_end_suffix = "";
+        conversation->reasoning_effort_low = "";
+        conversation->tool_result_group_start = conversation->user;
+    }
 #undef VIEW
+    conversation->grammar = policy->grammar;
+    conversation->tool_grammar = policy->tool_grammar;
+    conversation->default_reasoning_policy = policy->default_reasoning_policy;
     conversation->drop_prior_reasoning_by_default = policy->drop_prior_reasoning_by_default;
     conversation->tools_preserve_reasoning = policy->tools_preserve_reasoning;
     conversation->tool_results_merge_into_user = policy->tool_results_merge_into_user;

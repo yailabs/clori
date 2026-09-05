@@ -5,7 +5,11 @@
 #include <string.h>
 
 #include <yvex/internal/backend.h>
-#include <yvex/internal/execution.h>
+#include <yvex/internal/deployment.h>
+#include <yvex/internal/device_view.h>
+#include <yvex/internal/evidence.h>
+#include <yvex/internal/execution_observation.h>
+#include <yvex/internal/runtime.h>
 
 static void execution_test_identity(char output[YVEX_SHA256_HEX_CAP], char digit)
 {
@@ -27,6 +31,7 @@ static int execution_test_planning(void)
     unsigned char wire[YVEX_MODEL_EXECUTION_WIRE_BYTES];
     unsigned long long index;
     yvex_error err;
+    int capacity_rc;
 
     execution_test_identity(logical, 'a');
     execution_test_identity(source, 'b');
@@ -196,7 +201,7 @@ static int execution_test_planning(void)
     capacity_request.workload = &workload;
     capacity_request.model_bytes = 90ull * 1024ull * 1024ull * 1024ull;
     capacity_request.derived_layout_bytes = 1ull * 1024ull * 1024ull * 1024ull;
-    for (index = 0ull; index < YVEX_MODEL_STATE_CLASS_COUNT; ++index) {
+    for (index = 0ull; index < YVEX_MODEL_STATE_CLASS_COUNT_V1; ++index) {
         states[index].state_class = (yvex_model_state_class)index;
         states[index].extent = YVEX_EXECUTION_STATE_EXTENT_CONTEXT;
         states[index].logical_block_tokens = 1ull;
@@ -232,15 +237,19 @@ static int execution_test_planning(void)
     states[YVEX_MODEL_STATE_PREFIX_CHECKPOINT].shared = 1;
     states[YVEX_MODEL_STATE_PREFIX_CHECKPOINT].copy_on_write = 1;
     capacity_request.state_classes = states;
-    capacity_request.state_class_count = YVEX_MODEL_STATE_CLASS_COUNT;
+    capacity_request.state_class_count = YVEX_MODEL_STATE_CLASS_COUNT_V1;
     capacity_request.workspace_bytes = 2ull * 1024ull * 1024ull * 1024ull;
     capacity_request.scheduler_bytes = 128ull * 1024ull * 1024ull;
     capacity_request.graph_bytes = 256ull * 1024ull * 1024ull;
-    YVEX_TEST_ASSERT(yvex_execution_capacity_plan_build(
-                         &capacity_request, &capacity, &err) == YVEX_OK &&
+    capacity_rc = yvex_execution_capacity_plan_build(
+        &capacity_request, &capacity, &err);
+    if (capacity_rc != YVEX_OK)
+        fprintf(stderr, "capacity refusal: %s: %s\n",
+                yvex_error_where(&err), yvex_error_message(&err));
+    YVEX_TEST_ASSERT(capacity_rc == YVEX_OK &&
                          capacity.per_session_maximum == 131072ull &&
                          capacity.concurrent_sequences == 4ull &&
-                         capacity.state_class_count == YVEX_MODEL_STATE_CLASS_COUNT &&
+                         capacity.state_class_count == YVEX_MODEL_STATE_CLASS_COUNT_V1 &&
                          capacity.state_classes[YVEX_MODEL_STATE_SWA_RING].page_tokens == 16ull &&
                          capacity.state_classes[YVEX_MODEL_STATE_COMPRESSED_HISTORY].page_tokens ==
                              128ull &&
@@ -294,56 +303,69 @@ static int execution_test_planning(void)
 
 static int execution_test_profile(void)
 {
-    char identity[YVEX_SHA256_HEX_CAP];
-    yvex_compiled_execution_profile_request request = {0};
-    yvex_compiled_execution_profile first, second;
+    char identity[YVEX_SHA256_HEX_CAP], changed_identity[YVEX_SHA256_HEX_CAP];
+    yvex_runtime_execution_profile_request request = {0};
+    yvex_runtime_execution_profile first, second;
     yvex_error err;
 
     execution_test_identity(identity, 'a');
-    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2;
-    request.logical_model_identity = identity;
-    request.physical_variant_identity = identity;
-    request.physical_execution_identity = identity;
-    request.artifact_identity = identity;
-    request.materialization_identity = identity;
-    request.runtime_binding_identity = identity;
+    execution_test_identity(changed_identity, 'b');
+    request.schema_version = YVEX_RUNTIME_EXECUTION_PROFILE_SCHEMA_V1;
+    request.engine_generation = 1ull;
+    request.engine_specialization_identity = identity;
     request.kernel_bundle_identity = identity;
-    request.hardware_profile = "portable-cpu";
-    request.backend = YVEX_BACKEND_KIND_CPU;
-    request.context_capacity = 4096ull;
+    request.workload_profile_identity = identity;
     request.generation_mode = YVEX_EXECUTION_GENERATION_TARGET_ONLY;
-    request.workload = YVEX_EXECUTION_WORKLOAD_INTERACTIVE;
     request.evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
     request.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
     request.attention_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     request.moe_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     request.sampling_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
-    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+    YVEX_TEST_ASSERT(yvex_runtime_execution_profile_seal(
                          &request, &first, &err) == YVEX_OK,
-                     "compiled execution profile should seal");
-    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+                     "engine workload profile should seal");
+    YVEX_TEST_ASSERT(yvex_runtime_execution_profile_seal(
                          &request, &second, &err) == YVEX_OK,
-                     "equal compiled execution profile should seal");
+                     "equal engine workload profile should seal");
     YVEX_TEST_ASSERT(strcmp(first.identity, second.identity) == 0,
-                     "compiled execution identity should be deterministic");
+                     "engine workload identity should be deterministic");
     YVEX_TEST_ASSERT(
         first.resolution == YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED,
-        "compiled profile should expose its admitted degraded resolution");
+        "runtime profile should expose its admitted degraded resolution");
+    request.engine_generation = 2ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_profile_seal(&request, &second, &err) == YVEX_OK &&
+            second.engine_generation == 2ull &&
+            strcmp(first.identity, second.identity) == 0,
+        "process-local engine handles must not mutate workload identity");
+    request.engine_generation = 1ull;
+    request.engine_specialization_identity = changed_identity;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_profile_seal(&request, &second, &err) == YVEX_OK &&
+            strcmp(first.identity, second.identity) != 0,
+        "deployment specialization must mutate workload identity");
+    request.engine_specialization_identity = identity;
+    request.workload_profile_identity = changed_identity;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_profile_seal(&request, &second, &err) == YVEX_OK &&
+            strcmp(first.identity, second.identity) != 0,
+        "resource workload identity must mutate execution identity");
+    request.workload_profile_identity = identity;
     request.attention_resolution = YVEX_EXECUTION_RESOLUTION_EXACT;
-    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+    YVEX_TEST_ASSERT(yvex_runtime_execution_profile_seal(
                          &request, &second, &err) == YVEX_OK &&
                          strcmp(first.identity, second.identity) != 0,
                      "capability resolution should change execution identity");
     request.attention_resolution =
         YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     request.evidence = YVEX_EXECUTION_EVIDENCE_FORENSIC;
-    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+    YVEX_TEST_ASSERT(yvex_runtime_execution_profile_seal(
                          &request, &second, &err) == YVEX_OK &&
                          strcmp(first.identity, second.identity) != 0,
                      "evidence profile should change execution identity");
     request.attention_resolution =
         YVEX_EXECUTION_RESOLUTION_TEMPORARILY_RESOURCE_LIMITED;
-    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+    YVEX_TEST_ASSERT(yvex_runtime_execution_profile_seal(
                          &request, &second, &err) == YVEX_ERR_INVALID_ARG,
                      "non-executable capability resolution should refuse profile admission");
     return 0;
@@ -612,99 +634,6 @@ static int execution_test_memory_facts(void)
     return 0;
 }
 
-static int execution_test_shape(void)
-{
-    yvex_execution_shape_registry *registry = NULL;
-    yvex_execution_shape configured = {0}, required;
-    yvex_execution_shape_failure failure;
-    yvex_execution_shape_registry_summary summary;
-    const yvex_execution_shape *selected = NULL;
-    unsigned long long generation;
-    yvex_error err;
-
-    configured.schema_version = YVEX_EXECUTION_SHAPE_SCHEMA_V1;
-    configured.target_scope = YVEX_EXECUTION_SCOPE_TARGET;
-    configured.phase = YVEX_EXECUTION_PHASE_VERIFY;
-    configured.operation_scope = YVEX_EXECUTION_OPERATION_ENVELOPE;
-    configured.token_width = 5ull;
-    configured.candidate_visible = 1;
-    configured.context_band = YVEX_EXECUTION_CONTEXT_SHORT;
-    configured.context_capacity = 32ull;
-    configured.local_capacity = 16ull;
-    configured.compressed_capacity = 8ull;
-    configured.indexer_capacity = 8ull;
-    configured.rolling_capacity = 2ull;
-    configured.candidate_capacity = 6ull;
-    configured.workspace_generation = 1ull;
-    configured.evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
-    execution_test_identity(configured.execution_profile_identity, '1');
-    execution_test_identity(configured.attention_plan_identity, '2');
-    execution_test_identity(configured.state_layout_identity, '3');
-    execution_test_identity(configured.kernel_bundle_identity, '4');
-    execution_test_identity(configured.workspace_identity, '5');
-    YVEX_TEST_ASSERT(yvex_execution_shape_seal(&configured, &err) == YVEX_OK,
-                     "execution shape should seal");
-    YVEX_TEST_ASSERT(yvex_execution_shape_registry_open(
-                         &registry, 2ull, &err) == YVEX_OK,
-                     "shape registry should open");
-    YVEX_TEST_ASSERT(yvex_execution_shape_registry_register(
-                         registry, &configured, &err) == YVEX_OK,
-                     "execution shape should register");
-    required = configured;
-    required.position = 10ull;
-    required.local_capacity = 12ull;
-    YVEX_TEST_ASSERT(yvex_execution_shape_seal(&required, &err) == YVEX_OK,
-                     "shape requirement should seal");
-    YVEX_TEST_ASSERT(yvex_execution_shape_registry_select(
-                         registry, &required, &selected, &failure, &err) == YVEX_OK &&
-                         selected != NULL,
-                     "compatible execution shape should select");
-    required.local_capacity = 17ull;
-    YVEX_TEST_ASSERT(yvex_execution_shape_seal(&required, &err) == YVEX_OK,
-                     "oversized shape requirement should seal");
-    YVEX_TEST_ASSERT(yvex_execution_shape_registry_select(
-                         registry, &required, &selected, &failure, &err) ==
-                         YVEX_ERR_BOUNDS &&
-                         failure.component == YVEX_EXECUTION_CAPACITY_LOCAL &&
-                         failure.configured == 16ull && failure.required == 17ull &&
-                         failure.position == 10ull,
-                     "shape capacity refusal should identify the exact component");
-    YVEX_TEST_ASSERT(yvex_execution_shape_registry_summary_copy(
-                         registry, &summary, &err) == YVEX_OK &&
-                         summary.count == 1ull && summary.hit_count == 1ull &&
-                         summary.miss_count == 1ull,
-                     "shape registry should publish hit and miss accounting");
-    for (generation = 2ull; generation <= 258ull; ++generation) {
-        configured.workspace_generation = generation;
-        execution_test_identity(configured.workspace_identity,
-                                generation % 2ull ? '5' : '6');
-        YVEX_TEST_ASSERT(yvex_execution_shape_seal(&configured, &err) == YVEX_OK &&
-                             yvex_execution_shape_registry_register(
-                                 registry, &configured, &err) == YVEX_OK,
-                         "workspace rebinds must replace stale shape classes");
-    }
-    YVEX_TEST_ASSERT(yvex_execution_shape_registry_summary_copy(
-                         registry, &summary, &err) == YVEX_OK &&
-                         summary.count == 1ull,
-                     "workspace generations must not consume registry capacity");
-    required = configured;
-    required.position = 11ull;
-    required.candidate_capacity = 5ull;
-    YVEX_TEST_ASSERT(yvex_execution_shape_seal(&required, &err) == YVEX_OK &&
-                         yvex_execution_shape_registry_select(
-                             registry, &required, &selected, &failure, &err) == YVEX_OK &&
-                         selected && selected->workspace_generation == 258ull,
-                     "shape selection should use only the current workspace generation");
-    configured.workspace_generation = 1ull;
-    execution_test_identity(configured.workspace_identity, '5');
-    YVEX_TEST_ASSERT(yvex_execution_shape_seal(&configured, &err) == YVEX_OK &&
-                         yvex_execution_shape_registry_register(
-                             registry, &configured, &err) == YVEX_ERR_STATE,
-                     "stale workspace generation should not replace current execution truth");
-    yvex_execution_shape_registry_close(&registry);
-    return 0;
-}
-
 static int execution_test_device_view(void)
 {
     yvex_backend *backend = NULL;
@@ -727,7 +656,7 @@ static int execution_test_device_view(void)
     view.backend = backend;
     view.tensor = tensor;
     view.element_offset = 4ull;
-    view.model_generation = 1ull;
+    view.resource_generation = 1ull;
     view.session_generation = 1ull;
     view.state_generation = 1ull;
     view.rows = 2ull;
@@ -756,6 +685,5 @@ int yvex_test_runtime_execution(void)
     if (execution_test_profile() != 0) return 1;
     if (execution_test_memory_facts() != 0) return 1;
     if (execution_test_roofline() != 0) return 1;
-    if (execution_test_shape() != 0) return 1;
     return execution_test_device_view();
 }

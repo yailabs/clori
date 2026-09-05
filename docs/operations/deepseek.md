@@ -1,70 +1,82 @@
 # Operating DeepSeek-V4-Flash-DSpark
 
-DeepSeek-V4-Flash-DSpark is the sole current complete hosted YVEX vertical.
+DeepSeek-V4-Flash-DSpark is the complete hosted text vertical for the v0.1
+target. MiniMax is the admitted composite media counterexample on the same
+host/runtime/backend substrate.
 Family identities and architecture facts live in the
 [DeepSeek technical record](../model-families/deepseek-v4-flash.md); current
 gates live in [`ROADMAP.md`](../../ROADMAP.md).
 
 ## Product path
 
-List the local startup profiles, inspect the admitted DeepSeek entry, then
-start the sole persistent foreground server:
+Inspect the logical catalog, start the persistent host, then load DeepSeek as
+one exact engine generation:
 
 ```sh
-./yvex model list
-./yvex model show deepseek4-v4-flash-dspark-runtime-iq2xxs
-./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex model list --wide
+./yvex model show v4-flash-dspark
+./yvex serve
 ```
 
-The alias is an example; use a DeepSeek row whose `STARTUP` column is `yes` and
-whose generation mode is `dspark` for speculative execution.
-No model path or environment variable is required during normal operation.
-The command authenticates the selected artifact and binding and builds the
-resident runtime model. Importing an existing artifact into the registry is a
-one-time advanced operation documented in the
+The foreground host has no administrative prompt. From another terminal,
+load the logical model:
+
+```sh
+./yvex model load v4-flash-dspark
+./yvex model list --wide
+```
+
+If several runnable physical variants exist, a terminal shows their format,
+precision, size, backend, and mode and accepts a number or exact variant.
+Automation supplies `--variant VARIANT`. No model path, copied profile alias,
+or environment variable is required. `model load` authenticates the resolved
+artifact and binding, seals the deployment specialization, and creates one
+immutable engine generation. The host itself starts with zero engines and
+stays alive across load and unload.
+Importing an existing artifact into the registry is a one-time advanced
+operation documented in the
 [operator runbook](../operator-runbook.md#registering-an-existing-model), not
 artifact admission.
 
-After `runtime.ready`, verify and use the same resident model from another
-terminal:
+After the engine reports `loaded`, verify and use that exact generation from
+another terminal:
 
 ```sh
-./yvex server status
-./yvex server model
-./yvex server memory
-./yvex chat --session main
+./yvex host status
+./yvex model list --wide
+./yvex host memory
+./yvex chat --model v4-flash-dspark --session main
 ```
 
-An optional third terminal may run `yvex server log`. Status, logs, and chat
-are clients of the same server; none reloads weights or opens a second
-runtime model.
+An optional third terminal may run `yvex host logs`. Status, logs, and chat
+are clients of the same host; none reloads weights or opens a second engine.
 
-The server opens one model and retains the complete encoded model payload in
-one immutable process-lifetime host arena together with tokenizer, attention,
-materialization, output-head, target, draft, and verification resources. Each
-named session owns independent DeepSeek persistent state, bounded speculative
-candidate workspace, and exact prompt/token continuation.
+The engine retains the canonical encoded package mapping plus its tokenizer,
+attention, output-head, target, draft, verification, and admitted prepared
+resources. The resource report distinguishes mapped package bytes from
+prepared, resident, sequence-state, and workspace bytes. Each named session is
+bound to the exact engine generation and owns independent DeepSeek persistent
+state, bounded speculative candidate workspace, and prompt/token continuation.
 
 On turn two, the host renders and encodes the complete expected conversation,
 proves that the committed token ledger is its exact prefix, and prefills only
 the new suffix. An incompatible prefix refuses; reset is explicit.
 
-## One-shot path
+## Generation path
 
-```sh
-./yvex run --strategy stochastic --temperature 0.8 --top-k 50 --top-p 0.95 --min-p 0.05 --typical-p 1.0 --seed 42 "Explain attention in one sentence."
-```
-
-CUDA greedy sampling selects the token on device without copying the complete
-vocabulary row. Stochastic sampling remains an explicit common-host reference
-adapter. Streamed fragments are sent only after sampled-token decode commit
-and incremental detokenization commit.
+Human generation uses the linear `yvex chat` client. Programmatic inference
+uses the native typed protocol or the loopback OpenAI profile; there is no
+second one-shot CLI generation operation. CUDA greedy sampling selects the
+token on device without copying the complete vocabulary row. Stochastic
+sampling remains an explicit common-host reference adapter. Streamed fragments
+are sent only after sampled-token decode commit and incremental detokenization
+commit.
 
 ## Target-only and DSpark modes
 
-Generation mode belongs to the named startup profile. `server model` and
-`server status --json` report the mode actually open in the server. There is
-no per-turn fallback switch.
+Generation mode belongs to the resolved startup profile. Advanced `engine list --json`
+reports the mode of each loaded generation. There is no per-turn fallback
+switch.
 
 `target-only` retains ordinary one-token target generation as the semantic
 reference. `dspark` uses the checkpoint drafter to propose bounded blocks and
@@ -73,14 +85,14 @@ committed and streamed. Draft proposals do not appear in chat, native
 streaming, SSE, transcript, or completion usage.
 
 The final turn result reports the execution mode and compact speculation
-counts. Use `server log --json` for cycle-level draft,
+counts. Use `host logs --json` for cycle-level draft,
 verification, accepted-prefix, rejection, timing, and policy facts. A requested
 DSpark profile refuses startup if its artifact, binding, backend, or workspace
 requirements are incomplete; it never runs target-only silently.
 
 For explicit reasoning, the source-authored reasoning terminator ends the
 speculative shape. The committed final channel continues through ordinary
-target decode. The `source-boundary` fact emitted by `server log --json` reports
+target decode. The `source-boundary` fact emitted by `host logs --json` reports
 the boundary extent in `a`, the target-only continuation in `b`, and replayed
 accepted target rows in `c`. The last value must remain zero. This is an
 identity-bound DSpark sub-policy, not a fallback.
@@ -96,19 +108,18 @@ the interactive console use:
 /nothink    disable it
 ```
 
-The selected policy is request-bound and retained as the session's next-turn
-selection. If a change no longer extends the committed token prefix, YVEX
+The selected policy persists for the attached session until changed. If a
+change no longer extends the committed token prefix, YVEX
 rebuilds only physical sequence state and re-prefills the authoritative
 semantic history. Reasoning is streamed through its own typed channel and
 shown in dim text on a TTY; final answer text returns to the normal foreground.
-`yvex run --reasoning none|high|max` provides the same policy noninteractively:
-stdout contains exact canonical channel bytes and completion metrics go to
-stderr. YVEX does not infer reasoning from prose or expose hidden chain of
-thought.
+Programmatic clients select the corresponding typed policy through their
+admitted protocol field. YVEX does not infer reasoning from prose or expose
+hidden chain of thought.
 
 ## Application-provider path
 
-The same daemon exposes the bounded loopback profile without loading another
+The same host exposes the bounded loopback profile without loading another
 DeepSeek model. After `runtime.ready`, verify it:
 
 ```sh
@@ -134,15 +145,15 @@ the application to execute. `reasoning_effort` accepts `none`, `high`, or
 The engine-linked offline lane of `yvex` retains direct proof surfaces:
 
 ```sh
-./yvex execute attention prepare --help
-./yvex execute transformer run --help
-./yvex execute transformer decode --help
-./yvex execute transformer logits --help
-./yvex execute transformer sample --help
-./yvex execute transformer generate --help
+./yvex bench attention prepare --help
+./yvex bench transformer execute --help
+./yvex bench transformer decode --help
+./yvex bench transformer logits --help
+./yvex bench transformer sample --help
+./yvex bench transformer generate --help
 
 ./yvex inspect tokenizer --help
-./yvex execute tokenizer encode --help
+./yvex inspect tokenizer encode --help
 ./yvex compile quant preset --help
 ./yvex compile quant plan --help
 ./yvex artifact materialize --help
@@ -152,20 +163,21 @@ These are finite engineering and conformance operations, not hosted-generation
 aliases. They may open the engine directly but never create a persistent model
 authority.
 
-`execute transformer generate --audit` prints the identity-bound CUDA phase
+`bench transformer generate --audit` prints the identity-bound CUDA phase
 ledger after a real finite request. `--json` exposes the same seven stable phase
 slots and their measured/missing fact masks. Missing active bytes, occupancy or
 batched-decode work are reported as unavailable and must not be read as zero.
 
 For a bounded direct comparison over one admitted artifact and binding, the
 engineering generator accepts `--generation-mode target-only|dspark`. This is
-not the ordinary chat path and does not alter the selected daemon profile.
+not the ordinary chat path and does not alter the loaded engine profile.
 
 ## Runtime evidence
 
 For a hosted two-turn proof record:
 
-- artifact, physical variant, binding, model, session, and turn identities;
+- artifact, package, binding, specialization, engine-generation, session, and
+  turn identities;
 - model/artifact open and residency build counts;
 - first and second prompt token counts;
 - exact reusable prefix and second-turn suffix counts;

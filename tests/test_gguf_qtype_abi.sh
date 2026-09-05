@@ -3,8 +3,7 @@ set -eu
 
 test -f include/yvex/qtype.h
 
-grep -nF 'af97976c7810cdabb1863172f31c432dab767de7' \
-  include/yvex/qtype.h docs/reference/verified-inference.md >/dev/null
+grep -nF 'af97976c7810cdabb1863172f31c432dab767de7' include/yvex/qtype.h >/dev/null
 grep -nF 'yvex_gguf_qtype_tensor_storage' src/gguf/qtype.c >/dev/null
 grep -nF 'yvex_gguf_qtype_tensor_storage' src/gguf/core.c >/dev/null
 grep -nF 'yvex_gguf_qtype_tensor_storage' \

@@ -278,7 +278,7 @@ static int source_write_verified_manifest(FILE *fp, const void *opaque) {
                    "    \"shard_bytes\": %llu,\n"
                    "    \"header_tensor_count\": %llu,\n"
                    "    \"config_status\": \"verified\",\n"
-                   "    \"dspark_inference_config_status\": \"verified\",\n"
+                   "    \"dspark_inference_config_status\": \"%s\",\n"
                    "    \"tokenizer_status\": \"verified\",\n"
                    "    \"payload_digest_status\": \"not-verified\"\n"
                    "  }\n}\n",
@@ -286,7 +286,11 @@ static int source_write_verified_manifest(FILE *fp, const void *opaque) {
                    verification->source_total_bytes,
                    verification->shard_count,
                    verification->shard_bytes,
-                   verification->header_tensor_count) >= 0;
+                   verification->header_tensor_count,
+                   options->identity->required_sidecars &
+                           YVEX_SOURCE_SIDECAR_INFERENCE_CONFIG
+                       ? "verified"
+                       : "not-required") >= 0;
 }
 
 static int publish_verified(const char *out_path, const yvex_source_verify_options *options,
@@ -295,9 +299,9 @@ static int publish_verified(const char *out_path, const yvex_source_verify_optio
 
     if (!out_path || !options || !options->identity || !verification ||
         !verification->path_verified || !verification->repository_verified ||
-        !verification->revision_verified || !verification->config_valid ||
-        !verification->tokenizer_json_valid || !verification->tokenizer_config_valid ||
-        !verification->generation_config_valid || !verification->inference_config_valid ||
+        !verification->revision_verified ||
+        !yvex_source_verification_required_sidecars_valid(options->identity,
+                                                           verification) ||
         !verification->shard_index_headers_match ||
         verification->header_scan_count != 1u ||
         (strcmp(verification->inventory_authority, "upstream-index") == 0 &&

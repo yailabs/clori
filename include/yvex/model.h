@@ -5,6 +5,7 @@
 #define YVEX_MODEL_H
 
 #include <yvex/core.h>
+#include <yvex/source.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -139,6 +140,17 @@ typedef enum {
     YVEX_TENSOR_ROLE_DRAFT_MARKOV_EMBEDDING,
     YVEX_TENSOR_ROLE_DRAFT_MARKOV_OUTPUT,
     YVEX_TENSOR_ROLE_DRAFT_CONFIDENCE,
+    YVEX_TENSOR_ROLE_ATTENTION_Q_NORM,
+    YVEX_TENSOR_ROLE_ATTENTION_K_NORM,
+    YVEX_TENSOR_ROLE_SEQUENCE_MIXER_DECAY_LOG,
+    YVEX_TENSOR_ROLE_SEQUENCE_MIXER_CONVOLUTION,
+    YVEX_TENSOR_ROLE_SEQUENCE_MIXER_TIME_BIAS,
+    YVEX_TENSOR_ROLE_SEQUENCE_MIXER_DECAY_PROJECTION,
+    YVEX_TENSOR_ROLE_SEQUENCE_MIXER_BETA_PROJECTION,
+    YVEX_TENSOR_ROLE_SEQUENCE_MIXER_QKV_PROJECTION,
+    YVEX_TENSOR_ROLE_SEQUENCE_MIXER_OUTPUT_GATE,
+    YVEX_TENSOR_ROLE_SEQUENCE_MIXER_OUTPUT_NORM,
+    YVEX_TENSOR_ROLE_SEQUENCE_MIXER_OUTPUT,
     YVEX_TENSOR_ROLE_COUNT
 } yvex_tensor_role;
 
@@ -154,6 +166,8 @@ typedef enum {
     YVEX_TENSOR_COLLECTION_ROUTED_EXPERT,
     YVEX_TENSOR_COLLECTION_SHARED_EXPERT,
     YVEX_TENSOR_COLLECTION_AUXILIARY,
+    YVEX_TENSOR_COLLECTION_SEQUENCE_MIXER,
+    YVEX_TENSOR_COLLECTION_DENSE_FFN,
     YVEX_TENSOR_COLLECTION_COUNT
 } yvex_tensor_collection;
 
@@ -253,146 +267,6 @@ void yvex_model_context_close(yvex_model_context *context);
 int yvex_model_context_vocab_size(const char *path_or_alias,
                                   unsigned long long *out_vocab_size,
                                   yvex_error *err);
-
-/* Materialized weights. */
-typedef struct yvex_weight_table yvex_weight_table;
-typedef struct yvex_materialized_weight yvex_materialized_weight;
-
-typedef enum {
-    YVEX_WEIGHT_STATUS_EMPTY = 0,
-    YVEX_WEIGHT_STATUS_MATERIALIZED,
-    YVEX_WEIGHT_STATUS_PARTIAL,
-    YVEX_WEIGHT_STATUS_FAILED
-} yvex_weight_status;
-
-typedef enum {
-    YVEX_WEIGHT_RESIDENCY_HOST = 0,
-    YVEX_WEIGHT_RESIDENCY_CPU_BACKEND,
-    YVEX_WEIGHT_RESIDENCY_CUDA_BACKEND
-} yvex_weight_residency;
-
-typedef struct {
-    const char *backend_name;
-    int require_all_tensors;
-    int allow_unsupported_dtype;
-} yvex_materialize_options;
-
-typedef struct {
-    yvex_weight_status status;
-    const char *backend_name;
-    const char *materialization_gate;
-    const char *materialization_phase;
-    const char *shape_status;
-    const char *range_status;
-    const char *backend_status;
-    const char *cleanup_status;
-    int allocation_attempted;
-    int transfer_attempted;
-    int cleanup_attempted;
-    unsigned long long tensors_total;
-    unsigned long long tensors_materialized;
-    unsigned long long tensors_failed;
-    unsigned long long bytes_total;
-    unsigned long long bytes_materialized;
-    unsigned long long backend_allocated_bytes;
-    unsigned long long bytes_planned;
-    unsigned long long bytes_allocated;
-    unsigned long long bytes_transferred;
-    int execution_ready;
-} yvex_materialize_summary;
-
-int yvex_weight_table_materialize(yvex_weight_table **out,
-                                  const yvex_artifact *artifact,
-                                  const yvex_gguf *gguf,
-                                  const yvex_tensor_table *tensors,
-                                  yvex_backend *backend,
-                                  const yvex_materialize_options *options,
-                                  yvex_error *err);
-
-void yvex_weight_table_close(yvex_weight_table *weights);
-
-unsigned long long yvex_weight_table_count(const yvex_weight_table *weights);
-const yvex_materialized_weight *yvex_weight_table_at(const yvex_weight_table *weights,
-                                                     unsigned long long index);
-const yvex_materialized_weight *yvex_weight_table_find(const yvex_weight_table *weights,
-                                                       const char *name);
-
-int yvex_weight_table_get_summary(const yvex_weight_table *weights,
-                                  yvex_materialize_summary *out,
-                                  yvex_error *err);
-
-const char *yvex_weight_status_name(yvex_weight_status status);
-const char *yvex_weight_residency_name(yvex_weight_residency residency);
-
-const char *yvex_weight_name(const yvex_materialized_weight *weight);
-yvex_dtype yvex_weight_dtype(const yvex_materialized_weight *weight);
-yvex_tensor_role yvex_weight_role(const yvex_materialized_weight *weight);
-unsigned long long yvex_weight_bytes(const yvex_materialized_weight *weight);
-yvex_weight_residency yvex_weight_residency_of(const yvex_materialized_weight *weight);
-const yvex_device_tensor *yvex_weight_device_tensor(const yvex_materialized_weight *weight);
-
-/* Graph operation vocabulary. */
-#define YVEX_GRAPH_MAX_DIMS 4u
-
-typedef enum {
-    YVEX_VALUE_TOKEN_IDS = 0,
-    YVEX_VALUE_ACTIVATION,
-    YVEX_VALUE_WEIGHT,
-    YVEX_VALUE_KV_CACHE,
-    YVEX_VALUE_LOGITS,
-    YVEX_VALUE_TEMPORARY,
-    YVEX_VALUE_UNKNOWN
-} yvex_value_kind;
-
-typedef enum {
-    YVEX_RESIDENCY_HOST = 0,
-    YVEX_RESIDENCY_DEVICE,
-    YVEX_RESIDENCY_BACKEND_DECIDES
-} yvex_residency;
-
-typedef struct {
-    unsigned int id;
-    yvex_value_kind kind;
-    const char *name;
-    unsigned int rank;
-    unsigned long long dims[YVEX_GRAPH_MAX_DIMS];
-    yvex_dtype dtype;
-    yvex_residency residency;
-    const char *source_tensor_name;
-} yvex_graph_value_info;
-
-typedef enum {
-    YVEX_OP_EMBED = 0,
-    YVEX_OP_RMS_NORM,
-    YVEX_OP_MATMUL,
-    YVEX_OP_ROPE,
-    YVEX_OP_ATTENTION_PREFILL,
-    YVEX_OP_ATTENTION_DECODE,
-    YVEX_OP_KV_WRITE,
-    YVEX_OP_KV_READ,
-    YVEX_OP_SWIGLU,
-    YVEX_OP_RESIDUAL_ADD,
-    YVEX_OP_LOGITS,
-    YVEX_OP_SAMPLER,
-    YVEX_OP_UNSUPPORTED
-} yvex_op_kind;
-
-typedef enum {
-    YVEX_OP_STATUS_PLANNED = 0,
-    YVEX_OP_STATUS_MISSING_INPUT,
-    YVEX_OP_STATUS_UNSUPPORTED,
-    YVEX_OP_STATUS_INVALID_SHAPE
-} yvex_op_status;
-
-typedef struct {
-    unsigned int id;
-    yvex_op_kind kind;
-    yvex_op_status status;
-    const char *name;
-    unsigned int input_count;
-    unsigned int output_count;
-    const char *reason;
-} yvex_graph_op_info;
 
 #ifdef __cplusplus
 }

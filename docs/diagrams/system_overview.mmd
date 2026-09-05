@@ -2,15 +2,15 @@ flowchart LR
     subgraph compile[A. Compile]
         source[Verified sources]
         compiler[YVEX compiler]
-        artifact[Identity-bound GGUF<br/>+ runtime binding]
+        artifact[Immutable package<br/>+ runtime binding]
         source --> compiler --> artifact
     end
 
-    subgraph host[B. Run — yvex server MODEL]
+    subgraph host[B. Run — persistent yvex serve]
         protocol[Private local protocol]
         openai[Loopback OpenAI adapter]
-        sessions[Session registry<br/>+ persistent KV]
-        worker[Bounded keyed scheduler]
+        sessions[Engine manager<br/>+ generation-bound sessions]
+        worker[Per-engine scheduler<br/>+ executable batches]
         events[Typed runtime events]
         protocol <--> sessions
         openai <--> protocol
@@ -28,17 +28,17 @@ flowchart LR
     subgraph interact[D. Interact]
         raw[Raw trace]
         watch[Engine watch]
-        chat[REPL / chat]
-        run[yvex run]
+        chat[yvex chat]
+        admin[yvex host / engine / session]
         apps[SDKs / applications]
     end
 
-    artifact --> worker
+    artifact -->|load + specialize| sessions
     worker <--> graph
     events --> raw
     events --> watch
     protocol <--> chat
-    protocol <--> run
+    protocol <--> admin
     openai <--> apps
 
     offline[yvex<br/>offline engineering lane]

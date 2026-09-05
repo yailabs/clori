@@ -16,6 +16,7 @@
 #include <yvex/backend.h>
 #include <yvex/core.h>
 #include <yvex/gguf.h>
+#include <yvex/materialization.h>
 #include <yvex/model.h>
 #include <yvex/registry.h>
 
@@ -38,7 +39,7 @@ static const char inspect_help_text[] =
 static const char integrity_help_text[] =
     "usage: yvex artifact verify FILE_OR_ALIAS [--expect-sha256 HASH] "
     "[--require-token-embedding] [--partial-token N]\n"
-    "       yvex inspect artifact integrity FILE_OR_ALIAS [--backend cpu|cuda] "
+    "       yvex artifact verify integrity FILE_OR_ALIAS [--backend cpu|cuda] "
     "[--expect-sha256 HASH] [--require-token-embedding] [--partial-token N] "
     "[--audit | --output normal|table|audit]\n"
     "\nIntegrity validates local GGUF structure, tensor accounting, digest identity when "
@@ -50,7 +51,7 @@ static const char materialize_help_text[] =
     "backend-owned storage after integrity preflight. It does not execute prefill, decode, "
     "sampling, generation, or inference.\n";
 static const char materialize_gate_help_text[] =
-    "usage: yvex execute artifact materialize-gate check --model FILE_OR_ALIAS --label LABEL --family FAMILY "
+    "usage: yvex artifact verify materialization --model FILE_OR_ALIAS --label LABEL --family FAMILY "
     "--scope selected-tensor --expect-tensor NAME --expect-rank N --expect-dims D1[,D2,D3] "
     "--expect-dtype DTYPE --expect-bytes BYTES [--sha256 HASH] [--backend cpu] [--backend cuda] "
     "[--require-cpu] [--require-cuda] [--repeat N] [--check-cleanup] [--report-out FILE]\n\n"
@@ -60,7 +61,7 @@ static const char metadata_help_text[] =
     "usage: yvex inspect artifact metadata FILE_OR_ALIAS\n\nMetadata prints parsed GGUF metadata key/value "
     "summaries. Arrays are summarized.\n";
 static const char model_gate_help_text[] =
-    "usage: yvex execute artifact model-gate check --model FILE_OR_ALIAS --label LABEL --family FAMILY "
+    "usage: yvex artifact verify model --model FILE_OR_ALIAS --label LABEL --family FAMILY "
     "--expect-tensor NAME --expect-rank N --expect-dims D1[,D2,D3] --expect-dtype DTYPE "
     "--expect-bytes BYTES [--sha256 HASH] [--backend cpu] [--backend cuda] [--require-cpu] "
     "[--require-cuda] [--report-out FILE]\n\nModel gate checks selected tensor identity, "
@@ -468,7 +469,7 @@ static int command_integrity(int arg_count, char **args) {
             stderr,
             "usage: yvex artifact verify FILE_OR_ALIAS [--expect-sha256 HASH] "
             "[--require-token-"
-            "embedding] [--partial-token N] | yvex inspect artifact integrity FILE_OR_ALIAS "
+            "embedding] [--partial-token N] | yvex artifact verify integrity FILE_OR_ALIAS "
             "[--backend cpu|"
             "cuda] [--expect-sha256 HASH] [--require-token-embedding] [--partial-token N]\n");
         return 2;

@@ -173,7 +173,7 @@ static int source_cli_verify_payload(int argc, char **argv) {
 
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             yvex_cli_out_writef(stdout,
-                                "usage: yvex compile source verify --source DIR --models-root DIR "
+                                "usage: yvex source verify --source DIR --models-root DIR "
                                 "--source-manifest FILE [--target TARGET]\n");
             return 0;
         }
@@ -201,14 +201,14 @@ static int source_cli_verify_payload(int argc, char **argv) {
                             "yvex: --source, --models-root, and --source-manifest are required\n");
         return 2;
     }
-    if (!yvex_source_is_release_target(target)) {
+    if (!yvex_source_target_identity_find(target)) {
         yvex_cli_out_writef(stderr, "yvex: unsupported target: %s; use %s\n", target,
                             YVEX_SOURCE_RELEASE_TARGET_ID);
         return 2;
     }
 
     memset(&verification_options, 0, sizeof(verification_options));
-    verification_options.identity = yvex_source_release_identity();
+    verification_options.identity = yvex_source_target_identity_find(target);
     verification_options.source_path = source;
     verification_options.models_root = models_root;
     verification_options.manifest_path = manifest;
@@ -223,7 +223,7 @@ static int source_cli_verify_payload(int argc, char **argv) {
     if (rc != YVEX_OK)
         return print_yvex_error(&err, exit_for_status(rc));
 
-    yvex_cli_out_writef(stdout, "compile source verify: complete\n");
+    yvex_cli_out_writef(stdout, "source verify: complete\n");
     yvex_cli_out_writef(stdout, "target: %s\n", target);
     yvex_cli_out_writef(stdout, "source: %s\n", result.verification.resolved_source_path);
     yvex_cli_out_writef(stdout, "revision: %s\n", result.verification.revision);
@@ -293,7 +293,7 @@ void yvex_source_manifest_help(FILE *fp) {
                             "include-blockers --include-next --strict --audit --json --output "
                             "normal|table|audit|json\n");
     yvex_cli_out_writef(fp,
-                        "Payload verification: yvex compile source verify --source DIR "
+                        "Payload verification: yvex source verify --source DIR "
                         "--models-root DIR --source-manifest FILE [--target TARGET]\n");
 }
 

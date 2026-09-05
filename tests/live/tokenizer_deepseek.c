@@ -118,10 +118,14 @@ static int prompt_proof(const yvex_tokenizer *tokenizer, yvex_error *err)
         "<\xef\xbd\x9cUser\xef\xbd\x9c>next"
         "<\xef\xbd\x9c" "Assistant\xef\xbd\x9c></think>";
     yvex_prompt_message messages[] = {
-        {YVEX_PROMPT_ROLE_SYSTEM, "policy", 6u},
-        {YVEX_PROMPT_ROLE_USER, "hi", 2u},
-        {YVEX_PROMPT_ROLE_ASSISTANT, "ok", 2u},
-        {YVEX_PROMPT_ROLE_USER, "next", 4u}
+        {.schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1,
+         .role = YVEX_PROMPT_ROLE_SYSTEM, .content = "policy", .content_len = 6u},
+        {.schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1,
+         .role = YVEX_PROMPT_ROLE_USER, .content = "hi", .content_len = 2u},
+        {.schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1,
+         .role = YVEX_PROMPT_ROLE_ASSISTANT, .content = "ok", .content_len = 2u},
+        {.schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1,
+         .role = YVEX_PROMPT_ROLE_USER, .content = "next", .content_len = 4u}
     };
     yvex_prompt_options options = {1, 0, 1, 1, YVEX_PROMPT_MODE_CHAT};
     yvex_tokenizer_encode_options encode = {0, 0, 1, 128u};

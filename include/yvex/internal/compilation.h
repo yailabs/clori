@@ -14,10 +14,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 /* Ir. */
 #define YVEX_TRANSFORM_IR_SCHEMA_VERSION 1u
 #define YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION 2u
+#define YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION 3u
 #define YVEX_TRANSFORM_IR_IDENTITY_CAP 65u
 #define YVEX_TRANSFORM_IR_SOURCE_NAME_CAP 256u
 #define YVEX_TRANSFORM_IR_SHARD_NAME_CAP 128u
@@ -90,6 +90,8 @@ typedef enum {
     YVEX_TRANSFORM_SUBSYSTEM_SHARED_EXPERT,
     YVEX_TRANSFORM_SUBSYSTEM_OUTPUT,
     YVEX_TRANSFORM_SUBSYSTEM_AUXILIARY,
+    YVEX_TRANSFORM_SUBSYSTEM_SEQUENCE_MIXER,
+    YVEX_TRANSFORM_SUBSYSTEM_DENSE_FFN,
     YVEX_TRANSFORM_SUBSYSTEM_COUNT
 } yvex_transform_subsystem;
 typedef enum {
@@ -336,6 +338,7 @@ typedef struct {
     const char *architecture_identity;
     const char *role_map_identity;
     const char *unresolved_requirements_identity;
+    unsigned long long source_population_count;
     unsigned long long expected_source_count;
     unsigned long long expected_terminal_count;
     unsigned long long header_scan_count;
@@ -358,6 +361,7 @@ typedef struct {
     char role_map_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
     char unresolved_requirements_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
     char transform_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
+    unsigned long long source_population_count;
     unsigned long long source_value_count;
     unsigned long long intermediate_value_count;
     unsigned long long value_count;
@@ -428,7 +432,6 @@ const yvex_transform_value *yvex_transform_ir_terminal_at(
 const yvex_transform_value *yvex_transform_ir_node_input_at(
     const yvex_transform_ir *ir, const yvex_transform_node *node,
     unsigned long long ordinal);
-
 int yvex_transform_logical_key_equal(
     const yvex_transform_logical_key *left,
     const yvex_transform_logical_key *right);
@@ -437,7 +440,6 @@ int yvex_transform_shape_element_count(
     unsigned long long *out,
     yvex_transform_failure *failure,
     yvex_error *err);
-
 typedef struct yvex_transform_recipe_sink yvex_transform_recipe_sink;
 typedef struct {
     const yvex_transform_source_spec *sources;
@@ -493,7 +495,6 @@ int yvex_transform_recipe_add_terminal(
     yvex_transform_dtype dtype, const yvex_transform_precision_constraint *precision,
     const yvex_transform_node_spec *operation, yvex_transform_failure *failure,
     yvex_error *err);
-
 /* Binding. */
 typedef struct yvex_transform_binding yvex_transform_binding;
 typedef struct {
@@ -556,7 +557,6 @@ int yvex_transform_binding_payload_plan_build(
     size_t page_bytes,
     yvex_source_payload_failure *failure,
     yvex_error *err);
-
 /* Runtime-binding publication is a preparation-plane operation.  The CLI
  * supplies resolved paths and adapter identity, then receives only the
  * content-addressed path; runtime admission independently reopens the file. */
@@ -572,12 +572,13 @@ typedef struct yvex_compilation_runtime_binding_request {
     const char *physical_variant_plan_path;
     unsigned long long family_adapter_id;
     unsigned long long family_adapter_version;
+    unsigned int source_stream_count;
+    int rebind_existing_artifact;
 } yvex_compilation_runtime_binding_request;
 typedef struct yvex_compilation_runtime_binding_result {
     char path[YVEX_PATH_CAP];
     int published;
 } yvex_compilation_runtime_binding_result;
-
 unsigned long long yvex_transform_hash_string(const char *text);
 int yvex_transform_fail(yvex_transform_failure *failure,
                         yvex_transform_failure_code code,

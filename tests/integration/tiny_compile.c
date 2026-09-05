@@ -499,15 +499,6 @@ static int tiny_semantic(tiny_fixture *fixture,
 
 static int tiny_execution(tiny_fixture *fixture, yvex_error *err)
 {
-    static const yvex_physical_execution_policy physical_policy = {
-        .schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1,
-        .activation = YVEX_EXECUTION_ACTIVATION_HOST_F32,
-        .required_backend = YVEX_EXECUTION_BACKEND_CPU,
-        .evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION,
-        .fallback = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE,
-        .dense_kernel_family = "tiny-cpu-f32",
-        .expert_kernel_family = "tiny-cpu-f32",
-    };
     yvex_attention_failure attention_failure = {0};
     yvex_compiled_model_plan_request compiled = {0};
     int rc = yvex_attention_plan_build_semantic(
@@ -561,7 +552,7 @@ static int tiny_execution(tiny_fixture *fixture, yvex_error *err)
     if (rc == YVEX_OK)
         rc = yvex_physical_execution_ir_build(
             &fixture->physical, fixture->materialization, fixture->descriptor,
-            fixture->admission.profile_identity, &physical_policy, err);
+            fixture->admission.profile_identity, err);
     compiled = (yvex_compiled_model_plan_request){
         .operator_graph = fixture->operators,
         .materialization = fixture->materialization,
@@ -684,7 +675,7 @@ static int tiny_capacity_progress_collect(
 static int tiny_generation_capacity_refusal(
     const char *artifact_path, const char *binding_path, yvex_error *err)
 {
-    yvex_runtime_model_open_request model_request = {
+    yvex_model_engine_open_request model_request = {
         .artifact_path = artifact_path,
         .runtime_binding_path = binding_path,
         .target_id = "tiny-executable",
@@ -694,7 +685,7 @@ static int tiny_generation_capacity_refusal(
         .backend = YVEX_BACKEND_KIND_CPU,
     };
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V6,
         .backend = YVEX_BACKEND_KIND_CPU,
         .mode = YVEX_GENERATION_MODE_TARGET_ONLY,
         .context_capacity = 8ull,
@@ -710,12 +701,12 @@ static int tiny_generation_capacity_refusal(
             .typical_p = 1.0,
         },
     };
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     yvex_runtime_binding_failure binding_failure = {0};
     yvex_runtime_binding_summary binding_summary = {0};
     yvex_complete_artifact_admission admission = {0};
     yvex_runtime_binding *binding = NULL;
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine *model = NULL;
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_generation_context *generation = NULL;
     tiny_capacity_progress progress = {0};
@@ -745,11 +736,11 @@ static int tiny_generation_capacity_refusal(
     model_request.progress = tiny_capacity_progress_collect;
     model_request.progress_context = &progress;
     if (rc == YVEX_OK)
-        rc = yvex_runtime_model_open(&model, &model_request, &failure, err);
+        rc = yvex_model_engine_open(&model, &model_request, &failure, err);
     (void)unsetenv("YVEX_TEST_RUNTIME_TOTAL_MEMORY_BYTES");
     (void)unsetenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES");
     if (rc == YVEX_ERR_BOUNDS && !model &&
-        failure.code == YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION &&
+        failure.code == YVEX_MODEL_ENGINE_FAILURE_ALLOCATION &&
         strcmp(failure.field, "startup-execution-capacity") == 0 &&
         failure.expected > baseline && failure.actual == baseline &&
         progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull) {
@@ -764,7 +755,7 @@ static int tiny_generation_capacity_refusal(
     if (rc == YVEX_OK) {
         memset(&progress, 0, sizeof(progress));
         memset(&failure, 0, sizeof(failure));
-        rc = yvex_runtime_model_open(
+        rc = yvex_model_engine_open(
             &model, &model_request, &failure, err);
     }
     if (rc == YVEX_OK)
@@ -805,7 +796,7 @@ static int tiny_generation_capacity_refusal(
         (void)yvex_runtime_generation_context_close(&generation, &cleanup);
     if (session)
         (void)yvex_runtime_session_close(&session, &cleanup);
-    yvex_runtime_model_close(&model);
+    yvex_model_engine_close(&model);
     return rc;
 }
 

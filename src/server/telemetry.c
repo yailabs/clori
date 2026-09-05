@@ -24,25 +24,109 @@ struct server_telemetry {
     unsigned long long capacity, next_sequence, retained_count;
     struct timespec started;
     yvex_server_metrics metrics;
-    char runtime_model_identity[YVEX_SHA256_HEX_CAP];
-    char artifact_identity[YVEX_SHA256_HEX_CAP];
-    char variant_identity[YVEX_SHA256_HEX_CAP];
-    unsigned long long active_subscribers;
-    yvex_server_generation_mode generation_mode;
+    unsigned long long active_subscribers, coalesced_count;
+    unsigned long long drop_notice_sequence;
     int mutex_ready, condition_ready, closing;
 };
 static int event_identity(yvex_server_event *event);
 
+static int event_replaceable_under_pressure(yvex_server_event_kind kind)
+{
+    return kind == YVEX_SERVER_EVENT_PREFILL_PROGRESS ||
+           kind == YVEX_SERVER_EVENT_GENERATION_FRAGMENT ||
+           kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS ||
+           kind == YVEX_SERVER_EVENT_GENERATION_PROFILE ||
+           (kind >= YVEX_SERVER_EVENT_DRAFT_STARTED &&
+            kind <= YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED);
+}
+
+static void event_drop_notice(server_telemetry *telemetry,
+                              yvex_server_event *event)
+{
+    unsigned long long total = telemetry->metrics.telemetry_dropped;
+    event->kind = YVEX_SERVER_EVENT_TELEMETRY_DROPPED;
+    event->severity = YVEX_SERVER_SEVERITY_WARNING;
+    event->value_a = total;
+    event->value_b = telemetry->capacity;
+    event->value_c = telemetry->coalesced_count;
+    event->speculative_cycle = 0u;
+    event->proposed_tokens = 0u;
+    event->selected_verification_tokens = 0u;
+    event->accepted_tokens = 0u;
+    event->rejected_tokens = 0u;
+    event->discarded_tokens = 0u;
+    event->verification_count = 0u;
+    event->confidence_logit_count = 0u;
+    event->confidence_logit_minimum = 0.0;
+    event->confidence_logit_maximum = 0.0;
+    event->confidence_logit_mean = 0.0;
+    event->seconds = 0.0;
+    event->rate = 0.0;
+    memset(&event->measurement, 0, sizeof(event->measurement));
+    event->speculation_policy_identity[0] = '\0';
+    yvex_core_text_copy(event->phase, sizeof(event->phase), "telemetry");
+}
+
+static size_t event_oldest_slot_locked(const server_telemetry *telemetry,
+                                       int replaceable_only, int *found)
+{
+    unsigned long long oldest = ULLONG_MAX;
+    size_t index, slot = 0u;
+    *found = 0;
+    for (index = 0u; index < (size_t)telemetry->capacity; ++index) {
+        const yvex_server_event *candidate = &telemetry->events[index];
+        if (!candidate->sequence ||
+            (replaceable_only &&
+             !event_replaceable_under_pressure(candidate->kind)) ||
+            candidate->sequence >= oldest)
+            continue;
+        oldest = candidate->sequence;
+        slot = index;
+        *found = 1;
+    }
+    return slot;
+}
+
 static int event_append_locked(server_telemetry *telemetry,
                                yvex_server_event *event)
 {
-    unsigned long long slot;
+    size_t index, slot = 0u;
+    int found = 0;
+    if (telemetry->retained_count < telemetry->capacity) {
+        for (index = 0u; index < (size_t)telemetry->capacity; ++index)
+            if (!telemetry->events[index].sequence) {
+                slot = index;
+                found = 1;
+                break;
+            }
+    } else {
+        slot = event_oldest_slot_locked(telemetry, 1, &found);
+        if (!found && event_replaceable_under_pressure(event->kind))
+            return 2;
+        if (!found) slot = event_oldest_slot_locked(telemetry, 0, &found);
+    }
+    if (!found) return 0;
+    if (telemetry->events[slot].sequence == telemetry->drop_notice_sequence)
+        telemetry->drop_notice_sequence = 0u;
     event->sequence = telemetry->next_sequence++;
     if (!event_identity(event)) return 0;
-    slot = (event->sequence - 1u) % telemetry->capacity;
     if (telemetry->retained_count < telemetry->capacity)
         telemetry->retained_count++;
     telemetry->events[slot] = *event;
+    return 1;
+}
+
+static int event_drop_notice_update_locked(server_telemetry *telemetry)
+{
+    size_t index;
+    if (!telemetry->drop_notice_sequence) return 1;
+    for (index = 0u; index < (size_t)telemetry->capacity; ++index) {
+        yvex_server_event *event = &telemetry->events[index];
+        if (event->sequence != telemetry->drop_notice_sequence) continue;
+        event_drop_notice(telemetry, event);
+        return event_identity(event);
+    }
+    telemetry->drop_notice_sequence = 0u;
     return 1;
 }
 
@@ -51,6 +135,25 @@ static int hash_double(yvex_sha256 *hash, double value)
     uint64_t bits;
     memcpy(&bits, &value, sizeof(bits));
     return yvex_sha256_update_u64(hash, bits);
+}
+
+static int measurement_identity(yvex_sha256 *hash,
+                                const yvex_execution_measurement *measurement)
+{
+    return yvex_sha256_update_u64(hash, measurement->schema_version) &&
+           yvex_sha256_update_u64(hash, measurement->scope) &&
+           yvex_sha256_update_u64(hash, measurement->clock) &&
+           yvex_sha256_update_u64(hash, measurement->composition) &&
+           yvex_sha256_update_u64(hash, measurement->work_unit) &&
+           yvex_sha256_update_u64(hash, measurement->available) &&
+           yvex_sha256_update_u64(hash, measurement->completed_units) &&
+           yvex_sha256_update_u64(hash, measurement->total_units) &&
+           yvex_sha256_update_u64(hash, measurement->duration_ns) &&
+           yvex_sha256_update_u64(hash, measurement->rolling_units) &&
+           yvex_sha256_update_u64(hash, measurement->rolling_duration_ns) &&
+           yvex_sha256_update_u64(hash, measurement->rolling_window_units) &&
+           hash_double(hash, measurement->cumulative_rate) &&
+           hash_double(hash, measurement->rolling_rate);
 }
 
 static unsigned long long time_ns(clockid_t clock)
@@ -73,7 +176,7 @@ static int event_identity(yvex_server_event *event)
     if (!event)
         return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.server.event.v3") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.server.event.v6") ||
         !yvex_sha256_update_u64(&hash, event->schema_version) ||
         !yvex_sha256_update_u64(&hash, event->sequence) ||
         !yvex_sha256_update_u64(&hash, event->kind) ||
@@ -88,7 +191,8 @@ static int event_identity(yvex_server_event *event)
         !yvex_sha256_update_u64(&hash, event->value_a) ||
         !yvex_sha256_update_u64(&hash, event->value_b) ||
         !yvex_sha256_update_u64(&hash, event->value_c) ||
-        !yvex_sha256_update_u64(&hash, event->generation_mode) ||
+        !yvex_sha256_update_u64(&hash, event->engine_kind) ||
+        !yvex_sha256_update_u64(&hash, event->execution_strategy) ||
         !yvex_sha256_update_u64(&hash, event->speculative_cycle) ||
         !yvex_sha256_update_u64(&hash, event->proposed_tokens) ||
         !yvex_sha256_update_u64(&hash,
@@ -108,22 +212,19 @@ static int event_identity(yvex_server_event *event)
         !yvex_sha256_update_text(&hash, event->runtime_model_identity) ||
         !yvex_sha256_update_text(&hash, event->artifact_identity) ||
         !yvex_sha256_update_text(&hash, event->variant_identity) ||
+        !measurement_identity(&hash, &event->measurement) ||
         !yvex_sha256_final(&hash, digest))
         return 0;
     yvex_sha256_hex(digest, event->event_identity);
     return 1;
 }
 
-int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capacity,
-                          yvex_server_generation_mode generation_mode,
-                          const char *runtime_model_identity,
-                          const char *artifact_identity,
-                          const char *variant_identity, yvex_error *err)
+int yvex_server_telemetry_open(server_telemetry **out,
+                               unsigned long long capacity, yvex_error *err)
 {
     server_telemetry *telemetry;
     if (out) *out = NULL;
-    if (!out || !capacity || capacity > SIZE_MAX / sizeof(yvex_server_event) ||
-        generation_mode > YVEX_SERVER_GENERATION_MEDIA) {
+    if (!out || !capacity || capacity > SIZE_MAX / sizeof(yvex_server_event)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.telemetry.open",
                        "bounded telemetry capacity is required");
         return YVEX_ERR_INVALID_ARG;
@@ -140,18 +241,10 @@ int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capaci
     }
     telemetry->capacity = capacity;
     telemetry->next_sequence = 1u;
-    telemetry->generation_mode = generation_mode;
     telemetry->metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
+    telemetry->metrics.resources.schema_version =
+        YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
     (void)clock_gettime(CLOCK_MONOTONIC, &telemetry->started);
-    yvex_core_text_copy(telemetry->runtime_model_identity,
-                        sizeof(telemetry->runtime_model_identity),
-                        runtime_model_identity ? runtime_model_identity : "");
-    yvex_core_text_copy(telemetry->artifact_identity,
-                        sizeof(telemetry->artifact_identity),
-                        artifact_identity ? artifact_identity : "");
-    yvex_core_text_copy(telemetry->variant_identity,
-                        sizeof(telemetry->variant_identity),
-                        variant_identity ? variant_identity : "");
     if (pthread_mutex_init(&telemetry->mutex, NULL) != 0) {
         free(telemetry->events);
         free(telemetry);
@@ -179,19 +272,39 @@ int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capaci
  * Refuses invalid ownership or identity derivation.
  */
 int yvex_server_telemetry_emit_provider(
-    server_telemetry *telemetry, yvex_server_event_kind kind,
+    server_telemetry *telemetry, const server_event_scope *scope,
+    yvex_server_event_kind kind,
     yvex_server_event_severity severity, const char *session_id,
     const char *request_id, const char *turn_id, const char *phase,
     unsigned long long value_a, unsigned long long value_b,
     unsigned long long value_c, double seconds, double rate,
     const yvex_runtime_speculation_progress *speculation,
-    const yvex_provider_request *provider, yvex_server_event *emitted,
-    yvex_error *err)
+    const yvex_provider_request *provider,
+    const yvex_execution_measurement *measurement,
+    yvex_server_event *emitted, yvex_error *err)
 {
     yvex_server_event event;
-    int ring_full;
-    if (!telemetry || kind > YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE ||
-        severity > YVEX_SERVER_SEVERITY_FATAL) {
+    int append_rc, creating_drop_notice = 0, ring_full;
+    if (!telemetry || kind > YVEX_SERVER_EVENT_ENGINE_LOAD_PROGRESS ||
+        severity > YVEX_SERVER_SEVERITY_FATAL ||
+        (measurement &&
+         !yvex_server_execution_measurement_valid(measurement)) ||
+        (scope &&
+         (scope->engine_kind == YVEX_SERVER_ENGINE_NONE ||
+          scope->engine_kind > YVEX_SERVER_ENGINE_MEDIA ||
+          scope->execution_strategy > YVEX_SERVER_EXECUTION_SPECULATIVE ||
+          (scope->engine_kind == YVEX_SERVER_ENGINE_TEXT &&
+           scope->execution_strategy ==
+               YVEX_SERVER_EXECUTION_NOT_APPLICABLE) ||
+          (scope->engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
+           scope->execution_strategy !=
+               YVEX_SERVER_EXECUTION_NOT_APPLICABLE) ||
+          (scope->runtime_model_identity[0] &&
+           !yvex_sha256_hex_valid(scope->runtime_model_identity)) ||
+          (scope->artifact_identity[0] &&
+           !yvex_sha256_hex_valid(scope->artifact_identity)) ||
+          (scope->specialization_identity[0] &&
+           !yvex_sha256_hex_valid(scope->specialization_identity))))) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.telemetry.emit",
                        "valid telemetry owner and event facts are required");
         return YVEX_ERR_INVALID_ARG;
@@ -236,7 +349,11 @@ int yvex_server_telemetry_emit_provider(
     event.value_c = value_c;
     event.seconds = seconds;
     event.rate = rate;
-    event.generation_mode = telemetry->generation_mode;
+    if (measurement) event.measurement = *measurement;
+    event.engine_kind = scope ? scope->engine_kind : YVEX_SERVER_ENGINE_NONE;
+    event.execution_strategy = scope
+                                   ? scope->execution_strategy
+                                   : YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
     if (speculation) {
         event.speculative_cycle = speculation->cycle;
         event.proposed_tokens = speculation->proposed_tokens;
@@ -272,13 +389,17 @@ int yvex_server_telemetry_emit_provider(
                             sizeof(event.external_correlation_id),
                             provider->external_correlation_id);
     }
-    yvex_core_text_copy(event.runtime_model_identity,
-                        sizeof(event.runtime_model_identity),
-                        telemetry->runtime_model_identity);
-    yvex_core_text_copy(event.artifact_identity, sizeof(event.artifact_identity),
-                        telemetry->artifact_identity);
-    yvex_core_text_copy(event.variant_identity, sizeof(event.variant_identity),
-                        telemetry->variant_identity);
+    if (scope) {
+        yvex_core_text_copy(event.runtime_model_identity,
+                            sizeof(event.runtime_model_identity),
+                            scope->runtime_model_identity);
+        yvex_core_text_copy(event.artifact_identity,
+                            sizeof(event.artifact_identity),
+                            scope->artifact_identity);
+        yvex_core_text_copy(event.variant_identity,
+                            sizeof(event.variant_identity),
+                            scope->specialization_identity);
+    }
     if (pthread_mutex_lock(&telemetry->mutex) != 0) {
         yvex_error_set(err, YVEX_ERR_STATE, "server.telemetry.emit",
                        "telemetry mutex acquisition failed");
@@ -291,47 +412,39 @@ int yvex_server_telemetry_emit_provider(
         return YVEX_ERR_STATE;
     }
     ring_full = telemetry->retained_count == telemetry->capacity;
-    if (ring_full &&
-        kind != YVEX_SERVER_EVENT_TELEMETRY_DROPPED) {
-        yvex_server_event dropped = event;
-        dropped.kind = YVEX_SERVER_EVENT_TELEMETRY_DROPPED;
-        dropped.severity = YVEX_SERVER_SEVERITY_WARNING;
-        dropped.value_a = telemetry->metrics.telemetry_dropped + 2u;
-        dropped.value_b = telemetry->capacity;
-        dropped.value_c = 0u;
-        dropped.speculative_cycle = 0u;
-        dropped.proposed_tokens = 0u;
-        dropped.selected_verification_tokens = 0u;
-        dropped.accepted_tokens = 0u;
-        dropped.rejected_tokens = 0u;
-        dropped.discarded_tokens = 0u;
-        dropped.verification_count = 0u;
-        dropped.confidence_logit_count = 0u;
-        dropped.confidence_logit_minimum = 0.0;
-        dropped.confidence_logit_maximum = 0.0;
-        dropped.confidence_logit_mean = 0.0;
-        dropped.seconds = 0.0;
-        dropped.rate = 0.0;
-        dropped.speculation_policy_identity[0] = '\0';
-        yvex_core_text_copy(dropped.phase, sizeof(dropped.phase), "telemetry");
-        telemetry->metrics.telemetry_dropped += 2u;
-        if (!event_append_locked(telemetry, &dropped) ||
-            !event_append_locked(telemetry, &event)) {
+    if (ring_full) {
+        int replaceable_slot = 0;
+        telemetry->metrics.telemetry_dropped++;
+        if (event_replaceable_under_pressure(kind)) {
+            telemetry->coalesced_count++;
+            (void)event_oldest_slot_locked(telemetry, 1, &replaceable_slot);
+            if (!telemetry->drop_notice_sequence && replaceable_slot) {
+                event_drop_notice(telemetry, &event);
+                creating_drop_notice = 1;
+            }
+        }
+        if (!event_drop_notice_update_locked(telemetry)) {
             (void)pthread_mutex_unlock(&telemetry->mutex);
             yvex_error_set(err, YVEX_ERR_STATE, "server.telemetry.emit",
-                           "event identity derivation failed");
+                           "drop summary identity derivation failed");
             return YVEX_ERR_STATE;
         }
-    } else if (!event_append_locked(telemetry, &event)) {
+    }
+    append_rc = event_append_locked(telemetry, &event);
+    if (!append_rc) {
         (void)pthread_mutex_unlock(&telemetry->mutex);
         yvex_error_set(err, YVEX_ERR_STATE, "server.telemetry.emit",
                        "event identity derivation failed");
         return YVEX_ERR_STATE;
-    } else if (ring_full && kind == YVEX_SERVER_EVENT_TELEMETRY_DROPPED) {
-        telemetry->metrics.telemetry_dropped++;
     }
-    if (emitted) *emitted = event;
-    (void)pthread_cond_broadcast(&telemetry->condition);
+    if (append_rc == 1) {
+        if (creating_drop_notice)
+            telemetry->drop_notice_sequence = event.sequence;
+        if (emitted) *emitted = event;
+        (void)pthread_cond_broadcast(&telemetry->condition);
+    } else if (emitted) {
+        memset(emitted, 0, sizeof(*emitted));
+    }
     (void)pthread_mutex_unlock(&telemetry->mutex);
     yvex_error_clear(err);
     return YVEX_OK;
@@ -342,6 +455,7 @@ int yvex_server_telemetry_emit_provider(
  * Appends one identity-sealed event.
  */
 int yvex_server_telemetry_emit(server_telemetry *telemetry,
+                               const server_event_scope *scope,
                                yvex_server_event_kind kind,
                                yvex_server_event_severity severity,
                                const char *session_id, const char *request_id,
@@ -352,15 +466,16 @@ int yvex_server_telemetry_emit(server_telemetry *telemetry,
                                double rate, yvex_error *err)
 {
     return yvex_server_telemetry_emit_provider(
-        telemetry, kind, severity, session_id, request_id, turn_id, phase,
-        value_a, value_b, value_c, seconds, rate, NULL, NULL, NULL, err);
+        telemetry, scope, kind, severity, session_id, request_id, turn_id, phase,
+        value_a, value_b, value_c, seconds, rate, NULL, NULL, NULL, NULL, err);
 }
 
 int yvex_server_telemetry_next(server_telemetry *telemetry,
                           unsigned long long after_sequence, int wait,
                           yvex_server_event *event, yvex_error *err)
 {
-    unsigned long long first, wanted;
+    unsigned long long wanted = ULLONG_MAX;
+    size_t index, slot = 0u;
     if (!telemetry || !event || pthread_mutex_lock(&telemetry->mutex) != 0) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.telemetry.next",
                        "telemetry and event output are required");
@@ -377,11 +492,14 @@ int yvex_server_telemetry_next(server_telemetry *telemetry,
            after_sequence >= telemetry->next_sequence - 1u)
         if (pthread_cond_wait(&telemetry->condition, &telemetry->mutex) != 0)
             break;
-    first = telemetry->next_sequence - telemetry->retained_count;
-    wanted = after_sequence + 1u;
-    if (wanted < first)
-        wanted = first;
-    if (wanted >= telemetry->next_sequence) {
+    for (index = 0u; index < (size_t)telemetry->capacity; ++index) {
+        unsigned long long sequence = telemetry->events[index].sequence;
+        if (sequence > after_sequence && sequence < wanted) {
+            wanted = sequence;
+            slot = index;
+        }
+    }
+    if (wanted == ULLONG_MAX) {
         if (telemetry->active_subscribers) telemetry->active_subscribers--;
         if (telemetry->closing)
             (void)pthread_cond_broadcast(&telemetry->condition);
@@ -391,10 +509,36 @@ int yvex_server_telemetry_next(server_telemetry *telemetry,
                        telemetry->closing ? "telemetry is closed" : "no later event is available");
         return YVEX_ERR_STATE;
     }
-    *event = telemetry->events[(wanted - 1u) % telemetry->capacity];
+    *event = telemetry->events[slot];
     if (telemetry->active_subscribers) telemetry->active_subscribers--;
     if (telemetry->closing)
         (void)pthread_cond_broadcast(&telemetry->condition);
+    (void)pthread_mutex_unlock(&telemetry->mutex);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+/*
+ * Capture the exact upper sequence bound for a finite retained-history projection.
+ *
+ * The caller may then consume through this sequence with non-blocking next calls.
+ * Events published after the snapshot remain owned by continuous subscribers.
+ */
+int yvex_server_telemetry_latest_sequence(server_telemetry *telemetry,
+                                      unsigned long long *sequence,
+                                      yvex_error *err)
+{
+    if (!telemetry || !sequence || pthread_mutex_lock(&telemetry->mutex) != 0) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.telemetry.snapshot",
+                       "telemetry and sequence output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (telemetry->closing) {
+        (void)pthread_mutex_unlock(&telemetry->mutex);
+        yvex_error_set(err, YVEX_ERR_STATE, "server.telemetry.snapshot",
+                       "telemetry is closed");
+        return YVEX_ERR_STATE;
+    }
+    *sequence = telemetry->next_sequence - 1u;
     (void)pthread_mutex_unlock(&telemetry->mutex);
     yvex_error_clear(err);
     return YVEX_OK;
@@ -441,28 +585,15 @@ int yvex_server_telemetry_metrics_copy(server_telemetry *telemetry,
             (unsigned long long)usage.ru_maxrss * 1024u;
     if (metrics->peak_rss_bytes < metrics->current_rss_bytes)
         metrics->peak_rss_bytes = metrics->current_rss_bytes;
+    metrics->resources.schema_version = YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
+    metrics->resources.available |= YVEX_EXECUTION_RESOURCE_PROCESS_AVAILABLE;
+    metrics->resources.process_rss_current_bytes = metrics->current_rss_bytes;
+    metrics->resources.process_rss_peak_bytes = metrics->peak_rss_bytes;
     (void)pthread_mutex_unlock(&telemetry->mutex);
     yvex_error_clear(err);
     return YVEX_OK;
 }
 
-void yvex_server_telemetry_identities(server_telemetry *telemetry,
-                                 const char *runtime_model_identity,
-                                 const char *artifact_identity,
-                                 const char *variant_identity)
-{
-    if (!telemetry || pthread_mutex_lock(&telemetry->mutex) != 0) return;
-    yvex_core_text_copy(telemetry->runtime_model_identity,
-                        sizeof(telemetry->runtime_model_identity),
-                        runtime_model_identity ? runtime_model_identity : "");
-    yvex_core_text_copy(telemetry->artifact_identity,
-                        sizeof(telemetry->artifact_identity),
-                        artifact_identity ? artifact_identity : "");
-    yvex_core_text_copy(telemetry->variant_identity,
-                        sizeof(telemetry->variant_identity),
-                        variant_identity ? variant_identity : "");
-    (void)pthread_mutex_unlock(&telemetry->mutex);
-}
 /*
  * Account one process-lifetime model admission.
  *
@@ -502,6 +633,12 @@ void yvex_server_telemetry_model_closed(server_telemetry *telemetry)
 {
     if (!telemetry || pthread_mutex_lock(&telemetry->mutex) != 0) return;
     telemetry->metrics.model_close_count++;
+    if (telemetry->metrics.model_close_count ==
+        telemetry->metrics.model_open_count) {
+        telemetry->metrics.mapped_artifact_bytes = 0ull;
+        telemetry->metrics.resident_host_bytes = 0ull;
+        telemetry->metrics.resident_device_bytes = 0ull;
+    }
     (void)pthread_mutex_unlock(&telemetry->mutex);
 }
 /* Raise process-resident resource evidence from one authoritative runtime session. */
@@ -605,7 +742,10 @@ const char *yvex_server_event_kind_name(yvex_server_event_kind kind)
         "generation.first_token", "generation.fragment",
         "generation.progress", "generation.profile", "generation.completed",
         "generation.cancelled", "generation.failed", "client.disconnected", "telemetry.dropped",
-        "runtime.shutdown.start", "runtime.shutdown.complete"};
+        "runtime.shutdown.start", "runtime.shutdown.complete",
+        "engine.load.requested", "engine.ready", "engine.load.failed",
+        "engine.unload.started", "engine.unloaded", "engine.unload.failed",
+        "engine.load.progress"};
     return (unsigned int)kind < sizeof(names) / sizeof(names[0])
                ? names[kind] : "unknown";
 }
@@ -628,11 +768,16 @@ int yvex_server_event_validate(const yvex_server_event *event, yvex_error *err)
     yvex_server_event candidate;
     char supplied[YVEX_SHA256_HEX_CAP];
     int speculative;
-    speculative = event && event->kind >= YVEX_SERVER_EVENT_DRAFT_STARTED &&
-                  event->kind <=
-                      YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED;
+    speculative = event &&
+                  ((event->kind >= YVEX_SERVER_EVENT_DRAFT_STARTED &&
+                    event->kind <=
+                        YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED) ||
+                   ((event->kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS ||
+                     (event->kind >= YVEX_SERVER_EVENT_GENERATION_COMPLETED &&
+                      event->kind <= YVEX_SERVER_EVENT_GENERATION_FAILED)) &&
+                    event->speculative_cycle));
     if (!event || event->schema_version != YVEX_RUNTIME_EVENT_SCHEMA_VERSION ||
-        event->kind > YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE ||
+        event->kind > YVEX_SERVER_EVENT_ENGINE_LOAD_PROGRESS ||
         event->severity > YVEX_SERVER_SEVERITY_FATAL ||
         (event->provider_adapter[0] &&
          (!yvex_sha256_hex_valid(event->provider_request_identity) ||
@@ -640,13 +785,22 @@ int yvex_server_event_validate(const yvex_server_event *event, yvex_error *err)
         (!event->provider_adapter[0] &&
          (event->provider_request_identity[0] ||
           event->external_correlation_id[0])) ||
-        event->generation_mode > YVEX_SERVER_GENERATION_MEDIA ||
+        event->engine_kind > YVEX_SERVER_ENGINE_MEDIA ||
+        event->execution_strategy > YVEX_SERVER_EXECUTION_SPECULATIVE ||
+        (event->engine_kind == YVEX_SERVER_ENGINE_TEXT &&
+         event->execution_strategy ==
+             YVEX_SERVER_EXECUTION_NOT_APPLICABLE) ||
+        (event->engine_kind != YVEX_SERVER_ENGINE_TEXT &&
+         event->execution_strategy !=
+             YVEX_SERVER_EXECUTION_NOT_APPLICABLE) ||
         !isfinite(event->confidence_logit_minimum) ||
         !isfinite(event->confidence_logit_maximum) ||
         !isfinite(event->confidence_logit_mean) ||
         !isfinite(event->seconds) || !isfinite(event->rate) ||
+        !yvex_server_execution_measurement_valid(&event->measurement) ||
         (speculative &&
-         (event->generation_mode != YVEX_SERVER_GENERATION_DSPARK ||
+         (event->engine_kind != YVEX_SERVER_ENGINE_TEXT ||
+          event->execution_strategy != YVEX_SERVER_EXECUTION_SPECULATIVE ||
           !event->speculative_cycle ||
           event->confidence_logit_count > event->proposed_tokens ||
           (event->confidence_logit_count &&
@@ -700,13 +854,14 @@ int yvex_server_event_json(const yvex_server_event *event, char *output,
         return YVEX_ERR_INVALID_ARG;
     }
     length = snprintf(output, (size_t)capacity,
-                      "{\"schema\":3,\"sequence\":%llu,\"process\":%llu,"
+                      "{\"schema\":6,\"sequence\":%llu,\"process\":%llu,"
                       "\"wall_time_ns\":%llu,\"monotonic_time_ns\":%llu,\"kind\":\"%s\","
                       "\"severity\":%u,\"session\":\"%s\",\"request\":\"%s\","
                       "\"turn\":\"%s\",\"phase\":\"%s\","
                       "\"provider\":\"%s\",\"provider_request_identity\":\"%s\","
                       "\"external_correlation_id\":\"%s\",\"a\":%llu,"
-                      "\"b\":%llu,\"c\":%llu,\"generation_mode\":%u,"
+                      "\"b\":%llu,\"c\":%llu,\"engine_kind\":%u,"
+                      "\"execution_strategy\":%u,"
                       "\"speculative_cycle\":%llu,\"proposed_tokens\":%llu,"
                       "\"selected_verification_tokens\":%llu,"
                       "\"accepted_tokens\":%llu,\"rejected_tokens\":%llu,"
@@ -720,6 +875,16 @@ int yvex_server_event_json(const yvex_server_event *event, char *output,
                       "\"seconds\":%.9g,\"rate\":%.9g,"
                       "\"runtime_model_identity\":\"%s\","
                       "\"artifact_identity\":\"%s\",\"variant_identity\":\"%s\","
+                      "\"measurement_schema\":%u,\"measurement_scope\":%u,"
+                      "\"measurement_clock\":%u,\"measurement_composition\":%u,"
+                      "\"measurement_unit\":%u,\"measurement_available\":%llu,"
+                      "\"measurement_completed\":%llu,\"measurement_total\":%llu,"
+                      "\"measurement_duration_ns\":%llu,"
+                      "\"measurement_rolling_units\":%llu,"
+                      "\"measurement_rolling_duration_ns\":%llu,"
+                      "\"measurement_rolling_window_units\":%llu,"
+                      "\"measurement_cumulative_rate\":%.9g,"
+                      "\"measurement_rolling_rate\":%.9g,"
                       "\"identity\":\"%s\"}\n",
                       event->sequence, event->process_id, event->wall_time_ns,
                       event->monotonic_time_ns,
@@ -730,7 +895,8 @@ int yvex_server_event_json(const yvex_server_event *event, char *output,
                       event->provider_request_identity,
                       event->external_correlation_id,
                       event->value_a, event->value_b, event->value_c,
-                      (unsigned int)event->generation_mode,
+                      (unsigned int)event->engine_kind,
+                      (unsigned int)event->execution_strategy,
                       event->speculative_cycle, event->proposed_tokens,
                       event->selected_verification_tokens,
                       event->accepted_tokens, event->rejected_tokens,
@@ -743,7 +909,20 @@ int yvex_server_event_json(const yvex_server_event *event, char *output,
                       event->speculation_policy_identity,
                       event->seconds, event->rate,
                       event->runtime_model_identity, event->artifact_identity,
-                      event->variant_identity, event->event_identity);
+                      event->variant_identity, event->measurement.schema_version,
+                      (unsigned int)event->measurement.scope,
+                      (unsigned int)event->measurement.clock,
+                      (unsigned int)event->measurement.composition,
+                      (unsigned int)event->measurement.work_unit,
+                      event->measurement.available,
+                      event->measurement.completed_units,
+                      event->measurement.total_units,
+                      event->measurement.duration_ns,
+                      event->measurement.rolling_units,
+                      event->measurement.rolling_duration_ns,
+                      event->measurement.rolling_window_units,
+                      event->measurement.cumulative_rate,
+                      event->measurement.rolling_rate, event->event_identity);
     if (length < 0 || (unsigned long long)length >= capacity) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "server.telemetry.json",
                        "event JSON output capacity is insufficient");

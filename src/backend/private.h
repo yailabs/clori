@@ -7,6 +7,12 @@
 
 #include <yvex/internal/backend.h>
 
+struct yvex_backend_moe_operations;
+struct yvex_backend_sampling_operations;
+struct yvex_backend_transformer_operations;
+struct yvex_backend_component_operations;
+struct yvex_backend_encoded_operations;
+
 typedef struct yvex_backend_vtable {
     int (*close)(yvex_backend *, yvex_error *);
     int (*memory_stats)(const yvex_backend *, yvex_backend_memory_stats *, yvex_error *);
@@ -33,6 +39,7 @@ typedef struct yvex_backend_vtable {
                         unsigned long long, yvex_error *);
     int (*tensor_read)(yvex_backend *, const yvex_device_tensor *, void *,
                        unsigned long long, yvex_error *);
+    int (*tensor_zero)(yvex_backend *, yvex_device_tensor *, yvex_error *);
     int (*tensor_copy)(yvex_backend *, yvex_device_tensor *, const yvex_device_tensor *,
                        yvex_error *);
     int (*tensor_copy_async)(yvex_backend *, yvex_device_tensor *,
@@ -61,6 +68,16 @@ typedef struct yvex_backend_vtable {
                         yvex_error *);
     int (*host_workspace_alloc)(yvex_backend *, size_t, unsigned char **, yvex_error *);
     int (*host_workspace_free)(yvex_backend *, unsigned char **, yvex_error *);
+    const struct yvex_backend_sampling_operations *(*sampling_operations)(
+        const yvex_backend *);
+    const struct yvex_backend_moe_operations *(*moe_operations)(
+        const yvex_backend *);
+    const struct yvex_backend_transformer_operations *(*transformer_operations)(
+        const yvex_backend *);
+    const struct yvex_backend_component_operations *(*component_operations)(
+        const yvex_backend *);
+    const struct yvex_backend_encoded_operations *(*encoded_operations)(
+        const yvex_backend *);
 } yvex_backend_vtable;
 
 struct yvex_backend {

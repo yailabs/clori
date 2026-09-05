@@ -9,6 +9,7 @@
 
 #include <pthread.h>
 #include <stdatomic.h>
+#include <string.h>
 
 #include <yvex/internal/generation.h>
 #include <yvex/internal/server_media.h>
@@ -20,39 +21,68 @@ typedef struct server_telemetry server_telemetry;
 typedef struct server_session_registry server_session_registry;
 typedef struct server_media_registry server_media_registry;
 typedef struct server_openai_listener server_openai_listener;
-typedef struct server_scheduler server_scheduler;
+typedef struct server_request_queue server_request_queue;
+typedef struct server_engine_manager server_engine_manager;
+typedef struct server_engine_lease {
+    void *engine;
+    unsigned long long generation;
+} server_engine_lease;
+typedef struct {
+    yvex_server_engine_kind engine_kind;
+    yvex_server_execution_strategy execution_strategy;
+    char runtime_model_identity[YVEX_SHA256_HEX_CAP];
+    char artifact_identity[YVEX_SHA256_HEX_CAP];
+    char specialization_identity[YVEX_SHA256_HEX_CAP];
+} server_event_scope;
+static inline void server_event_scope_from_engine(
+    server_event_scope *scope, const yvex_server_engine_summary *engine)
+{
+    memset(scope, 0, sizeof(*scope));
+    if (!engine) return;
+    scope->engine_kind = engine->engine_kind;
+    scope->execution_strategy = engine->execution_strategy;
+    memcpy(scope->runtime_model_identity, engine->runtime_model_identity,
+           sizeof(scope->runtime_model_identity));
+    memcpy(scope->artifact_identity, engine->artifact_identity,
+           sizeof(scope->artifact_identity));
+    memcpy(scope->specialization_identity, engine->specialization_identity,
+           sizeof(scope->specialization_identity));
+}
+#define SERVER_REQUEST_QUEUE_KEY_CAP 224u
+#define YVEX_SERVER_PROTOCOL_CAPACITY_BYTES 40u
+#define YVEX_SERVER_PROTOCOL_MEASUREMENT_BYTES 112u
+#define YVEX_SERVER_PROTOCOL_RESOURCE_BYTES 224u
+#define YVEX_SERVER_DECODE_RATE_WINDOW_TOKENS 32ull
 
-typedef void (*server_scheduler_execute)(void *context, void *work);
-typedef void (*server_scheduler_observe)(void *context,
-                                         unsigned long long queued,
-                                         unsigned long long capacity,
-                                         unsigned long long active);
+typedef void (*server_request_queue_execute)(void *context, void *work);
+typedef void (*server_request_queue_observe)(void *context,
+                                             unsigned long long queued,
+                                             unsigned long long capacity,
+                                             unsigned long long active);
 
 typedef struct {
     unsigned long long queued, capacity, active, workers;
-    unsigned long long execution_ready_limit_ns, execution_ready_waits;
-    unsigned long long execution_ready_timeouts, execution_ready_ns;
-    unsigned long long maximum_execution_ready_width;
-} server_scheduler_summary;
+} server_request_queue_summary;
 
-int yvex_server_scheduler_open(
-    server_scheduler **out, unsigned long long queue_capacity,
-    unsigned long long worker_count, server_scheduler_execute execute,
-    server_scheduler_observe observe, void *context, yvex_error *err);
-int yvex_server_scheduler_start(server_scheduler *scheduler, yvex_error *err);
-int yvex_server_scheduler_submit(server_scheduler *scheduler, void *work,
-                                 const char *serialization_key,
-                                 int compatible_batch_candidate,
-                                 unsigned long long *queued, yvex_error *err);
-int yvex_server_scheduler_execution_ready(
-    server_scheduler *scheduler, const char *serialization_key,
-    unsigned long long *compatible_width, unsigned long long *wait_ns,
-    int *timed_out, yvex_error *err);
-void yvex_server_scheduler_request_stop(server_scheduler *scheduler);
-int yvex_server_scheduler_finish(server_scheduler *scheduler, yvex_error *err);
-void yvex_server_scheduler_snapshot(const server_scheduler *scheduler,
-                                    server_scheduler_summary *summary);
-void yvex_server_scheduler_close(server_scheduler **scheduler);
+int yvex_server_request_queue_open(
+    server_request_queue **out, unsigned long long queue_capacity,
+    unsigned long long worker_count, server_request_queue_execute execute,
+    server_request_queue_observe observe, void *context, yvex_error *err);
+int yvex_server_request_queue_start(server_request_queue *request_queue,
+                                    yvex_error *err);
+int yvex_server_request_queue_key(
+    char output[SERVER_REQUEST_QUEUE_KEY_CAP],
+    unsigned long long engine_generation, const char *serialization_scope,
+    yvex_error *err);
+int yvex_server_request_queue_submit(server_request_queue *request_queue, void *work,
+                                     const char *serialization_key,
+                                     unsigned long long *queued, yvex_error *err);
+void yvex_server_request_queue_request_stop(server_request_queue *request_queue);
+int yvex_server_request_queue_finish(server_request_queue *request_queue,
+                                     yvex_error *err);
+void yvex_server_request_queue_snapshot(const server_request_queue *request_queue,
+                                        server_request_queue_summary *summary);
+void yvex_server_request_queue_close(server_request_queue **request_queue);
 
 #define SESSION_SCHEMA_V1 1u
 #define SESSION_MAX_MESSAGES 128u
@@ -90,15 +120,25 @@ typedef struct server_session {
 
 struct server_session_registry {
     pthread_mutex_t mutex;
-    yvex_runtime_model *model;
-    server_scheduler *scheduler;
-    yvex_server_options options;
+    yvex_model_engine *model;
+    yvex_server_engine_options options;
     yvex_reasoning_policy default_reasoning_policy;
     server_telemetry *telemetry;
     server_session *sessions;
-    unsigned long long capacity, count, next_id;
-    int mutex_ready, closing, continuous_batching;
+    unsigned long long capacity, count, next_id, runnable_sequences;
+    int mutex_ready, closing, compatible_operation_batching;
+    unsigned long long engine_generation;
+    server_event_scope event_scope;
 };
+
+typedef struct {
+    char runtime_model_identity[YVEX_SHA256_HEX_CAP];
+    char specialization_identity[YVEX_SHA256_HEX_CAP];
+    unsigned long long activation_arena_peak_bytes;
+    unsigned long long execution_workspace_peak_bytes;
+    unsigned long long execution_transient_peak_bytes;
+    int activation_arena_observed, execution_resources_observed;
+} server_media_summary;
 
 typedef struct {
     const char *yvex_socket;
@@ -121,6 +161,7 @@ static inline yvex_reasoning_policy server_reasoning_automatic_policy(void)
 }
 
 #define YVEX_SERVER_SESSION_STORE_SCHEMA_V1 1u
+#define YVEX_SERVER_SESSION_STORE_SCHEMA_V2 2u
 typedef struct {
     const yvex_prompt_message *messages;
     const unsigned int *committed_tokens;
@@ -140,6 +181,7 @@ typedef struct {
     yvex_prompt_message *messages;
     unsigned char *transcript;
     unsigned int *committed_tokens;
+    unsigned long long schema_version;
     unsigned long long message_count, transcript_count, committed_count;
     unsigned long long turn_count, message_history_generation, transcript_generation;
     yvex_runtime_sampling_policy policy;
@@ -202,17 +244,53 @@ yvex_client_failure_class yvex_server_failure_class_from_status(int status);
 
 int yvex_server_protocol_receive(int fd, yvex_client_request *request,
                                  unsigned char **owned_prompt,
+                                 yvex_content_part **owned_content,
                                  yvex_provider_request **owned_provider,
                                  yvex_error *err);
 int yvex_server_protocol_send(int fd, const yvex_client_message *message,
                               yvex_error *err);
+int yvex_server_protocol_message_valid(const yvex_client_message *message);
+int yvex_server_protocol_request_fields_valid(
+    const yvex_client_request *request);
+int yvex_server_execution_capacity_valid(
+    const yvex_execution_capacity_summary *);
+int yvex_server_execution_measurement_valid(
+    const yvex_execution_measurement *);
+int yvex_server_execution_resource_valid(
+    const yvex_execution_resource_summary *);
+void yvex_server_decode_measurement(
+    unsigned long long first_fragment_ns,
+    unsigned long long committed_tokens,
+    const unsigned long long *decode_commit_ns,
+    unsigned int decode_commit_count,
+    unsigned long long now,
+    yvex_execution_measurement *measurement);
+int yvex_server_profile_reconcile(
+    const yvex_runtime_profile_record *, yvex_runtime_generation_mode,
+    unsigned long long *attributed_ns, unsigned long long *unattributed_ns);
+int yvex_server_protocol_capacity_encode(
+    const yvex_execution_capacity_summary *,
+    unsigned char[YVEX_SERVER_PROTOCOL_CAPACITY_BYTES]);
+int yvex_server_protocol_capacity_decode(
+    const unsigned char *, unsigned long long,
+    yvex_execution_capacity_summary *);
+int yvex_server_protocol_measurement_encode(
+    const yvex_execution_measurement *,
+    unsigned char[YVEX_SERVER_PROTOCOL_MEASUREMENT_BYTES]);
+int yvex_server_protocol_measurement_decode(
+    const unsigned char *, unsigned long long,
+    yvex_execution_measurement *);
+int yvex_server_protocol_resource_encode(
+    const yvex_execution_resource_summary *,
+    unsigned char[YVEX_SERVER_PROTOCOL_RESOURCE_BYTES]);
+int yvex_server_protocol_resource_decode(
+    const unsigned char *, unsigned long long,
+    yvex_execution_resource_summary *);
 
-int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capacity,
-                          yvex_server_generation_mode generation_mode,
-                          const char *runtime_model_identity,
-                          const char *artifact_identity,
-                          const char *variant_identity, yvex_error *err);
+int yvex_server_telemetry_open(server_telemetry **out,
+                               unsigned long long capacity, yvex_error *err);
 int yvex_server_telemetry_emit(server_telemetry *telemetry,
+                          const server_event_scope *scope,
                           yvex_server_event_kind kind,
                           yvex_server_event_severity severity,
                           const char *session_id, const char *request_id,
@@ -222,24 +300,25 @@ int yvex_server_telemetry_emit(server_telemetry *telemetry,
                           unsigned long long value_c,
                           double seconds, double rate, yvex_error *err);
 int yvex_server_telemetry_emit_provider(
-    server_telemetry *telemetry, yvex_server_event_kind kind,
+    server_telemetry *telemetry, const server_event_scope *scope,
+    yvex_server_event_kind kind,
     yvex_server_event_severity severity, const char *session_id,
     const char *request_id, const char *turn_id, const char *phase,
     unsigned long long value_a, unsigned long long value_b,
     unsigned long long value_c, double seconds, double rate,
     const yvex_runtime_speculation_progress *speculation,
-    const yvex_provider_request *provider, yvex_server_event *emitted,
-    yvex_error *err);
+    const yvex_provider_request *provider,
+    const yvex_execution_measurement *measurement,
+    yvex_server_event *emitted, yvex_error *err);
 int yvex_server_telemetry_next(server_telemetry *telemetry,
                           unsigned long long after_sequence, int wait,
                           yvex_server_event *event, yvex_error *err);
+int yvex_server_telemetry_latest_sequence(server_telemetry *telemetry,
+                                      unsigned long long *sequence,
+                                      yvex_error *err);
 int yvex_server_telemetry_metrics_copy(server_telemetry *telemetry,
                                   yvex_server_metrics *metrics,
                                   yvex_error *err);
-void yvex_server_telemetry_identities(server_telemetry *telemetry,
-                                 const char *runtime_model_identity,
-                                 const char *artifact_identity,
-                                 const char *variant_identity);
 void yvex_server_telemetry_model_opened(server_telemetry *telemetry,
                                    unsigned long long mapped_artifact_bytes,
                                    unsigned long long host_bytes,
@@ -278,10 +357,12 @@ void yvex_server_openai_snapshot(const server_openai_listener *listener,
                                  server_openai_snapshot *snapshot);
 void yvex_server_openai_close(server_openai_listener **listener);
 
-int yvex_server_sessions_open(server_session_registry **out, yvex_runtime_model *model,
-                              server_scheduler *scheduler,
-                              const yvex_server_options *options,
-                              int continuous_batching,
+int yvex_server_sessions_open(server_session_registry **out, yvex_model_engine *model,
+                              const yvex_server_engine_options *options,
+                              unsigned long long engine_generation,
+                              unsigned long long runnable_sequences,
+                              int compatible_operation_batching,
+                              const server_event_scope *event_scope,
                               server_telemetry *telemetry,
                               yvex_error *err);
 int yvex_server_sessions_execute(server_session_registry *registry,
@@ -290,8 +371,16 @@ int yvex_server_sessions_execute(server_session_registry *registry,
                                     double queue_seconds,
                                     server_message_emit emit,
                                     void *emit_context, yvex_error *err);
-int yvex_server_sessions_count(server_session_registry *registry,
-                                  unsigned long long *count, yvex_error *err);
+int yvex_server_sessions_occupancy(server_session_registry *registry,
+                                   unsigned long long *count,
+                                   unsigned long long *attached,
+                                   yvex_error *err);
+int yvex_server_sessions_resource_summary(
+    server_session_registry *, yvex_execution_resource_summary *, yvex_error *);
+int yvex_server_session_profile_publish(
+    server_session_registry *, const server_session *, const yvex_client_request *,
+    const char *, const char *, const yvex_runtime_generation_result *,
+    const yvex_runtime_generation_evidence *, yvex_error *);
 int yvex_server_sessions_console_status(server_session_registry *registry,
                                         const char *session_name,
                                         yvex_console_status *status,
@@ -315,12 +404,54 @@ int yvex_server_media_registry_console_status(
 int yvex_server_media_registry_cancel(
     server_media_registry *, const char *, yvex_error *);
 void yvex_server_media_registry_cancel_all(server_media_registry *);
-int yvex_server_media_registry_count(
-    server_media_registry *, unsigned long long *, yvex_error *);
+int yvex_server_media_registry_occupancy(
+    server_media_registry *, unsigned long long *, unsigned long long *,
+    yvex_error *);
 int yvex_server_media_registry_summary(
-    server_media_registry *, yvex_server_summary *, yvex_error *);
+    server_media_registry *, server_media_summary *, yvex_error *);
 int yvex_server_media_registry_start(
     server_media_registry *, yvex_runtime_media_model_summary *, yvex_error *);
 void yvex_server_media_registry_close(server_media_registry **);
+
+int yvex_server_engine_manager_open(
+    server_engine_manager **, unsigned long long, unsigned long long,
+    unsigned long long, server_request_queue_execute, void *,
+    server_telemetry *, yvex_error *);
+int yvex_server_engine_summary_valid(const yvex_server_engine_summary *);
+int yvex_server_engine_manager_load(
+    server_engine_manager *, const yvex_server_engine_options *,
+    const yvex_server_media_options *, yvex_server_engine_summary *, yvex_error *);
+int yvex_server_engine_manager_unload(
+    server_engine_manager *, const char *, unsigned long long,
+    yvex_server_engine_summary *, yvex_error *);
+int yvex_server_engine_manager_snapshot(
+    server_engine_manager *, yvex_server_engine_summary *, unsigned long long,
+    unsigned long long *, yvex_error *);
+int yvex_server_engine_manager_acquire(
+    server_engine_manager *, const char *, unsigned long long,
+    server_engine_lease *, yvex_server_engine_summary *, yvex_error *);
+void yvex_server_engine_manager_release(
+    server_engine_manager *, server_engine_lease *);
+int yvex_server_engine_manager_model_lease_acquire(
+    server_engine_manager *, const char *, char[YVEX_SERVER_ID_CAP],
+    yvex_server_engine_summary *, yvex_error *);
+int yvex_server_engine_manager_model_lease_release(
+    server_engine_manager *, const char *, yvex_server_engine_summary *,
+    yvex_error *);
+int yvex_server_engine_lease_submit(
+    server_engine_lease *, void *, const char *,
+    unsigned long long *, yvex_error *);
+int yvex_server_engine_lease_execute(
+    server_engine_lease *, const yvex_client_request *, const char *, double,
+    server_message_emit, void *, yvex_error *);
+int yvex_server_engine_lease_cancel(
+    server_engine_lease *, const char *, yvex_error *);
+int yvex_server_engine_lease_console_status(
+    server_engine_lease *, const char *, yvex_console_status *,
+    yvex_client_partial_turn *, yvex_error *);
+void yvex_server_engine_manager_cancel_all(server_engine_manager *);
+int yvex_server_engine_manager_request_queue_snapshot(
+    server_engine_manager *, server_request_queue_summary *, yvex_error *);
+int yvex_server_engine_manager_close(server_engine_manager **, yvex_error *);
 
 #endif

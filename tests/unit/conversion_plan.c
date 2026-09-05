@@ -34,7 +34,8 @@ int yvex_test_conversion_plan(void)
     yvex_error err;
     int rc;
 
-    system("rm -rf build/tests/conversion-plan");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/conversion-plan") == 0,
+                     "clear conversion plan fixture");
     YVEX_TEST_ASSERT(mkdir_ok("build") && mkdir_ok("build/tests") && mkdir_ok("build/tests/conversion-plan"), "mkdir");
     YVEX_TEST_ASSERT(write_st("build/tests/conversion-plan/model.safetensors"), "write st");
     memset(&options, 0, sizeof(options));

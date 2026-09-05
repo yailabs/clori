@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include <yvex/backend.h>
+#include <yvex/materialization.h>
 #include <yvex/model.h>
 
 typedef struct {

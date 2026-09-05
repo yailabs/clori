@@ -13,6 +13,7 @@
 #include <yvex/internal/candidate.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_operator.h>
 
 #include "src/graph/private.h"
 #include "src/runtime/private.h"
@@ -43,6 +44,7 @@ static yvex_attention_layer_plan state_layer(unsigned long long index,
     layer.layer_index = index;
     layer.attention_class = attention_class;
     layer.head_dimension = 2ull;
+    layer.query_lora_rank = 1ull;
     layer.hidden_dimension = 4ull;
     layer.query_heads = 2ull;
     layer.kv_heads = 1ull;
@@ -148,7 +150,7 @@ static int state_recipe_project(
     yvex_attention_state_recipe *recipe, yvex_attention_failure *failure,
     yvex_error *err)
 {
-    unsigned long long local_limit, compressed_capacity = 0ull;
+    unsigned long long local_limit, local_width, compressed_capacity = 0ull;
 
     if (!layer || !request || !recipe ||
         request->layer_ordinal != layer->layer_index ||
@@ -166,11 +168,13 @@ static int state_recipe_project(
     (void)snprintf(recipe->attention_plan_identity,
                    sizeof(recipe->attention_plan_identity), "%s",
                    request->attention_plan_identity);
+    if (yvex_attention_layer_local_state_width(layer, &local_width, err) != YVEX_OK)
+        return yvex_error_code(err);
     local_limit = layer->sliding_window - 1ull;
     state_recipe_history(recipe, YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY,
                          request->final_position < local_limit
                              ? request->final_position : local_limit,
-                         layer->head_dimension);
+                         local_width);
     if (layer->compressor_required) {
         compressed_capacity = request->final_position / layer->compression_ratio;
         state_recipe_history(
@@ -268,6 +272,53 @@ static int test_state_recipe_identity(const state_plan_fixture *fixture)
             yvex_attention_state_recipe_seal(&changed, &err) == YVEX_OK &&
             strcmp(baseline, changed.identity) != 0,
         "family selection-key mutation changes the state recipe identity");
+    return 0;
+}
+
+static int test_direct_kv_state_width(const state_plan_fixture *fixture)
+{
+    yvex_attention_layer_plan layer = fixture->layers[0];
+    yvex_attention_state_recipe_request request = {0};
+    yvex_attention_state_recipe recipe;
+    yvex_attention_workspace_recipe workspace;
+    const yvex_attention_workspace_component *ingress = NULL;
+    const yvex_attention_workspace_component *local = NULL;
+    yvex_attention_failure failure;
+    yvex_error err;
+    unsigned int index;
+
+    layer.query_lora_rank = 0ull;
+    request.layer_ordinal = layer.layer_index;
+    request.final_position = 3ull;
+    request.attention_plan_identity = fixture->plan.summary.attention_plan_identity;
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        state_recipe_project(&layer, &request, &recipe, &failure, &err) == YVEX_OK &&
+            recipe.components[0].binding ==
+                YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY &&
+            recipe.components[0].value_width ==
+                2ull * layer.kv_heads * layer.head_dimension,
+        "direct grouped-query attention retains complete K and V rows");
+    YVEX_TEST_ASSERT(
+        yvex_attention_workspace_recipe_build(
+            &layer, &recipe, YVEX_ATTENTION_EXECUTION_FULL,
+            YVEX_ATTENTION_OPERATION_ENVELOPE, YVEX_ATTENTION_EVIDENCE_NONE,
+            2ull, &workspace, &failure, &err) == YVEX_OK,
+        "direct grouped-query attention admits an envelope workspace");
+    for (index = 0u; index < workspace.component_count; ++index) {
+        const yvex_attention_workspace_component *component =
+            &workspace.components[index];
+        if (component->kind == YVEX_ATTENTION_WORKSPACE_INGRESS)
+            ingress = component;
+        else if (component->kind == YVEX_ATTENTION_WORKSPACE_LOCAL_VALUES)
+            local = component;
+    }
+    YVEX_TEST_ASSERT(
+        ingress && ingress->element_width ==
+                       layer.hidden_dimension * sizeof(float) &&
+            local && local->element_width ==
+                         recipe.components[0].value_width * sizeof(float),
+        "dense QKV workspace follows hidden input and complete K/V state geometry");
     return 0;
 }
 
@@ -1728,7 +1779,7 @@ static int test_summary_capacity_accounting(const state_plan_fixture *fixture)
 }
 
 static void execution_descriptor_fixture(
-    yvex_runtime_execution_descriptor_facts *facts)
+    yvex_runtime_operator_execution_facts *facts)
 {
     memset(facts, 0, sizeof(*facts));
     facts->schema_version = YVEX_RUNTIME_EXECUTION_DESCRIPTOR_SCHEMA_V2;
@@ -1797,13 +1848,13 @@ static void execution_descriptor_fixture(
 }
 
 static int execution_descriptor_changed(
-    const char *baseline, const yvex_runtime_execution_descriptor_facts *facts)
+    const char *baseline, const yvex_runtime_operator_execution_facts *facts)
 {
     char identity[YVEX_SHA256_HEX_CAP];
     yvex_error err;
 
     yvex_error_clear(&err);
-    return yvex_runtime_execution_descriptor_identity_compute(
+    return yvex_runtime_operator_execution_identity_compute(
                facts, identity, &err) == YVEX_OK &&
            strcmp(baseline, identity) != 0;
 }
@@ -1811,7 +1862,7 @@ static int execution_descriptor_changed(
 /* Prove descriptor identity covers compatibility and excludes orchestration evidence. */
 static int test_execution_descriptor_identity(void)
 {
-    yvex_runtime_execution_descriptor_facts facts, changed;
+    yvex_runtime_operator_execution_facts facts, changed;
     yvex_graph_attention_operator_request orchestration, unrelated;
     char first[YVEX_SHA256_HEX_CAP], second[YVEX_SHA256_HEX_CAP];
     double timing = 1.0, changed_timing = 999.0;
@@ -1819,7 +1870,7 @@ static int test_execution_descriptor_identity(void)
 
     execution_descriptor_fixture(&facts);
     yvex_error_clear(&err);
-    YVEX_TEST_ASSERT(yvex_runtime_execution_descriptor_identity_compute(
+    YVEX_TEST_ASSERT(yvex_runtime_operator_execution_identity_compute(
                          &facts, first, &err) == YVEX_OK,
                      "execution descriptor fixture seals");
     YVEX_TEST_ASSERT(strcmp(first,
@@ -1838,12 +1889,12 @@ static int test_execution_descriptor_identity(void)
     changed = facts;
     changed.probe = YVEX_ATTENTION_PROBE_UNSPECIFIED;
     YVEX_TEST_ASSERT(
-        yvex_runtime_execution_descriptor_identity_compute(
+        yvex_runtime_operator_execution_identity_compute(
             &changed, second, &err) == YVEX_ERR_INVALID_ARG,
         "legacy numeric zero probe refuses descriptor admission");
     changed.probe = (yvex_attention_probe_kind)(YVEX_ATTENTION_PROBE_CANONICAL_V2 + 1u);
     YVEX_TEST_ASSERT(
-        yvex_runtime_execution_descriptor_identity_compute(
+        yvex_runtime_operator_execution_identity_compute(
             &changed, second, &err) == YVEX_ERR_INVALID_ARG &&
             strcmp(facts.runtime_model_identity, changed.runtime_model_identity) == 0 &&
             strcmp(facts.runtime_binding_identity, changed.runtime_binding_identity) == 0 &&
@@ -1962,7 +2013,7 @@ static int test_execution_descriptor_identity(void)
     unrelated.warmup = 7ull;
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(
-        yvex_runtime_execution_descriptor_identity_compute(
+        yvex_runtime_operator_execution_identity_compute(
             &facts, second, &err) == YVEX_OK && strcmp(first, second) == 0 &&
             (orchestration.operator_action != unrelated.operator_action) &&
             orchestration.repeat != unrelated.repeat &&
@@ -1970,7 +2021,7 @@ static int test_execution_descriptor_identity(void)
         "action, repeat, warmup, and timing remain outside descriptor identity");
     changed = facts;
     changed.schema_version++;
-    YVEX_TEST_ASSERT(yvex_runtime_execution_descriptor_identity_compute(
+    YVEX_TEST_ASSERT(yvex_runtime_operator_execution_identity_compute(
                          &changed, second, &err) == YVEX_ERR_INVALID_ARG,
                      "unsupported execution descriptor schema refuses");
     return 0;
@@ -2382,6 +2433,7 @@ int yvex_test_runtime_state(void)
 
     state_plan_open(&fixture);
     if (test_state_recipe_identity(&fixture) != 0) return 1;
+    if (test_direct_kv_state_width(&fixture) != 0) return 1;
     if (test_workspace_recipe_identity() != 0) return 1;
     if (test_workspace_capture_geometry(&fixture) != 0) return 1;
     if (test_capacity_plan(&fixture) != 0) return 1;

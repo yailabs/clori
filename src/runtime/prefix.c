@@ -17,12 +17,12 @@ struct yvex_runtime_session_prefix {
     yvex_runtime_session_prefix_summary summary;
 };
 
-static int prefix_refuse(yvex_runtime_model_failure *failure,
+static int prefix_refuse(yvex_model_engine_failure *failure,
                          yvex_status status, const char *reason,
                          yvex_error *err)
 {
     yvex_runtime_private_failure_record(
-        failure, YVEX_RUNTIME_MODEL_FAILURE_GRAPH, "session-prefix", 1ull,
+        failure, YVEX_MODEL_ENGINE_FAILURE_GRAPH, "session-prefix", 1ull,
         0ull, reason);
     yvex_error_set(err, status, "runtime.session-prefix", reason);
     return status;
@@ -178,11 +178,11 @@ int yvex_runtime_session_prefix_capture(
     unsigned long long maximum_shared_bytes,
     yvex_runtime_session_prefix **out,
     yvex_runtime_session_prefix_summary *summary,
-    yvex_runtime_model_failure *failure, yvex_error *err)
+    yvex_model_engine_failure *failure, yvex_error *err)
 {
     yvex_runtime_session_prefix *prefix = NULL;
     yvex_attention_state_prefix_summary target = {0}, draft = {0};
-    yvex_runtime_model_summary model = {0};
+    yvex_model_engine_summary model = {0};
     unsigned long long remaining;
     int rc = YVEX_OK, draft_pristine = 0;
 
@@ -201,6 +201,12 @@ int yvex_runtime_session_prefix_capture(
                            "source session cannot publish a prefix", err);
         goto done;
     }
+    if (source->sequence_state) {
+        rc = prefix_refuse(
+            failure, YVEX_ERR_UNSUPPORTED,
+            "session prefix does not yet encode recurrent sequence state", err);
+        goto done;
+    }
     prefix = calloc(1u, sizeof(*prefix));
     if (!prefix) {
         rc = prefix_refuse(failure, YVEX_ERR_NOMEM,
@@ -208,7 +214,7 @@ int yvex_runtime_session_prefix_capture(
         goto done;
     }
     prefix->schema_version = YVEX_RUNTIME_SESSION_PREFIX_SCHEMA_V1;
-    rc = yvex_runtime_model_summary_copy(source->model, &model, err);
+    rc = yvex_model_engine_summary_copy(source->engine, &model, err);
     if (rc != YVEX_OK || !yvex_sha256_hex_valid(model.runtime_model_identity)) {
         rc = prefix_refuse(failure, YVEX_ERR_STATE,
                            "source runtime model identity is unavailable", err);
@@ -331,9 +337,9 @@ int yvex_runtime_session_prefix_attach(
     yvex_runtime_execution_session *destination,
     const yvex_runtime_session_prefix *prefix,
     yvex_runtime_session_prefix_summary *summary,
-    yvex_runtime_model_failure *failure, yvex_error *err)
+    yvex_model_engine_failure *failure, yvex_error *err)
 {
-    yvex_runtime_model_summary model = {0};
+    yvex_model_engine_summary model = {0};
     yvex_runtime_session_prefix_summary current = {0};
     int rc, draft_pristine = 0;
 
@@ -345,7 +351,7 @@ int yvex_runtime_session_prefix_attach(
                              "empty destination session is required", err);
     rc = prefix_identity(prefix, &current) ? YVEX_OK : YVEX_ERR_FORMAT;
     if (rc == YVEX_OK)
-        rc = yvex_runtime_model_summary_copy(destination->model, &model, err);
+        rc = yvex_model_engine_summary_copy(destination->engine, &model, err);
     if (rc == YVEX_OK && !prefix->draft &&
         destination->draft_attention_state_provider_ready)
         rc = yvex_runtime_private_attention_state_pristine(
@@ -353,7 +359,8 @@ int yvex_runtime_session_prefix_attach(
             &draft_pristine, err);
     if (rc != YVEX_OK || !destination->summary.open ||
         destination->summary.busy || destination->closing ||
-        destination->summary.invalidated || destination->state_residency ||
+        destination->summary.invalidated || destination->sequence_state ||
+        destination->state_residency ||
         destination->draft_state_residency ||
         !destination->attention_state_provider_ready ||
         (prefix->draft &&
@@ -383,7 +390,7 @@ int yvex_runtime_session_prefix_attach(
         (void)yvex_runtime_private_session_invalidate(destination, 1,
                                                       &cleanup);
         yvex_runtime_private_failure_record(
-            failure, YVEX_RUNTIME_MODEL_FAILURE_GRAPH, "session-prefix",
+            failure, YVEX_MODEL_ENGINE_FAILURE_GRAPH, "session-prefix",
             1ull, 0ull, "prefix attachment failed atomically");
         goto done;
     }

@@ -8,6 +8,13 @@
   },
   "change_classes": [
     {
+      "id": "selective-ssm-source-and-state",
+      "patterns": ["src/model/families/mamba2.c", "src/graph/families/mamba2.c", "include/yvex/internal/families/mamba2.h", "src/model/semantic_decoder.c", "include/yvex/internal/semantic_decoder.h", "src/graph/state_space.c", "include/yvex/internal/state_space.h", "tests/unit/state_space.c", "tests/unit/mamba2.c", "tests/reference/selective_ssd.py"],
+      "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],
+      "tests": ["unit.selective_ssd", "unit.mamba2_source", "unit.sequence_state", "unit.sequence_state_session", "unit.sequence_mixer", "cuda.sequence_mixer", "integration.tiny-vertical"],
+      "reason": "source-only SSM admission and common state geometry require independent component numerics, negative promotion and existing stateful consumer regressions; they do not qualify a hosted model"
+    },
+    {
       "id": "core-common",
       "patterns": ["src/core/**", "include/yvex/core.h", "include/yvex/status.h"],
       "lanes": ["fast", "structural", "runtime", "sanitizer"],
@@ -45,6 +52,13 @@
       "reason": "MiniMax semantic lowering requires its distinct bounded live vertical"
     },
     {
+      "id": "family-qwen3-5",
+      "patterns": ["src/model/families/qwen3_5.c", "src/graph/families/qwen3_5.c", "src/backend/cuda/families/qwen3_5.cu", "include/yvex/internal/families/qwen3_5.h", "include/yvex/internal/sequence_state.h", "src/runtime/sequence_state.c", "tests/unit/qwen3_5*.c", "tests/unit/sequence_state*.c"],
+      "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],
+      "tests": ["unit.qwen3_5_architecture", "unit.qwen3_5_tensors", "unit.sequence_mixer", "unit.sequence_state", "unit.sequence_state_session", "integration.tiny-vertical"],
+      "reason": "Qwen3.5 hybrid source semantics require exact config, stateful mixing, numeric, and composed-runtime evidence"
+    },
+    {
       "id": "family-compiler-adapter",
       "patterns": ["src/model/families/**", "include/yvex/internal/model_family.h"],
       "lanes": ["fast", "structural", "numeric", "runtime"],
@@ -53,10 +67,17 @@
     },
     {
       "id": "semantic-operator-ir",
-      "patterns": ["src/model/compilation/semantic.c", "src/graph/operator_ir.c", "src/graph/source_compile.c", "include/yvex/internal/model_ir.h", "include/yvex/internal/operator_ir.h"],
+      "patterns": ["src/model/compilation/semantic.c", "src/graph/operator_ir.c", "src/graph/decoder_plan.c", "src/graph/source_compile.c", "include/yvex/internal/model_ir.h", "include/yvex/internal/operator_ir.h", "include/yvex/internal/decoder_plan.h"],
       "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],
       "tests": ["integration.tiny-vertical"],
       "reason": "semantic and operator IR changes require deterministic lowering and production composition"
+    },
+    {
+      "id": "stateful-sequence-mixer",
+      "patterns": ["src/graph/sequence_mixer*.c", "src/backend/cuda/sequence_mixer*", "include/yvex/internal/sequence_mixer.h", "include/yvex/internal/transformer.h", "tests/unit/sequence_mixer.c", "tests/unit/cuda/sequence_mixer.c"],
+      "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],
+      "tests": ["unit.sequence_mixer", "cuda.sequence_mixer", "integration.tiny-vertical"],
+      "reason": "stateful sequence mixing requires numerical, cached-decode, rollback, and composed runtime evidence"
     },
     {
       "id": "physical-execution-ir",
@@ -78,6 +99,15 @@
       "lanes": ["fast", "runtime", "sanitizer"],
       "tests": ["unit.runtime_state", "integration.tiny-vertical"],
       "reason": "mutable state requires reset, cancellation, rollback, cleanup, and composed lifecycle evidence"
+    },
+    {
+      "id": "runtime-engine-resources",
+      "patterns": ["src/runtime/resource.c", "include/yvex/internal/engine_resource.h",
+                   "src/runtime/core.c", "src/runtime/media.c"],
+      "lanes": ["fast", "structural", "runtime", "sanitizer"],
+      "tests": ["unit.engine_resource", "unit.runtime_binding",
+                "unit.runtime_media", "integration.tiny-vertical"],
+      "reason": "engine resource ownership requires dependency, eviction, cleanup, both runtime verticals, and sanitizer evidence"
     },
     {
       "id": "backend-cpu",
@@ -108,8 +138,34 @@
       "reason": "text conversion and conversation changes require exact roundtrip and complete text-path evidence"
     },
     {
+      "id": "public-abi",
+      "patterns": [
+        "include/yvex/api.h",
+        "include/yvex/artifact.h",
+        "include/yvex/backend.h",
+        "include/yvex/catalog.h",
+        "include/yvex/content.h",
+        "include/yvex/core.h",
+        "include/yvex/gguf.h",
+        "include/yvex/graph.h",
+        "include/yvex/materialization.h",
+        "include/yvex/model.h",
+        "include/yvex/provider.h",
+        "include/yvex/qtype.h",
+        "include/yvex/quant.h",
+        "include/yvex/registry.h",
+        "include/yvex/server.h",
+        "include/yvex/source.h",
+        "include/yvex/tokenizer.h",
+        "tests/test_public_abi.py"
+      ],
+      "lanes": ["structural"],
+      "tests": ["structural.public-abi", "structural.source-layout"],
+      "reason": "installed ABI changes require explicit version decisions and C/C++ layout qualification"
+    },
+    {
       "id": "protocol-provider-api",
-      "patterns": ["src/provider/**", "src/server/protocol.c", "include/yvex/provider.h", "include/yvex/protocol.h", "include/yvex/api.h"],
+      "patterns": ["src/provider/**", "src/server/protocol.c", "include/yvex/content.h", "include/yvex/provider.h", "include/yvex/protocol.h", "include/yvex/api.h"],
       "lanes": ["fast", "runtime", "sanitizer"],
       "tests": ["integration.openai", "integration.tiny-vertical"],
       "reason": "protocol and API changes require codec refusal and client/server composition"
@@ -123,7 +179,7 @@
     },
     {
       "id": "server",
-      "patterns": ["src/server/**", "include/yvex/internal/server.h"],
+      "patterns": ["src/server/**", "include/yvex/server.h", "include/yvex/internal/server.h"],
       "lanes": ["fast", "runtime", "sanitizer"],
       "tests": ["integration.openai", "integration.repl", "integration.tiny-vertical"],
       "reason": "server changes require process lifecycle, protocol, cancellation, and cleanup evidence"
@@ -151,7 +207,7 @@
     },
     {
       "id": "documentation-only",
-      "patterns": ["docs/**", "config/documentation_owners.tsv", "README.md", "CHANGELOG.md", "ROADMAP.md", "CONTRIBUTING.md", "AGENTS.md"],
+      "patterns": ["docs/**", "README.md", "CHANGELOG.md", "ROADMAP.md", "CONTRIBUTING.md", "AGENTS.md"],
       "lanes": ["structural"],
       "tests": [],
       "reason": "documentation changes require ownership, links, project-control, and architecture checks only"
@@ -165,7 +221,7 @@
     },
     {
       "id": "test-infrastructure",
-      "patterns": ["tests/test.c", "tests/test.h", "tests/test_cuda.c", "tests/support/**", "tests/unit/*_runner.c", "tools/qa*.py", "tools/generate_qa_registry.py", "config/qa/**", ".agents/skills/engineering-worklog/**", ".github/workflows/**", ".github/pull_request_template.md", ".gitignore"],
+      "patterns": ["tests/test.c", "tests/test.h", "tests/test_cuda.c", "tests/support/**", "tests/unit/*_runner.c", "tools/qa*.py", "tools/generate_qa_registry.py", "config/qa/**", ".github/workflows/**", ".github/pull_request_template.md", ".gitignore"],
       "lanes": ["fast", "structural", "runtime", "sanitizer"],
       "tests": ["property.qa-registry"],
       "reason": "QA infrastructure changes must validate registry parity, orchestration, and representative execution"

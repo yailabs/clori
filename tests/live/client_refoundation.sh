@@ -4,6 +4,7 @@
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
+NATIVE_TURN=${NATIVE_TURN:-build/tests/native_turn}
 ARTIFACT=${YVEX_MODEL_ARTIFACT:?YVEX_MODEL_ARTIFACT is required}
 BINDING=${YVEX_RUNTIME_BINDING:?YVEX_RUNTIME_BINDING is required}
 . tests/support/cleanup.sh
@@ -14,18 +15,20 @@ root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-client-live.XXXXXX")
 runtime="$root/runtime"
 home="$root/home"
 profile=deepseek4-v4-flash-dspark-runtime-iq2xxs
+repl_prompt="$profile> "
 mkdir -m 700 "$runtime" "$home"
 mkdir -p "$home/.local/share/yvex"
 cat >"$home/.local/share/yvex/models.local.json" <<EOF
 {
-  "schema": "yvex.models.local.v3",
+  "schema": "yvex.models.local.v6",
   "models": [{
     "alias": "$profile",
     "path": "$ARTIFACT",
     "runtime_binding": "$BINDING",
     "runtime_target": "deepseek4-v4-flash-dspark",
     "runtime_backend": "cuda",
-    "runtime_mode": "dspark",
+    "runtime_engine_kind": "text",
+    "runtime_execution_strategy": "speculative",
     "runtime_context": 128
   }]
 }
@@ -47,7 +50,7 @@ cleanup()
         wait "$repl_pid" 2>/dev/null || true
     fi
     if test -n "$daemon_pid" && kill -0 "$daemon_pid" 2>/dev/null; then
-        XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server stop >/dev/null 2>&1 || true
+        XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host stop >/dev/null 2>&1 || true
         kill "$daemon_pid" 2>/dev/null || true
         wait "$daemon_pid" 2>/dev/null || true
     fi
@@ -72,16 +75,15 @@ cleanup()
 }
 trap cleanup EXIT HUP INT TERM
 
-HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server "$profile" \
-    --backend cuda --ctx 128 --console raw --trace-level tokens \
-    --openai off \
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" serve \
+    --logs json --trace-level tokens --openai off \
     >"$root/raw.jsonl" 2>"$root/daemon.err" &
 daemon_pid=$!
 
 ready=0
 attempt=0
 while test "$attempt" -lt 600; do
-    if XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json \
+    if XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host status --json \
         >"$root/status.json" 2>/dev/null; then
         ready=1
         break
@@ -94,19 +96,22 @@ test "$ready" -eq 1 || {
     sed -n '1,80p' "$root/daemon.err" >&2
     exit 1
 }
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" engine load "$profile" \
+    >"$root/engine.load"
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host status --json >"$root/status.json"
 grep -F '"model_open_count":1' "$root/status.json" >/dev/null
 
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log >"$root/engine.log" &
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host logs --follow >"$root/engine.log" &
 watch_pid=$!
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --json \
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host logs --json --follow \
     >"$root/trace.log" &
 trace_pid=$!
 
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new main >"$root/session.new"
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session main \
+XDG_RUNTIME_DIR="$runtime" "$NATIVE_TURN" --session main \
     --max-new-tokens 1 --strategy greedy Hi \
     >"$root/turn1" 2>"$root/turn1.metrics"
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session main \
+XDG_RUNTIME_DIR="$runtime" "$NATIVE_TURN" --session main \
     --max-new-tokens 1 --strategy greedy 'How are you?' \
     >"$root/turn2" 2>"$root/turn2.metrics"
 grep -F '14 prompt/6 reused' "$root/turn2.metrics" >/dev/null
@@ -132,7 +137,7 @@ XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session detach main >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show main >"$root/detached"
 grep -F 'detached' "$root/detached" >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session attach main >/dev/null
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json >"$root/status.after.json"
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host status --json >"$root/status.after.json"
 grep -F '"model_open_count":1' "$root/status.after.json" >/dev/null
 grep -E '"resident_device_bytes":[1-9][0-9]*' "$root/status.after.json" >/dev/null
 grep -E '"output_head_upload_count":[01](,|})' "$root/status.after.json" >/dev/null
@@ -145,7 +150,7 @@ repl_pid=$!
 exec 3>"$root/repl.input"
 attempt=0
 while test "$attempt" -lt 100; do
-    test -f "$root/repl.typescript" && grep -F 'yvex> ' "$root/repl.typescript" >/dev/null && break
+    test -f "$root/repl.typescript" && grep -F "$repl_prompt" "$root/repl.typescript" >/dev/null && break
     attempt=$((attempt + 1))
     sleep 0.1
 done
@@ -153,7 +158,7 @@ test "$attempt" -lt 100
 printf 'Hi\n' >&3
 attempt=0
 while test "$attempt" -lt 900; do
-    prompts=$(grep -o 'yvex> ' "$root/repl.typescript" 2>/dev/null | wc -l)
+    prompts=$(grep -o "$repl_prompt" "$root/repl.typescript" 2>/dev/null | wc -l)
     test "$prompts" -ge 2 && break
     kill -0 "$repl_pid" 2>/dev/null || break
     attempt=$((attempt + 1))
@@ -178,16 +183,16 @@ grep -F 'detached' "$root/repl.session" >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session reset main >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show main >"$root/reset"
 grep -F 'position=0 turns=0' "$root/reset" >/dev/null
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session main \
+XDG_RUNTIME_DIR="$runtime" "$NATIVE_TURN" --session main \
     --max-new-tokens 1 --strategy greedy Hi \
     >"$root/turn1.after-reset" 2>"$root/turn1.after-reset.metrics"
 test "$(sed -n '1p' "$root/turn1")" = "$(sed -n '1p' "$root/turn1.after-reset")"
 
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --max-new-tokens 1 \
+XDG_RUNTIME_DIR="$runtime" "$NATIVE_TURN" --max-new-tokens 1 \
     --strategy greedy Hello >"$root/oneshot"
 
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new reasoning-live >/dev/null
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session reasoning-live \
+XDG_RUNTIME_DIR="$runtime" "$NATIVE_TURN" --session reasoning-live \
     --max-new-tokens 64 --strategy greedy --reasoning high \
     'What is 2 plus 2? Answer briefly.' \
     >"$root/reasoning.out" 2>"$root/reasoning.metrics"
@@ -199,7 +204,7 @@ XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show reasoning-live \
 grep -F 'detached' "$root/reasoning.session" >/dev/null
 
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new cancel-live >/dev/null
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session cancel-live \
+XDG_RUNTIME_DIR="$runtime" "$NATIVE_TURN" --session cancel-live \
     --max-new-tokens 16 --strategy greedy 'Explain attention briefly.' \
     >"$root/cancel.out" 2>"$root/cancel.err" &
 cancel_pid=$!
@@ -227,16 +232,16 @@ test "$cancel_status" -eq 130
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show cancel-live >"$root/cancel.session"
 grep -F 'partial' "$root/cancel.session" >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session reset cancel-live >/dev/null
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session cancel-live \
+XDG_RUNTIME_DIR="$runtime" "$NATIVE_TURN" --session cancel-live \
     --max-new-tokens 1 --strategy greedy 'Continue after cancellation.' \
     >"$root/cancel.retry" 2>"$root/cancel.retry.metrics"
 grep -F 'generation 1 tokens' "$root/cancel.retry.metrics" >/dev/null
 
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json >"$root/status.final.json"
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host status --json >"$root/status.final.json"
 grep -F '"model_open_count":1' "$root/status.final.json" >/dev/null
 grep -E '"cancelled_requests":[1-9][0-9]*' "$root/status.final.json" >/dev/null
 
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server stop >/dev/null
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host stop >/dev/null
 wait "$daemon_pid"
 daemon_pid=
 wait "$watch_pid"
@@ -247,11 +252,11 @@ trace_pid=
 grep -F '"kind":"runtime.ready"' "$root/raw.jsonl" >/dev/null
 grep -F '"kind":"runtime.shutdown.complete"' "$root/raw.jsonl" |
     grep -F '"a":1,"b":1' >/dev/null
-grep -F 'request started' "$root/engine.log" >/dev/null
-grep -F 'generation completed' "$root/engine.log" >/dev/null
-grep -F 'request started' "$root/trace.log" >/dev/null
-grep -F 'generation completed' "$root/trace.log" >/dev/null
-grep -E '^#[0-9]+ (debug|info|warning|error|fatal)' "$root/trace.log" >/dev/null
+grep -E 'REQUEST[[:space:]]+main/' "$root/engine.log" >/dev/null
+grep -E 'COMPLETE[[:space:]]+[1-9][0-9]* token' "$root/engine.log" >/dev/null
+grep -F '"kind":"request.started"' "$root/trace.log" >/dev/null
+grep -F '"kind":"generation.completed"' "$root/trace.log" >/dev/null
+grep -F '"schema":3' "$root/trace.log" >/dev/null
 ! grep -E '(^|[[:space:]])[ab]=' "$root/engine.log" >/dev/null
 ! grep -E '(^|[[:space:]])[ab]=' "$root/trace.log" >/dev/null
 grep -F '"kind":"generation.cancelled"' "$root/raw.jsonl" |

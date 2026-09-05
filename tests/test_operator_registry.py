@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Validate the canonical operator registry, generator, and audit reconciliation."""
+"""Validate the canonical operator registry, generator, and product projections."""
 
 from __future__ import annotations
 
 import copy
-import csv
 import hashlib
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -16,17 +16,18 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "config/operator/registry.json"
 GENERATOR = ROOT / "tools/generate_operator_registry.py"
-AUDIT = ROOT / "docs/audits/operator-surface-ec7dcc"
 GENERATED = ROOT / "build/generated/operator"
 FORBIDDEN_TOP_LEVEL = {
+    "dev",
+    "eval",
     "evidence",
+    "execute",
     "graph",
+    "integrate",
     "quant",
-    "source",
+    "system",
     "tensor",
     "tokenizer",
-    "eval",
-    "bench",
 }
 
 
@@ -44,8 +45,6 @@ def invoke(
     registry: pathlib.Path,
     output: pathlib.Path,
     check: bool = False,
-    audit: pathlib.Path | None = None,
-    migration: pathlib.Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = [
         "python3",
@@ -55,10 +54,6 @@ def invoke(
         "--output",
         str(output),
     ]
-    if audit is not None:
-        command.extend(["--audit-root", str(audit)])
-    if migration is not None:
-        command.extend(["--migration-output", str(migration)])
     if check:
         command.append("--check")
     return subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
@@ -83,6 +78,13 @@ def operation(registry: dict[str, object], operation_id: str) -> dict[str, objec
     rows = registry["operations"]
     assert isinstance(rows, list)
     return next(row for row in rows if row["operation_id"] == operation_id)
+
+
+def normalized_operations(registry: dict[str, object]) -> list[dict[str, object]]:
+    defaults = registry["operation_defaults"]
+    rows = registry["operations"]
+    assert isinstance(defaults, dict) and isinstance(rows, list)
+    return [{**defaults, **row} for row in rows]
 
 
 def test_generation(registry: dict[str, object]) -> None:
@@ -142,7 +144,7 @@ def test_refusals(registry: dict[str, object]) -> None:
     mutation_failure(registry, lambda row: row.update(unexpected=True), "unknown field 'unexpected'")
     mutation_failure(
         registry,
-        lambda row: operation(row, "server.status").update(summmary="typo"),
+        lambda row: operation(row, "host.status").update(summmary="typo"),
         "unknown field 'summmary'",
     )
     mutation_failure(
@@ -152,35 +154,35 @@ def test_refusals(registry: dict[str, object]) -> None:
     )
 
     def duplicate_path(row: dict[str, object]) -> None:
-        source = operation(row, "server.status")
-        target = operation(row, "server.model")
+        source = operation(row, "host.status")
+        target = operation(row, "engine.list")
         target["command_path"] = list(source["command_path"])
 
     mutation_failure(registry, duplicate_path, "duplicate canonical path")
 
     def alias_collision(row: dict[str, object]) -> None:
-        operation(row, "server.status")["aliases"] = [
-            {"path": ["server", "model"], "deprecation": "current"}
+        operation(row, "host.status")["aliases"] = [
+            {"path": ["engine", "list"], "deprecation": "current"}
         ]
 
     mutation_failure(registry, alias_collision, "alias collides")
 
     def duplicate_flag(row: dict[str, object]) -> None:
-        operation(row, "server.status")["flags"] = [
+        operation(row, "host.status")["flags"] = [
             {"name": "--json", "value_type": "boolean", "takes_value": False}
         ]
 
     mutation_failure(registry, duplicate_flag, "duplicate flag")
 
     def conflicting_flag_type(row: dict[str, object]) -> None:
-        operation(row, "server.status")["flags"] = [
+        operation(row, "host.status")["flags"] = [
             {"name": "--json", "value_type": "number", "takes_value": True}
         ]
 
     mutation_failure(registry, conflicting_flag_type, "conflicting flag types/defaults")
 
     def unknown_flag_field(row: dict[str, object]) -> None:
-        operation(row, "server.status")["flags"] = [
+        operation(row, "host.status")["flags"] = [
             {
                 "name": "--strict-test",
                 "value_type": "boolean",
@@ -198,7 +200,7 @@ def test_refusals(registry: dict[str, object]) -> None:
     mutation_failure(registry, unknown_argument_field, "unknown field 'surprise'")
 
     def invalid_argument_order(row: dict[str, object]) -> None:
-        operation(row, "server.status")["arguments"] = [
+        operation(row, "host.status")["arguments"] = [
             {"name": "optional", "multiplicity": "optional"},
             {"name": "required", "multiplicity": "one", "required": True},
         ]
@@ -206,7 +208,7 @@ def test_refusals(registry: dict[str, object]) -> None:
     mutation_failure(registry, invalid_argument_order, "required argument cannot follow")
 
     def unknown_relation(row: dict[str, object]) -> None:
-        operation(row, "server.status")["flags"] = [
+        operation(row, "host.status")["flags"] = [
             {
                 "name": "--extra",
                 "value_type": "boolean",
@@ -218,32 +220,37 @@ def test_refusals(registry: dict[str, object]) -> None:
     mutation_failure(registry, unknown_relation, "unknown related flag")
     mutation_failure(
         registry,
-        lambda row: operation(row, "server.status").update(test_owner="none"),
+        lambda row: operation(row, "host.status").update(test_owner="none"),
         "requires test and documentation owners",
     )
     mutation_failure(
         registry,
-        lambda row: operation(row, "server.status").update(adapter_id="graph"),
+        lambda row: operation(row, "host.status").update(adapter_id="graph"),
         "unknown runtime-client adapter",
     )
     mutation_failure(
         registry,
-        lambda row: operation(row, "server.status").update(protocol_operation="unknown"),
+        lambda row: operation(row, "host.status").update(protocol_operation="unknown"),
         "unknown protocol operation",
     )
     mutation_failure(
         registry,
-        lambda row: operation(row, "server.status").update(renderer_id="unknown"),
+        lambda row: operation(row, "host.status").update(renderer_id="unknown"),
         "unknown renderer",
     )
     mutation_failure(
         registry,
-        lambda row: operation(row, "server.status").update(command_path=["eval"]),
+        lambda row: operation(row, "host.status").update(command_path=["eval"]),
         "forbidden top-level namespace",
     )
     mutation_failure(
         registry,
-        lambda row: operation(row, "server.status").update(summary="run yvex-dev"),
+        lambda row: operation(row, "host.status").update(command_path=[]),
+        "alias collides with canonical path",
+    )
+    mutation_failure(
+        registry,
+        lambda row: operation(row, "host.status").update(summary="run yvex-dev"),
         "references retired executable",
     )
     mutation_failure(
@@ -259,23 +266,12 @@ def test_refusals(registry: dict[str, object]) -> None:
     mutation_failure(registry, unknown_flag_set_field, "unknown field 'surprise'")
 
 
-def read_tsv(name: str) -> list[dict[str, str]]:
-    with (AUDIT / name).open(encoding="utf-8", newline="") as source:
-        return list(csv.DictReader(source, delimiter="\t"))
-
-
-def test_audit_reconciliation(registry: dict[str, object]) -> None:
-    commands = read_tsv("commands.tsv")
-    flags = read_tsv("flags.tsv")
-    operations = read_tsv("operations.tsv")
-    require(len(commands) == 70, "frozen command count changed")
-    require(len(flags) == 426, "frozen command/flag count changed")
-    require(len(operations) == 99, "frozen operation count changed")
-    rows = registry["operations"]
-    assert isinstance(rows, list)
+def test_product_surface(registry: dict[str, object]) -> None:
+    require("audit_reconciliation" not in registry,
+            "retired audit reconciliation remains in the runtime registry")
+    rows = normalized_operations(registry)
     by_id = {row["operation_id"]: row for row in rows}
-    unmatched = sorted({row["operation_id"] for row in operations} - set(by_id))
-    require(not unmatched, f"unmatched audit operations: {unmatched}")
+    require(len(by_id) == len(rows), "operation IDs are not unique")
     for row in rows:
         if row.get("deprecation_state") != "removed":
             continue
@@ -283,39 +279,36 @@ def test_audit_reconciliation(registry: dict[str, object]) -> None:
         require(successors, f"removed operation has no successor: {row['operation_id']}")
         require(all(successor in by_id for successor in successors),
                 f"unknown successor for {row['operation_id']}")
-        require(all(by_id[successor].get("deprecation_state") == "current" for successor in successors),
+        require(all(by_id[successor].get("deprecation_state") == "current"
+                    for successor in successors),
                 f"removed successor for {row['operation_id']}")
-    command_ids = {row["command_id"] for row in commands}
-    require(all(row["command_id"] in command_ids for row in flags),
-            "flag row has no audited command owner")
-    require(sum(row.get("lane") == "offline-engine" and row.get("CLI_projection") for row in rows) >= 39,
-            "offline capabilities were not preserved")
-    require(sum(row.get("lane") == "runtime-client" and row.get("CLI_projection") for row in rows) >= 17,
-            "client capabilities were not preserved")
-    require(any(row.get("operation_id") == "server.host" and
+
+    active = [row for row in rows if row.get("deprecation_state") != "removed"]
+    lanes = {row["lane"] for row in active}
+    require({"runtime-client", "offline-engine", "daemon-entrypoint", "REPL-local"} <= lanes,
+            f"missing product lane: {sorted(lanes)}")
+    require(any(row.get("operation_id") == "host.serve" and
                 row.get("lane") == "daemon-entrypoint" and row.get("CLI_projection")
-                for row in rows), "foreground server entrypoint is not projected")
-    slash = {row.get("slash_projection") for row in rows if row.get("slash_projection") != "none"}
-    require(slash == {"/help", "/status", "/model", "/memory", "/context", "/sessions",
-                      "/session", "/new", "/attach", "/detach", "/reset", "/close",
-                      "/cancel", "/quit", "/nothink", "/think", "/think-max"},
+                for row in active), "foreground host entrypoint is not projected")
+    paths = {tuple(row.get("command_path", [])) for row in active if row.get("CLI_projection")}
+    roots = {path[0] for path in paths if path}
+    require({"chat", "serve", "host", "engine", "session", "model", "source",
+             "artifact", "profile", "compile", "inspect", "bench", "help", "version"}
+            <= roots, f"missing product domain root: {sorted(roots)}")
+    require(not any(path and path[0] in {"run", "server"} for path in paths),
+            "retired run/server grammar remains projected")
+    require("generation.turn" not in by_id, "retired run operation remains registered")
+    slash = {row.get("slash_projection") for row in active
+             if row.get("slash_projection") != "none"}
+    require(slash == {"/help", "/status", "/context", "/sessions", "/session",
+                      "/new", "/use", "/detach", "/attach", "/attachments",
+                      "/attachments-clear",
+                      "/reset", "/close", "/cancel", "/quit", "/nothink", "/think",
+                      "/think-low", "/think-max"},
             f"unexpected slash catalog: {sorted(slash)}")
-    slash_aliases = {alias for row in rows for alias in row.get("slash_aliases", [])}
+    slash_aliases = {alias for row in active for alias in row.get("slash_aliases", [])}
     require(slash_aliases == {"/exit"},
             f"unexpected slash aliases: {sorted(slash_aliases)}")
-    with tempfile.TemporaryDirectory(prefix="yvex-audit-reconciliation-") as temporary:
-        root = pathlib.Path(temporary)
-        first = root / "first.md"
-        second = root / "second.md"
-        generated = root / "generated"
-        result = invoke(REGISTRY, generated, audit=AUDIT, migration=first)
-        require(result.returncode == 0, result.stderr)
-        result = invoke(REGISTRY, generated, audit=AUDIT, migration=second)
-        require(result.returncode == 0, result.stderr)
-        require(first.read_bytes() == second.read_bytes(), "nondeterministic migration matrix")
-        require(first.read_bytes() ==
-                (ROOT / "docs/migrations/command-architecture-v1.md").read_bytes(),
-                "tracked migration matrix is stale")
 
 
 def test_compiled_discovery(registry: dict[str, object]) -> None:
@@ -387,6 +380,15 @@ def test_compiled_discovery(registry: dict[str, object]) -> None:
                 actual["documentation_owner"] == source["documentation_owner"],
                 f"discovery owners: {actual['operation_id']}")
     projected = [row for row in operations if row["projections"]["cli"]]
+    roots = [row for row in projected if not row["command_path"]]
+    require(not roots, "bare yvex must not be a canonical operation path")
+    help_operation = next(row for row in projected
+                          if row["operation_id"] == "command.discovery")
+    require("" in help_operation["aliases"], "bare yvex is not the help alias")
+    chat_operation = next(row for row in projected
+                          if row["operation_id"] == "generation.chat")
+    require(chat_operation["command_path"] == "chat",
+            "interactive chat is not explicit")
     for row in projected:
         first = row["command_path"].split(" ", 1)[0]
         require(first not in FORBIDDEN_TOP_LEVEL, f"forbidden projection: {row['command_path']}")
@@ -395,17 +397,26 @@ def test_compiled_discovery(registry: dict[str, object]) -> None:
 def test_completion() -> None:
     outputs: dict[str, str] = {}
     for shell in ("bash", "zsh", "fish"):
-        command = [str(ROOT / "yvex"), "completion", shell]
+        command = [str(ROOT / "yvex"), "help", "completion", shell]
         first = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
         second = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
         require(first.returncode == 0, first.stderr)
         require(first.stdout == second.stdout, f"nondeterministic {shell} completion")
         require("yvex-dev" not in first.stdout and "yvex-openai" not in first.stdout,
                 f"retired executable in {shell} completion")
-        require("'server'" in first.stdout and "server status" in first.stdout and
-                "--ctx" in first.stdout,
+        require("'serve'" in first.stdout and "host status" in first.stdout and
+                "engine load" in first.stdout and "--ctx" in first.stdout and
+                "server status" not in first.stdout and "yvex run" not in first.stdout,
                 f"{shell} completion is not context aware")
         outputs[shell] = first.stdout
+    root_case = next(line for line in outputs["bash"].splitlines()
+                     if line.lstrip().startswith("'') candidates='"))
+    match = re.search(r"candidates='([^']*)'", root_case)
+    require(match is not None, "missing Bash root completion candidates")
+    root_candidates = set(match.group(1).split())
+    require(root_candidates == {"chat", "help", "host", "inspect", "model",
+                                "serve", "version"},
+            f"top-level completion leaks plumbing: {sorted(root_candidates)}")
     with tempfile.TemporaryDirectory(prefix="yvex-completion-") as temporary:
         root = pathlib.Path(temporary)
         bash = root / "yvex.bash"
@@ -426,10 +437,10 @@ def main() -> int:
     registry = read_registry()
     test_generation(registry)
     test_refusals(registry)
-    test_audit_reconciliation(registry)
+    test_product_surface(registry)
     test_compiled_discovery(registry)
     test_completion()
-    print("operator registry: schema/generation/refusal/audit/discovery checks passed")
+    print("operator registry: schema/generation/refusal/product/discovery checks passed")
     return 0
 
 

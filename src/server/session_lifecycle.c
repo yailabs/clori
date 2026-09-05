@@ -30,17 +30,18 @@ static int session_identity(server_session_registry *registry,
                             const char *name,
                             char output[YVEX_SHA256_HEX_CAP])
 {
-    yvex_runtime_model_summary model;
+    yvex_model_engine_summary model;
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_error err;
-    if (!yvex_runtime_model_view_get(registry->model) ||
-        yvex_runtime_model_summary_copy(registry->model, &model, &err) !=
+    if (!yvex_model_engine_view_get(registry->model) ||
+        yvex_model_engine_summary_copy(registry->model, &model, &err) !=
             YVEX_OK)
         return 0;
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.server.session.v1") ||
         !yvex_sha256_update_text(&hash, model.runtime_model_identity) ||
+        !yvex_sha256_update_u64(&hash, registry->engine_generation) ||
         !yvex_sha256_update_text(&hash, name) ||
         !yvex_sha256_final(&hash, digest))
         return 0;
@@ -66,7 +67,7 @@ int yvex_server_session_execution_open(server_session_registry *registry,
                                        yvex_error *err)
 {
     yvex_runtime_session_open_request request = {0};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     request.backend = registry->options.backend;
     request.maximum_host_bytes = registry->options.maximum_host_bytes;
     request.maximum_device_bytes = registry->options.maximum_device_bytes;
@@ -161,7 +162,8 @@ static int session_publish_locked(server_session_registry *registry,
     registry->count++;
     yvex_server_telemetry_session(registry->telemetry, 1, 1);
     rc = yvex_server_telemetry_emit(
-        registry->telemetry, YVEX_SERVER_EVENT_SESSION_CREATED,
+        registry->telemetry, &registry->event_scope,
+        YVEX_SERVER_EVENT_SESSION_CREATED,
         YVEX_SERVER_SEVERITY_INFO, session->name, NULL, NULL, phase,
         value_a, value_b, registry->count, 0.0, 0.0, err);
     if (rc == YVEX_OK) return YVEX_OK;
@@ -209,10 +211,10 @@ int yvex_server_session_fork_locked(
     server_session **created,
     yvex_runtime_session_prefix_summary *prefix_summary, yvex_error *err)
 {
-    const yvex_runtime_model_view *view =
-        registry ? yvex_runtime_model_view_get(registry->model) : NULL;
+    const yvex_model_engine_view *view =
+        registry ? yvex_model_engine_view_get(registry->model) : NULL;
     yvex_runtime_session_prefix *prefix = NULL;
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     server_session *child = NULL;
     int rc;
     if (created) *created = NULL;
@@ -320,7 +322,8 @@ int yvex_server_session_reset_locked(server_session_registry *registry,
     session->state = session->attached_clients ? YVEX_SERVER_SESSION_READY
                                                : YVEX_SERVER_SESSION_DETACHED;
     return yvex_server_telemetry_emit(
-        registry->telemetry, YVEX_SERVER_EVENT_SESSION_RESET,
+        registry->telemetry, &registry->event_scope,
+        YVEX_SERVER_EVENT_SESSION_RESET,
         YVEX_SERVER_SEVERITY_INFO, session->name, NULL, NULL, "session",
         0u, 0u, 0u, 0.0, 0.0, err);
 }
@@ -342,7 +345,8 @@ int yvex_server_session_close_locked(server_session_registry *registry,
     registry->count--;
     yvex_server_telemetry_session(registry->telemetry, -1, 0);
     (void)yvex_server_telemetry_emit(
-        registry->telemetry, YVEX_SERVER_EVENT_SESSION_CLOSED,
+        registry->telemetry, &registry->event_scope,
+        YVEX_SERVER_EVENT_SESSION_CLOSED,
         YVEX_SERVER_SEVERITY_INFO, session->name, NULL, NULL, "session",
         0u, registry->count, 0u, 0.0, 0.0, err);
     memset(session, 0, sizeof(*session));
@@ -351,15 +355,24 @@ int yvex_server_session_close_locked(server_session_registry *registry,
 }
 
 int yvex_server_sessions_open(server_session_registry **out,
-                              yvex_runtime_model *model,
-                              server_scheduler *scheduler,
-                              const yvex_server_options *options,
-                              int continuous_batching,
+                              yvex_model_engine *model,
+                              const yvex_server_engine_options *options,
+                              unsigned long long engine_generation,
+                              unsigned long long runnable_sequences,
+                              int compatible_operation_batching,
+                              const server_event_scope *event_scope,
                               server_telemetry *telemetry, yvex_error *err)
 {
     server_session_registry *registry;
     if (out) *out = NULL;
-    if (!out || !model || !scheduler || !options || !telemetry ||
+    if (!out || !model || !options || !event_scope || !telemetry ||
+        !engine_generation || !runnable_sequences ||
+        runnable_sequences > options->maximum_sessions ||
+        event_scope->engine_kind != options->engine_kind ||
+        event_scope->execution_strategy != options->execution_strategy ||
+        !yvex_sha256_hex_valid(event_scope->runtime_model_identity) ||
+        !yvex_sha256_hex_valid(event_scope->artifact_identity) ||
+        !yvex_sha256_hex_valid(event_scope->specialization_identity) ||
         !options->maximum_sessions ||
         options->maximum_sessions > SIZE_MAX / sizeof(server_session)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.registry",
@@ -377,12 +390,25 @@ int yvex_server_sessions_open(server_session_registry **out,
         return YVEX_ERR_NOMEM;
     }
     registry->model = model;
-    registry->scheduler = scheduler;
     registry->options = *options;
-    registry->continuous_batching = continuous_batching != 0;
-    registry->default_reasoning_policy = server_reasoning_automatic_policy();
+    registry->engine_generation = engine_generation;
+    registry->event_scope = *event_scope;
+    registry->compatible_operation_batching =
+        compatible_operation_batching != 0;
+    {
+        const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
+        const yvex_tokenizer_plan_summary *tokenizer =
+            view && view->tokenizer
+                ? yvex_tokenizer_plan_summary_get(view->tokenizer) : NULL;
+        registry->default_reasoning_policy =
+            tokenizer && yvex_reasoning_policy_valid(
+                             tokenizer->default_reasoning_policy)
+                ? tokenizer->default_reasoning_policy
+                : server_reasoning_automatic_policy();
+    }
     registry->telemetry = telemetry;
     registry->capacity = options->maximum_sessions;
+    registry->runnable_sequences = runnable_sequences;
     registry->next_id = 1u;
     if (pthread_mutex_init(&registry->mutex, NULL) != 0) {
         free(registry->sessions);
@@ -397,15 +423,110 @@ int yvex_server_sessions_open(server_session_registry **out,
     return YVEX_OK;
 }
 
-int yvex_server_sessions_count(server_session_registry *registry,
-                               unsigned long long *count, yvex_error *err)
+int yvex_server_sessions_occupancy(server_session_registry *registry,
+                                   unsigned long long *count,
+                                   unsigned long long *attached,
+                                   yvex_error *err)
 {
-    if (!registry || !count || pthread_mutex_lock(&registry->mutex) != 0) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.count",
-                       "registry and count output are required");
+    unsigned long long index, clients = 0u;
+    if (!registry || !count || !attached ||
+        pthread_mutex_lock(&registry->mutex) != 0) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.occupancy",
+                       "registry and occupancy outputs are required");
         return YVEX_ERR_INVALID_ARG;
     }
+    for (index = 0u; index < registry->capacity; ++index)
+        clients += registry->sessions[index].attached_clients;
     *count = registry->count;
+    *attached = clients;
+    (void)pthread_mutex_unlock(&registry->mutex);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int session_resource_accumulate(
+    yvex_execution_resource_summary *total,
+    const yvex_runtime_session_summary *session)
+{
+    unsigned long long workspace_current = 0ull, workspace_peak = 0ull;
+    unsigned long long attention_peak, host_peak;
+#define ADD(field, value) \
+    do { if (!yvex_core_u64_add(total->field, (value), &total->field)) return 0; } while (0)
+    attention_peak = session->workspace_peak_bytes > session->workspace_bytes
+                         ? session->workspace_peak_bytes
+                         : session->workspace_bytes;
+    host_peak = session->host_workspace_peak_bytes >
+                        session->host_workspace_bytes
+                    ? session->host_workspace_peak_bytes
+                    : session->host_workspace_bytes;
+    if (!yvex_core_u64_add(session->workspace_bytes,
+                           session->host_workspace_bytes, &workspace_current) ||
+        !yvex_core_u64_add(workspace_current,
+                           session->device_workspace_bytes, &workspace_current) ||
+        !yvex_core_u64_add(attention_peak, host_peak, &workspace_peak) ||
+        !yvex_core_u64_add(workspace_peak,
+                           session->device_workspace_bytes, &workspace_peak))
+        return 0;
+    ADD(session_attention_allocated_bytes,
+        session->attention_state_allocated_bytes);
+    ADD(session_attention_resident_bytes,
+        session->attention_state_resident_bytes);
+    ADD(session_attention_virtual_bytes,
+        session->attention_state_virtual_bytes);
+    ADD(session_attention_page_table_bytes,
+        session->attention_state_page_table_bytes);
+    ADD(session_recurrent_state_bytes,
+        session->sequence_recurrent_state_bytes);
+    ADD(session_convolution_state_bytes,
+        session->sequence_convolution_state_bytes);
+    ADD(session_candidate_state_bytes,
+        session->sequence_candidate_state_bytes);
+    ADD(session_physical_state_bytes,
+        session->attention_state_allocated_bytes);
+    ADD(session_physical_state_bytes, session->sequence_host_state_bytes);
+    ADD(session_physical_state_bytes, session->sequence_device_state_bytes);
+    ADD(workspace_current_bytes, workspace_current);
+    ADD(workspace_peak_bytes, workspace_peak);
+#undef ADD
+    return 1;
+}
+
+int yvex_server_sessions_resource_summary(
+    server_session_registry *registry,
+    yvex_execution_resource_summary *resources, yvex_error *err)
+{
+    unsigned long long index;
+    int saw_session = 0;
+    if (resources) memset(resources, 0, sizeof(*resources));
+    if (!registry || !resources ||
+        pthread_mutex_lock(&registry->mutex) != 0) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.resources",
+                       "registry and resource outputs are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    resources->schema_version = YVEX_EXECUTION_RESOURCE_SCHEMA_V1;
+    for (index = 0ull; index < registry->capacity; ++index) {
+        const server_session *session = &registry->sessions[index];
+        yvex_runtime_session_summary summary = {0};
+        if (!session->name[0] || !session->execution ||
+            session->state == YVEX_SERVER_SESSION_CLOSED)
+            continue;
+        if (yvex_runtime_session_summary_copy(session->execution, &summary,
+                                              err) != YVEX_OK) {
+            (void)pthread_mutex_unlock(&registry->mutex);
+            return yvex_error_code(err);
+        }
+        if (!session_resource_accumulate(resources, &summary)) {
+            (void)pthread_mutex_unlock(&registry->mutex);
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "server.session.resources",
+                           "session resource total overflowed");
+            return YVEX_ERR_BOUNDS;
+        }
+        saw_session = 1;
+    }
+    if (saw_session)
+        resources->available = YVEX_EXECUTION_RESOURCE_SESSION_AVAILABLE |
+                               YVEX_EXECUTION_RESOURCE_WORKSPACE_AVAILABLE;
     (void)pthread_mutex_unlock(&registry->mutex);
     yvex_error_clear(err);
     return YVEX_OK;

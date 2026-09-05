@@ -79,6 +79,27 @@ static int sampling_hash_f32(yvex_sha256 *hash, float value)
     memcpy(&bits, &value, sizeof(bits));
     return yvex_sha256_update_u64(hash, bits);
 }
+static int sampling_raw_logits_digest(
+    const float *values, unsigned long long count,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+    if (!values || !count) return 0;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.raw-logits.v1"))
+        return 0;
+    for (index = 0ull; index < count; ++index) {
+        uint32_t bits;
+        if (!isfinite(values[index])) return 0;
+        memcpy(&bits, &values[index], sizeof(bits));
+        if (!yvex_sha256_update_u64(&hash, bits)) return 0;
+    }
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
 static int sampling_hash_f64(yvex_sha256 *hash, double value)
 {
     uint64_t bits;
@@ -208,18 +229,25 @@ int yvex_runtime_sampling_context_open(
     yvex_runtime_sampling_policy canonical;
     unsigned long long one_bytes = 0ull, workspace_bytes = 0ull, owned_bytes;
     unsigned long long token_bytes = 0ull, value_bytes = 0ull, tie_bytes = 0ull;
+    unsigned long long selection_vocabulary = 0ull;
     if (out) *out = NULL;
+    if (options && logits_plan)
+        selection_vocabulary = options->selection_vocabulary_size
+                                   ? options->selection_vocabulary_size
+                                   : logits_plan->vocabulary_size;
     if (options && options->device_selection != 0 && options->device_selection != 1)
         return sampling_refuse(err, YVEX_ERR_INVALID_ARG,
                                "sampling device-selection contract is not boolean");
     if (!out || !logits_plan || !policy || !options ||
         !logits_plan->vocabulary_size ||
         logits_plan->vocabulary_size != logits_plan->row_count ||
+        !selection_vocabulary ||
+        selection_vocabulary > logits_plan->vocabulary_size ||
         !yvex_sha256_hex_valid(logits_plan->output_head_plan_identity) ||
-        options->maximum_vocabulary_size < logits_plan->vocabulary_size ||
+        options->maximum_vocabulary_size < selection_vocabulary ||
         !options->maximum_rows ||
         (!options->device_selection &&
-         (!yvex_core_u64_mul(logits_plan->vocabulary_size,
+         (!yvex_core_u64_mul(selection_vocabulary,
                              sizeof(sampling_candidate), &one_bytes) ||
           !yvex_core_u64_mul(one_bytes, 2ull, &workspace_bytes))) ||
         (options->device_selection &&
@@ -237,7 +265,7 @@ int yvex_runtime_sampling_context_open(
     canonical = *policy;
     canonical.policy_identity[0] = '\0';
     if (yvex_runtime_sampling_policy_seal(
-            &canonical, logits_plan->vocabulary_size, err) != YVEX_OK ||
+            &canonical, selection_vocabulary, err) != YVEX_OK ||
         strcmp(canonical.policy_identity, policy->policy_identity) != 0)
         return sampling_refuse(err, YVEX_ERR_FORMAT, "sampling policy identity is stale");
     context = (yvex_runtime_sampling_context *)yvex_core_calloc(1u, sizeof(*context));
@@ -263,6 +291,7 @@ int yvex_runtime_sampling_context_open(
     context->logits_plan = *logits_plan;
     context->policy = canonical;
     context->options = *options;
+    context->options.selection_vocabulary_size = selection_vocabulary;
     yvex_runtime_sampling_pcg_seed(
         canonical.seed, &context->rng_state, &context->rng_increment);
     atomic_init(&context->lifecycle, 0u);
@@ -283,7 +312,7 @@ int yvex_runtime_sampling_context_open(
     }
     context->drain_condition_ready = 1;
     context->summary.schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1;
-    context->summary.vocabulary_size = logits_plan->vocabulary_size;
+    context->summary.vocabulary_size = selection_vocabulary;
     context->summary.maximum_rows = options->maximum_rows;
     context->summary.workspace_bytes = workspace_bytes;
     context->summary.workspace_generation = 1ull;
@@ -315,13 +344,14 @@ static int sampling_source_identity(yvex_runtime_sampling_source *source)
            yvex_sha256_update_u64(&hash, source->source_phase) &&
            yvex_sha256_update_u64(&hash, source->source_position) &&
            yvex_sha256_update_u64(&hash, source->vocabulary_size) &&
+           yvex_sha256_update_u64(&hash, source->logits_stride) &&
            (!source->host_values_available ||
             yvex_sha256_update_text(&hash, source->raw_logits_digest)) &&
            (!source->device_values_available ||
             (yvex_sha256_update_text(
                  &hash, source->device_logits.execution_profile_identity) &&
              yvex_sha256_update_u64(
-                 &hash, source->device_logits.model_generation) &&
+                 &hash, source->device_logits.resource_generation) &&
              yvex_sha256_update_u64(
                  &hash, source->device_logits.session_generation) &&
              yvex_sha256_update_u64(
@@ -358,13 +388,25 @@ int yvex_runtime_sampling_source_from_logits(
     source->schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1;
     source->source_phase = row->source_phase;
     source->source_position = row->source_position;
-    source->vocabulary_size = row->vocabulary_size;
+    source->vocabulary_size = mutable->summary.vocabulary_size;
+    source->logits_stride = row->vocabulary_size;
     source->host_values_available = row->host_values_available;
     source->device_values_available = row->device_values_available;
     source->logits_capacity = row->host_values_available ? logits_capacity : 0ull;
     source->logits = row->host_values_available ? logits : NULL;
-    if (row->device_values_available) source->device_logits = row->device_logits;
-    yvex_runtime_identity_copy(source->raw_logits_digest, row->raw_logits_digest);
+    if (row->device_values_available) {
+        source->device_logits = row->device_logits;
+        source->device_logits.columns = source->vocabulary_size;
+    }
+    if (row->host_values_available &&
+        !sampling_raw_logits_digest(
+            logits, source->vocabulary_size, source->raw_logits_digest)) {
+        memset(source, 0, sizeof(*source));
+        sampling_leave(mutable, YVEX_ERR_FORMAT, 0ull);
+        return sampling_refuse(
+            err, YVEX_ERR_FORMAT,
+            "sampling selection vocabulary contains invalid logits");
+    }
     yvex_runtime_identity_copy(source->logits_row_identity, row->logits_row_identity);
     yvex_runtime_identity_copy(source->output_head_plan_identity, row->output_head_plan_identity);
     yvex_runtime_identity_copy(source->source_hidden_digest, row->source_hidden_digest);
@@ -385,14 +427,12 @@ static int sampling_source_validate(
     const yvex_runtime_sampling_source *source, yvex_error *err)
 {
     yvex_runtime_sampling_source canonical;
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     char raw_digest[YVEX_SHA256_HEX_CAP];
-    unsigned long long index;
     if (!context || !source ||
         source->schema_version != YVEX_RUNTIME_SAMPLING_SCHEMA_V1 ||
         source->source_phase > YVEX_LOGITS_SOURCE_DRAFT ||
-        source->vocabulary_size != context->logits_plan.vocabulary_size ||
+        source->vocabulary_size != context->summary.vocabulary_size ||
+        source->logits_stride != context->logits_plan.vocabulary_size ||
         source->host_values_available == source->device_values_available ||
         source->device_values_available != context->options.device_selection ||
         strcmp(source->output_head_plan_identity,
@@ -405,25 +445,9 @@ static int sampling_source_validate(
     if (source->host_values_available) {
         if (source->logits_capacity < source->vocabulary_size || !source->logits)
             return sampling_refuse(err, YVEX_ERR_FORMAT, "sampling host logits are unavailable");
-        yvex_sha256_init(&hash);
-        if (!yvex_sha256_update_text(&hash, "yvex.runtime.raw-logits.v1"))
-            return sampling_refuse(err, YVEX_ERR_STATE,
-                                   "sampling raw-logits validation initialization failed");
-        for (index = 0ull; index < source->vocabulary_size; ++index) {
-            uint32_t bits;
-            if (!isfinite(source->logits[index]))
-                return sampling_refuse(err, YVEX_ERR_FORMAT,
-                                       "sampling source contains non-finite logits");
-            memcpy(&bits, &source->logits[index], sizeof(bits));
-            if (!yvex_sha256_update_u64(&hash, bits))
-                return sampling_refuse(err, YVEX_ERR_STATE,
-                                       "sampling raw-logits validation failed");
-        }
-        if (!yvex_sha256_final(&hash, digest))
-            return sampling_refuse(err, YVEX_ERR_STATE,
-                                   "sampling raw-logits digest finalization failed");
-        yvex_sha256_hex(digest, raw_digest);
-        if (strcmp(raw_digest, source->raw_logits_digest) != 0)
+        if (!sampling_raw_logits_digest(
+                source->logits, source->vocabulary_size, raw_digest) ||
+            strcmp(raw_digest, source->raw_logits_digest) != 0)
             return sampling_refuse(err, YVEX_ERR_FORMAT,
                                    "sampling source logits were mutated after sealing");
     } else if (source->device_logits.kind != YVEX_EXECUTION_DEVICE_LOGITS ||
@@ -796,7 +820,7 @@ static int sampling_execution_identity(
            yvex_sha256_update_u64(&hash, result->rng_draw_count) &&
            yvex_sha256_update_u64(&hash, result->d2h_bytes) &&
            yvex_sha256_update_u64(&hash, result->kernel_launches) &&
-           yvex_sha256_update_u64(&hash, result->stream_synchronizations) &&
+           yvex_sha256_update_u64(&hash, result->queue_synchronizations) &&
            yvex_sha256_update_u64(&hash, result->device_synchronizations) &&
            yvex_sha256_update_u64(&hash, result->full_array_host_scan_bytes) &&
            sampling_hash_f64(&hash, result->effective_top_p) &&
@@ -945,7 +969,7 @@ static int sampling_select_device_stochastic(
     const yvex_backend_sampling_operations *operations =
         yvex_backend_sampling_operations_get(source->device_logits.backend);
     yvex_backend_sampling_result selected;
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     yvex_device_tensor view;
     uint64_t next_state = initial_state;
     unsigned long long next_draws;
@@ -995,7 +1019,7 @@ static int sampling_select_device_stochastic(
     result->normalization_error = selected.normalization_error;
     result->d2h_bytes = facts.d2h_bytes;
     result->kernel_launches = facts.kernel_launches;
-    result->stream_synchronizations = facts.stream_synchronizations;
+    result->queue_synchronizations = facts.queue_synchronizations;
     result->device_synchronizations = facts.device_synchronizations;
     result->rng_draw_count = 1ull;
     if (!sampling_device_stochastic_candidate_identity(
@@ -1122,9 +1146,10 @@ static int sampling_select_device_greedy_batch(
     const yvex_execution_device_view *first = &sources[0].device_logits;
     const yvex_backend_sampling_operations *operations =
         yvex_backend_sampling_operations_get(first->backend);
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     yvex_device_tensor rows;
     unsigned long long index, expected, total;
+    int packed = 1;
     int rc = operations && operations->select_greedy_rows ? YVEX_OK : YVEX_ERR_UNSUPPORTED;
     if (rc != YVEX_OK)
         return sampling_refuse(err, YVEX_ERR_UNSUPPORTED,
@@ -1140,29 +1165,59 @@ static int sampling_select_device_greedy_batch(
             (!yvex_core_u64_mul(index, sources[index].vocabulary_size, &expected) ||
              !yvex_core_u64_add(first->element_offset, expected, &expected) ||
              view->backend != first->backend || view->tensor != first->tensor ||
-             view->element_offset != expected ||
-             view->model_generation != first->model_generation ||
+             view->resource_generation != first->resource_generation ||
              view->session_generation != first->session_generation ||
              view->state_generation != first->state_generation ||
              strcmp(view->execution_profile_identity, first->execution_profile_identity) != 0))
             rc = sampling_refuse(err, YVEX_ERR_FORMAT,
-                                 "device greedy rows are not one contiguous publication");
+                                 "device greedy rows do not share one publication");
+        else if (rc == YVEX_OK && view->element_offset != expected)
+            packed = 0;
     }
-    if (rc == YVEX_OK &&
+    for (index = 0ull; rc == YVEX_OK && index < source_count; ++index)
+        sampling_result_initialize(context, &sources[index], &results[index]);
+    if (rc == YVEX_OK && packed &&
         (!yvex_core_u64_mul(source_count, sources[0].vocabulary_size, &total) ||
          !yvex_backend_tensor_f32_subview(first->tensor, first->element_offset, total, &rows)))
         rc = sampling_refuse(err, YVEX_ERR_BOUNDS, "device greedy row batch extent is invalid");
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK && packed) {
         rc = operations->select_greedy_rows(
             first->backend, &rows, source_count, sources[0].vocabulary_size,
             context->device_tokens, context->device_values, context->device_ties, &facts, err);
+        if (rc == YVEX_OK) {
+            results[0].d2h_bytes = facts.d2h_bytes;
+            results[0].kernel_launches = facts.kernel_launches;
+            results[0].queue_synchronizations = facts.queue_synchronizations;
+            results[0].device_synchronizations = facts.device_synchronizations;
+        }
+    }
+    for (index = 0ull; rc == YVEX_OK && !packed && index < source_count; ++index) {
+        const yvex_execution_device_view *view = &sources[index].device_logits;
+        facts = (yvex_backend_operation_facts){0};
+        if (!yvex_backend_tensor_f32_subview(
+                view->tensor, view->element_offset,
+                sources[index].vocabulary_size, &rows))
+            rc = sampling_refuse(
+                err, YVEX_ERR_BOUNDS,
+                "one strided device greedy row extent is invalid");
+        if (rc == YVEX_OK)
+            rc = operations->select_greedy_rows(
+                view->backend, &rows, 1ull, sources[index].vocabulary_size,
+                &context->device_tokens[index], &context->device_values[index],
+                &context->device_ties[index], &facts, err);
+        if (rc == YVEX_OK) {
+            results[index].d2h_bytes = facts.d2h_bytes;
+            results[index].kernel_launches = facts.kernel_launches;
+            results[index].queue_synchronizations = facts.queue_synchronizations;
+            results[index].device_synchronizations = facts.device_synchronizations;
+        }
+    }
     if (rc == YVEX_OK && context->options.cancel_requested &&
         context->options.cancel_requested(context->options.cancel_context))
         rc = sampling_refuse(err, YVEX_ERR_CANCELLED,
                              "device greedy row batch was cancelled before publication");
     for (index = 0ull; rc == YVEX_OK && index < source_count; ++index) {
         yvex_runtime_sampling_result *result = &results[index];
-        sampling_result_initialize(context, &sources[index], result);
         result->device_selection = 1;
         result->maximum_logit = result->selected_logit = context->device_values[index];
         result->tied_maximum_count = context->device_ties[index];
@@ -1172,14 +1227,6 @@ static int sampling_select_device_greedy_batch(
         result->candidates_after_top_k = result->candidates_after_min_p =
             result->candidates_after_typical_p = result->candidates_after_top_p =
                 result->final_candidate_count = sources[index].vocabulary_size;
-        /* One physical launch serves the logical batch. Attribute movement
-         * once so aggregate accounting cannot multiply the operation. */
-        if (!index) {
-            result->d2h_bytes = facts.d2h_bytes;
-            result->kernel_launches = facts.kernel_launches;
-            result->stream_synchronizations = facts.stream_synchronizations;
-            result->device_synchronizations = facts.device_synchronizations;
-        }
         if (!sampling_device_candidate_identity(
                 context, &sources[index], result->candidate_set_identity) ||
             !sampling_rng_identity(context, context->rng_state, context->successful_draws,
@@ -1297,13 +1344,13 @@ int yvex_runtime_sampling_distribution(
     int rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!context || !source || !probabilities || !result ||
-        probability_capacity < context->logits_plan.vocabulary_size)
+        probability_capacity < context->summary.vocabulary_size)
         return sampling_refuse(err, YVEX_ERR_INVALID_ARG,
                                "sampling distribution output capacity is invalid");
     rc = sampling_enter(context, err);
     if (rc != YVEX_OK) return rc;
     memset(probabilities, 0,
-           (size_t)context->logits_plan.vocabulary_size * sizeof(*probabilities));
+           (size_t)context->summary.vocabulary_size * sizeof(*probabilities));
     memset(&staged, 0, sizeof(staged));
     rc = sampling_source_validate(context, source, err);
     if (rc == YVEX_OK && !source->host_values_available)
@@ -1855,144 +1902,4 @@ int yvex_runtime_sampling_context_close(
     *context = NULL;
     yvex_error_clear(err);
     return YVEX_OK;
-}
-/* Publish sampling readiness only after real-logits selection completes. */
-static void sampling_operator_publish(
-    yvex_sampling_operator_result *result, const yvex_runtime_sampling_context_summary *summary)
-{
-    result->sample_count = result->execution.completed_samples;
-    result->prefill_samples = result->sample_count ? 1ull : 0ull;
-    result->decode_samples = result->sample_count - result->prefill_samples;
-    result->workspace_bytes = summary->workspace_bytes;
-    result->workspace_generation = summary->workspace_generation;
-    result->cold_workspace_allocations = summary->cold_workspace_allocations;
-    result->warm_workspace_allocations = summary->warm_workspace_allocations;
-    result->sampling_source_contract_ready = 1;
-    result->sampling_policy_ready = 1;
-    result->sampling_greedy_ready = 1;
-    result->sampling_temperature_ready = 1;
-    result->sampling_top_k_ready = 1;
-    result->sampling_top_p_ready = 1;
-    result->sampling_min_p_ready = 1;
-    result->sampling_typical_ready = 1;
-    result->sampling_stochastic_ready = 1;
-    result->sampling_seed_reproducibility_ready = 1;
-    result->sampling_real_logits_ready = 1;
-    result->sampling_partial_progress_ready = 1;
-    result->sampling_ready = 1;
-    result->persistent_state_unchanged = 1;
-}
-/* Execute admitted logits rows without appending selected tokens to model state. */
-int yvex_runtime_sampling_operator_execute(
-    const yvex_sampling_operator_request *request, yvex_sampling_operator_result *result,
-    yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err)
-{
-    yvex_runtime_sampling_context *context = NULL;
-    yvex_runtime_sampling_source *sources = NULL;
-    yvex_runtime_sampling_context_summary summary = {0};
-    yvex_runtime_sampling_options options = {0};
-    yvex_runtime_sampling_policy policy;
-    yvex_error cleanup_error;
-    unsigned long long index, row_count, vocabulary_size, logits_extent;
-    int rc, close_rc;
-    if (result) memset(result, 0, sizeof(*result));
-    if (!request || !result || !retained_cleanup || *retained_cleanup)
-        return sampling_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "sampling operator request and empty cleanup output are required");
-    yvex_core_text_copy(result->command, sizeof(result->command), "execute transformer sample");
-    yvex_core_text_copy(result->target, sizeof(result->target), request->logits.target);
-    yvex_core_text_copy(result->logits_backend, sizeof(result->logits_backend),
-                        request->logits.backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu");
-    yvex_core_text_copy(result->sampling_execution_kind,
-                        sizeof(result->sampling_execution_kind), "common-host");
-    rc = yvex_runtime_logits_operator_execute(
-        &request->logits, &result->logits, retained_cleanup, err);
-    yvex_core_text_copy(result->family, sizeof(result->family), result->logits.family);
-    if (rc != YVEX_OK) goto finish;
-    row_count = result->logits.row_count;
-    vocabulary_size = result->logits.plan.vocabulary_size;
-    if (!row_count || !vocabulary_size ||
-        !yvex_core_u64_mul(row_count, vocabulary_size, &logits_extent) ||
-        !result->logits.rows ||
-        !result->logits.raw_logits ||
-        result->logits.raw_logits_count != logits_extent) {
-        rc = sampling_refuse(err, YVEX_ERR_STATE,
-                             "sampling operator received no complete real logits rows");
-        goto finish;
-    }
-    rc = yvex_runtime_logits_result_validate(
-        &result->logits.plan, result->logits.raw_logits,
-        result->logits.raw_logits_count, result->logits.rows,
-        result->logits.row_count, &result->logits.execution, err);
-    if (rc != YVEX_OK) goto finish;
-    policy = request->policy;
-    if (yvex_runtime_sampling_policy_seal(&policy, vocabulary_size, err) != YVEX_OK) {
-        rc = yvex_error_code(err);
-        goto finish;
-    }
-    yvex_core_text_copy(result->strategy, sizeof(result->strategy),
-                        policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY ? "greedy" : "stochastic");
-    result->policy = policy;
-    options.maximum_vocabulary_size = vocabulary_size;
-    options.maximum_rows = row_count;
-    options.maximum_host_bytes = request->maximum_sampling_host_bytes;
-    options.cancel_requested = request->cancel_requested;
-    options.cancel_context = request->cancel_context;
-    rc = yvex_runtime_sampling_context_open(
-        &context, &result->logits.plan, &policy, &options, err);
-    if (rc != YVEX_OK) goto finish;
-    if (row_count > SIZE_MAX / sizeof(*sources) ||
-        row_count > SIZE_MAX / sizeof(*result->samples)) {
-        rc = sampling_refuse(err, YVEX_ERR_BOUNDS,
-                             "sampling operator directory extent overflowed");
-        goto close_context;
-    }
-    sources = (yvex_runtime_sampling_source *)yvex_core_calloc(
-        (size_t)row_count, sizeof(*sources));
-    result->samples = (yvex_runtime_sampling_result *)yvex_core_calloc(
-        (size_t)row_count, sizeof(*result->samples));
-    if (!sources || !result->samples) {
-        rc = sampling_refuse(err, YVEX_ERR_NOMEM,
-                             "sampling operator directory allocation failed");
-        goto close_context;
-    }
-    for (index = 0ull; index < row_count && rc == YVEX_OK; ++index)
-        rc = yvex_runtime_sampling_source_from_logits(
-            context, &sources[index], result->logits.raw_logits + index * vocabulary_size,
-            vocabulary_size, &result->logits.rows[index], err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_sampling_execute(
-            context, sources, row_count, result->samples, row_count, &result->execution, err);
-    if (yvex_runtime_sampling_context_snapshot(context, &summary, &cleanup_error) == YVEX_OK &&
-        (rc == YVEX_OK || result->execution.completed_samples))
-        sampling_operator_publish(result, &summary);
-close_context:
-    yvex_error_clear(&cleanup_error);
-    close_rc = yvex_runtime_sampling_context_close(&context, &cleanup_error);
-    if (rc == YVEX_OK && close_rc != YVEX_OK) {
-        rc = close_rc;
-        if (err) *err = cleanup_error;
-    }
-finish:
-    yvex_core_free(sources);
-    if (rc == YVEX_OK) {
-        result->completed = 1;
-        yvex_core_text_copy(result->status, sizeof(result->status), "complete");
-        yvex_error_clear(err);
-    } else {
-        yvex_core_text_copy(result->status, sizeof(result->status), "refused");
-        yvex_core_text_copy(result->reason, sizeof(result->reason), err && yvex_error_is_set(err)
-                                ? yvex_error_message(err)
-                                : "sampling execution refused");
-    }
-    return rc;
-}
-void yvex_runtime_sampling_operator_result_release(
-    yvex_sampling_operator_result *result)
-{
-    if (!result) return;
-    yvex_core_free(result->samples);
-    result->samples = NULL;
-    result->sample_count = 0ull;
-    yvex_runtime_logits_operator_result_release(&result->logits);
 }

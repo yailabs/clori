@@ -16,7 +16,9 @@
 #include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/joint_transformer.h>
 #include <yvex/internal/latent.h>
+#include <yvex/internal/media.h>
 #include <yvex/internal/runtime.h>
+#include "src/backend/cuda/component_ops.h"
 
 enum { VIDEO_VALUES = 96u, AUDIO_VALUES = 32u, CONDITION_VALUES = 5120u };
 
@@ -356,26 +358,44 @@ static int refusal_checks(
     float invalid_timestep[1] = {1.25f};
     int rc;
     request.text_indices = duplicate_text;
-    rc = yvex_backend_transformer_joint_cuda(
+    rc = yvex_cuda_transformer_joint_execute(
         backend, external, blocks, identity, arena_bytes, &request, &result, err);
     if (rc != YVEX_ERR_FORMAT || result.complete) return YVEX_ERR_STATE;
     request = *valid;
     request.timesteps = invalid_timestep;
-    rc = yvex_backend_transformer_joint_cuda(
+    rc = yvex_cuda_transformer_joint_execute(
         backend, external, blocks, identity, arena_bytes, &request, &result, err);
     if (rc != YVEX_ERR_FORMAT || result.complete) return YVEX_ERR_STATE;
     request = *valid;
     request.video_output_capacity--;
-    rc = yvex_backend_transformer_joint_cuda(
+    rc = yvex_cuda_transformer_joint_execute(
         backend, external, blocks, identity, arena_bytes, &request, &result, err);
     if (rc != YVEX_ERR_INVALID_ARG || result.complete) return YVEX_ERR_STATE;
     request = *valid;
     request.video_output_physical = valid->audio_output_physical;
-    rc = yvex_backend_transformer_joint_cuda(
+    rc = yvex_cuda_transformer_joint_execute(
         backend, external, blocks, identity, arena_bytes, &request, &result, err);
     if (rc != YVEX_ERR_INVALID_ARG || result.complete) return YVEX_ERR_STATE;
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+static int specialize_outputs(
+    const yvex_transformer_joint_recipe *recipe,
+    yvex_transformer_linear_physical_plan *video,
+    yvex_transformer_linear_physical_plan *audio, yvex_error *err)
+{
+    yvex_runtime_av_generation_request request = {
+        .component_backend = YVEX_BACKEND_KIND_CUDA};
+    int rc = yvex_runtime_media_request_specialize(
+        &request, recipe ? recipe->identity_domain : NULL,
+        recipe ? &recipe->video_output : NULL,
+        recipe ? &recipe->audio_output : NULL, err);
+    if (rc == YVEX_OK) {
+        *video = request.video_output_specialization;
+        *audio = request.audio_output_specialization;
+    }
+    return rc;
 }
 
 static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
@@ -402,17 +422,19 @@ static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
     int attached = 0, rc, cleanup_rc;
     yvex_error cleanup;
     request->recipe = graph ? graph->omni_recipe : NULL;
-    if (!graph || !request->recipe || !graph->omni_output_physical_compile) {
+    if (!graph || !request->recipe) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "minimax-h3.transformer-proof",
                        "the admitted joint Transformer recipe is unavailable");
         rc = YVEX_ERR_UNSUPPORTED;
     } else {
-        rc = graph->omni_output_physical_compile(
+        rc = specialize_outputs(
+            request->recipe,
             &request->video_output_physical, &request->audio_output_physical, err);
     }
     if (rc == YVEX_OK) {
         rc = graph->component_admit(
-            "transformer", artifact, gguf, tensors, &admission, &admission_failure, err);
+            "transformer", artifact, gguf, tensors, NULL, &admission, NULL,
+            &admission_failure, err);
     }
     yvex_materialization_options_default(&options);
     options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
@@ -442,7 +464,7 @@ static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
         rc = refusal_checks(backend, external, blocks, identity, arena_bytes,
                             request, err);
     if (rc == YVEX_OK)
-        rc = yvex_backend_transformer_joint_cuda(
+        rc = yvex_cuda_transformer_joint_execute(
             backend, external, blocks, identity, arena_bytes, request, result, err);
     if (attached) {
         yvex_error_clear(&cleanup);
@@ -549,7 +571,8 @@ static int execute_selected_block(
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK)
         rc = graph->component_admit(
-            "transformer", artifact, gguf, tensors, &admission, &admission_failure, &err);
+            "transformer", artifact, gguf, tensors, NULL, &admission, NULL,
+            &admission_failure, &err);
     yvex_materialization_options_default(&materialization_options);
     materialization_options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
     if (rc == YVEX_OK)
@@ -581,7 +604,7 @@ static int execute_selected_block(
     }
     options.inv_freq = (const float *)external[YVEX_TRANSFORMER_JOINT_ROPE_INV_FREQ].encoded;
     if (rc == YVEX_OK)
-        rc = yvex_backend_transformer_joint_blocks_cuda(
+        rc = yvex_cuda_transformer_joint_blocks_execute(
             backend, graph->omni_recipe, block, 1ull, identity, arena_bytes, hidden,
             time, timestep_count, positions, adaln_indices, rows, output, values,
             &result, &options, &err);
@@ -627,26 +650,31 @@ static int execute_artifact(const yvex_artifact *artifact, const yvex_gguf *gguf
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure;
     yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
     yvex_error cleanup;
     int rc;
     request->recipe = graph ? graph->omni_recipe : NULL;
-    if (!graph || !request->recipe || !graph->omni_output_physical_compile) {
+    if (!graph || !request->recipe) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "minimax-h3.transformer-proof",
                        "the admitted joint Transformer recipe is unavailable");
         rc = YVEX_ERR_UNSUPPORTED;
     } else {
-        rc = graph->omni_output_physical_compile(
+        rc = specialize_outputs(
+            request->recipe,
             &request->video_output_physical, &request->audio_output_physical, err);
     }
     if (rc == YVEX_OK) {
         rc = graph->component_admit(
-            "transformer", artifact, gguf, tensors, &admission, &failure, err);
+            "transformer", artifact, gguf, tensors, NULL, &admission, NULL, &failure, err);
     }
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
             80ull * 1024ull * 1024ull * 1024ull, 16ull * 1024ull * 1024ull * 1024ull, err);
-    if (rc == YVEX_OK) rc = graph->transformer_component_cuda(session, request, result, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_borrow(session, &component, err);
+    if (rc == YVEX_OK)
+        rc = graph->transformer_component_execute(&component, request, result, err);
     yvex_error_clear(&cleanup);
     if (yvex_runtime_component_session_close(&session, &cleanup) != YVEX_OK && rc == YVEX_OK) {
         rc = yvex_error_code(&cleanup);
@@ -686,6 +714,10 @@ static int execute_latent(const char *path, const char *conditioning_path,
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure;
     yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
+    yvex_component_resource_summary resources = {0};
+    const int optional_fallback =
+        getenv("YVEX_TEST_JOINT_PREPARED_OPTIONAL_FAILURE") != NULL;
     yvex_minimax_h3_t2va_plan plan;
     yvex_runtime_av_layout_result layout_result;
     yvex_runtime_latent_result latent_result;
@@ -707,7 +739,15 @@ static int execute_latent(const char *path, const char *conditioning_path,
         .video_row_capacity = 192ull, .audio_row_capacity = 512ull,
         .maximum_workspace_bytes = (192ull + 512ull) * sizeof(float),
     };
+    yvex_media_plan_request plan_request = {
+        .schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1,
+        .text_tokens = 1ull, .width = 32ull, .height = 32ull, .frames = 5ull,
+        .inference_steps = steps,
+    };
+    yvex_media_layout_request layout_request = {0};
     yvex_minimax_h3_t2va_omni_context context = {0};
+    yvex_transformer_linear_physical_plan video_specialization = {0};
+    yvex_transformer_linear_physical_plan audio_specialization = {0};
     char conditioning_identity[65];
     yvex_error err, cleanup;
     int rc, cleanup_rc;
@@ -722,19 +762,28 @@ static int execute_latent(const char *path, const char *conditioning_path,
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK)
         rc = graph->component_admit("transformer", artifact, gguf, tensors,
-                                    &admission, &failure, &err);
+                                    NULL, &admission, NULL, &failure, &err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
             80ull * 1024ull * 1024ull * 1024ull, 16ull * 1024ull * 1024ull * 1024ull, &err);
     if (rc == YVEX_OK)
-        rc = graph->t2va_plan_build(&plan, 1ull, 32ull, 32ull, 5ull, steps, &err);
-    if (rc == YVEX_OK) rc = graph->t2va_layout_build(&plan, &layout, &layout_result, &err);
-    context.transformer_session = session;
+        rc = yvex_runtime_component_session_borrow(session, &component, &err);
+    if (rc == YVEX_OK) rc = graph->t2va_plan_build(&plan, &plan_request, &err);
+    layout_request.plan = &plan;
+    if (rc == YVEX_OK)
+        rc = graph->t2va_layout_build(&layout_request, &layout, &layout_result, &err);
+    if (rc == YVEX_OK)
+        rc = specialize_outputs(
+            graph->omni_recipe,
+            &video_specialization, &audio_specialization, &err);
+    context.transformer_component = &component;
     context.conditioning = conditioning;
     context.conditioning_capacity = CONDITION_VALUES;
     context.layout = &layout;
     context.layout_result = &layout_result;
+    context.video_output_specialization = &video_specialization;
+    context.audio_output_specialization = &audio_specialization;
     context.timestep_indices = timestep_indices;
     context.timestep_capacity = 19ull;
     context.block_count = block_count;
@@ -743,10 +792,38 @@ static int execute_latent(const char *path, const char *conditioning_path,
         rc = graph->t2va_latent_execute(
             &plan, &context, 42ull, (192ull + 512ull) * sizeof(float) * 4ull,
             video, 192ull, audio, 512ull, &latent_result, &omni_result, &err);
-    if (rc == YVEX_OK && (!latent_result.completed || !omni_result.complete ||
-                          omni_result.model_evaluations != steps)) {
+    if (rc == YVEX_OK &&
+        (!latent_result.completed || !omni_result.complete ||
+         omni_result.model_evaluations != steps ||
+         latent_result.transaction.state != YVEX_EXECUTION_TRANSACTION_COMMITTED ||
+         latent_result.transaction.started_quanta != steps ||
+         latent_result.transaction.completed_quanta != steps ||
+         latent_result.transaction.safe_points != steps ||
+         latent_result.transaction.retained_resources != 1ull)) {
         yvex_error_set(&err, YVEX_ERR_STATE, "minimax-h3.latent-proof",
                        "the exact resident latent iteration did not complete");
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_component_execution_resource_summary(
+            &component, &resources, &err);
+    if (rc == YVEX_OK &&
+        (!resources.ready || resources.retained_by_transaction ||
+         resources.preparation_count != 1ull || resources.use_count != steps ||
+         resources.reuse_count + 1ull != resources.use_count ||
+         resources.rebuild_count || !resources.host_arena_bytes ||
+         !resources.device_arena_bytes ||
+         (optional_fallback
+              ? (resources.request_ready || resources.condition_ready ||
+                 resources.resource_count != 1ull ||
+                 resources.request_prepared_bytes ||
+                 resources.condition_prepared_bytes)
+              : (!resources.request_ready || !resources.condition_ready ||
+                 resources.resource_count != 3ull ||
+                 !resources.request_prepared_bytes ||
+                 !resources.condition_prepared_bytes)))) {
+        yvex_error_set(&err, YVEX_ERR_STATE, "minimax-h3.resource-proof",
+                       "the iterative request did not retain and reuse its prepared resources");
         rc = YVEX_ERR_STATE;
     }
     if (rc == YVEX_OK) {
@@ -768,12 +845,28 @@ static int execute_latent(const char *path, const char *conditioning_path,
     }
     if (rc == YVEX_OK)
         printf("t2va_latent=accepted steps=%u blocks=%llu packed_rows=%llu\n"
-               "kernel_launches=%llu peak_device_bytes=%llu\nplan_identity=%s\n"
+               "kernel_launches=%llu peak_device_bytes=%llu\n"
+               "execution_quanta=%llu safe_points=%llu transaction_setup_ns=%llu "
+               "safe_point_ns=%llu\nresource_prepare_ns=%llu arena_host_bytes=%llu "
+               "arena_device_bytes=%llu resource_uses=%llu resource_reuses=%llu "
+               "last_execution_allocations=%llu\nrequest_prepared_bytes=%llu "
+               "condition_prepared_bytes=%llu resource_count=%llu resource_rebuilds=%llu\n"
+               "plan_identity=%s\n"
                "layout_identity=%s\nevaluator_identity=%s\nlatent_identity=%s\n"
                "transformer_chain_identity=%s\nresidency_identity=%s\n"
                "vae_input_identity=%s\n",
                steps, block_count, plan.packed_rows, omni_result.kernel_launches,
-               omni_result.peak_device_bytes, plan.identity, layout_result.layout_identity,
+               omni_result.peak_device_bytes, latent_result.transaction.completed_quanta,
+               latent_result.transaction.safe_points,
+               latent_result.transaction.setup_nanoseconds,
+               latent_result.transaction.safe_point_nanoseconds,
+               resources.preparation_nanoseconds, resources.host_arena_bytes,
+               resources.device_arena_bytes, resources.use_count,
+               resources.reuse_count, resources.last_execution_allocation_events,
+               resources.request_prepared_bytes,
+               resources.condition_prepared_bytes, resources.resource_count,
+               resources.rebuild_count,
+               plan.identity, layout_result.layout_identity,
                omni_result.evaluator_identity, latent_result.execution_identity,
                omni_result.execution_chain_identity, omni_result.residency_identity,
                unpack_result.input_identity);
@@ -993,6 +1086,25 @@ static int latent_fixture_read(request_fixture *fixture, const char *root,
            file_read(audio_path, fixture->audio_reference, audio_values);
 }
 
+typedef struct {
+    unsigned int requests, resumes;
+} latent_yield_fixture;
+
+static int latent_yield_requested(void *opaque)
+{
+    latent_yield_fixture *fixture = opaque;
+    fixture->requests++;
+    return fixture->requests == 1u;
+}
+
+static int latent_yield_resume(void *opaque, yvex_error *err)
+{
+    latent_yield_fixture *fixture = opaque;
+    fixture->resumes++;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int execute_latent_fixture(
     const char *artifact_path, const char *fixture_root, const char *video_output_path,
     const char *audio_output_path, unsigned long long width, unsigned long long height,
@@ -1007,13 +1119,30 @@ static int execute_latent_fixture(
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure;
     yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
+    yvex_component_resource_summary resources = {0};
+    const int optional_fallback =
+        getenv("YVEX_TEST_JOINT_PREPARED_OPTIONAL_FAILURE") != NULL;
+    const int cooperative_yield =
+        getenv("YVEX_TEST_COOPERATIVE_YIELD") != NULL;
     yvex_minimax_h3_t2va_plan plan = {0};
     yvex_runtime_av_layout_result layout_result = {0};
     yvex_runtime_latent_result latent_result = {0};
     yvex_minimax_h3_t2va_omni_result omni_result = {0};
     yvex_minimax_h3_t2va_omni_context context = {0};
+    yvex_transformer_linear_physical_plan video_specialization = {0};
+    yvex_transformer_linear_physical_plan audio_specialization = {0};
     yvex_runtime_av_layout_output layout = {0};
     request_fixture fixture = {0};
+    latent_yield_fixture yielded = {0};
+    yvex_execution_yield_control yield_control = {
+        latent_yield_requested, latent_yield_resume, &yielded};
+    yvex_media_plan_request plan_request = {
+        .schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1,
+        .text_tokens = text_rows, .width = width, .height = height, .frames = frames,
+        .inference_steps = steps,
+    };
+    yvex_media_layout_request layout_request = {0};
     unsigned long long video_values, audio_values, conditioning_values, workspace_bytes;
     char conditioning_identity[65];
     const char *checkpoint_root = getenv("YVEX_MINIMAX_H3_LATENT_CHECKPOINT_ROOT");
@@ -1023,7 +1152,7 @@ static int execute_latent_fixture(
     if (!artifact_path || !fixture_root || !video_output_path || !audio_output_path ||
         !width || !height || !frames || !text_rows || !block_count || block_count > 50ull ||
         !steps || steps > 64u || !graph ||
-        graph->t2va_plan_build(&plan, text_rows, width, height, frames, steps, &err) != YVEX_OK ||
+        graph->t2va_plan_build(&plan, &plan_request, &err) != YVEX_OK ||
         plan.packed_rows > YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS ||
         !yvex_core_u64_mul(plan.video_rows, plan.video_value_width, &video_values) ||
         !yvex_core_u64_mul(plan.audio_rows, plan.audio_value_width, &audio_values) ||
@@ -1050,27 +1179,74 @@ static int execute_latent_fixture(
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK)
         rc = graph->component_admit("transformer", artifact, gguf, tensors,
-                                    &admission, &failure, &err);
+                                    NULL, &admission, NULL, &failure, &err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
-            80ull * 1024ull * 1024ull * 1024ull, 4ull * 1024ull * 1024ull * 1024ull, &err);
-    if (rc == YVEX_OK) rc = graph->t2va_layout_build(&plan, &layout, &layout_result, &err);
-    context.transformer_session = session;
+            80ull * 1024ull * 1024ull * 1024ull, 16ull * 1024ull * 1024ull * 1024ull, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_borrow(session, &component, &err);
+    layout_request.plan = &plan;
+    if (rc == YVEX_OK)
+        rc = graph->t2va_layout_build(&layout_request, &layout, &layout_result, &err);
+    if (rc == YVEX_OK)
+        rc = specialize_outputs(
+            graph->omni_recipe,
+            &video_specialization, &audio_specialization, &err);
+    context.transformer_component = &component;
     context.conditioning = fixture.conditioning;
     context.conditioning_capacity = conditioning_values;
     context.layout = &layout;
     context.layout_result = &layout_result;
+    context.video_output_specialization = &video_specialization;
+    context.audio_output_specialization = &audio_specialization;
     context.timestep_indices = fixture.timestep_indices;
     context.timestep_capacity = plan.packed_rows;
     context.block_count = block_count;
     context.conditioning_identity = conditioning_identity;
+    context.yield_control = cooperative_yield ? &yield_control : NULL;
     context.observe = checkpoint_root && checkpoint_root[0] ? latent_checkpoint_observe : NULL;
     context.observer_context = &checkpoint;
     if (rc == YVEX_OK)
         rc = graph->t2va_latent_execute(
             &plan, &context, seed, workspace_bytes, fixture.video_output, video_values,
             fixture.audio_output, audio_values, &latent_result, &omni_result, &err);
+    if (rc == YVEX_OK &&
+        (latent_result.transaction.state != YVEX_EXECUTION_TRANSACTION_COMMITTED ||
+         latent_result.transaction.completed_quanta != steps ||
+         latent_result.transaction.safe_points != steps ||
+         latent_result.transaction.yields !=
+             (cooperative_yield && steps > 1u ? 1ull : 0ull) ||
+         latent_result.transaction.resumes !=
+             (cooperative_yield && steps > 1u ? 1ull : 0ull) ||
+         yielded.resumes != (cooperative_yield && steps > 1u ? 1u : 0u) ||
+         latent_result.transaction.retained_resources != 1ull)) {
+        yvex_error_set(&err, YVEX_ERR_STATE, "minimax-h3.latent-request.transaction",
+                       "the iterative request did not retain one admitted execution resource");
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_component_execution_resource_summary(
+            &component, &resources, &err);
+    if (rc == YVEX_OK &&
+        (!resources.ready || resources.retained_by_transaction ||
+         resources.preparation_count != 1ull || resources.use_count != steps ||
+         resources.reuse_count + 1ull != resources.use_count ||
+         resources.rebuild_count || !resources.host_arena_bytes ||
+         !resources.device_arena_bytes ||
+         (optional_fallback
+              ? (resources.request_ready || resources.condition_ready ||
+                 resources.resource_count != 1ull ||
+                 resources.request_prepared_bytes ||
+                 resources.condition_prepared_bytes)
+              : (!resources.request_ready || !resources.condition_ready ||
+                 resources.resource_count != 3ull ||
+                 !resources.request_prepared_bytes ||
+                 !resources.condition_prepared_bytes)))) {
+        yvex_error_set(&err, YVEX_ERR_STATE, "minimax-h3.resource-proof",
+                       "prepared request and condition state did not remain reusable");
+        rc = YVEX_ERR_STATE;
+    }
     if (rc == YVEX_OK &&
         (!file_write(video_output_path, fixture.video_output, video_values) ||
          !file_write(audio_output_path, fixture.audio_output, audio_values)))
@@ -1088,10 +1264,29 @@ static int execute_latent_fixture(
     }
     if (rc == YVEX_OK)
         printf("t2va_latent_request=accepted rows=%llu blocks=%llu steps=%u seed=%llu\n"
-               "kernel_launches=%llu peak_device_bytes=%llu\nplan_identity=%s\n"
+               "kernel_launches=%llu peak_device_bytes=%llu\n"
+               "execution_quanta=%llu safe_points=%llu yields=%llu resumes=%llu "
+               "transaction_setup_ns=%llu "
+               "safe_point_ns=%llu\nresource_prepare_ns=%llu arena_host_bytes=%llu "
+               "arena_device_bytes=%llu resource_uses=%llu resource_reuses=%llu "
+               "last_execution_allocations=%llu\nrequest_prepared_bytes=%llu "
+               "condition_prepared_bytes=%llu resource_count=%llu resource_rebuilds=%llu\n"
+               "plan_identity=%s\n"
                "layout_identity=%s\nlatent_identity=%s\ntransformer_chain_identity=%s\n",
                plan.packed_rows, block_count, steps, seed, omni_result.kernel_launches,
-               omni_result.peak_device_bytes, plan.identity, layout_result.layout_identity,
+               omni_result.peak_device_bytes, latent_result.transaction.completed_quanta,
+               latent_result.transaction.safe_points,
+               latent_result.transaction.yields,
+               latent_result.transaction.resumes,
+               latent_result.transaction.setup_nanoseconds,
+               latent_result.transaction.safe_point_nanoseconds,
+               resources.preparation_nanoseconds, resources.host_arena_bytes,
+               resources.device_arena_bytes, resources.use_count,
+               resources.reuse_count, resources.last_execution_allocation_events,
+               resources.request_prepared_bytes,
+               resources.condition_prepared_bytes, resources.resource_count,
+               resources.rebuild_count,
+               plan.identity, layout_result.layout_identity,
                latent_result.execution_identity, omni_result.execution_chain_identity);
     else
         fprintf(stderr, "t2va_latent_request=refused where=%s message=%s\n",

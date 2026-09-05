@@ -141,7 +141,7 @@ int yvex_backend_state_residency_attach(
     return YVEX_OK;
 }
 
-int yvex_backend_state_residency_publish_generation(
+int yvex_backend_state_residency_validate_generation(
     yvex_backend *backend, unsigned long long generation, yvex_error *err)
 {
     if (!backend || backend_cleanup_only(backend) ||
@@ -165,9 +165,15 @@ int yvex_backend_state_residency_publish_generation(
                        "state generation cannot regress");
         return YVEX_ERR_STATE;
     }
-    backend->state_residency_generation = generation;
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+void yvex_backend_state_residency_publish_generation(
+    yvex_backend *backend, unsigned long long generation)
+{
+    if (backend && backend->kind == YVEX_BACKEND_KIND_CUDA)
+        backend->state_residency_generation = generation;
 }
 
 void yvex_backend_state_residency_detach(yvex_backend *backend)

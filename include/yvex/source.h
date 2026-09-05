@@ -77,6 +77,20 @@ typedef struct {
     const char *stderr_path;
 } yvex_account_command_options;
 
+/* Bounded provider output remains caller-owned and is never persisted by this API. */
+typedef struct {
+    const char *args[YVEX_ACCOUNT_ARG_CAP];
+    char *stdout_bytes;
+    size_t stdout_capacity;
+    char *stderr_bytes;
+    size_t stderr_capacity;
+    size_t stdout_count;
+    size_t stderr_count;
+    int stdout_truncated;
+    int stderr_truncated;
+    int exit_code;
+} yvex_account_capture_options;
+
 int yvex_account_provider_from_name(const char *name, yvex_account_provider *out);
 const char *yvex_account_provider_name(yvex_account_provider provider);
 const char *yvex_account_default_token_env(yvex_account_provider provider);
@@ -91,6 +105,8 @@ int yvex_account_write_state(const yvex_account_observation *observations,
                              yvex_error *err);
 int yvex_accounts_run_provider_command(const yvex_account_command_options *options,
                                        yvex_error *err);
+int yvex_accounts_capture_provider_command(yvex_account_capture_options *options,
+                                           yvex_error *err);
 
 /* Source manifests. */
 typedef enum {

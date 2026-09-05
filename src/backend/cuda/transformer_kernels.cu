@@ -134,40 +134,51 @@ extern "C" __global__ void yvex_rotary_half_plain_f32(
 }
 
 /* Four warp-owned queries reuse K/V while online softmax avoids a second Q/K traversal. */
-extern "C" __global__ void yvex_gqa_f32(
+template <unsigned int Slots>
+__device__ __forceinline__ void yvex_gqa_f32_body(
     const float *query, const float *key, const float *value, float *output,
-    unsigned long long tokens, unsigned long long query_heads,
-    unsigned long long kv_heads, unsigned long long head_dim, float scale, int causal)
+    unsigned long long query_tokens, unsigned long long key_value_tokens,
+    unsigned long long query_start, unsigned long long query_heads,
+    unsigned long long kv_heads, unsigned long long head_dim,
+    unsigned long long query_stride, unsigned long long key_stride,
+    unsigned long long value_stride, float scale, int causal, float *scratch)
 {
-    extern __shared__ float scratch[];
     const unsigned int warp = threadIdx.x / warpSize, lane = threadIdx.x % warpSize;
     const unsigned int queries_per_block = blockDim.x / warpSize;
     unsigned long long query_tile = blockIdx.x / query_heads, query_head = blockIdx.x % query_heads;
     unsigned long long token = query_tile * queries_per_block + warp;
+    unsigned long long position = query_start + token;
     unsigned long long kv_head = query_head / (query_heads / kv_heads);
     unsigned long long maximum_visible, visible, source, dim;
-    float query_lanes[4] = {0.0f}, accumulated[4] = {0.0f};
+    float query_lanes[Slots] = {0.0f}, accumulated[Slots] = {0.0f};
     float maximum = -INFINITY, denominator = 0.0f;
     unsigned int slot, active;
-    if (!query || !key || !value || !output || !tokens || !kv_heads ||
-        !query_heads || query_heads % kv_heads || !head_dim || queries_per_block > 4u) return;
-    active = token < tokens;
-    visible = causal ? token + 1ull : tokens;
-    maximum_visible = causal ? min(tokens, (query_tile + 1ull) * queries_per_block) : tokens;
-    for (slot = 0u; slot < 4u; ++slot) {
+    if (!query || !key || !value || !output || !query_tokens ||
+        !key_value_tokens || !kv_heads ||
+        !query_heads || query_heads % kv_heads || !head_dim ||
+        head_dim > (unsigned long long)Slots * warpSize || queries_per_block > 4u) return;
+    active = token < query_tokens && position < key_value_tokens;
+    visible = causal ? min(key_value_tokens, position + 1ull)
+                     : key_value_tokens;
+    maximum_visible = causal
+        ? min(key_value_tokens,
+              query_start + (query_tile + 1ull) * queries_per_block)
+        : key_value_tokens;
+    for (slot = 0u; slot < Slots; ++slot) {
         dim = (unsigned long long)lane + (unsigned long long)slot * warpSize;
         if (active && dim < head_dim)
-            query_lanes[slot] = query[(token * query_heads + query_head) * head_dim + dim];
+            query_lanes[slot] = query[token * query_stride + query_head * head_dim + dim];
     }
     for (source = 0ull; source < maximum_visible; ++source) {
         float dot = 0.0f;
         float new_maximum, old_scale, weight;
         for (dim = threadIdx.x; dim < head_dim; dim += blockDim.x) {
-            scratch[dim] = key[(source * kv_heads + kv_head) * head_dim + dim];
-            scratch[head_dim + dim] = value[(source * kv_heads + kv_head) * head_dim + dim];
+            scratch[dim] = key[source * key_stride + kv_head * head_dim + dim];
+            scratch[head_dim + dim] =
+                value[source * value_stride + kv_head * head_dim + dim];
         }
         __syncthreads();
-        for (slot = 0u; slot < 4u; ++slot) {
+        for (slot = 0u; slot < Slots; ++slot) {
             dim = (unsigned long long)lane + (unsigned long long)slot * warpSize;
             if (active && source < visible && dim < head_dim)
                 dot += query_lanes[slot] * scratch[dim];
@@ -180,7 +191,7 @@ extern "C" __global__ void yvex_gqa_f32(
             old_scale = maximum == -INFINITY ? 0.0f : expf(maximum - new_maximum);
             weight = expf(dot - new_maximum);
             denominator = denominator * old_scale + weight;
-            for (slot = 0u; slot < 4u; ++slot) {
+            for (slot = 0u; slot < Slots; ++slot) {
                 dim = (unsigned long long)lane + (unsigned long long)slot * warpSize;
                 if (dim < head_dim)
                     accumulated[slot] = accumulated[slot] * old_scale + weight * scratch[head_dim + dim];
@@ -189,66 +200,41 @@ extern "C" __global__ void yvex_gqa_f32(
         }
         __syncthreads();
     }
-    for (slot = 0u; slot < 4u; ++slot) {
+    for (slot = 0u; slot < Slots; ++slot) {
         dim = (unsigned long long)lane + (unsigned long long)slot * warpSize;
         if (active && dim < head_dim && denominator > 0.0f)
             output[(token * query_heads + query_head) * head_dim + dim] = accumulated[slot] / denominator;
     }
 }
 
-/* Preserve BF16 source values in F32 while changing to the head-major GEMM layout. */
-extern "C" __global__ void yvex_gqa_pack_f32(
-    const float *input, float *output, unsigned long long tokens,
-    unsigned long long heads, unsigned long long head_dim, int *status)
+extern "C" __global__ void yvex_gqa_f32(
+    const float *query, const float *key, const float *value, float *output,
+    unsigned long long query_tokens, unsigned long long key_value_tokens,
+    unsigned long long query_start, unsigned long long query_heads,
+    unsigned long long kv_heads, unsigned long long head_dim,
+    unsigned long long query_stride, unsigned long long key_stride,
+    unsigned long long value_stride, float scale, int causal)
 {
-    unsigned long long index =
-        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned long long elements = tokens * heads * head_dim, token, head, dim;
-    float value;
-    if (!input || !output || !status || *status || index >= elements) return;
-    token = index / (heads * head_dim);
-    head = (index / head_dim) % heads;
-    dim = index % head_dim;
-    value = input[index];
-    if (!isfinite(value)) {
-        atomicCAS(status, 0, 1);
-        return;
-    }
-    output[(head * tokens + token) * head_dim + dim] = value;
+    extern __shared__ float scratch[];
+    yvex_gqa_f32_body<4u>(
+        query, key, value, output, query_tokens, key_value_tokens,
+        query_start, query_heads, kv_heads, head_dim, query_stride, key_stride,
+        value_stride, scale, causal, scratch);
 }
 
-/* One warp owns one F32-published score so the fallback reduction order is invariant. */
-extern "C" __global__ void yvex_gqa_score_f32(
-    const float *query, const float *key, float *scores,
-    unsigned long long tokens, unsigned long long heads,
-    unsigned long long query_rows, unsigned long long head_dim, float scale)
+extern "C" __global__ void yvex_gqa_wide_f32(
+    const float *query, const float *key, const float *value, float *output,
+    unsigned long long query_tokens, unsigned long long key_value_tokens,
+    unsigned long long query_start, unsigned long long query_heads,
+    unsigned long long kv_heads, unsigned long long head_dim,
+    unsigned long long query_stride, unsigned long long key_stride,
+    unsigned long long value_stride, float scale, int causal)
 {
-    const unsigned int warp = threadIdx.x / warpSize, lane = threadIdx.x % warpSize;
-    const unsigned int warps = blockDim.x / warpSize;
-    unsigned long long task = (unsigned long long)blockIdx.x * warps + warp;
-    unsigned long long source, local_query, head, dim;
-    float dot = 0.0f;
-    if (!query || !key || !scores || !tokens || !heads || !query_rows ||
-        !head_dim || task >= heads * query_rows * tokens) return;
-    source = task % tokens;
-    local_query = (task / tokens) % query_rows;
-    head = task / (tokens * query_rows);
-    for (dim = lane; dim < head_dim; dim += warpSize) {
-        float q = query[(head * tokens + local_query) * head_dim + dim];
-        float k = key[(head * tokens + source) * head_dim + dim];
-        dot += q * k;
-    }
-    for (unsigned int offset = warpSize >> 1; offset; offset >>= 1)
-        dot += __shfl_down_sync(0xffffffffu, dot, offset);
-    if (!lane) scores[task] = dot * scale;
-}
-
-extern "C" __global__ void yvex_gqa_scale_f32(
-    float *values, unsigned long long count, float scale)
-{
-    unsigned long long index =
-        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (values && index < count) values[index] *= scale;
+    extern __shared__ float scratch[];
+    yvex_gqa_f32_body<8u>(
+        query, key, value, output, query_tokens, key_value_tokens,
+        query_start, query_heads, kv_heads, head_dim, query_stride, key_stride,
+        value_stride, scale, causal, scratch);
 }
 
 /* Source attention normalizes in F32; only the completed attention output is BF16-rounded. */
@@ -339,45 +325,14 @@ extern "C" __global__ void yvex_gqa_softmax_warp_f32(
     }
 }
 
-/* Publish P*V with a fixed source-order accumulation for every output element. */
-extern "C" __global__ void yvex_gqa_value_f32(
-    const float *probabilities, const float *value, float *output,
-    unsigned long long tokens, unsigned long long heads,
-    unsigned long long query_rows, unsigned long long head_dim, int *status)
-{
-    unsigned long long task =
-        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned long long dim, local_query, head, source;
-    float accumulated = 0.0f;
-    if (!probabilities || !value || !output || !status || *status || !tokens ||
-        !heads || !query_rows || !head_dim || task >= heads * query_rows * head_dim)
-        return;
-    dim = task % head_dim;
-    local_query = (task / head_dim) % query_rows;
-    head = task / (head_dim * query_rows);
-    for (source = 0ull; source < tokens; ++source)
-        accumulated += probabilities[(head * query_rows + local_query) * tokens + source] *
-                       value[(head * tokens + source) * head_dim + dim];
-    if (!isfinite(accumulated)) {
-        atomicCAS(status, 0, 1);
-        return;
-    }
-    output[(head * tokens + local_query) * head_dim + dim] = accumulated;
-}
-
-/* Restore the batched GEMM result to the canonical token/head/dimension layout. */
-extern "C" __global__ void yvex_gqa_unpack_f32(
-    const float *input, float *output, unsigned long long tokens,
-    unsigned long long heads, unsigned long long head_dim)
+extern "C" __global__ void yvex_attention_validate_f32(
+    const float *values, unsigned long long count, int *status)
 {
     unsigned long long index =
-        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned long long elements = tokens * heads * head_dim, token, head, dim;
-    if (!input || !output || index >= elements) return;
-    token = index / (heads * head_dim);
-    head = (index / head_dim) % heads;
-    dim = index % head_dim;
-    output[index] = input[(head * tokens + token) * head_dim + dim];
+        (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
+        (unsigned long long)threadIdx.x;
+    if (!values || !status || *status || index >= count) return;
+    if (!isfinite(values[index])) atomicCAS(status, 0, 1);
 }
 
 /* Fuse the elementwise SiLU gate product used by dense transformer MLPs. */
@@ -394,6 +349,20 @@ extern "C" __global__ void yvex_silu_product_bf16_f32(
     output[index] = float_to_bf16_rne(value * up[index]);
 }
 
+/* Apply the family-neutral sigmoid output gate used by attention projections. */
+extern "C" __global__ void yvex_sigmoid_product_bf16_f32(
+    const float *values, const float *gate, float *output,
+    unsigned long long count)
+{
+    unsigned long long index =
+        ((unsigned long long)blockIdx.x * (unsigned long long)blockDim.x) +
+        (unsigned long long)threadIdx.x;
+    float scale;
+    if (!values || !gate || !output || index >= count) return;
+    scale = 1.0f / (1.0f + expf(-gate[index]));
+    output[index] = float_to_bf16_rne(values[index] * scale);
+}
+
 extern "C" __global__ void yvex_silu_f32(
     const float *input, float *output, unsigned long long count, int bf16_output)
 {
@@ -402,6 +371,27 @@ extern "C" __global__ void yvex_silu_f32(
     float value;
     if (!input || !output || index >= count) return;
     value = input[index] / (1.0f + expf(-input[index]));
+    output[index] = bf16_output ? float_to_bf16_rne(value) : value;
+}
+
+/* Match the exact erf GELU used by vision towers; approximation policy is not implicit. */
+extern "C" __global__ void yvex_gelu_f32(
+    const float *input, float *output, unsigned long long count,
+    int tanh_approximation, int bf16_output)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    float value;
+    if (!input || !output || index >= count) return;
+    if (tanh_approximation) {
+        float cube = input[index] * input[index] * input[index];
+        value = 0.5f * input[index] *
+                (1.0f + tanhf(0.7978845608028654f *
+                               (input[index] + 0.044715f * cube)));
+    } else {
+        value = 0.5f * input[index] *
+                (1.0f + erff(input[index] * 0.7071067811865475f));
+    }
     output[index] = bf16_output ? float_to_bf16_rne(value) : value;
 }
 
@@ -460,6 +450,26 @@ extern "C" __global__ void yvex_split_interleaved_three_f32(
     first[index] = input[input_base];
     second[index] = input[input_base + head_dim];
     third[index] = input[input_base + 2ull * head_dim];
+}
+
+extern "C" __global__ void yvex_split_interleaved_two_f32(
+    const float *input, float *first, float *second,
+    unsigned long long rows, unsigned long long heads,
+    unsigned long long head_dim)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned long long width = heads * head_dim;
+    unsigned long long row, within, head, lane, input_base;
+    if (!input || !first || !second || !heads || !head_dim ||
+        index >= rows * width) return;
+    row = index / width;
+    within = index % width;
+    head = within / head_dim;
+    lane = within % head_dim;
+    input_base = row * 2ull * width + head * 2ull * head_dim + lane;
+    first[index] = input[input_base];
+    second[index] = input[input_base + head_dim];
 }
 
 extern "C" __global__ void yvex_swiglu_split_bf16_f32(

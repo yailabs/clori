@@ -173,6 +173,7 @@ static int test_policy_v2_and_presets(void)
         "84a934800f49b2cb7cf031eb18c8c1660ef8250da751e0ea34f65852d7c5333f",
         "adb3f1549440ad39adb2cc08826e659e91ac95c289b9ce75a0efc3dbf89d60a3",
         "5942d4c1bc6ae5d140c72387ff93da14e5ed9a77a6ded3f41ac3f7e9596a0f24",
+        "d3e8c279e1f5256b61e039e0cb0d462551d0790b73c9bead86789a4d6ec99338",
     };
     const char *path = "build/tests/quant-policy/v2.json";
     const char *roundtrip = "build/tests/quant-policy/v2-roundtrip.json";
@@ -183,6 +184,8 @@ static int test_policy_v2_and_presets(void)
     yvex_quant_policy_summary roundtrip_summary;
     const yvex_quant_policy_rule *rule;
     unsigned long long preset;
+    const unsigned long long preset_count =
+        sizeof(preset_identities) / sizeof(preset_identities[0]);
     char original_identity[YVEX_QUANT_POLICY_IDENTITY_CAP];
     yvex_error err;
 
@@ -235,8 +238,9 @@ static int test_policy_v2_and_presets(void)
     yvex_quant_policy_close(opened);
     yvex_quant_policy_close(policy);
 
-    YVEX_TEST_ASSERT(yvex_quant_policy_preset_count() == 3u, "preset catalog count");
-    for (preset = 0u; preset < yvex_quant_policy_preset_count(); ++preset) {
+    YVEX_TEST_ASSERT(yvex_quant_policy_preset_count() == preset_count,
+                     "preset catalog count");
+    for (preset = 0u; preset < preset_count; ++preset) {
         const char *name = yvex_quant_policy_preset_name(preset);
         policy = NULL;
         YVEX_TEST_ASSERT(name && yvex_quant_policy_preset_open(&policy, name, &err) == YVEX_OK,

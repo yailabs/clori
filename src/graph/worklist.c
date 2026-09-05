@@ -84,7 +84,7 @@ static int execution_batch_sources_hash(yvex_sha256 *hash,
 int yvex_execution_batch_seal(yvex_execution_batch *batch, yvex_error *err)
 {
     yvex_sha256 hash;
-    if (!batch || batch->schema_version != YVEX_EXECUTION_BATCH_SCHEMA_V1 ||
+    if (!batch || batch->schema_version != YVEX_EXECUTION_BATCH_SCHEMA_V2 ||
         batch->provenance > YVEX_EXECUTION_BATCH_COMPILED_COMPATIBLE ||
         batch->phase >= YVEX_EXECUTION_PHASE_COUNT ||
         !batch->row_count || batch->row_count >= 64ull ||
@@ -96,26 +96,20 @@ int yvex_execution_batch_seal(yvex_execution_batch *batch, yvex_error *err)
          batch->row_count < 2ull) ||
         (batch->provenance == YVEX_EXECUTION_BATCH_PREFILL &&
          batch->phase != YVEX_EXECUTION_PHASE_PREFILL) ||
-        !batch->model_generation || !execution_batch_sources_valid(batch) ||
-        !worklist_identity_valid(batch->runtime_model_identity) ||
-        !worklist_identity_valid(batch->runtime_binding_identity) ||
-        !worklist_identity_valid(batch->physical_variant_identity) ||
+        !batch->engine_generation || !execution_batch_sources_valid(batch) ||
         !worklist_identity_valid(batch->execution_profile_identity) ||
         !worklist_identity_valid(batch->operation_identity))
         return worklist_refuse(
             err, YVEX_ERR_INVALID_ARG, "execution batch identity or provenance is incomplete");
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.execution-batch.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.execution-batch.v2") ||
         !yvex_sha256_update_u64(&hash, batch->schema_version) ||
         !yvex_sha256_update_u64(&hash, batch->provenance) ||
         !yvex_sha256_update_u64(&hash, batch->phase) ||
         !yvex_sha256_update_u64(&hash, batch->row_count) ||
         !yvex_sha256_update_u64(&hash, batch->source_count) ||
-        !yvex_sha256_update_u64(&hash, batch->model_generation) ||
+        !yvex_sha256_update_u64(&hash, batch->engine_generation) ||
         !execution_batch_sources_hash(&hash, batch) ||
-        !yvex_sha256_update_text(&hash, batch->runtime_model_identity) ||
-        !yvex_sha256_update_text(&hash, batch->runtime_binding_identity) ||
-        !yvex_sha256_update_text(&hash, batch->physical_variant_identity) ||
         !yvex_sha256_update_text(&hash, batch->execution_profile_identity) ||
         !yvex_sha256_update_text(&hash, batch->operation_identity) ||
         !worklist_hash_finish(&hash, batch->identity))
@@ -144,82 +138,17 @@ int yvex_execution_batch_validate(const yvex_execution_batch *batch,
     return YVEX_OK;
 }
 
-int yvex_execution_compatibility_key_seal(
-    yvex_execution_compatibility_key *key, yvex_error *err)
-{
-    yvex_sha256 hash;
-    if (!key)
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility key is unavailable");
-    if (key->schema_version != YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1 ||
-        key->phase >= YVEX_EXECUTION_PHASE_COUNT || !key->model_generation ||
-        !key->row_width || !key->admitted_width || key->admitted_width >= 64ull)
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility geometry is incomplete");
-    if (!worklist_identity_valid(key->runtime_model_identity))
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility runtime model identity is invalid");
-    if (!worklist_identity_valid(key->runtime_binding_identity))
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility runtime binding identity is invalid");
-    if (!worklist_identity_valid(key->physical_variant_identity))
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility physical variant identity is invalid");
-    if (!worklist_identity_valid(key->execution_profile_identity))
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility execution profile identity is invalid");
-    if (!worklist_identity_valid(key->operation_identity))
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility operation identity is invalid");
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.execution-compatibility.v1") ||
-        !yvex_sha256_update_u64(&hash, key->schema_version) ||
-        !yvex_sha256_update_u64(&hash, key->phase) ||
-        !yvex_sha256_update_u64(&hash, key->backend_kind) ||
-        !yvex_sha256_update_u64(&hash, key->tensor_scope) ||
-        !yvex_sha256_update_u64(&hash, key->execution_class) ||
-        !yvex_sha256_update_u64(&hash, key->publication_contract) ||
-        !yvex_sha256_update_u64(&hash, key->model_generation) ||
-        !yvex_sha256_update_u64(&hash, key->layer_ordinal) ||
-        !yvex_sha256_update_u64(&hash, key->row_width) ||
-        !yvex_sha256_update_u64(&hash, key->admitted_width) ||
-        !yvex_sha256_update_text(&hash, key->runtime_model_identity) ||
-        !yvex_sha256_update_text(&hash, key->runtime_binding_identity) ||
-        !yvex_sha256_update_text(&hash, key->physical_variant_identity) ||
-        !yvex_sha256_update_text(&hash, key->execution_profile_identity) ||
-        !yvex_sha256_update_text(&hash, key->operation_identity) ||
-        !worklist_hash_finish(&hash, key->identity))
-        return worklist_refuse(
-            err, YVEX_ERR_STATE,
-            "execution compatibility identity derivation failed");
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
 int yvex_execution_compatibility_key_validate(
     const yvex_execution_compatibility_key *key, yvex_error *err)
 {
-    yvex_execution_compatibility_key expected;
-    char identity[YVEX_SHA256_HEX_CAP];
-    if (!key || !worklist_identity_valid(key->identity))
+    if (!key || key->schema_version != YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2 ||
+        key->phase >= YVEX_EXECUTION_PHASE_COUNT ||
+        key->operation >= YVEX_EXECUTION_COMPATIBILITY_OPERATION_COUNT ||
+        !key->engine_generation || !key->row_width || !key->admitted_width ||
+        key->admitted_width >= 64ull)
         return worklist_refuse(
             err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility identity is unavailable");
-    expected = *key;
-    yvex_core_text_copy(identity, sizeof(identity), key->identity);
-    if (yvex_execution_compatibility_key_seal(&expected, err) != YVEX_OK)
-        return yvex_error_code(err);
-    if (strcmp(identity, expected.identity) != 0)
-        return worklist_refuse(
-            err, YVEX_ERR_FORMAT,
-            "execution compatibility identity is stale");
+            "execution compatibility geometry or engine handle is incomplete");
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -232,51 +161,46 @@ int yvex_execution_compatibility_keys_match(
         yvex_execution_compatibility_key_validate(right, err) != YVEX_OK)
         return 0;
     yvex_error_clear(err);
-    return strcmp(left->identity, right->identity) == 0;
-}
-
-int yvex_expert_worklist_compiled_policy_valid(
-    unsigned long long supported_width_mask,
-    unsigned long long tensor_core_minimum,
-    const char *tensor_core_kernel_family)
-{
-    int tensor_core = tensor_core_minimum != 0ull;
-    return (supported_width_mask & 2ull) && !(supported_width_mask & 1ull) &&
-           tensor_core == (tensor_core_kernel_family && tensor_core_kernel_family[0]) &&
-           (!tensor_core ||
-            (tensor_core_minimum < 63ull &&
-             (supported_width_mask & (1ull << tensor_core_minimum)) &&
-             strlen(tensor_core_kernel_family) < 64u));
+    return left->phase == right->phase &&
+           left->operation == right->operation &&
+           left->backend_kind == right->backend_kind &&
+           left->tensor_scope == right->tensor_scope &&
+           left->execution_class == right->execution_class &&
+           left->engine_generation == right->engine_generation &&
+           left->layer_ordinal == right->layer_ordinal &&
+           left->row_width == right->row_width &&
+           left->admitted_width == right->admitted_width;
 }
 
 int yvex_expert_worklist_policy_seal(yvex_expert_worklist_policy *policy,
                                      yvex_error *err)
 {
     yvex_sha256 hash;
-    int tensor_core;
-    if (!policy || policy->schema_version != YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V1 ||
+    int matrix_tile;
+    if (!policy || policy->schema_version != YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V2 ||
         !(policy->supported_width_mask & 2ull) ||
         (policy->supported_width_mask & 1ull) ||
         (policy->supported_width_mask >> 63u) ||
-        !policy->narrow_kernel_family[0])
+        policy->row_implementation >= YVEX_ENGINE_IMPLEMENTATION_COUNT)
         return worklist_refuse(err, YVEX_ERR_INVALID_ARG,
                                "expert worklist width policy is incomplete");
-    tensor_core = policy->tensor_core_minimum != 0ull;
-    if (tensor_core != (policy->tensor_core_kernel_family[0] != '\0') ||
-        (tensor_core &&
-         (policy->tensor_core_minimum >= 63ull ||
-          !(policy->supported_width_mask & (1ull << policy->tensor_core_minimum)) ||
-          strcmp(policy->narrow_kernel_family,
-                 policy->tensor_core_kernel_family) == 0)))
+    matrix_tile = policy->matrix_tile_minimum != 0ull;
+    if (matrix_tile != (policy->matrix_implementation != YVEX_ENGINE_IMPLEMENTATION_COUNT) ||
+        (matrix_tile &&
+         (policy->matrix_tile_minimum >= 63ull ||
+          !(policy->supported_width_mask & (1ull << policy->matrix_tile_minimum)) ||
+          policy->matrix_implementation !=
+              YVEX_ENGINE_IMPLEMENTATION_DEVICE_MATRIX_TILE ||
+          policy->row_implementation == policy->matrix_implementation)))
         return worklist_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "expert Tensor Core width policy is inconsistent");
+                               "expert matrix-tile width policy is inconsistent");
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.expert-worklist-policy.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.expert-worklist-policy.v2") ||
         !yvex_sha256_update_u64(&hash, policy->schema_version) ||
         !yvex_sha256_update_u64(&hash, policy->supported_width_mask) ||
-        !yvex_sha256_update_u64(&hash, policy->tensor_core_minimum) ||
-        !yvex_sha256_update_text(&hash, policy->narrow_kernel_family) ||
-        !yvex_sha256_update_text(&hash, policy->tensor_core_kernel_family) ||
+        !yvex_sha256_update_u64(&hash, policy->matrix_tile_minimum) ||
+        !yvex_sha256_update_u64(&hash, policy->row_implementation) ||
+        !yvex_sha256_update_u64(&hash, policy->matrix_implementation) ||
         !worklist_hash_finish(&hash, policy->identity))
         return worklist_refuse(err, YVEX_ERR_STATE,
                                "expert worklist policy identity derivation failed");
@@ -402,9 +326,9 @@ int yvex_expert_worklist_build(const yvex_expert_worklist_request *request,
         worklist->population_histogram[
             population < YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP
                 ? population : YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP - 1u]++;
-        if (request->policy->tensor_core_minimum &&
-            population >= request->policy->tensor_core_minimum) {
-            worklist->tensor_core_eligible_pairs += population;
+        if (request->policy->matrix_tile_minimum &&
+            population >= request->policy->matrix_tile_minimum) {
+            worklist->matrix_tile_eligible_pairs += population;
             if (population % maximum_width)
                 worklist->tail_rows += maximum_width - population % maximum_width;
         }
@@ -422,7 +346,7 @@ int yvex_expert_worklist_build(const yvex_expert_worklist_request *request,
     worklist->pair_count = request->pair_count;
     worklist->bucket_count = bucket;
     worklist->admitted_tile_width = maximum_width;
-    worklist->narrow_pairs = request->pair_count - worklist->tensor_core_eligible_pairs;
+    worklist->narrow_pairs = request->pair_count - worklist->matrix_tile_eligible_pairs;
     worklist->expert_ids = storage->expert_ids;
     worklist->bucket_offsets = storage->bucket_offsets;
     worklist->bucket_populations = storage->bucket_populations;
@@ -537,7 +461,7 @@ int yvex_expert_worklist_observation_add(
         delta->schema_version != YVEX_EXPERT_WORKLIST_OBSERVATION_SCHEMA_V1 ||
         !delta->worklist_count || !delta->pair_count || !delta->bucket_count ||
         !delta->maximum_bucket_population ||
-        !yvex_core_u64_add(delta->tensor_core_eligible_pairs, delta->narrow_pairs,
+        !yvex_core_u64_add(delta->matrix_tile_eligible_pairs, delta->narrow_pairs,
                            &classified_pairs) || classified_pairs != delta->pair_count)
         return worklist_refuse(err, YVEX_ERR_INVALID_ARG,
                                "expert worklist observation is incomplete");
@@ -567,12 +491,12 @@ int yvex_expert_worklist_observation_add(
                            &candidate.pair_count) ||
         !yvex_core_u64_add(candidate.bucket_count, delta->bucket_count,
                            &candidate.bucket_count) ||
-        !yvex_core_u64_add(candidate.tensor_core_eligible_pairs,
-                           delta->tensor_core_eligible_pairs,
-                           &candidate.tensor_core_eligible_pairs) ||
-        !yvex_core_u64_add(candidate.tensor_core_executed_pairs,
-                           delta->tensor_core_executed_pairs,
-                           &candidate.tensor_core_executed_pairs) ||
+        !yvex_core_u64_add(candidate.matrix_tile_eligible_pairs,
+                           delta->matrix_tile_eligible_pairs,
+                           &candidate.matrix_tile_eligible_pairs) ||
+        !yvex_core_u64_add(candidate.matrix_tile_executed_pairs,
+                           delta->matrix_tile_executed_pairs,
+                           &candidate.matrix_tile_executed_pairs) ||
         !yvex_core_u64_add(candidate.narrow_pairs, delta->narrow_pairs,
                            &candidate.narrow_pairs) ||
         !yvex_core_u64_add(candidate.tail_rows, delta->tail_rows,

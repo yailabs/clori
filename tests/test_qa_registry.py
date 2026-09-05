@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import copy
+import contextlib
+import io
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -13,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import generate_qa_registry  # noqa: E402
+import qa  # noqa: E402
 
 
 def expect_refusal(registry: dict, message: str) -> None:
@@ -24,6 +28,66 @@ def expect_refusal(registry: dict, message: str) -> None:
         except generate_qa_registry.RegistryError:
             return
     raise AssertionError(message)
+
+
+def sample_report(*, stability: dict | None) -> dict:
+    value = {
+        "schema": qa.EVIDENCE_SCHEMA,
+        "run_identity": "source-stability-property",
+        "source_commit": "1" * 40,
+        "source_state": "clean",
+        "summary": {"counts": {state: 0 for state in ["PASS", "FAIL", "SKIP", "BLOCKED", "ERROR"]}},
+        "results": [],
+    }
+    if stability is not None:
+        value["source_stability"] = stability
+    return value
+
+
+def check_source_stability() -> None:
+    clean = {"head": "1" * 40, "state": "clean", "delta_identity": "a" * 64}
+    if not qa.source_stability(clean, dict(clean))["valid"]:
+        raise AssertionError("unchanged QA source snapshot was invalidated")
+
+    moved_head = dict(clean, head="2" * 40)
+    if qa.source_stability(clean, moved_head)["valid"]:
+        raise AssertionError("changed HEAD retained valid QA evidence")
+
+    dirty_delta = dict(clean, state="dirty", delta_identity="b" * 64)
+    invalid = qa.source_stability(clean, dirty_delta)
+    if invalid["valid"] or invalid["changed_fields"] != ["state", "delta_identity"]:
+        raise AssertionError("changed dirty source delta retained valid QA evidence")
+
+    with tempfile.TemporaryDirectory() as directory:
+        repository = Path(directory)
+        subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+        subprocess.run(["git", "config", "user.email", "qa@example.invalid"], cwd=repository,
+                       check=True)
+        subprocess.run(["git", "config", "user.name", "QA Property"], cwd=repository,
+                       check=True)
+        (repository / "tracked.c").write_text("int tracked;\n", encoding="utf-8")
+        subprocess.run(["git", "add", "tracked.c"], cwd=repository, check=True)
+        subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repository, check=True)
+        before = qa.source_snapshot(repository)
+        (repository / "untracked.c").write_text("int untracked;\n", encoding="utf-8")
+        after = qa.source_snapshot(repository)
+        if qa.source_stability(before, after)["valid"]:
+            raise AssertionError("untracked source input retained valid QA evidence")
+
+    with tempfile.TemporaryDirectory() as directory:
+        invalid_path = Path(directory) / "invalid.json"
+        invalid_path.write_text(json.dumps(sample_report(stability=invalid)), encoding="utf-8")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = qa.report(str(invalid_path))
+        if status == 0 or "SOURCE MUTATED / EVIDENCE INVALID" not in output.getvalue():
+            raise AssertionError("invalid QA evidence was not visible and non-zero")
+
+        legacy_path = Path(directory) / "legacy.json"
+        legacy_path.write_text(json.dumps(sample_report(stability=None)), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            if qa.report(str(legacy_path)) != 0:
+                raise AssertionError("legacy evidence without optional stability fields was refused")
 
 
 def main() -> int:
@@ -40,6 +104,7 @@ def main() -> int:
     second = generate_qa_registry.projections(registry, tests)
     if first != second:
         raise AssertionError("QA projections are not deterministic")
+    check_source_stability()
 
     duplicate = copy.deepcopy(registry)
     duplicate["tests"].append(copy.deepcopy(duplicate["tests"][0]))

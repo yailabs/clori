@@ -87,7 +87,7 @@ typedef struct {
     const unsigned char *mapping, *payload;
     size_t mapping_count;
     state_restore_scope scopes[2];
-    yvex_runtime_model_summary model;
+    yvex_model_engine_summary model;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long schema, scope_count, payload_bytes;
     char payload_identity[YVEX_SHA256_HEX_CAP];
@@ -739,7 +739,7 @@ static int state_store_payload_identity(
 
 static int state_file_header_write(
     state_file_writer *writer, unsigned long long file_bytes,
-    unsigned long long scope_count, const yvex_runtime_model_summary *model,
+    unsigned long long scope_count, const yvex_model_engine_summary *model,
     unsigned long long payload_bytes, const char *payload_identity,
     yvex_error *err)
 {
@@ -769,7 +769,7 @@ static int state_file_header_write(
 
 static void state_store_summary_set(
     yvex_runtime_state_store_summary *summary,
-    unsigned int schema, const yvex_runtime_model_summary *model,
+    unsigned int schema, const yvex_model_engine_summary *model,
     unsigned long long file_bytes,
     unsigned long long scope_count, unsigned long long position,
     unsigned long long payload_bytes, const char *payload_identity,
@@ -801,7 +801,7 @@ int yvex_runtime_session_state_save(
 {
     state_save_scope scopes[2];
     state_file_writer writer;
-    yvex_runtime_model_summary model;
+    yvex_model_engine_summary model;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long file_bytes = STATE_FILE_HEADER_V2_BYTES;
     unsigned long long scope_count = 0ull, index, payload_aligned = 0ull;
@@ -824,7 +824,13 @@ int yvex_runtime_session_state_save(
                               "state save requires an idle valid session", err);
         goto done;
     }
-    model = session->model->summary;
+    if (session->sequence_state) {
+        rc = state_store_fail(
+            YVEX_ERR_UNSUPPORTED,
+            "state checkpoints do not yet encode recurrent sequence state", err);
+        goto done;
+    }
+    model = session->engine->summary;
     rc = state_save_scope_prepare(&scopes[scope_count],
                                   &session->attention_state_provider, 0ull,
                                   err);
@@ -1369,7 +1375,7 @@ static int state_file_parser_scope(
 }
 
 static int state_file_parser_header(
-    state_file_parser *parser, yvex_runtime_model_summary *model,
+    state_file_parser *parser, yvex_model_engine_summary *model,
     unsigned long long *schema, unsigned long long *scope_count,
     unsigned long long *payload_bytes,
     char payload_identity[YVEX_SHA256_HEX_CAP], yvex_error *err)
@@ -1447,12 +1453,12 @@ static int state_restore_file_parse(
     yvex_error *err)
 {
     state_file_parser parser = {0};
-    yvex_runtime_model_summary current_model;
+    yvex_model_engine_summary current_model;
     const void *payload = NULL;
     char identity[YVEX_SHA256_HEX_CAP];
     int rc, draft_pristine = 0;
     memset(file, 0, sizeof(*file));
-    current_model = session->model->summary;
+    current_model = session->engine->summary;
     rc = state_file_map(path, maximum_file_bytes, &file->mapping,
                         &file->mapping_count, err);
     if (rc != YVEX_OK) goto failure;
@@ -1524,8 +1530,8 @@ static int state_restore_scope_prepare(
 {
     const yvex_attention_plan *attention =
         tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
-            ? session->model->draft_attention
-            : session->model->attention;
+            ? session->engine->draft_attention
+            : session->engine->attention;
     yvex_attention_state_provider *provider =
         tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
             ? &session->draft_attention_state_provider
@@ -1545,7 +1551,7 @@ static int state_restore_scope_prepare(
                          err);
     if (!attention ||
         strcmp(scope->capacity.model_execution_identity,
-               session->model->binding_summary.model_execution_identity) != 0)
+               session->engine->binding_summary.model_execution_identity) != 0)
         return state_store_fail(
             YVEX_ERR_FORMAT,
             "state capacity does not belong to the runtime model", err);
@@ -1626,7 +1632,7 @@ static int state_restore_publish(
     unsigned long long scope_count, yvex_error *err)
 {
     yvex_attention_failure failure = {0};
-    yvex_runtime_model_failure model_failure = {0};
+    yvex_model_engine_failure model_failure = {0};
     yvex_error cleanup;
     int rc;
     rc = state_restore_scope_prepare(
@@ -1699,6 +1705,12 @@ int yvex_runtime_session_state_inspect(
                               "state inspect requires an idle valid session", err);
         goto done;
     }
+    if (session->sequence_state) {
+        rc = state_store_fail(
+            YVEX_ERR_UNSUPPORTED,
+            "state checkpoints do not yet encode recurrent sequence state", err);
+        goto done;
+    }
     rc = state_restore_file_parse(session, path, maximum_file_bytes, &file, err);
     if (rc != YVEX_OK) goto done;
     if (file.payload_bytes) {
@@ -1753,6 +1765,12 @@ int yvex_runtime_session_state_restore(
         !session->attention_state_provider_ready) {
         rc = state_store_fail(YVEX_ERR_STATE,
                               "state restore requires an idle valid session", err);
+        goto done;
+    }
+    if (session->sequence_state) {
+        rc = state_store_fail(
+            YVEX_ERR_UNSUPPORTED,
+            "state checkpoints do not yet encode recurrent sequence state", err);
         goto done;
     }
     rc = state_restore_file_parse(session, path, maximum_file_bytes, &file, err);

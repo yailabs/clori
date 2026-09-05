@@ -59,6 +59,103 @@ if [ "${YVEX_FAKE_HF_FAIL:-0}" = "1" ]; then
   exit 42
 fi
 
+if [ "$#" -ge 2 ] && [ "$1" = "models" ]; then
+  if [ "${YVEX_FAKE_HF_DISCOVERY_AUTH:-0}" = "1" ]; then
+    printf 'fake-hf: 401 gated repository requires authentication\n' >&2
+    exit 41
+  fi
+  if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "malformed" ]; then
+    printf '{not-json\n'
+    exit 0
+  fi
+  if [ "$2" = "info" ]; then
+    repo=${3:-MiniMaxAI/MiniMax-H3}
+    if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "model-not-found" ]; then
+      printf 'fake-hf: repository not found\n' >&2
+      exit 44
+    fi
+    if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "revision-not-found" ]; then
+      printf 'fake-hf: revision not found\n' >&2
+      exit 44
+    fi
+    resolved_sha=${YVEX_FAKE_HF_RESOLVED_SHA:-b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08}
+    gated=false
+    [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "gated" ] && gated='"manual"'
+    if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "tiny" ]; then
+      cat <<JSON
+{"id":"$repo","author":"yvex-fixtures","sha":"$resolved_sha","pipeline_tag":"text-generation","gated":false,"tags":["gguf","test-fixture"]}
+JSON
+      exit 0
+    fi
+    if [ "$repo" = "deepseek-ai/DeepSeek-V4-Flash-DSpark" ]; then
+      cat <<JSON
+{"id":"$repo","author":"deepseek-ai","sha":"$resolved_sha","pipeline_tag":"text-generation","gated":$gated,"tags":["deepseek","safetensors"],"safetensors":{"parameters":{"BF16":33000000000},"total":33000000000},"transformers_info":{"auto_model":"DeepSeekV4ForCausalLM"}}
+JSON
+      exit 0
+    fi
+    if [ "$repo" = "unsloth/MiniMax-H3-GGUF" ]; then
+      cat <<JSON
+{"id":"$repo","author":"unsloth","sha":"$resolved_sha","pipeline_tag":"text-to-video","gated":$gated,"tags":["minimax-h3","gguf","quantized"],"base_models":{"relation":"quantized","models":[{"id":"MiniMaxAI/MiniMax-H3"}]}}
+JSON
+      exit 0
+    fi
+    cat <<JSON
+{"id":"$repo","author":"MiniMaxAI","sha":"$resolved_sha","pipeline_tag":"text-to-video","gated":$gated,"tags":["minimax-h3","safetensors","gguf"],"safetensors":{"parameters":{"BF16":33000000000,"F16":1024},"total":33000001024},"transformers_info":{"auto_model":"MiniMaxH3ForConditionalGeneration"},"base_models":{"relation":"finetune","models":[{"id":"MiniMaxAI/MiniMax-H3-Base"}]}}
+JSON
+    exit 0
+  fi
+  if [ "$2" = "list" ] && [ "$#" -ge 3 ] && [ "${3#-}" = "$3" ]; then
+    if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "alternative-safetensors" ]; then
+      printf '%s\n' '[{"path":"config.json","size":512},{"path":"consolidated.safetensors","size":3072},{"path":"model-00001-of-00002.safetensors","size":1024},{"path":"model-00002-of-00002.safetensors","size":2048},{"path":"model.safetensors.index.json","size":128},{"path":"tokenizer.json","size":256}]'
+      exit 0
+    fi
+    if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "incomplete-shards" ]; then
+      printf '%s\n' '[{"path":"config.json","size":512},{"path":"model-00001-of-00002.safetensors","size":1024}]'
+      exit 0
+    fi
+    if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "duplicate-shards" ]; then
+      printf '%s\n' '[{"path":"model-00001-of-00002.safetensors","size":1024},{"path":"model-00001-of-00002.safetensors","size":1024}]'
+      exit 0
+    fi
+    if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "unsafe-file" ]; then
+      printf '[{"path":"../escape.gguf","size":16}]\n'
+      exit 0
+    fi
+    if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "tiny" ]; then
+      tiny_bytes=${YVEX_FAKE_HF_TINY_BYTES:-0}
+      printf '[{"path":"model-Q4_K_M.gguf","size":%s}]\n' "$tiny_bytes"
+      exit 0
+    fi
+    if [ "$3" = "unsloth/MiniMax-H3-GGUF" ]; then
+      cat <<'JSON'
+[{"path":"MiniMax-H3-Q4_K_M.gguf","size":4096},{"path":"README.md","size":128}]
+JSON
+      exit 0
+    fi
+    cat <<'JSON'
+[{"path":"config.json","size":512},{"path":"model-00001-of-00002.safetensors","size":1024},{"path":"model-00002-of-00002.safetensors","size":2048},{"path":"model-Q4_K_M.gguf","size":4096},{"path":"model-IQ2_XXS.gguf","size":2048},{"path":"README.md","size":128},{"path":"tokenizer.json","size":256}]
+JSON
+    exit 0
+  fi
+  if [ "$2" = "list" ]; then
+    if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "empty" ]; then
+      printf '[]\n'
+      exit 0
+    fi
+    search_sha=${YVEX_FAKE_HF_RESOLVED_SHA:-b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08}
+    if [ "${YVEX_FAKE_HF_DISCOVERY_MODE:-mixed}" = "tiny" ]; then
+      cat <<JSON
+[{"id":"yvex-fixtures/tiny-executable","author":"yvex-fixtures","sha":"$search_sha","pipeline_tag":"text-generation","gated":false,"tags":["gguf","test-fixture"]}]
+JSON
+      exit 0
+    fi
+    cat <<JSON
+[{"id":"fal/MiniMax-H3-Realism-People-LoRA","author":"fal","sha":"4444444444444444444444444444444444444444","pipeline_tag":"text-to-video","gated":false,"tags":["minimax-h3","lora","safetensors"],"base_models":{"relation":"adapter","models":[{"id":"MiniMaxAI/MiniMax-H3"}]}},{"id":"LBH-123-AI/Minimax_h3_latent_Upscaler","author":"LBH-123-AI","sha":"5555555555555555555555555555555555555555","pipeline_tag":"text-to-video","gated":false,"tags":["minimax-h3","upscaler","safetensors"]},{"id":"MiniMaxAI/MiniMax-H3","author":"MiniMaxAI","sha":"$search_sha","pipeline_tag":"text-to-video","gated":false,"tags":["minimax-h3","safetensors"],"safetensors":{"parameters":{"BF16":33000000000,"F16":1024},"total":33000001024},"transformers_info":{"auto_model":"MiniMaxH3ForConditionalGeneration"}},{"id":"unsloth/MiniMax-H3-GGUF","author":"unsloth","sha":"2222222222222222222222222222222222222222","pipeline_tag":"text-to-video","gated":false,"tags":["minimax-h3","gguf","quantized"],"base_models":{"relation":"quantized","models":[{"id":"MiniMaxAI/MiniMax-H3"}]}},{"id":"community/MiniMax-H3-finetune","author":"community","sha":"6666666666666666666666666666666666666666","pipeline_tag":"text-to-video","gated":false,"tags":["minimax-h3","safetensors","finetune"],"base_models":{"relation":"finetune","models":[{"id":"MiniMaxAI/MiniMax-H3"}]}},{"id":"community/unknown-model","author":"community","sha":"1111111111111111111111111111111111111111","pipeline_tag":"unknown","gated":false,"tags":["safetensors"],"safetensors":{"parameters":{"F32":1000},"total":1000}},{"id":"private/gated-model","author":"private","sha":"3333333333333333333333333333333333333333","pipeline_tag":"text-generation","gated":"manual","tags":["qwen","safetensors"],"safetensors":{"parameters":{"BF16":2000},"total":2000},"transformers_info":{"auto_model":"QwenForCausalLM"}}]
+JSON
+    exit 0
+  fi
+fi
+
 if [ "$#" -lt 2 ] || [ "$1" != "download" ]; then
   printf 'fake-hf: expected download REPO\n' >&2
   exit 2
@@ -68,6 +165,7 @@ repo=$2
 shift 2
 local_dir=
 dry_run=0
+gguf_download=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -80,7 +178,14 @@ while [ "$#" -gt 0 ]; do
       dry_run=1
       shift
       ;;
-    --revision|--include|--exclude|--max-workers|--token)
+    --include)
+      [ "$#" -ge 2 ] || exit 2
+      case "$2" in
+        *.gguf) gguf_download=1 ;;
+      esac
+      shift 2
+      ;;
+    --revision|--exclude|--max-workers|--token)
       [ "$#" -ge 2 ] || exit 2
       shift 2
       ;;
@@ -150,11 +255,21 @@ printf '# fake model card\n' > "$local_dir/README.md"
 fake_hf_step 1
 
 printf 'fake-hf: downloading shard 1\n'
-fake_hf_write_shard "$local_dir/model-00001-of-00002.safetensors" "embed.weight" 16
+if [ "$gguf_download" -eq 1 ]; then
+  if [ -n "${YVEX_FAKE_HF_DOWNLOAD_SOURCE:-}" ]; then
+    cp "$YVEX_FAKE_HF_DOWNLOAD_SOURCE" "$local_dir/model-Q4_K_M.gguf"
+  else
+    printf 'GGUF fake provider fixture\n' > "$local_dir/model-Q4_K_M.gguf"
+  fi
+else
+  fake_hf_write_shard "$local_dir/model-00001-of-00002.safetensors" "embed.weight" 16
+fi
 fake_hf_step 2
 
 printf 'fake-hf: downloading shard 2\n'
-fake_hf_write_shard "$local_dir/model-00002-of-00002.safetensors" "layers.0.attn.q_proj.weight" 32
+if [ "$gguf_download" -eq 0 ]; then
+  fake_hf_write_shard "$local_dir/model-00002-of-00002.safetensors" "layers.0.attn.q_proj.weight" 32
+fi
 fake_hf_step 3
 
 i=4
@@ -163,6 +278,12 @@ while [ "$i" -le "$steps" ]; do
   fake_hf_step "$i"
   i=$((i + 1))
 done
+
+if [ "${YVEX_FAKE_HF_LOCAL_CACHE:-0}" = "1" ]; then
+  mkdir -p "$local_dir/.cache/huggingface/download"
+  printf 'provider transfer metadata\n' \
+    > "$local_dir/.cache/huggingface/download/config.json.metadata"
+fi
 
 printf 'fake-hf: complete\n'
 printf 'fake-hf: downloaded repo=%s local_dir=%s\n' "$repo" "$local_dir"

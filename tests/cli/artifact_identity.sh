@@ -35,7 +35,7 @@ not_contains() {
 yvex_test_cleanup "$OUT_DIR"
 mkdir -p "$OUT_DIR" "$STALE_DIR"
 
-"$YVEX_BIN" compile emit artifact controlled \
+"$YVEX_BIN" compile artifact emit \
   --out "$MODEL" \
   --model-name identity-controlled-f16 \
   --arch deepseek \
@@ -43,7 +43,7 @@ mkdir -p "$OUT_DIR" "$STALE_DIR"
   --overwrite >"$OUT_DIR/emit.out" 2>"$OUT_DIR/emit.err"
 cp "$MODEL" "$STALE_MODEL"
 
-"$YVEX_BIN" model registry add \
+"$YVEX_BIN" profile create \
   --path "$MODEL" \
   --registry "$REG" \
   --support-level selected-tensor-materialized \
@@ -65,7 +65,7 @@ contains "$OUT_DIR/add.out" "status: models-added"
 GOOD_SHA=$(awk '/^registered_sha256: / { print $2 }' "$OUT_DIR/add.out")
 test -n "$GOOD_SHA" || fail "missing registered sha"
 
-"$YVEX_BIN" model registry verify "$ALIAS" --registry "$REG" --audit \
+"$YVEX_BIN" profile verify "$ALIAS" --registry "$REG" --audit \
   >"$OUT_DIR/verify-pass.out" 2>"$OUT_DIR/verify-pass.err"
 contains "$OUT_DIR/verify-pass.out" "digest_status: pass"
 contains "$OUT_DIR/verify-pass.out" "identity_status: pass"
@@ -100,14 +100,14 @@ contains "$OUT_DIR/integrity-raw.out" "digest_status: not-requested"
 contains "$OUT_DIR/integrity-raw.out" "sha256: unavailable"
 contains "$OUT_DIR/integrity-raw.out" "status: artifact-integrity-pass"
 
-"$YVEX_BIN" model registry add \
+"$YVEX_BIN" profile create \
   --path "$STALE_MODEL" \
   --registry "$STALE_REG" \
   --support-level selected-tensor-materialized \
   >"$OUT_DIR/stale-add.out" 2>"$OUT_DIR/stale-add.err"
 printf Z | dd of="$STALE_MODEL" bs=1 seek=128 conv=notrunc status=none
 
-"$YVEX_BIN" model registry verify "$ALIAS" --registry "$STALE_REG" --audit \
+"$YVEX_BIN" profile verify "$ALIAS" --registry "$STALE_REG" --audit \
   >"$OUT_DIR/verify-stale.out" 2>"$OUT_DIR/verify-stale.err" && \
   fail "mutated registered artifact unexpectedly verified" || true
 contains "$OUT_DIR/verify-stale.out" "digest_status: fail"
@@ -123,7 +123,7 @@ contains "$OUT_DIR/materialize-stale.out" "identity_status: fail"
 contains "$OUT_DIR/materialize-stale.out" "status: models-identity-fail"
 not_contains "$OUT_DIR/materialize-stale.out" "status: weights-materialized"
 
-"$YVEX_BIN" execute artifact model-gate check \
+"$YVEX_BIN" artifact verify model \
   --model "$MODEL" \
   --label identity-bad-sha \
   --family deepseek \
@@ -141,7 +141,7 @@ contains "$OUT_DIR/model-gate-bad-sha.txt" "actual_sha256: $GOOD_SHA"
 contains "$OUT_DIR/model-gate-bad-sha.txt" "digest_status: fail"
 contains "$OUT_DIR/model-gate-bad-sha.txt" "identity_status: fail"
 
-"$YVEX_BIN" execute artifact materialize-gate check \
+"$YVEX_BIN" artifact verify materialization \
   --model "$MODEL" \
   --label identity-bad-sha \
   --family deepseek \

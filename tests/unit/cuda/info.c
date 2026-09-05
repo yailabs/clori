@@ -270,14 +270,14 @@ static int moe_test_execution_contract(
         !row_count || row_count > 8ull)
         return 0;
     memset(batch, 0, sizeof(*batch));
-    batch->schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V1;
+    batch->schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V2;
     batch->provenance = row_count == 1ull
                             ? YVEX_EXECUTION_BATCH_SINGLE_ROW
                             : YVEX_EXECUTION_BATCH_COMPILED_COMPATIBLE;
     batch->phase = YVEX_EXECUTION_PHASE_DECODE;
     batch->row_count = row_count;
     batch->source_count = 1ull;
-    batch->model_generation = 1ull;
+    batch->engine_generation = 1ull;
     memset(source, 0, sizeof(*source));
     source->execution_generation = 2ull;
     source->state_generation = 3ull;
@@ -290,15 +290,13 @@ static int moe_test_execution_contract(
     }
     batch->sources = source;
     batch->rows = batch_rows;
-    memset(batch->runtime_model_identity, 'a', YVEX_SHA256_HEX_CAP - 1u);
-    memset(batch->runtime_binding_identity, 'b', YVEX_SHA256_HEX_CAP - 1u);
-    memset(batch->physical_variant_identity, 'c', YVEX_SHA256_HEX_CAP - 1u);
     memset(batch->execution_profile_identity, 'd', YVEX_SHA256_HEX_CAP - 1u);
     memset(batch->operation_identity, 'e', YVEX_SHA256_HEX_CAP - 1u);
     memset(policy, 0, sizeof(*policy));
-    policy->schema_version = YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V1;
+    policy->schema_version = YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V2;
     policy->supported_width_mask = 0x1feull;
-    strcpy(policy->narrow_kernel_family, YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT);
+    policy->row_implementation = YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW;
+    policy->matrix_implementation = YVEX_ENGINE_IMPLEMENTATION_COUNT;
     if (yvex_execution_batch_seal(batch, err) != YVEX_OK ||
         yvex_expert_worklist_policy_seal(policy, err) != YVEX_OK)
         return 0;
@@ -518,7 +516,7 @@ static int assert_encoded_moe(yvex_backend *backend)
     rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V4 &&
-            result.tensor_core_launches == 0ull &&
+            result.accelerated_matrix_launches == 0ull &&
             result.worklists.worklist_count == 1ull &&
             result.worklists.pair_count == PAIRS &&
             result.worklists.width_histogram[ROWS] == 1ull &&
@@ -561,7 +559,7 @@ static int assert_encoded_moe(yvex_backend *backend)
     for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
          slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot) {
         job.weights[slot].activation = YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED;
-        job.weights[slot].kernel_family = YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW;
+        job.weights[slot].implementation = YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW;
     }
     native = yvex_cuda_state(backend)->kernel_bundle_native;
     rows.row_count = 2ull;
@@ -577,7 +575,7 @@ static int assert_encoded_moe(yvex_backend *backend)
     if (native) {
         YVEX_TEST_ASSERT(
             rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V4 &&
-                result.tensor_core_launches == 0ull &&
+                result.accelerated_matrix_launches == 0ull &&
                 yvex_device_tensor_is_written(small_output) &&
                 yvex_backend_tensor_read(backend, small_output, encoded,
                                          2ull * WIDTH * sizeof(float), &err) == YVEX_OK,
@@ -601,7 +599,7 @@ static int assert_encoded_moe(yvex_backend *backend)
         rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
             rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V4 &&
-                result.tensor_core_launches == 0ull &&
+                result.accelerated_matrix_launches == 0ull &&
                 yvex_device_tensor_is_written(encoded_output) &&
                 yvex_backend_tensor_read(backend, encoded_output, encoded,
                                          sizeof(encoded), &err) == YVEX_OK,
@@ -615,8 +613,8 @@ static int assert_encoded_moe(yvex_backend *backend)
                          "native grouped encoded MoE matches portable oracle");
         for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
              slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot)
-            job.weights[slot].kernel_family =
-                YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT;
+            job.weights[slot].implementation =
+                YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW;
         for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
              slot <= YVEX_MOE_WEIGHT_ROUTED_DOWN; ++slot)
             job.weights[slot].layout = YVEX_EXECUTION_LAYOUT_EXPERT_MAJOR;
@@ -633,7 +631,7 @@ static int assert_encoded_moe(yvex_backend *backend)
         rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
             rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V4 &&
-                result.tensor_core_launches == 0ull &&
+                result.accelerated_matrix_launches == 0ull &&
                 yvex_device_tensor_is_written(small_output) &&
                 yvex_backend_tensor_read(backend, small_output, tensorcore,
                                          2ull * WIDTH * sizeof(float), &err) == YVEX_OK,
@@ -658,7 +656,7 @@ static int assert_encoded_moe(yvex_backend *backend)
         rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
             rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V4 &&
-                result.tensor_core_launches == 0ull &&
+                result.accelerated_matrix_launches == 0ull &&
                 yvex_device_tensor_is_written(reference_output) &&
                 yvex_backend_tensor_read(backend, reference_output, tensorcore,
                                          sizeof(tensorcore), &err) == YVEX_OK,
@@ -684,7 +682,7 @@ static int assert_encoded_moe(yvex_backend *backend)
         rc = operations->execute_rows(
             backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
-            rc == YVEX_OK && result.completed && result.tensor_core_launches == 0ull &&
+            rc == YVEX_OK && result.completed && result.accelerated_matrix_launches == 0ull &&
                 yvex_device_tensor_is_written(wide_output) &&
                 yvex_backend_tensor_read(backend, wide_output, tensorcore,
                                          4ull * WIDTH * sizeof(float), &err) == YVEX_OK,
@@ -696,9 +694,9 @@ static int assert_encoded_moe(yvex_backend *backend)
         }
         YVEX_TEST_ASSERT(maximum_error <= 1e-6f,
                          "width-four DP4A comparison matches its encoded oracle");
-        worklist_policy.tensor_core_minimum = 4ull;
-        strcpy(worklist_policy.tensor_core_kernel_family,
-               YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT);
+        worklist_policy.matrix_tile_minimum = 4ull;
+        worklist_policy.matrix_implementation =
+            YVEX_ENGINE_IMPLEMENTATION_DEVICE_MATRIX_TILE;
         YVEX_TEST_ASSERT(
             yvex_expert_worklist_policy_seal(&worklist_policy, &err) == YVEX_OK,
             "seal the compiler-admitted real-width Tensor Core worklist");
@@ -707,9 +705,9 @@ static int assert_encoded_moe(yvex_backend *backend)
         rc = operations->execute_rows(
             backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
-            rc == YVEX_OK && result.completed && result.tensor_core_launches == 2ull &&
-                result.worklists.tensor_core_eligible_pairs == 24ull &&
-                result.worklists.tensor_core_executed_pairs == 24ull &&
+            rc == YVEX_OK && result.completed && result.accelerated_matrix_launches == 2ull &&
+                result.worklists.matrix_tile_eligible_pairs == 24ull &&
+                result.worklists.matrix_tile_executed_pairs == 24ull &&
                 result.worklists.narrow_pairs == 0ull &&
                 result.worklists.maximum_bucket_population == 4ull &&
                 yvex_device_tensor_is_written(wide_output) &&
@@ -731,9 +729,9 @@ static int assert_encoded_moe(yvex_backend *backend)
                 &job, &rows, &execution_batch, &worklist_policy,
                 &execution_source, execution_rows, 2ull, &err),
             "seal a narrow batch under the Tensor Core-capable policy");
-        worklist_policy.tensor_core_minimum = 4ull;
-        strcpy(worklist_policy.tensor_core_kernel_family,
-               YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT);
+        worklist_policy.matrix_tile_minimum = 4ull;
+        worklist_policy.matrix_implementation =
+            YVEX_ENGINE_IMPLEMENTATION_DEVICE_MATRIX_TILE;
         YVEX_TEST_ASSERT(
             yvex_expert_worklist_policy_seal(&worklist_policy, &err) == YVEX_OK,
             "reseal the Tensor Core policy for its exact narrow fallback");
@@ -742,9 +740,9 @@ static int assert_encoded_moe(yvex_backend *backend)
         rc = operations->execute_rows(
             backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
-            rc == YVEX_OK && result.completed && result.tensor_core_launches == 0ull &&
-                result.worklists.tensor_core_eligible_pairs == 0ull &&
-                result.worklists.tensor_core_executed_pairs == 0ull &&
+            rc == YVEX_OK && result.completed && result.accelerated_matrix_launches == 0ull &&
+                result.worklists.matrix_tile_eligible_pairs == 0ull &&
+                result.worklists.matrix_tile_executed_pairs == 0ull &&
                 result.worklists.narrow_pairs == 12ull &&
                 yvex_device_tensor_is_written(small_output) &&
                 yvex_backend_tensor_read(backend, small_output, tensorcore,
@@ -760,8 +758,8 @@ static int assert_encoded_moe(yvex_backend *backend)
         job.eager_execution = 0;
         for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
              slot <= YVEX_MOE_WEIGHT_ROUTED_DOWN; ++slot)
-            job.weights[slot].kernel_family =
-                YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT;
+            job.weights[slot].implementation =
+                YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW;
         rows.row_count = ROWS;
         rows.device_rows = input;
         rows.device_outputs = reference_output;
@@ -770,7 +768,8 @@ static int assert_encoded_moe(yvex_backend *backend)
                 &job, &rows, &execution_batch, &worklist_policy,
                 &execution_source, execution_rows, ROWS, &err),
             "reseal the kernel-refusal worklist contract");
-        job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE].kernel_family = "unadmitted-expert-kernel";
+        job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE].implementation =
+            YVEX_ENGINE_IMPLEMENTATION_DEVICE_F32;
         reference_output->is_written = 0;
         memset(&result, 0, sizeof(result));
         rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
@@ -778,8 +777,8 @@ static int assert_encoded_moe(yvex_backend *backend)
             rc == YVEX_ERR_FORMAT && !result.completed &&
                 !yvex_device_tensor_is_written(reference_output),
             "mismatched compiler-selected expert kernels refuse without fallback");
-        job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE].kernel_family =
-            YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT;
+        job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE].implementation =
+            YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW;
     } else {
         YVEX_TEST_ASSERT(
             rc == YVEX_ERR_UNSUPPORTED && !result.completed &&
@@ -1077,7 +1076,7 @@ static int assert_grouped_moe(yvex_backend *backend)
             row_result.row_expert_pairs == 2ull && row_result.unique_experts >= 1ull &&
             yvex_device_tensor_is_written(batch_output) &&
             row_result.kernel_launches < 2ull * normal.kernel_launches &&
-            row_result.stream_synchronizations == 1ull &&
+            row_result.queue_synchronizations == 1ull &&
             row_result.device_synchronizations == 0ull &&
             yvex_backend_tensor_read(backend, batch_output, batch_device,
                                      sizeof(batch_device), &err) == YVEX_OK &&
@@ -1098,7 +1097,7 @@ static int assert_grouped_moe(yvex_backend *backend)
         rc == YVEX_OK && !row_result.completed &&
             row_result.device_completion_pending &&
             yvex_device_tensor_is_written(batch_output) &&
-            !row_result.stream_synchronizations &&
+            !row_result.queue_synchronizations &&
             !row_result.device_synchronizations &&
             row_result.d2h_bytes == sizeof(deferred.status) + sizeof(deferred.worklist) &&
             !row_result.memory.complete && row_result.memory.activation_bytes != 0ull &&
@@ -1114,7 +1113,7 @@ static int assert_grouped_moe(yvex_backend *backend)
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && completion_result.completed && deferred.status == 0 &&
             deferred.worklist.bucket_count >= 1ull &&
-            completion_result.stream_synchronizations == 1ull &&
+            completion_result.queue_synchronizations == 1ull &&
             completion_result.device_synchronizations == 0ull &&
             row_result.active_weight_base_bytes +
                     row_result.active_weight_per_unique_expert_bytes *
@@ -1124,7 +1123,7 @@ static int assert_grouped_moe(yvex_backend *backend)
     rc = row_operations->complete_rows(backend, 1, &completion_result, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && completion_result.completed &&
-            !completion_result.stream_synchronizations &&
+            !completion_result.queue_synchronizations &&
             !completion_result.device_synchronizations,
         "a proved same-stream barrier adds no redundant MoE synchronization");
     job.device_completion = NULL;
@@ -1389,18 +1388,18 @@ static int assert_deferred_attention_completion(yvex_backend *backend)
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && !completion.pending && published == staged &&
             completion.barrier_observed &&
-            completion.output.stream_synchronizations == 1ull &&
+            completion.output.queue_synchronizations == 1ull &&
             !completion.output.device_synchronizations,
         "first deferred attention completion publishes after one stream barrier");
 
     published = -1.0f;
     completion.pending = 1;
     completion.barrier_observed = 0;
-    completion.output.stream_synchronizations = 0ull;
+    completion.output.queue_synchronizations = 0ull;
     rc = yvex_backend_attention_complete(backend, &completion, 1, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && published == staged && completion.barrier_observed &&
-            !completion.output.stream_synchronizations &&
+            !completion.output.queue_synchronizations &&
             !completion.output.device_synchronizations,
         "ordered attention completions reuse one already observed barrier");
 
@@ -1525,7 +1524,9 @@ int yvex_cuda_test_info(void)
         "yvex_attention_activation_quantize",
         "yvex_attention_rolling_state",
         "yvex_attention_topk",
-        "yvex_attention_reduce"
+        "yvex_attention_reduce",
+        "yvex_conv1d_f32",
+        "yvex_conv1d_transposed_f32"
     };
     size_t symbol_index;
     unsigned char *imported = NULL, *mapped = NULL, *pageable = NULL;
@@ -1736,7 +1737,7 @@ int yvex_cuda_test_info(void)
                              attention_symbols[symbol_index],
                              YVEX_BACKEND_CAPABILITY_REASON_FUNCTION_MISSING,
                              YVEX_BACKEND_VARIANT_ATTENTION_ENCODED) == 0,
-                         "each encoded-attention symbol is atomically required");
+                         "each encoded CUDA bundle symbol is atomically required");
     }
     backend = NULL;
     rc = yvex_backend_open(&backend, &options, &err);

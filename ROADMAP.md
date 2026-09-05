@@ -20,19 +20,24 @@ an NVIDIA DGX Spark / GB10 CUDA system from a complete GGUF artifact produced
 by YVEX. The accepted product topology is:
 
 ```text
-yvex  one public executable with finite client/offline modes and an explicit
-      foreground server mode
+yvex  one public executable with explicit offline, foreground-host, native-client,
+      and external-compatibility roles
 ```
 
-`yvex server MODEL [--ctx N]` directly enters the foreground server lifecycle
-and owns the model, worker, queue, sessions, KV, Unix-domain protocol, loopback
-OpenAI-compatible listener, and runtime telemetry. Runtime-facing client
-operations cross the local protocol. Finite compiler and engineering operations
-may link engine owners but never become another hosted runtime.
+`yvex serve` directly enters a persistent foreground host lifecycle with no
+loaded engine. Interactive `yvex engine load` (or deterministic automation via
+`yvex engine load PROFILE`) and `yvex engine unload ENGINE` create and retire identity-bound engine
+generations while the Unix-domain protocol, loopback OpenAI-compatible listener,
+and telemetry remain alive.
+Runtime-facing clients route to one exact engine generation through the local
+protocol. Finite compiler and engineering operations may link engine owners but
+never become another hosted runtime.
 
-The current implementation can compile admitted physical variants, open one
-complete model, generate streamed text, retain exact multi-turn sessions, and
-serve the bounded `yvex.openai.compat.v2` profile. This establishes executable
+The current implementation can compile admitted physical packages, specialize
+them for one deployment, dynamically own several fitting engine generations,
+generate streamed text or typed media, retain exact multi-turn sessions, and
+serve the bounded `yvex.openai.compat.v2` profile. Resource admission may still
+permit only one very large engine on GB10. These facts establish executable
 product capability, not model quality, release benchmark, or release
 qualification.
 
@@ -65,7 +70,7 @@ run, or a self-authored report cannot promote a capability by itself.
 | 2 | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `complete` | One versioned operation authority drives command paths, flags, defaults, validation, help, discovery, protocol projections, slash catalog, and command tests. | `V010.PROJECT.CONTROL.PUBLIC.0` |
 | 3 | `V010.DOCS.INFORMATION.ARCHITECTURE.0` | `complete` | One governed information architecture separates doctrine, reference and implemented architecture, family facts, contracts, operations, development policy, project control, decisions, audits, migrations, releases, and history. | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` |
 | 4 | `V010.REPO.CODE.COMMENTARY.0` | `complete` | Natural selective technical commentary replaces mandatory labeled prose across every governed first-party source while production lexical tokens remain unchanged. | `V010.DOCS.INFORMATION.ARCHITECTURE.0` |
-| 5 | `V010.OPERATOR.REPL.CONSOLE.0` | `complete` | A mature server-backed linear console consumes the canonical operation authority and renders truthful status, progress, metrics, the unified server log, and cancellation; explicit reasoning remains conditional on an admitted typed channel. | `V010.REPO.CODE.COMMENTARY.0` |
+| 5 | `V010.OPERATOR.REPL.CONSOLE.0` | `complete` | A mature host-backed linear chat client consumes the canonical operation authority and renders truthful status, progress, metrics, host logs, and cancellation; explicit reasoning remains conditional on an admitted typed channel. | `V010.REPO.CODE.COMMENTARY.0` |
 | 6 | `V010.REBASE.DEEPSEEK.DSPARK.0` | `complete` | The sole DeepSeek vertical is rebound to the exact DSpark source and reaches target-verified speculative text through the hosted product path. | `V010.OPERATOR.REPL.CONSOLE.0` |
 | 7 | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` | `complete` | Identity-bound execution profiles, Physical Execution IR, prefix-addressable candidate state, shape-safe CUDA admission, exact partial turns, typed device views, and operational projections form one verified execution substrate. | `V010.REBASE.DEEPSEEK.DSPARK.0` |
 | 8 | `V010.REPO.ARCHITECTURE.COMPRESSION.0` | `complete` | One source-membership authority and fewer ceremonial owners, internal ABIs, symbols, build declarations, targets, and duplicate registry facts preserve the accepted execution behavior in a directly navigable repository. | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` |
@@ -78,26 +83,8 @@ run, or a self-authored report cannot promote a capability by itself.
 
 Active Next: V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
 
-Detailed accepted and successor contracts for the current sequence are:
-
-- [Canonical Operation and Command Architecture](docs/milestones/command-architecture.md)
-- [Documentation and Information Architecture](docs/milestones/documentation-architecture.md)
-- [Natural Technical Commentary](docs/milestones/code-commentary.md)
-- [Mature Runtime Console and Interactive REPL](docs/milestones/runtime-console-repl.md)
-- [DeepSeek V4 Flash DSpark Rebase](docs/milestones/deepseek-dspark-rebase.md)
-- [Verified Execution-Substrate Refoundation](docs/milestones/product-architecture.md)
-- [Repository Architecture Compression](docs/milestones/repository-compression.md)
-- [Core Compiler and Family Consolidation](docs/milestones/core-compilation-consolidation.md)
-- [Repository-Native Engineering Worklog](docs/milestones/engineering-worklog.md)
-- [Model-Derived GB10 Execution](docs/milestones/gb10-optimization.md)
-
-The pre-implementation combined plans remain traceable without staying on the
-active path:
-
-| Milestone | State | Successor |
-| --- | --- | --- |
-| `V010.OPERATOR.RUNTIME.CONSOLE.0` | `superseded` | `V010.OPERATOR.REPL.CONSOLE.0` |
-| `V010.OPERATOR.COMMAND.CONSOLE.0` | `superseded` | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` then `V010.OPERATOR.REPL.CONSOLE.0` |
+Detailed retired contracts and superseded plans remain traceable in Git
+history; they are not required to understand the current implementation.
 
 ## Accepted foundations
 
@@ -108,41 +95,42 @@ not a replacement historical ledger.
 | --- | --- |
 | Source and compilation | The pinned 48-shard DSpark source, tokenizer, 72,317-tensor coverage, 1,409-terminal Transformation IR, bootstrap physical policy, qtypes, and deterministic GGUF emission have typed owners and identity-bound outputs. |
 | Compiler and family boundary | Compiler-facing family adapters seal source-authored facts into Semantic Model IR and a canonical Operator Graph IR. Generic passes seal Physical Execution IR and one content-addressed binding; runtime model-open authenticates and instantiates that compiled truth without consulting a concrete family implementation. |
+| Pure SSM qualification | [Mamba2](docs/model-families/mamba2.md) is partial: product-acquired pinned source, exact BF16 tensor roles, CPU selective-SSD component numerics and common transactional recurrent-state geometry are proven. Conflicting upstream numerical/token policy and the missing SSM-only compiled decoder prevent READY or hosted-generation claims. |
 | Artifact and admission | One complete DSpark bootstrap artifact contains the target and drafter; structural, payload, roundtrip, materialization, and one binding containing target/draft/verification plans are admitted outside Git. |
-| Runtime and generation | One authenticated model opens in the foreground `yvex server` process; server-owned sessions retain exact target KV/token truth and bounded candidate state; target-only and target-verified DSpark text run on CPU and the admitted mixed CUDA/host path. |
-| Application serving | Local protocol v10 and YVEX OpenAI Compatibility Profile v2 share one runtime, scheduler, session registry, and telemetry authority; bounded session fork composes immutable prefix sharing with independent semantic state. |
-| Product surface | `yvex` is the sole product executable. Its explicit foreground `server MODEL` mode hosts the model; `chat` and `run` remain protocol clients, while finite compiler and engineering lanes remain bounded offline operations. |
+| Runtime and generation | An authenticated package and deployment specialization open as one immutable engine generation; engine-bound sessions retain exact target KV/token truth and bounded candidate state; target-only and target-verified DSpark text and MiniMax typed media use the same host/runtime/backend substrate. |
+| Application serving | Local protocol v20 and YVEX OpenAI Compatibility Profile v2 share one persistent host, engine manager, session registry, request routing, and telemetry authority. V20 carries exact capacity/resource/measurement facts, ordered typed content and provenance, directional specialization capabilities, attached-client/model-lease occupancy, and explicit demand-active lease acquire/release without changing session selection. |
+| Product surface | `yvex` is the sole product executable. `yvex serve` starts the foreground zero-engine host; `model load`, `model unload`, and `model active` own ordinary engine lifecycle/truth; advanced `engine` commands retain exact plumbing; `yvex chat` is the sole public REPL and stages repeated next-turn attachments without creating sessions; bare `yvex` renders help. |
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
-| Documentation architecture | Canonical doctrine, terminology, reference and implemented architecture, family records, contracts, operations, development policy, audits, migrations, and release surfaces have separate governed owners. |
+| Documentation architecture | A compact current map links implemented architecture, family records, contracts, operation, development and release owners; retired audits, plans and migrations live in Git history. |
 | Code commentary | Every governed first-party source follows the natural selective-commentary doctrine; the structural guard rejects obsolete templates and boilerplate while production lexical tokens remain unchanged. |
-| Engineering worklog | One repository-scoped Codex skill captures selected material semantic changes and evidence in retained records; ignored drafts and optional communication projections create no product or publication authority. |
-| Runtime console | The server-backed `yvex>` console renders one composed attachment view, protocol-authored prefill progress, direct model output, typed final metrics, registry-derived slash discovery and completion, the canonical `server log` observability stream, server cancellation, and bounded terminal restoration including Ctrl-D. |
-| Operator audit | The frozen post-cutover audit inventories 70 route-level commands, 426 command/flag pairs, 99 semantic operations, 10 slash commands, 14 protocol operations, 5 HTTP endpoints, and every Make/script/environment surface with zero unmatched categories. |
+| Runtime console | Explicit `yvex chat` is the sole client-owned linear, scrollback-preserving console over public protocol facts. Bare `yvex` only renders the product command map. Chat renders protocol-authored progress, committed output, typed metrics, cancellation and bounded terminal restoration without backend-private reads. |
+| Operator surface | The strict generated operation registry drives compiled discovery, help, completion and slash projections; executable tests validate the current graph directly rather than reconciling a frozen audit. |
 | Performance | `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` remains `partial`: startup and bounded profiling are accepted; warm decode remains below admission. |
-
-The frozen audit is under
-[`docs/audits/operator-surface-ec7dcc/`](docs/audits/operator-surface-ec7dcc/README.md).
-Its tables describe baseline `ec7dccede90c1a1efa87b4c2519c25b30d5e1733` and
-are implementation input, not live command or project authority.
 
 ## Open work
 
 ### GB10 runtime optimization
 
 The earlier performance delivery reduced cold startup and added internal
-profiling, but did not optimize warm decode. The continuation starts from
-measured owners rather than a preselected mechanism. Current accepted
-observations include approximately 0.794 prompt tokens/s, 0.432 decode
-tokens/s, attention at 43.88% of measured warm execution, MoE at 19.29%, about
-4,511 kernel launches and 63 synchronizations per token. These are diagnostic
-baseline facts, not a release benchmark.
+profiling, but did not close warm decode. Fresh consolidated-tree
+characterization retained a 9.83 token/s ten-sample target-only short median,
+7.62 token/s over three 256-token target-only samples, 10.68 token/s on the
+matching DSpark short lane, and 9.72 token/s over the three DSpark 256-token
+samples. One 1,000-token reasoning characterization measured 2.22 token/s
+target-only and 2.08 token/s DSpark. These are controlled characterization,
+not a release benchmark. The 20--24 token/s class is the first minimum
+engineering floor, not the optimization destination.
 
-The active implementation now derives execution geometry from one sealed model
-descriptor and admits binding v14 as the complete compiler authority; older
-bindings are refused because they cannot represent the legal expert-worklist
-widths and optional Tensor Core regime carried by Physical Execution IR v4.
-Runtime instantiates actual expert-major populations from typed execution batches;
-the backend cannot infer semantic compatibility or manufacture execution width.
+The active implementation now derives stable package geometry from Physical
+Execution IR v5 and authenticates it through runtime binding v15. The explicit
+v14 reader accepts compatible canonical package records, lifts them into v5,
+and refuses v14 derived-layout requirements that would misrepresent the new
+package/specialization boundary. Deployment implementation class, activation
+representation, admitted widths, hardware capability, and crossovers are
+sealed once in an engine specialization rather than persisted as package
+meaning. Runtime instantiates actual expert-major populations from typed
+execution batches; the backend cannot infer semantic compatibility or
+manufacture execution width.
 Hardware, workload, capacity and state-page facts remain separate. Admission
 refuses insufficient model-residency memory before artifact open. Host graph
 state commits through stable per-class virtual pages; a phase roofline ledger
@@ -211,8 +199,9 @@ Machine-readable readiness facts retained for claim guards:
 ```text
 canonical_operation_registry_ready=1
 generated_command_descriptors_ready=1
-protocol_v8_ready=1
+protocol_v15_ready=1
 mature_repl_console_ready=1
+terminal_application_ready=1
 deepseek_dspark_source_ready=1
 target_only_generation_ready=1
 dspark_verified_generation_ready=1
@@ -223,7 +212,7 @@ model_quality_evaluation_ready=0
 full_model_release_benchmark_ready=0
 release_qualification_ready=0
 continuous_batching_ready=0
-multi_model_server_ready=0
+multi_model_server_ready=1
 remote_server_ready=0
 authentication_ready=0
 tls_ready=0
@@ -263,9 +252,10 @@ used for this cutover.
 
 YVEX does not currently claim:
 
-- a full-screen TUI or an explicit reasoning channel for a runtime profile that
-  does not advertise one;
-- warm decode optimization or 5, 10, or 20 tokens/s admission;
+- an explicit reasoning channel for a runtime profile that does not advertise
+  one;
+- the initial 20--24 token/s warm-decode performance class or a later
+  optimization destination;
 - DSpark acceleration, optimized block verification, or production load-aware
   confidence scheduling;
 - model behavior or model quality evaluation;
@@ -275,6 +265,7 @@ YVEX does not currently claim:
   security;
 - the full OpenAI API, Anthropic compatibility, hosted tools, multimodal
   OpenAI input, or model-server tool execution;
-- continuous batching, multi-model serving, distributed serving, or sessions
+- global ready-sequence continuous batching, arbitrary simultaneous residency
+  of huge models, automatic engine swap, distributed serving, or sessions
   persisted across server restart;
 - a second complete model-family vertical.

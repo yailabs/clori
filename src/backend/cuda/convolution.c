@@ -1,5 +1,6 @@
 /* Execute multistage alias-free Conv1D decoders over admitted resident F32 weights. */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/component_ops.h"
 
 #include <limits.h>
 #include <math.h>
@@ -138,6 +139,246 @@ static int decoder_launch(alias_decoder_run *run, CUfunction function,
                                    YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
                                    stage, err);
     if (rc == YVEX_OK) run->result->kernel_launches++;
+    return rc;
+}
+
+static int convolution_grid(unsigned long long tasks, unsigned int *grid,
+                            const char *stage, yvex_error *err)
+{
+    if (!tasks || tasks > (unsigned long long)UINT_MAX * CONVOLUTION_BLOCK) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, stage,
+                       "convolution launch geometry exceeds the CUDA grid bound");
+        return YVEX_ERR_BOUNDS;
+    }
+    *grid = (unsigned int)((tasks + CONVOLUTION_BLOCK - 1ull) / CONVOLUTION_BLOCK);
+    return YVEX_OK;
+}
+
+static int convolution_launch(yvex_backend *backend, CUfunction function,
+                              unsigned int grid, unsigned int block, void **parameters,
+                              const char *stage, yvex_error *err)
+{
+    int rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                              function, grid, block, 0u, parameters, stage, err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                                   stage, err);
+    return rc;
+}
+
+static int convolution_weight_address(
+    yvex_backend *backend, const yvex_convolution_weight *weight,
+    unsigned long long expected_bytes, CUdeviceptr *address,
+    const char *stage, yvex_error *err)
+{
+    if (!weight || !weight->encoded || weight->qtype != YVEX_GGUF_QTYPE_F32 ||
+        weight->encoded_bytes != expected_bytes ||
+        yvex_backend_resident_resolve(backend, weight->encoded,
+                                      weight->encoded_bytes, address) !=
+            YVEX_BACKEND_RESIDENT_HIT) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, stage,
+                       "convolution requires an exact resident F32 weight");
+        return YVEX_ERR_FORMAT;
+    }
+    return YVEX_OK;
+}
+
+int yvex_backend_conv2d_f32(
+    yvex_backend *backend, const yvex_convolution_2d_geometry *geometry,
+    const yvex_device_tensor *input, const yvex_convolution_weight *weight,
+    const yvex_convolution_weight *bias, yvex_device_tensor *output,
+    yvex_convolution_cuda_result *result, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    unsigned long long padded_height, padded_width, output_height, output_width;
+    unsigned long long input_values, output_values, weight_values, bytes;
+    CUdeviceptr input_address, weight_address = 0, bias_address = 0, output_address;
+    unsigned int grid;
+    int reflect_padding, rc;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!backend || !geometry || !input || !weight || !output || !result || !state ||
+        yvex_backend_kind_of(backend) != YVEX_BACKEND_KIND_CUDA ||
+        !yvex_backend_tensor_owned_by(backend, input) ||
+        !yvex_backend_tensor_owned_by(backend, output) ||
+        !geometry->batch || !geometry->input_channels || !geometry->output_channels ||
+        !geometry->input_height || !geometry->input_width || !geometry->kernel_height ||
+        !geometry->kernel_width || !geometry->stride_height || !geometry->stride_width ||
+        !geometry->weight_temporal_extent ||
+        geometry->weight_temporal_index >= geometry->weight_temporal_extent ||
+        geometry->padding > YVEX_CONVOLUTION_PADDING_REFLECT ||
+        !yvex_core_u64_add(geometry->input_height, geometry->padding_top,
+                           &padded_height) ||
+        !yvex_core_u64_add(padded_height, geometry->padding_bottom,
+                           &padded_height) ||
+        !yvex_core_u64_add(geometry->input_width, geometry->padding_left,
+                           &padded_width) ||
+        !yvex_core_u64_add(padded_width, geometry->padding_right, &padded_width) ||
+        padded_height < geometry->kernel_height ||
+        padded_width < geometry->kernel_width) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.conv2d",
+                       "one complete bounded Conv2D request is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    output_height = (padded_height - geometry->kernel_height) /
+                        geometry->stride_height + 1ull;
+    output_width = (padded_width - geometry->kernel_width) /
+                       geometry->stride_width + 1ull;
+    if (!yvex_core_u64_mul(geometry->batch, geometry->input_channels, &input_values) ||
+        !yvex_core_u64_mul(input_values, geometry->input_height, &input_values) ||
+        !yvex_core_u64_mul(input_values, geometry->input_width, &input_values) ||
+        !yvex_core_u64_mul(geometry->batch, geometry->output_channels, &output_values) ||
+        !yvex_core_u64_mul(output_values, output_height, &output_values) ||
+        !yvex_core_u64_mul(output_values, output_width, &output_values) ||
+        !yvex_core_u64_mul(geometry->output_channels, geometry->input_channels,
+                           &weight_values) ||
+        !yvex_core_u64_mul(weight_values, geometry->weight_temporal_extent,
+                           &weight_values) ||
+        !yvex_core_u64_mul(weight_values, geometry->kernel_height, &weight_values) ||
+        !yvex_core_u64_mul(weight_values, geometry->kernel_width, &weight_values) ||
+        !yvex_core_u64_mul(input_values, sizeof(float), &bytes) ||
+        input->bytes != bytes ||
+        !yvex_core_u64_mul(output_values, sizeof(float), &bytes) ||
+        output->bytes != bytes ||
+        !yvex_core_u64_mul(weight_values, sizeof(float), &bytes)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.conv2d.geometry",
+                       "Conv2D tensor geometry overflowed or differs from its device tensors");
+        return YVEX_ERR_BOUNDS;
+    }
+    rc = convolution_weight_address(backend, weight, bytes, &weight_address,
+                                    "cuda.conv2d.weight", err);
+    if (rc == YVEX_OK && bias) {
+        if (!yvex_core_u64_mul(geometry->output_channels, sizeof(float), &bytes))
+            rc = YVEX_ERR_BOUNDS;
+        else
+            rc = convolution_weight_address(backend, bias, bytes, &bias_address,
+                                            "cuda.conv2d.bias", err);
+    }
+    if (rc != YVEX_OK) return rc;
+    input_address = yvex_cuda_tensor_ptr(input);
+    output_address = yvex_cuda_tensor_ptr(output);
+    reflect_padding = geometry->padding == YVEX_CONVOLUTION_PADDING_REFLECT;
+    rc = convolution_grid(output_values, &grid, "cuda.conv2d.launch", err);
+    if (rc == YVEX_OK) {
+        void *parameters[] = {
+            &input_address, &weight_address, &bias_address, &output_address,
+            (void *)&geometry->batch, (void *)&geometry->input_channels,
+            (void *)&geometry->output_channels, (void *)&geometry->input_height,
+            (void *)&geometry->input_width, &output_height, &output_width,
+            (void *)&geometry->kernel_height, (void *)&geometry->kernel_width,
+            (void *)&geometry->stride_height, (void *)&geometry->stride_width,
+            (void *)&geometry->padding_top, (void *)&geometry->padding_left,
+            (void *)&geometry->weight_temporal_extent,
+            (void *)&geometry->weight_temporal_index, &reflect_padding};
+        rc = convolution_launch(backend, state->conv2d_function, grid,
+                                CONVOLUTION_BLOCK, parameters, "cuda.conv2d", err);
+    }
+    if (rc == YVEX_OK) {
+        output->is_written = 1;
+        result->kernel_launches = 1ull;
+        result->output_height = output_height;
+        result->output_width = output_width;
+        result->output_values = output_values;
+        result->complete = 1;
+        yvex_error_clear(err);
+    }
+    return rc;
+}
+
+int yvex_backend_group_norm_silu_f32(
+    yvex_backend *backend, const yvex_device_tensor *input,
+    const yvex_convolution_weight *weight, const yvex_convolution_weight *bias,
+    unsigned long long batch, unsigned long long channels,
+    unsigned long long height, unsigned long long width,
+    unsigned long long groups, float epsilon, yvex_device_tensor *output,
+    yvex_convolution_cuda_result *result, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    unsigned long long values, bytes, parameter_bytes, tasks;
+    CUdeviceptr input_address, weight_address = 0, bias_address = 0, output_address;
+    unsigned int grid;
+    int rc;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!backend || !input || !weight || !bias || !output || !result || !state ||
+        !batch || !channels || !height || !width || !groups || channels % groups ||
+        epsilon <= 0.0f || !yvex_backend_tensor_owned_by(backend, input) ||
+        !yvex_backend_tensor_owned_by(backend, output) ||
+        !yvex_core_u64_mul(batch, channels, &values) ||
+        !yvex_core_u64_mul(values, height, &values) ||
+        !yvex_core_u64_mul(values, width, &values) ||
+        !yvex_core_u64_mul(values, sizeof(float), &bytes) ||
+        input->bytes != bytes || output->bytes != bytes ||
+        !yvex_core_u64_mul(channels, sizeof(float), &parameter_bytes)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.group-norm-silu",
+                       "one complete isolated GroupNorm+SiLU request is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = convolution_weight_address(backend, weight, parameter_bytes, &weight_address,
+                                    "cuda.group-norm-silu.weight", err);
+    if (rc == YVEX_OK)
+        rc = convolution_weight_address(backend, bias, parameter_bytes, &bias_address,
+                                        "cuda.group-norm-silu.bias", err);
+    if (rc != YVEX_OK) return rc;
+    input_address = yvex_cuda_tensor_ptr(input);
+    output_address = yvex_cuda_tensor_ptr(output);
+    tasks = batch * groups;
+    rc = convolution_grid(tasks, &grid, "cuda.group-norm-silu.launch", err);
+    if (rc == YVEX_OK) {
+        void *parameters[] = {&input_address, &weight_address, &bias_address,
+                              &output_address, &batch, &channels, &height, &width,
+                              &groups, &epsilon};
+        rc = convolution_launch(backend, state->group_norm_silu_function, grid,
+                                CONVOLUTION_BLOCK, parameters,
+                                "cuda.group-norm-silu", err);
+    }
+    if (rc == YVEX_OK) {
+        output->is_written = 1;
+        result->kernel_launches = 1ull;
+        result->output_height = height;
+        result->output_width = width;
+        result->output_values = values;
+        result->complete = 1;
+        yvex_error_clear(err);
+    }
+    return rc;
+}
+
+int yvex_backend_add_f32(
+    yvex_backend *backend, yvex_device_tensor *destination,
+    const yvex_device_tensor *source, unsigned long long values,
+    yvex_convolution_cuda_result *result, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    CUdeviceptr destination_address, source_address;
+    unsigned long long bytes;
+    unsigned int grid;
+    float destination_scale = 1.0f, source_scale = 1.0f;
+    int rc;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!backend || !destination || !source || !values || !result || !state ||
+        !yvex_backend_tensor_owned_by(backend, destination) ||
+        !yvex_backend_tensor_owned_by(backend, source) ||
+        !yvex_core_u64_mul(values, sizeof(float), &bytes) ||
+        destination->bytes != bytes || source->bytes != bytes) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.add-f32",
+                       "equal bounded F32 device tensors are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    destination_address = yvex_cuda_tensor_ptr(destination);
+    source_address = yvex_cuda_tensor_ptr(source);
+    rc = convolution_grid(values, &grid, "cuda.add-f32.launch", err);
+    if (rc == YVEX_OK) {
+        void *parameters[] = {&destination_address, &source_address, &values,
+                              &destination_scale, &source_scale};
+        rc = convolution_launch(backend, state->vector_update_function, grid,
+                                CONVOLUTION_BLOCK, parameters, "cuda.add-f32", err);
+    }
+    if (rc == YVEX_OK) {
+        destination->is_written = 1;
+        result->kernel_launches = 1ull;
+        result->output_values = values;
+        result->complete = 1;
+        yvex_error_clear(err);
+    }
     return rc;
 }
 
@@ -300,7 +541,8 @@ static int decoder_convolution(
     unsigned long long batch, input_channels, output_channels, input_length;
     unsigned long long kernel_size, stride, dilation, padding;
     unsigned long long output_length, weight_rows, weight_width, tasks;
-    int transposed, rc;
+    CUfunction function;
+    int rc;
     if (!geometry || !input || !output ||
         decoder_output_length(geometry, &output_length, err) != YVEX_OK)
         return yvex_error_code(err);
@@ -337,14 +579,16 @@ static int decoder_convolution(
         stride = geometry->stride;
         dilation = geometry->dilation;
         padding = geometry->padding;
-        transposed = geometry->transposed;
+        function = geometry->transposed
+                       ? (state ? state->conv1d_transposed_function : NULL)
+                       : (state ? state->conv1d_function : NULL);
         void *parameters[] = {
             &input_address, &weight, &bias, &scale_address, &output_address,
             &batch, &input_channels, &output_channels, &input_length,
-            &output_length, &kernel_size, &stride, &dilation, &padding, &transposed,
+            &output_length, &kernel_size, &stride, &dilation, &padding,
         };
-        rc = decoder_launch(run, state ? state->conv1d_function : NULL,
-                            tasks, parameters, "cuda.alias-decoder.convolution", err);
+        rc = decoder_launch(run, function, tasks, parameters,
+                            "cuda.alias-decoder.convolution", err);
     }
     return decoder_tensor_close(run, &scale, rc, err);
 }
@@ -663,7 +907,7 @@ static int decoder_output(alias_decoder_run *run, yvex_device_tensor *current,
     return decoder_tensor_close(run, &activation, rc, err);
 }
 
-int yvex_backend_alias_decoder_execute(
+int yvex_cuda_alias_decoder_execute(
     yvex_backend *backend, const yvex_alias_decoder_request *request,
     yvex_alias_decoder_result *result, yvex_error *err)
 {

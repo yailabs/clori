@@ -907,7 +907,7 @@ static int activation_prefill_state_summary(
 
 static int activation_prefill_capacity_build(
     yvex_graph_attention_capacity_plan **out,
-    const yvex_runtime_model_view *model,
+    const yvex_model_engine_view *model,
     unsigned long long start, unsigned long long tokens,
     yvex_error *err)
 {
@@ -923,14 +923,14 @@ static int activation_prefill_capacity_build(
 }
 
 static int activation_prefill_prepare(
-    yvex_runtime_model *model, yvex_runtime_execution_session *session,
+    yvex_model_engine *model, yvex_runtime_execution_session *session,
     const yvex_runtime_activation_prefill_request *request,
     const yvex_runtime_activation_input_summary *input,
     yvex_graph_attention_state_summary *state,
-    yvex_runtime_model_failure *failure, yvex_error *err)
+    yvex_model_engine_failure *failure, yvex_error *err)
 {
-    const yvex_runtime_model_view *model_view =
-        yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *model_view =
+        yvex_model_engine_view_get(model);
     yvex_graph_attention_capacity_plan *state_capacity = NULL;
     yvex_graph_attention_capacity_plan *workspace_capacity = NULL;
     yvex_attention_failure graph_failure;
@@ -989,20 +989,20 @@ static int activation_prefill_prepare(
 }
 
 static int activation_prefill_admit(
-    yvex_runtime_model *model, yvex_runtime_execution_session *session,
+    yvex_model_engine *model, yvex_runtime_execution_session *session,
     const yvex_runtime_activation_input *input,
     const yvex_runtime_activation_prefill_request *request,
     yvex_error *err)
 {
-    const yvex_runtime_model_view *model_view =
-        yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *model_view =
+        yvex_model_engine_view_get(model);
     const yvex_runtime_session_view *session_view =
         yvex_runtime_session_view_get(session);
     const yvex_runtime_binding_summary *binding =
         model_view ? model_view->binding : NULL;
     yvex_runtime_activation_input_expectation expectation;
     yvex_attention_operation_scope graph_scope;
-    if (!model_view || !session_view || session_view->model != model ||
+    if (!model_view || !session_view || session_view->engine != model ||
         !binding || !input || !request || !request->chunk_tokens ||
         !request->context_capacity ||
         (request->backend != YVEX_BACKEND_KIND_CPU &&
@@ -1064,11 +1064,11 @@ static int activation_prefill_execution_identity(
 }
 
 int yvex_runtime_activation_prefill_execute(
-    yvex_runtime_model *model, yvex_runtime_execution_session *session,
+    yvex_model_engine *model, yvex_runtime_execution_session *session,
     const yvex_runtime_activation_input *input,
     const yvex_runtime_activation_prefill_request *request,
     yvex_runtime_activation_prefill_result *result,
-    yvex_runtime_model_failure *failure, yvex_error *err)
+    yvex_model_engine_failure *failure, yvex_error *err)
 {
     const yvex_runtime_activation_input_summary *summary =
         yvex_runtime_activation_input_summary_get(input);
@@ -1187,25 +1187,25 @@ int yvex_runtime_activation_prefill_execute(
 
 static int activation_prefill_operator_publish(
     const yvex_graph_attention_operator_request *request,
-    const yvex_runtime_model *model,
+    const yvex_model_engine *model,
     const yvex_runtime_execution_session *session,
     const yvex_runtime_activation_prefill_result *prefill,
     yvex_graph_attention_operator_result *result, yvex_error *err)
 {
-    const yvex_runtime_model_view *model_view =
-        yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *model_view =
+        yvex_model_engine_view_get(model);
     const yvex_runtime_session_view *session_view =
         yvex_runtime_session_view_get(session);
     const yvex_runtime_binding_summary *binding =
         model_view ? model_view->binding : NULL;
     const yvex_attention_summary *attention =
         model_view ? yvex_attention_plan_summary(model_view->attention) : NULL;
-    yvex_runtime_model_summary model_summary;
+    yvex_model_engine_summary model_summary;
     yvex_runtime_session_summary session_summary;
     yvex_graph_attention_state_summary state;
     yvex_runtime_state_residency_summary state_residency;
     if (!binding || !attention || !session_view ||
-        yvex_runtime_model_summary_copy(
+        yvex_model_engine_summary_copy(
             model, &model_summary, err) != YVEX_OK ||
         yvex_runtime_session_summary_copy(
             session, &session_summary, err) != YVEX_OK ||
@@ -1337,11 +1337,6 @@ static int activation_prefill_operator_publish(
     result->upload_count = session_summary.upload_count;
     result->artifact_hash_passes = model_summary.artifact_hash_passes;
     result->artifact_bytes_hashed = model_summary.artifact_bytes_hashed;
-    result->runtime_model_builds = model_summary.runtime_model_builds;
-    result->runtime_descriptor_builds =
-        model_summary.runtime_descriptor_builds;
-    result->semantic_graph_builds = model_summary.semantic_graph_builds;
-    result->executable_graph_builds = model_summary.executable_graph_builds;
     result->capabilities = session_summary.capabilities;
     result->attention_cuda_execution_ready =
         request->backend == YVEX_BACKEND_KIND_CUDA;
@@ -1383,16 +1378,16 @@ int yvex_runtime_activation_prefill_operator_execute(
     yvex_graph_attention_operator_result *result,
     yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err)
 {
-    yvex_runtime_model_open_request model_request;
+    yvex_model_engine_open_request model_request;
     yvex_runtime_session_open_request session_request;
     yvex_runtime_activation_input_limits limits;
     yvex_runtime_activation_prefill_request prefill_request;
     yvex_runtime_activation_prefill_result prefill;
     yvex_runtime_activation_input *input = NULL;
     yvex_runtime_cleanup_lease *cleanup = NULL;
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine *model = NULL;
     yvex_runtime_execution_session *session = NULL;
-    yvex_runtime_model_failure failure;
+    yvex_model_engine_failure failure;
     yvex_error primary;
     const yvex_runtime_activation_input_summary *summary;
     unsigned long long final;

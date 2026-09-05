@@ -10,12 +10,15 @@
 #include <string.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/execution.h>
 #include <yvex/internal/graph_state.h>
 
 typedef struct {
     unsigned long long required, logical_required, host_total, device_total, generation;
 } runtime_workspace_requirements;
+
+static int runtime_sequence_state_summary_record(
+    yvex_runtime_execution_session *session,
+    yvex_sequence_state_summary *out, yvex_error *err);
 
 static int runtime_session_owned_by_current_thread(
     const yvex_runtime_execution_session *session)
@@ -23,7 +26,6 @@ static int runtime_session_owned_by_current_thread(
     return session->execution_owner_ready &&
            pthread_equal(session->execution_owner, pthread_self());
 }
-
 /* The backend sees one session-owned resolver even when the session carries
  * distinct target and draft banks. Pointer membership selects the residency;
  * neither scope becomes a second backend or KV authority. */
@@ -47,26 +49,27 @@ static int runtime_session_state_resolve(
 
 int yvex_runtime_device_view_bind(
     yvex_execution_device_view *out, yvex_execution_device_value_kind kind,
-    yvex_runtime_model *model, yvex_runtime_execution_session *session,
+    yvex_model_engine *model, yvex_runtime_execution_session *session,
     const yvex_attention_state_provider *provider,
-    const yvex_compiled_execution_profile *profile, const yvex_device_tensor *tensor,
+    const yvex_runtime_execution_profile *profile, const yvex_device_tensor *tensor,
     unsigned long long offset, unsigned long long rows, unsigned long long columns,
     yvex_error *err)
 {
-    const yvex_runtime_model_view *model_view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *model_view = yvex_model_engine_view_get(model);
     const yvex_runtime_session_view *session_view =
         yvex_runtime_session_view_get(session);
-    yvex_runtime_model_summary model_summary;
+    yvex_model_engine_summary model_summary;
     yvex_runtime_session_summary session_summary;
     yvex_runtime_residency_summary residency;
     yvex_graph_attention_state_summary state;
     if (!out || !model_view || !session_view || !provider || !provider->summary ||
         !profile || !tensor ||
-        yvex_runtime_model_summary_copy(model, &model_summary, err) != YVEX_OK ||
+        yvex_model_engine_summary_copy(model, &model_summary, err) != YVEX_OK ||
         yvex_runtime_session_summary_copy(session, &session_summary, err) != YVEX_OK ||
         yvex_runtime_residency_snapshot(model_view->residency, &residency,
                                         NULL, NULL, err) != YVEX_OK ||
-        provider->summary(provider->context, &state, err) != YVEX_OK) {
+        provider->summary(provider->context, &state, err) != YVEX_OK ||
+        !runtime_execution_profile_matches(profile, model, session)) {
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.execution.device-view",
                        "device value generations are unavailable");
         return YVEX_ERR_STATE;
@@ -77,7 +80,7 @@ int yvex_runtime_device_view_bind(
     out->backend = session_view->backend;
     out->tensor = tensor;
     out->element_offset = offset;
-    out->model_generation = residency.generation;
+    out->resource_generation = residency.generation;
     out->session_generation = session_summary.workspace_generation;
     out->state_generation = state.generation;
     out->rows = rows;
@@ -191,20 +194,123 @@ int yvex_runtime_private_attention_workspace_required(
     return YVEX_OK;
 }
 
+int yvex_runtime_private_session_sequence_state_open(
+    yvex_runtime_execution_session *session,
+    const yvex_sequence_state_plan *plan, int bounded,
+    unsigned long long *state_budget, unsigned long long *admitted_host_bytes,
+    yvex_model_engine_failure *failure, yvex_error *err)
+{
+    yvex_sequence_state_plan derived;
+    const yvex_decoder_plan_summary *decoder;
+    yvex_sequence_state_summary summary;
+    unsigned long long bytes;
+    int rc;
+
+    decoder = session && session->engine
+                  ? yvex_decoder_plan_summary_get(session->engine->view.decoder)
+                  : NULL;
+    if (!plan && decoder && decoder->recurrent_layer_count) {
+        rc = yvex_decoder_plan_sequence_state(
+            session->engine->view.decoder, &derived, err);
+        if (rc != YVEX_OK) return rc;
+        plan = &derived;
+    }
+    if (!plan) return YVEX_OK;
+    rc = yvex_sequence_state_open_for_backend(
+        &session->sequence_state, plan, session->summary.backend, err);
+    if (rc == YVEX_OK)
+        rc = yvex_sequence_state_summary_copy(
+            session->sequence_state, &summary, err);
+    if (rc == YVEX_OK &&
+        !yvex_core_u64_add(summary.committed_state_bytes,
+                           summary.candidate_state_bytes, &bytes))
+        rc = YVEX_ERR_BOUNDS;
+    if (rc == YVEX_OK && session->summary.backend == YVEX_BACKEND_KIND_CPU &&
+        ((bounded && bytes > *state_budget) ||
+         !yvex_core_u64_add(*admitted_host_bytes, bytes,
+                            admitted_host_bytes)))
+        rc = YVEX_ERR_BOUNDS;
+    if (rc == YVEX_OK && session->summary.backend == YVEX_BACKEND_KIND_CUDA &&
+        session->maximum_device_bytes && bytes > session->maximum_device_bytes)
+        rc = YVEX_ERR_BOUNDS;
+    if (rc != YVEX_OK) {
+        yvex_sequence_state_close(&session->sequence_state);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_GRAPH, "sequence-state",
+            bounded ? *state_budget : 0ull, 0ull,
+            rc == YVEX_ERR_BOUNDS
+                ? session->summary.backend == YVEX_BACKEND_KIND_CUDA
+                      ? "recurrent sequence state exceeds the admitted session device budget"
+                      : "recurrent sequence state exceeds the admitted session host budget"
+                : "recurrent sequence state could not open",
+            err, (yvex_status)rc);
+    }
+    if (bounded && session->summary.backend == YVEX_BACKEND_KIND_CPU)
+        *state_budget -= bytes;
+    session->view.sequence_state = session->sequence_state;
+    session->summary.sequence_state_binding_count = summary.binding_count;
+    session->summary.sequence_state_generation = summary.generation;
+    session->summary.sequence_committed_state_bytes =
+        summary.committed_state_bytes;
+    session->summary.sequence_candidate_state_bytes =
+        summary.candidate_state_bytes;
+    session->summary.sequence_host_state_bytes = summary.host_state_bytes;
+    session->summary.sequence_device_state_bytes = summary.device_state_bytes;
+    return YVEX_OK;
+}
+
+int yvex_runtime_private_session_sequence_state_attach(
+    yvex_runtime_execution_session *session,
+    yvex_model_engine_failure *failure, yvex_error *err)
+{
+    yvex_sequence_state_summary summary;
+    int rc;
+
+    if (!session->sequence_state ||
+        session->summary.backend != YVEX_BACKEND_KIND_CUDA)
+        return YVEX_OK;
+    rc = yvex_sequence_state_attach_device(
+        session->sequence_state, session->backend, err);
+    if (rc != YVEX_OK) {
+        yvex_runtime_private_failure_record(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND,
+            "sequence-state-device", 1ull, 0ull,
+            "CUDA recurrent sequence state could not become resident");
+        return rc;
+    }
+    rc = yvex_sequence_state_summary_copy(
+        session->sequence_state, &summary, err);
+    if (rc != YVEX_OK) return rc;
+    session->summary.sequence_host_state_bytes = summary.host_state_bytes;
+    session->summary.sequence_device_state_bytes = summary.device_state_bytes;
+    return YVEX_OK;
+}
+
+int yvex_runtime_private_session_sequence_state_close(
+    yvex_runtime_execution_session *session, yvex_error *err)
+{
+    int rc;
+
+    if (!session) return YVEX_OK;
+    rc = yvex_sequence_state_close_checked(&session->sequence_state, err);
+    session->view.sequence_state = session->sequence_state;
+    return rc;
+}
+
 static int runtime_session_workspace_requirements(
     const yvex_runtime_execution_session *session, yvex_runtime_execution_mode mode,
     yvex_runtime_execution_scope scope, yvex_attention_evidence_level evidence_level,
     const yvex_graph_attention_capacity_plan *capacity, const yvex_graph_attention_state_summary *state,
     unsigned long long physical_row_capacity, unsigned long long minimum_bytes,
     runtime_workspace_requirements *requirements,
-    yvex_runtime_model_failure *failure, yvex_error *err) {
+    yvex_model_engine_failure *failure, yvex_error *err) {
     static const yvex_attention_execution_mode graph_modes[] = {
         YVEX_ATTENTION_EXECUTION_EAGER, YVEX_ATTENTION_EXECUTION_PIECEWISE, YVEX_ATTENTION_EXECUTION_FULL};
     static const yvex_attention_operation_scope graph_scopes[] = {
         YVEX_ATTENTION_OPERATION_CORE, YVEX_ATTENTION_OPERATION_ENVELOPE, YVEX_ATTENTION_OPERATION_RELEASE_SET};
     const yvex_graph_attention_capacity_summary *summary =
         yvex_graph_attention_capacity_plan_summary(capacity);
-    const yvex_runtime_binding *binding = session->model->binding;
+    const yvex_runtime_binding *binding = session->engine->binding;
     const yvex_attention_summary *attention_summary;
     const yvex_attention_layer_plan *layers;
     yvex_attention_execution_mode graph_mode;
@@ -213,11 +319,17 @@ static int runtime_session_workspace_requirements(
     int deferred;
     memset(requirements, 0, sizeof(*requirements));
     if (!summary || !binding)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_STATE, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "attention-state", 1ull,
+            0ull, "sealed idle state is required", err, YVEX_ERR_STATE);
     if ((unsigned int)mode >= sizeof(graph_modes) / sizeof(graph_modes[0]) ||
         (unsigned int)scope >= sizeof(graph_scopes) / sizeof(graph_scopes[0]) ||
         evidence_level > YVEX_ATTENTION_EVIDENCE_FULL)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_REQUEST, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_INVALID_ARGUMENT,
+            "attention-workspace-plan", 1ull, 0ull,
+            "open CUDA session and an exact execution mode are required", err,
+            YVEX_ERR_INVALID_ARG);
     graph_mode = graph_modes[mode];
     graph_scope = graph_scopes[scope];
     deferred = yvex_backend_kind_of(session->backend) == YVEX_BACKEND_KIND_CUDA &&
@@ -244,9 +356,9 @@ static int runtime_session_workspace_requirements(
     if (minimum_bytes > requirements->required) requirements->required = minimum_bytes;
     if (deferred) {
         const yvex_moe_plan_summary *target =
-            yvex_moe_plan_summary_get(session->model->view.moe);
+            yvex_moe_plan_summary_get(session->engine->view.moe);
         const yvex_moe_plan_summary *draft =
-            yvex_moe_plan_summary_get(session->model->view.draft_moe);
+            yvex_moe_plan_summary_get(session->engine->view.draft_moe);
         unsigned long long moe_layer_count = target ? target->layer_count : 0ull, bytes;
         if (draft && draft->layer_count > moe_layer_count)
             moe_layer_count = draft->layer_count;
@@ -254,8 +366,13 @@ static int runtime_session_workspace_requirements(
             (!yvex_core_u64_mul(moe_layer_count,
                                 sizeof(yvex_moe_device_completion_slot), &bytes) ||
              !yvex_core_u64_add(requirements->required, bytes, &requirements->required)))
-            return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_BUDGET,
-                                                ULLONG_MAX, 0ull, err);
+            return yvex_runtime_private_reject_as(
+                failure, YVEX_MODEL_ENGINE_FAILURE_GRAPH,
+                YVEX_RUNTIME_FAILURE_ORIGIN_RESOURCE,
+                YVEX_RUNTIME_RECOVERY_PREPARE_OR_EVICT,
+                "host-workspace-budget", ULLONG_MAX, 0ull,
+                "descriptor-bucket CUDA staging exceeds the session host budget",
+                err, YVEX_ERR_BOUNDS);
     }
     /* The session owns one physical arena for both target and draft plans. Rebinding a
      * smaller logical recipe must not resize or duplicate that arena. */
@@ -271,15 +388,26 @@ static int runtime_session_workspace_requirements(
         !yvex_core_u64_add(requirements->host_total, requirements->required,
                            &requirements->host_total) ||
         (session->maximum_host_bytes && requirements->host_total > session->maximum_host_bytes))
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_BUDGET, session->maximum_host_bytes,
-                              requirements->host_total, err);
+        return yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_GRAPH,
+            YVEX_RUNTIME_FAILURE_ORIGIN_RESOURCE,
+            YVEX_RUNTIME_RECOVERY_PREPARE_OR_EVICT,
+            "host-workspace-budget", session->maximum_host_bytes,
+            requirements->host_total,
+            "descriptor-bucket CUDA staging exceeds the session host budget",
+            err, YVEX_ERR_BOUNDS);
     if (!yvex_core_u64_add(session->summary.device_resident_bytes, requirements->required,
                            &requirements->device_total) ||
         !yvex_core_u64_add(session->summary.workspace_generation, 1ull, &requirements->generation) ||
         (session->maximum_device_bytes && requirements->device_total > session->maximum_device_bytes))
-        return yvex_runtime_private_refuse(
-            failure, YVEX_RUNTIME_REFUSE_DEVICE_WORKSPACE_BUDGET,
-            session->maximum_device_bytes, requirements->device_total, err);
+        return yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND,
+            YVEX_RUNTIME_FAILURE_ORIGIN_RESOURCE,
+            YVEX_RUNTIME_RECOVERY_PREPARE_OR_EVICT,
+            "device-workspace-budget", session->maximum_device_bytes,
+            requirements->device_total,
+            "descriptor-bucket CUDA workspace exceeds the session device budget",
+            err, YVEX_ERR_BOUNDS);
     return YVEX_OK;
 }
 
@@ -295,40 +423,73 @@ static void runtime_session_logical_workspace_publish(
     yvex_attention_workspace_close(&prior);
 }
 
+static int runtime_session_workspace_rollback(
+    yvex_runtime_execution_session *session,
+    const yvex_runtime_session_summary *summary_before,
+    unsigned long long required, int status,
+    yvex_model_engine_failure *failure, yvex_error *err)
+{
+    yvex_model_engine_failure primary_failure =
+        failure ? *failure : (yvex_model_engine_failure){0};
+    yvex_error primary = err ? *err : (yvex_error){0}, cleanup;
+    int cleanup_rc;
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_private_session_workspace_discard(session, &cleanup);
+    if (cleanup_rc != YVEX_OK) {
+        status = cleanup_rc;
+        if (err) *err = cleanup;
+        yvex_runtime_private_failure_record(
+            failure, YVEX_MODEL_ENGINE_FAILURE_CLEANUP, "attention-workspace",
+            required, 0ull,
+            "failed CUDA workspace candidate could not be released");
+    } else {
+        if (err) *err = primary;
+        if (failure) *failure = primary_failure;
+    }
+    session->summary = *summary_before;
+    return status;
+}
+
 int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_session *session,
     yvex_runtime_execution_mode mode, yvex_runtime_execution_scope scope,
     yvex_attention_evidence_level evidence_level, const yvex_graph_attention_capacity_plan *capacity,
     unsigned long long physical_row_capacity, unsigned long long minimum_bytes,
-    yvex_runtime_model_failure *failure, yvex_error *err) {
+    yvex_model_engine_failure *failure, yvex_error *err) {
     yvex_backend_tensor_desc device_descriptor;
     yvex_attention_workspace *logical_candidate = NULL;
     yvex_backend_host_workspace_summary workspace;
     yvex_graph_attention_state_summary state;
     yvex_runtime_session_summary summary_before;
-    yvex_runtime_model_failure primary_failure;
     runtime_workspace_requirements requirements;
-    yvex_error primary_error;
     char workspace_identity[YVEX_SHA256_HEX_CAP];
     const yvex_graph_attention_capacity_summary *capacity_summary =
         yvex_graph_attention_capacity_plan_summary(capacity);
-    const yvex_attention_summary *draft_summary = session && session->model
-        ? yvex_attention_plan_summary(session->model->draft_attention) : NULL;
+    const yvex_attention_summary *draft_summary = session && session->engine
+        ? yvex_attention_plan_summary(session->engine->draft_attention) : NULL;
     yvex_attention_state_provider *state_provider;
     int rc = YVEX_OK;
     if (!session || !yvex_graph_attention_capacity_plan_summary(capacity) ||
         !physical_row_capacity ||
         (unsigned int)mode > (unsigned int)YVEX_RUNTIME_MODE_FULL || evidence_level > YVEX_ATTENTION_EVIDENCE_FULL ||
         session->summary.backend != YVEX_BACKEND_KIND_CUDA || !session->backend)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_REQUEST, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_INVALID_ARGUMENT,
+            "attention-workspace-plan", 1ull, 0ull,
+            "open CUDA session and an exact execution mode are required", err,
+            YVEX_ERR_INVALID_ARG);
     if (pthread_mutex_lock(&session->lifecycle_mutex) != 0)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_LOCK, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "session-lock", 1ull,
+            0ull, "runtime session workspace lock is unavailable", err,
+            YVEX_ERR_STATE);
     summary_before = session->summary;
     if (!session->summary.open ||
         (session->summary.busy &&
          !runtime_session_owned_by_current_thread(session)) ||
         session->closing) {
-        rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_SESSION_STATE,
-                            0ull, 1ull, err);
+        rc = yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "session-state", 0ull,
+            1ull, "idle open session is required", err, YVEX_ERR_STATE);
         goto done;
     }
     state_provider = draft_summary && capacity_summary &&
@@ -340,13 +501,15 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
              ? state_provider->summary(state_provider->context, &state, err)
              : YVEX_ERR_STATE;
     if (rc != YVEX_OK) {
-        yvex_runtime_private_failure_record(failure, YVEX_RUNTIME_MODEL_FAILURE_GRAPH,
+        yvex_runtime_private_failure_record(failure, YVEX_MODEL_ENGINE_FAILURE_GRAPH,
             "attention-state", 1ull, 0ull, "runtime attention-state capacities could not be read");
         goto done;
     }
     if (!state.sealed || state.transaction_active) {
-        rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_STATE, 0ull,
-                            state.transaction_active ? 1ull : 0ull, err);
+        rc = yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "attention-state", 0ull,
+            state.transaction_active ? 1ull : 0ull,
+            "sealed idle state is required", err, YVEX_ERR_STATE);
         goto done;
     }
     if (session->host_workspace_cleanup_pending ||
@@ -354,7 +517,7 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
         rc = yvex_runtime_private_session_workspace_discard(session, err);
         if (rc != YVEX_OK) {
             yvex_runtime_private_failure_record(
-                failure, YVEX_RUNTIME_MODEL_FAILURE_CLEANUP, "attention-workspace",
+                failure, YVEX_MODEL_ENGINE_FAILURE_CLEANUP, "attention-workspace",
                 0ull, 1ull, "prior CUDA staging candidate still requires cleanup");
             goto done;
         }
@@ -364,7 +527,7 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
         physical_row_capacity, minimum_bytes, &requirements, failure, err);
     if (rc != YVEX_OK) goto done;
     rc = yvex_runtime_workspace_identity_compute(
-        session->model->summary.runtime_model_identity, session->summary.backend,
+        session->engine->summary.runtime_model_identity, session->summary.backend,
         session->maximum_host_bytes, session->maximum_device_bytes,
         session->summary.workspace_bytes, requirements.required,
         yvex_graph_attention_capacity_plan_summary(capacity)->identity, workspace_identity, err);
@@ -374,7 +537,7 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
             &logical_candidate, requirements.logical_required, err);
         if (rc != YVEX_OK) {
             yvex_runtime_private_failure_record(
-                failure, YVEX_RUNTIME_MODEL_FAILURE_GRAPH, "attention-workspace",
+                failure, YVEX_MODEL_ENGINE_FAILURE_GRAPH, "attention-workspace",
                 requirements.logical_required, 0ull,
                 "attention logical workspace growth failed");
             goto done;
@@ -388,8 +551,10 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
             !yvex_backend_host_workspace_summary_get(session->backend, &workspace) ||
             !workspace.attached || !workspace.owned || !workspace.pinned ||
             workspace.capacity != requirements.required) {
-            rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_ALREADY_SEALED,
-                requirements.required, session->summary.host_workspace_bytes, err);
+            rc = yvex_runtime_private_reject(
+                failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "host-workspace",
+                requirements.required, session->summary.host_workspace_bytes,
+                "host workspace is already sealed", err, YVEX_ERR_STATE);
             goto done;
         }
         if (strcmp(session->summary.workspace_identity, workspace_identity) != 0) {
@@ -426,7 +591,7 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
                                            requirements.generation, err);
     if (rc != YVEX_OK) {
         yvex_runtime_private_failure_record(
-            failure, YVEX_RUNTIME_MODEL_FAILURE_BACKEND, "device-workspace",
+            failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND, "device-workspace",
             requirements.required, 0ull, "CUDA device workspace allocation failed");
         goto rollback;
     }
@@ -434,7 +599,7 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
         session->backend, requirements.required, err);
     if (rc != YVEX_OK) {
         yvex_runtime_private_failure_record(
-            failure, YVEX_RUNTIME_MODEL_FAILURE_BACKEND, "pinned-host-workspace",
+            failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND, "pinned-host-workspace",
             requirements.required, 0ull, "CUDA pinned workspace allocation failed");
         goto rollback;
     }
@@ -457,32 +622,19 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
     yvex_runtime_identity_copy(session->summary.workspace_identity,
                                 workspace_identity);
     if (getenv("YVEX_TEST_RUNTIME_WORKSPACE_FAILURE"))
-        rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_CAPABILITY_INJECTION,
-                            0ull, 1ull, err);
+        rc = yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND,
+            YVEX_RUNTIME_FAILURE_ORIGIN_INTERNAL,
+            YVEX_RUNTIME_RECOVERY_ABORT_TRANSACTION,
+            "workspace-capability-publication", 0ull, 1ull,
+            "injected runtime workspace capability publication failure", err,
+            YVEX_ERR_STATE);
     else
         rc = yvex_runtime_private_session_capabilities_bind(session, failure, 1, err);
     if (rc == YVEX_OK) goto done;
 rollback:
-    {
-        yvex_error cleanup;
-        int cleanup_rc;
-        primary_error = err ? *err : (yvex_error){0};
-        primary_failure = failure ? *failure : (yvex_runtime_model_failure){0};
-        yvex_error_clear(&cleanup);
-        cleanup_rc = yvex_runtime_private_session_workspace_discard(session, &cleanup);
-        if (cleanup_rc != YVEX_OK) {
-            rc = cleanup_rc;
-            if (err) *err = cleanup;
-            yvex_runtime_private_failure_record(
-                failure, YVEX_RUNTIME_MODEL_FAILURE_CLEANUP, "attention-workspace",
-                requirements.required, 0ull,
-                "failed CUDA workspace candidate could not be released");
-        } else {
-            if (err) *err = primary_error;
-            if (failure) *failure = primary_failure;
-        }
-        session->summary = summary_before;
-    }
+    rc = runtime_session_workspace_rollback(
+        session, &summary_before, requirements.required, rc, failure, err);
 done:
     if (rc == YVEX_OK && logical_candidate)
         runtime_session_logical_workspace_publish(
@@ -499,7 +651,7 @@ done:
 int yvex_runtime_private_session_prepare_persistent_scope_state_locked(
     yvex_runtime_execution_session *session, yvex_tensor_scope scope,
     const yvex_graph_attention_capacity_plan *capacity,
-    yvex_runtime_model_failure *failure, yvex_error *err)
+    yvex_model_engine_failure *failure, yvex_error *err)
 {
     yvex_attention_state_provider *provider;
     yvex_runtime_state_residency **residency;
@@ -509,7 +661,10 @@ int yvex_runtime_private_session_prepare_persistent_scope_state_locked(
     int ready, rc;
     if (!session || !capacity ||
         (scope != YVEX_TENSOR_SCOPE_GLOBAL && scope != YVEX_TENSOR_SCOPE_DRAFT))
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_LOCK, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "session-lock", 1ull,
+            0ull, "runtime session workspace lock is unavailable", err,
+            YVEX_ERR_STATE);
     provider = scope == YVEX_TENSOR_SCOPE_DRAFT
                    ? &session->draft_attention_state_provider
                    : &session->attention_state_provider;
@@ -527,7 +682,9 @@ int yvex_runtime_private_session_prepare_persistent_scope_state_locked(
          !runtime_session_owned_by_current_thread(session)) ||
         session->closing ||
         *residency || !ready) {
-        rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_SESSION_STATE, 0ull, 1ull, err);
+        rc = yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "session-state", 0ull,
+            1ull, "idle open session is required", err, YVEX_ERR_STATE);
     } else {
         rc = other ? yvex_runtime_state_residency_summary_copy(
                          other, &other_summary, err)
@@ -542,7 +699,7 @@ int yvex_runtime_private_session_prepare_persistent_scope_state_locked(
              !yvex_core_u64_add(prior_device, other_summary.device_bytes,
                                 &prior_device)))
             rc = yvex_runtime_private_reject(
-                failure, YVEX_RUNTIME_MODEL_FAILURE_GRAPH,
+                failure, YVEX_MODEL_ENGINE_FAILURE_GRAPH,
                 "persistent-state-budget", ULLONG_MAX, 0ull,
                 "combined target and draft state budget overflowed", err,
                 YVEX_ERR_BOUNDS);
@@ -581,8 +738,8 @@ int yvex_runtime_private_session_prepare_persistent_scope_state_locked(
             }
             yvex_runtime_private_failure_record(
                 failure,
-                cleanup_rc == YVEX_OK ? YVEX_RUNTIME_MODEL_FAILURE_GRAPH
-                                      : YVEX_RUNTIME_MODEL_FAILURE_CLEANUP,
+                cleanup_rc == YVEX_OK ? YVEX_MODEL_ENGINE_FAILURE_GRAPH
+                                      : YVEX_MODEL_ENGINE_FAILURE_CLEANUP,
                 "persistent-state-residency", 1ull, 0ull,
                 cleanup_rc == YVEX_OK ? "persistent state preparation failed"
                                       : "persistent state cleanup failed");
@@ -600,13 +757,15 @@ int yvex_runtime_private_session_prepare_persistent_scope_state_locked(
 int yvex_runtime_session_prepare_persistent_scope_state(
     yvex_runtime_execution_session *session, yvex_tensor_scope scope,
     const yvex_graph_attention_capacity_plan *capacity,
-    yvex_runtime_model_failure *failure, yvex_error *err)
+    yvex_model_engine_failure *failure, yvex_error *err)
 {
     int rc;
     if (!session || !session->lifecycle_mutex_ready ||
         pthread_mutex_lock(&session->lifecycle_mutex) != 0)
-        return yvex_runtime_private_refuse(
-            failure, YVEX_RUNTIME_REFUSE_WORKSPACE_LOCK, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "session-lock", 1ull,
+            0ull, "runtime session workspace lock is unavailable", err,
+            YVEX_ERR_STATE);
     rc = yvex_runtime_private_session_prepare_persistent_scope_state_locked(
         session, scope, capacity, failure, err);
     (void)pthread_mutex_unlock(&session->lifecycle_mutex);
@@ -616,7 +775,7 @@ int yvex_runtime_session_prepare_persistent_scope_state(
 int yvex_runtime_session_prepare_persistent_state(
     yvex_runtime_execution_session *session,
     const yvex_graph_attention_capacity_plan *capacity,
-    yvex_runtime_model_failure *failure, yvex_error *err)
+    yvex_model_engine_failure *failure, yvex_error *err)
 {
     return yvex_runtime_session_prepare_persistent_scope_state(
         session, YVEX_TENSOR_SCOPE_GLOBAL, capacity, failure, err);
@@ -625,22 +784,24 @@ int yvex_runtime_session_prepare_persistent_state(
 int yvex_runtime_session_configure_persistent_pages(
     yvex_runtime_execution_session *session,
     const yvex_execution_capacity_plan *capacity,
-    yvex_runtime_model_failure *failure, yvex_error *err)
+    yvex_model_engine_failure *failure, yvex_error *err)
 {
     yvex_attention_failure state_failure;
     int rc, target_configured = 0;
     if (!session || !capacity || !session->lifecycle_mutex_ready ||
         pthread_mutex_lock(&session->lifecycle_mutex) != 0)
-        return yvex_runtime_private_refuse(
-            failure, YVEX_RUNTIME_REFUSE_WORKSPACE_LOCK, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "session-lock", 1ull,
+            0ull, "runtime session workspace lock is unavailable", err,
+            YVEX_ERR_STATE);
     if (!session->summary.open || session->summary.busy || session->closing ||
         !session->attention_state_provider_ready ||
         !session->attention_state_provider.configure_pages ||
         (session->draft_attention_state_provider_ready &&
          !session->draft_attention_state_provider.configure_pages)) {
-        rc = yvex_runtime_private_refuse(
-            failure, YVEX_RUNTIME_REFUSE_WORKSPACE_SESSION_STATE, 0ull, 1ull,
-            err);
+        rc = yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "session-state", 0ull,
+            1ull, "idle open session is required", err, YVEX_ERR_STATE);
         goto done;
     }
     memset(&state_failure, 0, sizeof(state_failure));
@@ -659,7 +820,7 @@ int yvex_runtime_session_configure_persistent_pages(
             (void)yvex_runtime_private_session_invalidate(session, 1, &cleanup);
         }
         yvex_runtime_private_failure_record(
-            failure, YVEX_RUNTIME_MODEL_FAILURE_GRAPH,
+            failure, YVEX_MODEL_ENGINE_FAILURE_GRAPH,
             "persistent-state-pages", 1ull, 0ull,
             "execution capacity could not configure persistent state pages");
     }
@@ -673,15 +834,20 @@ done:
 }
 
 int yvex_runtime_session_reset_persistent_state(yvex_runtime_execution_session *session,
-    yvex_runtime_model_failure *failure, yvex_error *err) {
+    yvex_model_engine_failure *failure, yvex_error *err) {
     yvex_attention_failure state_failure;
     int rc;
     if (!session || !session->lifecycle_mutex_ready ||
         pthread_mutex_lock(&session->lifecycle_mutex) != 0)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_LOCK, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "session-lock", 1ull,
+            0ull, "runtime session workspace lock is unavailable", err,
+            YVEX_ERR_STATE);
     if (!session->summary.open || session->summary.busy || session->closing ||
         !session->state_residency || !session->attention_state_provider_ready) {
-        rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_SESSION_STATE, 0ull, 1ull, err);
+        rc = yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "session-state", 0ull,
+            1ull, "idle open session is required", err, YVEX_ERR_STATE);
     } else {
         rc = yvex_runtime_state_residency_reset(session->state_residency, err);
         if (rc == YVEX_OK)
@@ -695,12 +861,17 @@ int yvex_runtime_session_reset_persistent_state(yvex_runtime_execution_session *
             rc = session->draft_attention_state_provider.reset(
                 session->draft_attention_state_provider.context,
                 &state_failure, err);
+        if (rc == YVEX_OK && session->sequence_state)
+            rc = yvex_sequence_state_reset(session->sequence_state, err);
+        if (rc == YVEX_OK)
+            rc = runtime_sequence_state_summary_record(session, NULL, err);
         if (rc != YVEX_OK) {
             yvex_error cleanup;
             session->summary.invalidated = 1;
             (void)yvex_runtime_private_session_invalidate(session, 1, &cleanup);
-            yvex_runtime_private_failure_record(failure, YVEX_RUNTIME_MODEL_FAILURE_GRAPH,
-                "persistent-state-reset", 1ull, 0ull, "persistent attention state reset failed");
+            yvex_runtime_private_failure_record(failure, YVEX_MODEL_ENGINE_FAILURE_GRAPH,
+                "persistent-state-reset", 1ull, 0ull,
+                "persistent session state reset failed");
         }
     }
     (void)pthread_mutex_unlock(&session->lifecycle_mutex);
@@ -708,33 +879,54 @@ int yvex_runtime_session_reset_persistent_state(yvex_runtime_execution_session *
 }
 /* Acquire exclusive mutable execution ownership for one session operation. */
 int yvex_runtime_session_begin(yvex_runtime_execution_session *session,
-                               yvex_runtime_model_failure *failure, yvex_error *err) {
-    yvex_runtime_private_refusal_id refusal = YVEX_RUNTIME_REFUSE_COUNT;
+                               yvex_model_engine_failure *failure, yvex_error *err) {
     int rc;
     if (!session || !session->lifecycle_mutex_ready ||
         pthread_mutex_lock(&session->lifecycle_mutex) != 0)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_SESSION_REQUIRED, 1ull, 0ull, err);
-    if (session->summary.invalidated)
-        refusal = YVEX_RUNTIME_REFUSE_SESSION_INVALIDATED;
-    else if (!session->summary.open || session->closing)
-        refusal = YVEX_RUNTIME_REFUSE_SESSION_CLOSING;
-    else if (session->summary.busy)
-        refusal = YVEX_RUNTIME_REFUSE_SESSION_BUSY;
-    else if (session->summary.cancelled)
-        refusal = YVEX_RUNTIME_REFUSE_SESSION_CANCELLED;
-    if (refusal != YVEX_RUNTIME_REFUSE_COUNT) {
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_INVALID_ARGUMENT, "session",
+            1ull, 0ull, "open runtime session is required", err,
+            YVEX_ERR_INVALID_ARG);
+    if (!session->engine || !session->summary.engine_generation ||
+        session->summary.engine_generation != session->engine->summary.engine_generation ||
+        session->summary.invalidated) {
         (void)pthread_mutex_unlock(&session->lifecycle_mutex);
-        return yvex_runtime_private_refuse(failure, refusal, 0ull, 1ull, err);
+        return yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_DRIFT,
+            YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY,
+            YVEX_RUNTIME_RECOVERY_INVALIDATE_SEQUENCE,
+            "session-invalidated", 0ull, 1ull,
+            "artifact drift invalidated session", err, YVEX_ERR_STATE);
+    }
+    if (!session->summary.open || session->closing) {
+        (void)pthread_mutex_unlock(&session->lifecycle_mutex);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "session-closing",
+            0ull, 1ull, "runtime session is closing", err, YVEX_ERR_STATE);
+    }
+    if (session->summary.busy) {
+        (void)pthread_mutex_unlock(&session->lifecycle_mutex);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY, "session-busy",
+            0ull, 1ull, "runtime session already owns an execution", err,
+            YVEX_ERR_STATE);
+    }
+    if (session->summary.cancelled) {
+        (void)pthread_mutex_unlock(&session->lifecycle_mutex);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_CANCELLED,
+            "session-cancelled", 0ull, 1ull, "session cancelled", err,
+            YVEX_ERR_CANCELLED);
     }
     session->summary.busy = 1;
     session->execution_owner = pthread_self();
     session->execution_owner_ready = 1;
     (void)pthread_mutex_unlock(&session->lifecycle_mutex);
-    rc = yvex_runtime_model_validate(session->model, failure, err);
+    rc = yvex_model_engine_validate(session->engine, failure, err);
     if (rc != YVEX_OK) {
         if (pthread_mutex_lock(&session->lifecycle_mutex) != 0) {
             yvex_runtime_private_failure_record(
-                failure, YVEX_RUNTIME_MODEL_FAILURE_CLEANUP, "session-busy-release",
+                failure, YVEX_MODEL_ENGINE_FAILURE_CLEANUP, "session-busy-release",
                 0ull, 1ull, "failed model validation could not release session ownership");
             yvex_error_set(err, YVEX_ERR_STATE, "runtime.session.begin",
                            "runtime session synchronization could not be reacquired");
@@ -833,15 +1025,167 @@ int yvex_runtime_session_select_attention_prefix(
     return rc;
 }
 
+typedef struct {
+    yvex_attention_state_provider *provider;
+    yvex_runtime_state_residency *residency;
+    int provider_prepared;
+} runtime_state_transaction_participant;
+
+static int runtime_sequence_state_summary_record(
+    yvex_runtime_execution_session *session,
+    yvex_sequence_state_summary *out, yvex_error *err)
+{
+    yvex_sequence_state_summary summary;
+    int rc;
+
+    if (!session || !session->sequence_state) {
+        if (out) memset(out, 0, sizeof(*out));
+        return YVEX_OK;
+    }
+    rc = yvex_sequence_state_summary_copy(
+        session->sequence_state, &summary, err);
+    if (rc != YVEX_OK) return rc;
+    session->summary.sequence_state_binding_count = summary.binding_count;
+    session->summary.sequence_state_generation = summary.generation;
+    session->summary.sequence_committed_state_bytes =
+        summary.committed_state_bytes;
+    session->summary.sequence_candidate_state_bytes =
+        summary.candidate_state_bytes;
+    session->summary.sequence_host_state_bytes = summary.host_state_bytes;
+    session->summary.sequence_device_state_bytes = summary.device_state_bytes;
+    if (out) *out = summary;
+    return YVEX_OK;
+}
+
+static int runtime_state_transaction_prepare(void *opaque, yvex_error *err)
+{
+    runtime_state_transaction_participant *participant = opaque;
+    yvex_attention_failure failure = {0};
+    int rc;
+    if (!participant || !participant->provider)
+        return YVEX_ERR_INVALID_ARG;
+    rc = participant->residency
+             ? yvex_runtime_state_residency_prepare_commit(
+                   participant->residency, err)
+             : YVEX_OK;
+    if (rc == YVEX_OK)
+        rc = participant->provider->prepare_commit(
+            participant->provider->context, &failure, err);
+    participant->provider_prepared = rc == YVEX_OK;
+    return rc;
+}
+
+static void runtime_state_transaction_publish(void *opaque)
+{
+    runtime_state_transaction_participant *participant = opaque;
+    if (!participant || !participant->provider_prepared) return;
+    if (participant->residency)
+        yvex_runtime_state_residency_publish_commit(participant->residency);
+    participant->provider->publish_commit(participant->provider->context);
+    participant->provider_prepared = 0;
+}
+
+static int runtime_state_transaction_abort(void *opaque, yvex_error *err)
+{
+    runtime_state_transaction_participant *participant = opaque;
+    yvex_attention_failure failure = {0};
+    yvex_error first = {0}, retry = {0};
+    int rc, retry_rc;
+    if (!participant || !participant->provider) return YVEX_ERR_INVALID_ARG;
+    if (participant->provider_prepared)
+        participant->provider->cancel_commit(participant->provider->context);
+    participant->provider_prepared = 0;
+    if (participant->residency)
+        yvex_runtime_state_residency_abort(participant->residency);
+    rc = participant->provider->abort(
+        participant->provider->context, &failure, err);
+    if (rc == YVEX_OK) return YVEX_OK;
+    first = err ? *err : (yvex_error){0};
+    retry_rc = participant->provider->abort(
+        participant->provider->context, &failure, &retry);
+    if (retry_rc != YVEX_OK) {
+        if (err) *err = retry;
+        return retry_rc;
+    }
+    if (err) *err = first;
+    return rc;
+}
+
+static int runtime_transaction_resolve(
+    const yvex_runtime_transaction_participant *participants,
+    unsigned int participant_count, int status, int *abort_failed,
+    yvex_error *err)
+{
+    yvex_error primary = err ? *err : (yvex_error){0};
+    yvex_error failure = {0}, abort_error = {0};
+    unsigned int index;
+    int rc = status, abort_rc = YVEX_OK;
+    if (abort_failed) *abort_failed = 0;
+    if (participant_count > YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP ||
+        (participant_count && !participants)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.transaction",
+                       "bounded transaction participants are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    for (index = 0u; index < participant_count; ++index)
+        if (!participants[index].context || !participants[index].prepare ||
+            !participants[index].publish || !participants[index].abort) {
+            yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.transaction",
+                           "every transaction participant must be complete");
+            return YVEX_ERR_INVALID_ARG;
+        }
+    for (index = 0u; rc == YVEX_OK && index < participant_count; ++index)
+        rc = participants[index].prepare(participants[index].context, err);
+    if (rc == YVEX_OK) {
+        for (index = 0u; index < participant_count; ++index)
+            participants[index].publish(participants[index].context);
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    failure = err ? *err : primary;
+    for (index = participant_count; index-- > 0u;) {
+        yvex_error current = {0};
+        int current_rc = participants[index].abort(
+            participants[index].context, &current);
+        if (current_rc != YVEX_OK && abort_rc == YVEX_OK) {
+            abort_rc = current_rc;
+            abort_error = current;
+        }
+    }
+    if (abort_rc != YVEX_OK) {
+        if (abort_failed) *abort_failed = 1;
+        if (err) *err = abort_error;
+        return abort_rc;
+    }
+    if (err) {
+        if (failure.code != YVEX_OK)
+            *err = failure;
+        else if (primary.code != YVEX_OK)
+            *err = primary;
+        else
+            yvex_error_set(err, (yvex_status)rc, "runtime.transaction",
+                           "transaction failed before publication");
+    }
+    return rc;
+}
+
+int yvex_runtime_transaction_resolve(
+    const yvex_runtime_transaction_participant *participants,
+    unsigned int participant_count, int status, yvex_error *err)
+{
+    return runtime_transaction_resolve(
+        participants, participant_count, status, NULL, err);
+}
+
 int yvex_runtime_session_finish_scope(
     yvex_runtime_execution_session *session, yvex_tensor_scope scope,
     yvex_attention_transaction_disposition disposition, int status,
     yvex_error *err) {
     yvex_graph_attention_state_summary state;
+    yvex_sequence_state_summary sequence = {0};
     const yvex_attention_workspace_summary *workspace;
     yvex_attention_state_provider *provider;
     yvex_runtime_state_residency *residency;
-    yvex_attention_failure state_failure;
     yvex_error cleanup, state_error, primary_error;
     unsigned long long *counter = NULL, counter_next = 0ull;
     int provider_ready, cleanup_rc = YVEX_OK;
@@ -880,6 +1224,16 @@ int yvex_runtime_session_finish_scope(
              : YVEX_ERR_STATE;
     if (rc == YVEX_OK) state_ready = 1;
     else cleanup_rc = rc, cleanup = state_error;
+    rc = runtime_sequence_state_summary_record(session, &sequence, &state_error);
+    if (rc != YVEX_OK && cleanup_rc == YVEX_OK)
+        cleanup_rc = rc, cleanup = state_error;
+    if (primary_status == YVEX_OK && sequence.transaction_active &&
+        cleanup_rc == YVEX_OK) {
+        cleanup_rc = YVEX_ERR_STATE;
+        yvex_error_set(
+            &cleanup, cleanup_rc, "runtime.session.sequence-state",
+            "recurrent state requires coordinated transaction finalization");
+    }
     workspace = yvex_attention_workspace_summary_get(session->attention_workspace);
     if (workspace) {
         session->summary.workspace_peak_bytes = workspace->peak_bytes;
@@ -908,34 +1262,44 @@ int yvex_runtime_session_finish_scope(
     }
     if (provider_ready && ((state_ready && state.transaction_active) ||
         primary_status != YVEX_OK || cleanup_rc != YVEX_OK || session->invalidation_pending)) {
+        runtime_state_transaction_participant state_participant = {
+            .provider = provider, .residency = residency};
+        yvex_runtime_transaction_participant transaction = {
+            .context = &state_participant,
+            .prepare = runtime_state_transaction_prepare,
+            .publish = runtime_state_transaction_publish,
+            .abort = runtime_state_transaction_abort};
         int committing = primary_status == YVEX_OK && cleanup_rc == YVEX_OK &&
             !session->invalidation_pending &&
             disposition == YVEX_ATTENTION_TRANSACTION_COMMIT;
         yvex_error_clear(&state_error);
-        rc = committing && residency
-                 ? yvex_runtime_state_residency_publish(residency, &state_error)
-                 : YVEX_OK;
-        if (rc == YVEX_OK)
-            rc = committing
-                     ? provider->commit(provider->context, &state_failure,
-                                        &state_error)
-                     : provider->abort(provider->context, &state_failure,
-                                       &state_error);
-        if (rc == YVEX_OK && committing && residency)
-            rc = yvex_runtime_state_residency_commit(residency, &state_error);
-        else if (!committing && residency)
-            yvex_runtime_state_residency_abort(residency);
+        rc = committing
+                 ? runtime_transaction_resolve(
+                       &transaction, 1u, YVEX_OK, NULL, &state_error)
+                 : runtime_state_transaction_abort(
+                       &state_participant, &state_error);
         if (rc != YVEX_OK) {
             cleanup_rc = rc;
             cleanup = state_error;
-            yvex_error_clear(&state_error);
-            rc = provider->abort(provider->context, &state_failure, &state_error);
-            if (rc != YVEX_OK) {
-                cleanup_rc = rc;
-                cleanup = state_error;
-            }
-            if (residency) yvex_runtime_state_residency_abort(residency);
         }
+    }
+    if (sequence.transaction_active) {
+        yvex_runtime_transaction_participant participant;
+        int sequence_status = primary_status != YVEX_OK
+                                  ? primary_status
+                                  : cleanup_rc != YVEX_OK
+                                        ? cleanup_rc
+                                        : YVEX_ERR_STATE;
+        yvex_error_clear(&state_error);
+        rc = yvex_sequence_state_participant(
+            session->sequence_state, &participant, &state_error);
+        if (rc == YVEX_OK)
+            rc = runtime_transaction_resolve(
+                &participant, 1u, sequence_status, NULL, &state_error);
+        if (rc != sequence_status && rc != YVEX_OK && cleanup_rc == YVEX_OK)
+            cleanup_rc = rc, cleanup = state_error;
+        (void)runtime_sequence_state_summary_record(
+            session, NULL, &state_error);
     }
     if (session->invalidation_pending) {
         rc = yvex_runtime_private_session_invalidate(session, 1, &state_error);
@@ -981,47 +1345,129 @@ int yvex_runtime_session_finish_scope(
 
 int yvex_runtime_session_finish_coordinated(
     yvex_runtime_execution_session *session, int status,
-    const yvex_runtime_commit_participant *participant, yvex_error *err)
+    const yvex_runtime_transaction_participant *participants,
+    unsigned int participant_count, yvex_error *err)
 {
     yvex_attention_state_provider *providers[2];
     yvex_runtime_state_residency *residencies[2];
-    yvex_graph_attention_state_summary summaries[2] = {{0}};
-    yvex_attention_failure state_failure = {0};
-    yvex_error primary = err ? *err : (yvex_error){0}, failure = {0}, cleanup = {0};
-    unsigned long long counter_next = 0ull, index;
-    int prepared[2] = {0, 0}, participant_prepared = 0;
-    int rc = status, cleanup_rc = YVEX_OK;
-    if (!session || (participant && (!participant->prepare || !participant->publish ||
-                                     !participant->cancel)) ||
+    int provider_ready[2];
+    runtime_state_transaction_participant state_participants[2] = {{0}};
+    yvex_runtime_transaction_participant sequence_participant = {0};
+    yvex_sequence_state_summary sequence_summary = {0};
+    yvex_runtime_transaction_participant transaction[
+        YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP] = {{0}};
+    yvex_error primary = err ? *err : (yvex_error){0};
+    yvex_error cleanup = {0}, transaction_error = {0}, summary_error = {0};
+    unsigned long long counter_next = 0ull;
+    unsigned int index, state_count = 0u, state_owner_count = 0u;
+    unsigned int transaction_count = 0u;
+    int abort_failed = 0, boundary_failure, cleanup_rc = YVEX_OK;
+    int rc = status, transaction_rc, transaction_status;
+    if (!session ||
+        participant_count > YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP - 3u ||
+        (participant_count && !participants) ||
         !session->lifecycle_mutex_ready ||
         pthread_mutex_lock(&session->lifecycle_mutex) != 0) {
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.session.coordinated",
-                       "busy session and complete commit participant are required");
+                       "busy session and bounded transaction participants are required");
         return YVEX_ERR_STATE;
     }
     providers[0] = &session->attention_state_provider;
     providers[1] = &session->draft_attention_state_provider;
     residencies[0] = session->state_residency;
     residencies[1] = session->draft_state_residency;
+    provider_ready[0] = session->attention_state_provider_ready;
+    provider_ready[1] = session->draft_attention_state_provider_ready;
     if (!session->summary.open || !session->summary.busy ||
         !runtime_session_owned_by_current_thread(session) || session->closing ||
-        !session->attention_state_provider_ready ||
-        !session->draft_attention_state_provider_ready ||
         session->invalidation_pending) {
         cleanup_rc = YVEX_ERR_STATE;
         yvex_error_set(&cleanup, cleanup_rc, "runtime.session.coordinated",
-                       "target and drafter state are not commit-ready");
+                       "session state is not commit-ready");
     }
-    for (index = 0ull; cleanup_rc == YVEX_OK && index < 2ull; ++index) {
-        cleanup_rc = providers[index]->summary(
-            providers[index]->context, &summaries[index], &cleanup);
-        if (rc == YVEX_OK && cleanup_rc == YVEX_OK &&
-            (!summaries[index].transaction_active || summaries[index].candidate_active ||
-             !summaries[index].staged_layer_count || summaries[index].invalidated)) {
+    for (index = 0u; index < 2u; ++index) {
+        yvex_graph_attention_state_summary summary = {0};
+        int summary_rc;
+        if (!provider_ready[index]) continue;
+        summary_rc = providers[index]->summary(
+            providers[index]->context, &summary, &cleanup);
+        if (summary_rc != YVEX_OK && cleanup_rc == YVEX_OK)
+            cleanup_rc = summary_rc;
+        if (summary_rc == YVEX_OK && summary.transaction_active) {
+            state_participants[state_count].provider = providers[index];
+            state_participants[state_count].residency = residencies[index];
+            transaction[state_count] = (yvex_runtime_transaction_participant){
+                .context = &state_participants[state_count],
+                .prepare = runtime_state_transaction_prepare,
+                .publish = runtime_state_transaction_publish,
+                .abort = runtime_state_transaction_abort};
+            state_count++;
+            state_owner_count++;
+        }
+        if (rc == YVEX_OK && summary_rc == YVEX_OK &&
+            (!summary.transaction_active || summary.candidate_active ||
+             !summary.staged_layer_count || summary.invalidated) &&
+            cleanup_rc == YVEX_OK) {
             cleanup_rc = YVEX_ERR_STATE;
             yvex_error_set(&cleanup, cleanup_rc, "runtime.session.coordinated",
-                           "one coordinated state batch is incomplete");
+                           "one coordinated state participant is incomplete");
         }
+    }
+    transaction_count = state_count;
+    if (session->sequence_state) {
+        int summary_rc;
+        yvex_error_clear(&summary_error);
+        summary_rc = runtime_sequence_state_summary_record(
+            session, &sequence_summary, &summary_error);
+        if (summary_rc != YVEX_OK && cleanup_rc == YVEX_OK) {
+            cleanup_rc = summary_rc;
+            cleanup = summary_error;
+        }
+        if (summary_rc == YVEX_OK && sequence_summary.transaction_active) {
+            summary_rc = yvex_sequence_state_participant(
+                session->sequence_state, &sequence_participant, &summary_error);
+            if (summary_rc == YVEX_OK) {
+                transaction[transaction_count++] = sequence_participant;
+                state_owner_count++;
+            } else if (cleanup_rc == YVEX_OK) {
+                cleanup_rc = summary_rc;
+                cleanup = summary_error;
+            }
+        }
+        if (rc == YVEX_OK && summary_rc == YVEX_OK &&
+            (!sequence_summary.transaction_active ||
+             sequence_summary.staged_layers != sequence_summary.binding_count ||
+             sequence_summary.invalidated) &&
+            cleanup_rc == YVEX_OK) {
+            cleanup_rc = YVEX_ERR_STATE;
+            yvex_error_set(
+                &cleanup, cleanup_rc, "runtime.session.coordinated",
+                "coordinated recurrent state participant is incomplete");
+        }
+    }
+    if (transaction_count + participant_count >
+        YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP && cleanup_rc == YVEX_OK) {
+        cleanup_rc = YVEX_ERR_BOUNDS;
+        yvex_error_set(&cleanup, cleanup_rc, "runtime.session.coordinated",
+                       "transaction participant capacity was exceeded");
+    }
+    for (index = 0u; index < participant_count; ++index) {
+        if (!participants[index].context || !participants[index].prepare ||
+            !participants[index].publish || !participants[index].abort) {
+            if (cleanup_rc == YVEX_OK) {
+                cleanup_rc = YVEX_ERR_INVALID_ARG;
+                yvex_error_set(&cleanup, cleanup_rc,
+                               "runtime.session.coordinated",
+                               "transaction participant is incomplete");
+            }
+            continue;
+        }
+        transaction[transaction_count++] = participants[index];
+    }
+    if (rc == YVEX_OK && !state_owner_count && cleanup_rc == YVEX_OK) {
+        cleanup_rc = YVEX_ERR_STATE;
+        yvex_error_set(&cleanup, cleanup_rc, "runtime.session.coordinated",
+                       "coordinated execution has no active state participant");
     }
     if (rc == YVEX_OK && cleanup_rc == YVEX_OK &&
         !yvex_core_u64_add(session->summary.execution_count, 1ull, &counter_next)) {
@@ -1030,74 +1476,34 @@ int yvex_runtime_session_finish_coordinated(
                        "runtime session execution counter overflowed");
     }
 
-    if (rc == YVEX_OK && cleanup_rc == YVEX_OK && participant) {
-        cleanup_rc = participant->prepare(participant->context, &cleanup);
-        participant_prepared = cleanup_rc == YVEX_OK;
-    }
-    for (index = 0ull; rc == YVEX_OK && cleanup_rc == YVEX_OK && index < 2ull;
-         ++index)
-        if (residencies[index])
-            cleanup_rc = yvex_runtime_state_residency_publish(
-                residencies[index], &cleanup);
-    for (index = 0ull; rc == YVEX_OK && cleanup_rc == YVEX_OK && index < 2ull;
-         ++index) {
-        cleanup_rc = providers[index]->prepare_commit(
-            providers[index]->context, &state_failure, &cleanup);
-        prepared[index] = cleanup_rc == YVEX_OK;
-    }
-    if (rc == YVEX_OK && cleanup_rc == YVEX_OK) {
-        for (index = 0ull; index < 2ull; ++index)
-            providers[index]->publish_commit(providers[index]->context);
-        for (index = 0ull; cleanup_rc == YVEX_OK && index < 2ull; ++index)
-            if (residencies[index])
-                cleanup_rc = yvex_runtime_state_residency_commit(
-                    residencies[index], &cleanup);
-        if (cleanup_rc == YVEX_OK && participant_prepared)
-            participant->publish(participant->context);
-        if (cleanup_rc == YVEX_OK)
-            session->summary.execution_count = counter_next;
-    } else {
-        for (index = 2ull; index-- > 0ull;)
-            if (prepared[index])
-                providers[index]->cancel_commit(providers[index]->context);
-        if (participant) participant->cancel(participant->context);
-        for (index = 0ull; index < 2ull; ++index) {
-            int abort_rc = providers[index]->abort(
-                providers[index]->context, &state_failure, &failure);
-            if (residencies[index])
-                yvex_runtime_state_residency_abort(residencies[index]);
-            if (abort_rc != YVEX_OK && cleanup_rc == YVEX_OK) {
-                cleanup_rc = abort_rc;
-                cleanup = failure;
-            }
-        }
-    }
-    if (rc != YVEX_OK || cleanup_rc != YVEX_OK) {
+    transaction_status = rc != YVEX_OK ? rc : cleanup_rc;
+    transaction_error = transaction_status == rc ? primary : cleanup;
+    transaction_rc = runtime_transaction_resolve(
+        transaction, transaction_count, transaction_status, &abort_failed,
+        &transaction_error);
+    boundary_failure = cleanup_rc != YVEX_OK || abort_failed ||
+                       (rc == YVEX_OK && transaction_rc != YVEX_OK);
+    (void)runtime_sequence_state_summary_record(
+        session, NULL, &summary_error);
+    if (transaction_rc == YVEX_OK)
+        session->summary.execution_count = counter_next;
+    else {
         unsigned long long *counter =
-            (rc != YVEX_OK ? rc : cleanup_rc) == YVEX_ERR_CANCELLED
+            transaction_rc == YVEX_ERR_CANCELLED
                 ? &session->summary.cancellation_count
                 : &session->summary.failure_count;
         if (yvex_core_u64_add(*counter, 1ull, &counter_next)) *counter = counter_next;
-        if (cleanup_rc != YVEX_OK && cleanup_rc != YVEX_ERR_CANCELLED)
+        if (boundary_failure && transaction_rc != YVEX_ERR_CANCELLED)
             session->summary.invalidated = 1;
     }
     session->execution_owner_ready = 0;
     session->summary.busy = 0;
     (void)pthread_cond_broadcast(&session->idle_condition);
     (void)pthread_mutex_unlock(&session->lifecycle_mutex);
-    if (cleanup_rc != YVEX_OK) {
-        if (err) *err = cleanup;
-        return cleanup_rc;
-    }
-    if (rc != YVEX_OK) {
-        if (err && primary.code != YVEX_OK)
-            *err = primary;
-        else
-            yvex_error_set(err, (yvex_status)rc, "runtime.session.execution",
-                           "coordinated execution failed before publication");
-        return rc;
-    }
-    return yvex_runtime_private_success(err);
+    if (transaction_rc == YVEX_OK)
+        return yvex_runtime_private_success(err);
+    if (err) *err = transaction_error;
+    return transaction_rc;
 }
 
 int yvex_runtime_session_finish(yvex_runtime_execution_session *session, int status,

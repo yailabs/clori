@@ -145,6 +145,7 @@ typedef struct {
     const void *lowering_context;
     const yvex_source_verification *verification;
     const char *tokenizer_architecture;
+    unsigned long long tokenizer_vocabulary_size;
 } yvex_gguf_writer_complete_input;
 typedef struct {
     const yvex_gguf_writer_proof_tensor *tensors;

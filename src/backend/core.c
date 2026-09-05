@@ -99,6 +99,85 @@ static const backend_capability_rule backend_capability_rules[] = {
                  YVEX_BACKEND_VARIANT_ATTENTION_NONCAUSAL_F32}},
 };
 
+const struct yvex_backend_sampling_operations *yvex_backend_sampling_operations_get(
+    const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->sampling_operations
+               ? backend->vtable->sampling_operations(backend)
+               : NULL;
+}
+
+const struct yvex_backend_moe_operations *yvex_backend_moe_operations_get(
+    const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->moe_operations
+               ? backend->vtable->moe_operations(backend)
+               : NULL;
+}
+
+const struct yvex_backend_transformer_operations *yvex_backend_transformer_operations_get(
+    const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->transformer_operations
+               ? backend->vtable->transformer_operations(backend)
+               : NULL;
+}
+
+const struct yvex_backend_component_operations *yvex_backend_component_operations_get(
+    const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->component_operations
+               ? backend->vtable->component_operations(backend)
+               : NULL;
+}
+
+static const yvex_backend_encoded_operations *backend_encoded_operations(
+    const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->encoded_operations
+               ? backend->vtable->encoded_operations(backend)
+               : NULL;
+}
+
+int yvex_backend_encoded_matvec(
+    yvex_backend *backend, const unsigned char *resident_encoded,
+    unsigned long long encoded_bytes, unsigned int qtype,
+    unsigned long long row_count, unsigned long long row_width,
+    unsigned long long row_bytes, unsigned long long input_rows,
+    const yvex_device_tensor *input, const yvex_device_tensor *input_tail,
+    unsigned long long input_head_width, const yvex_device_tensor *additive,
+    yvex_device_tensor *output, int activation_q8,
+    yvex_backend_operation_facts *facts, yvex_error *err)
+{
+    const yvex_backend_encoded_operations *operations =
+        backend_encoded_operations(backend);
+    if (!operations || !operations->matvec)
+        return backend_refuse(err, YVEX_ERR_UNSUPPORTED, "backend.encoded-matvec",
+                              "backend has no encoded matrix-row implementation");
+    return operations->matvec(
+        backend, resident_encoded, encoded_bytes, qtype, row_count, row_width,
+        row_bytes, input_rows, input, input_tail, input_head_width, additive,
+        output, activation_q8, facts, err);
+}
+
+int yvex_backend_encoded_gather(
+    yvex_backend *backend, const unsigned char *resident_encoded,
+    unsigned long long encoded_bytes, unsigned int qtype,
+    unsigned long long row_count, unsigned long long row_width,
+    unsigned long long row_bytes, const unsigned int *row_ids,
+    unsigned long long selected_rows, yvex_device_tensor *output,
+    yvex_backend_operation_facts *facts, yvex_error *err)
+{
+    const yvex_backend_encoded_operations *operations =
+        backend_encoded_operations(backend);
+    if (!operations || !operations->gather)
+        return backend_refuse(err, YVEX_ERR_UNSUPPORTED, "backend.encoded-gather",
+                              "backend has no encoded row-gather implementation");
+    return operations->gather(
+        backend, resident_encoded, encoded_bytes, qtype, row_count, row_width,
+        row_bytes, row_ids, selected_rows, output, facts, err);
+}
+
 static const char *backend_name_at(const char *const *names,
                                    size_t count,
                                    unsigned int index)
@@ -693,6 +772,32 @@ int yvex_backend_tensor_read(yvex_backend *backend,
     }
     return backend->vtable->tensor_read(backend, tensor, dst, len, err);
 }
+
+int yvex_backend_tensor_zero(yvex_backend *backend,
+                             yvex_device_tensor *tensor,
+                             yvex_error *err)
+{
+    int rc;
+    if (!backend || !tensor) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "backend.tensor.zero",
+                       "backend and owned mutable tensor are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = backend_dispatch_admit(backend, "backend.tensor.zero", err);
+    if (rc != YVEX_OK) return rc;
+    if (!backend_tensor_owner_is(backend, tensor) || tensor->borrowed_host) {
+        yvex_error_set(err, YVEX_ERR_STATE, "backend.tensor.zero",
+                       "tensor is not mutable storage owned by this backend");
+        return YVEX_ERR_STATE;
+    }
+    if (!backend->vtable || !backend->vtable->tensor_zero) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "backend.tensor.zero",
+                       "backend does not support tensor zeroing");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    return backend->vtable->tensor_zero(backend, tensor, err);
+}
+
 int yvex_backend_tensor_copy(yvex_backend *backend,
                              yvex_device_tensor *dst,
                              const yvex_device_tensor *src,

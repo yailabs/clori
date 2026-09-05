@@ -9,7 +9,7 @@ project these facts but do not own event meaning.
 
 Runtime, server, session, generation, listener, and shutdown owners publish one
 ordered event stream. Consumers are the server raw console, local protocol
-subscribers, status/metrics accumulation, `server log`, and the interactive
+subscribers, status/metrics accumulation, `host logs`, and the interactive
 console.
 
 No consumer scrapes another renderer's text.
@@ -23,9 +23,10 @@ full probes never enter normal watch merely because trace verbosity increased.
 ## Event identity
 
 Each event carries a schema, global sequence, wall and monotonic timestamps,
-severity, kind, process/runtime identities, and applicable model, artifact,
-variant, session, request, turn, phase, counter, timing, rate, and result
-fields. Content is excluded unless an explicit trace-content policy admits it.
+severity, kind, process/runtime identities, and applicable model, engine
+generation, artifact, specialization, session, request, turn, phase, counter,
+timing, rate, and result fields. Content is excluded unless an explicit
+trace-content policy admits it.
 The sealed semantic identity binds sequence, kind, correlations, counters,
 durations, result facts, and model identities. Process ID and observed wall or
 monotonic clock values remain diagnostic fields and do not enter that identity.
@@ -37,47 +38,102 @@ make an uncommitted state visible or promote capability.
 
 Typed events cover at least:
 
-- startup, artifact/binding admission, materialization, residency, and ready;
+- host startup/readiness, engine load, package/binding admission,
+  specialization, materialization, residency, draining, unload, and failure;
 - listener preparation/readiness/failure;
 - client/session attach and lifecycle;
 - request admission, queueing, tokenization, prefix reuse, and prefill;
 - draft start/completion, target verification start/completion, accepted prefix,
   candidate rejection, and speculative-cycle commit;
 - first token, decode progress, fragment publication, commit, and stop;
+- media request, conditioning, latent iteration, video/audio decode,
+  publication, completion, cancellation, and failure;
 - cancellation, refusal, failure, and partial progress;
 - memory/resource counters and bounded profile stages;
-- shutdown admission, drain, model close, and completion.
+- host shutdown admission, engine drain/close, and completion.
 
 ## Fan-out and overflow
 
 One bounded fan-out distributes the event to raw JSONL, protocol subscribers,
 metrics, and human renderers. Low-priority progress may be coalesced or dropped
 under pressure, and overflow remains an explicit fact. Lifecycle and terminal
-events may not disappear silently.
+events receive retention priority over replaceable progress. Once the ring is
+full, a new progress record replaces the oldest replaceable record; it cannot
+evict a retained lifecycle or terminal record while any replaceable slot
+exists. If every retained record is non-replaceable, incoming progress is
+coalesced instead of displacing it. One retained `telemetry.dropped` record is
+updated with exact aggregate pressure/coalescing counts rather than appending a
+warning for every loss. Ring storage remains fixed and drop accounting cannot
+amplify event pressure.
 
 Subscription failure or a slow client cannot block scheduler workers
-indefinitely. Disconnect releases subscriber resources without closing the
-runtime model.
+indefinitely. Disconnect releases subscriber resources without closing an
+engine or the host.
 
 ## Projections
 
-`yvex server MODEL` renders the compact human projection in the owning foreground
-terminal by default. `yvex server log` attaches the same projection from another
-terminal, while `server log --verbose` additionally renders individual speculative
-cycles. `yvex server MODEL --console raw` and `yvex server log --json` emit canonical
-JSONL for the admitted trace schema. `server status` is a bounded snapshot rather
-than an event replay. Human projections render retained history plus live events in
-stable semantic categories. They retain operator-significant lifecycle, contended
-queue, prefill, first-token, aggregate speculative economics, completion,
-cancellation, and failure events while suppressing connection churn, uncontended
-queue admission, fragments, intermediate draft/verification steps, and profile
-rows. They render bytes in human units, speculative acceptance as
+`yvex serve` renders the compact human projection in the owning foreground
+terminal by default. `yvex host logs` renders a finite retained-history
+snapshot from another terminal, while `host logs --follow` keeps the typed
+subscription open. `host logs --verbose` additionally renders individual
+speculative cycles. `yvex serve --logs json` and `yvex host logs --json`
+emit canonical JSONL for the admitted trace schema. `host status` is a
+bounded host snapshot and `engine list` is the engine-inventory snapshot;
+neither is an event replay. Human projections render retained history plus live
+events in stable semantic categories. They retain operator-significant host,
+engine, session, contended queue, prefill, first-token, aggregate speculative
+economics, completion, cancellation, and failure events while suppressing
+connection churn, uncontended queue admission, fragments, intermediate
+draft/verification steps, and profile rows. They render bytes in human units,
+speculative acceptance as
 accepted/proposed, and stop codes as their named contract values. The `--json`
-projection retains the full subscribed event sequence with sequence, severity,
+projection retains the full selected event sequence with sequence, severity,
 turn, phase, timing, and rate. Neither projection
 exposes generic positional counter names. Native prefill
 progress sent to the REPL is another projection of the sealed event, not a
 synthetic client event.
+
+Text generation publishes a generic rolling `generation.progress` event after
+the first committed token at most once per second or each 64 committed tokens.
+It carries cumulative committed tokens, current position, reasoning tokens,
+elapsed decode time/rate and, when present, cumulative speculative proposal and
+acceptance facts. One terminal event carries the same final cumulative
+speculative view. Default human logs render the rolling event; per-token
+fragments and individual speculative phases require explicit detailed trace.
+
+The rate record names its denominator. Cumulative decode is committed decode
+work divided by complete decode wall; rolling decode is recent committed work
+divided by its own recent duration, with a current maximum window of 32 tokens.
+The compact server projection labels these `avg` and `r32`; canonical JSON keeps
+the complete scope, clock, composition, unit, work, duration, and rates. Human
+abbreviations never replace the typed authority.
+
+A completed stage profile also publishes an `unattributed` remainder. Its
+`value_a` is the sum of disjoint measured host phases, `value_b` is total
+generation wall, and `value_c` is the remainder. Attention, model-component,
+and synchronization measurements are explicitly overlapping children and are
+not subtracted again. If the disjoint clocks cannot be reconciled, the
+remainder duration stays unavailable instead of manufacturing a negative or
+double-counted wall.
+
+Target-only first/subsequent decode timings own only the model step and remain
+disjoint from output/state children. Speculative first/subsequent decode
+timings enclose a complete draft/verify/commit iteration; nested output,
+sampling, state, detokenization, and publication facts stay inspectable but
+are excluded from the disjoint wall sum. The event composition field carries
+that distinction explicitly.
+
+Media progress is likewise server-authored. The interactive client may project
+bounded completed/total iteration facts but does not fabricate percentages or
+assistant prose. Component-open events distinguish full hash, verified reopen,
+fallback hash, receipt state, bytes actually hashed, file extent, and elapsed
+time. These authentication facts do not imply materialization or residency.
+
+Engine load progress is authored by each lifecycle owner. Verification bytes
+and residency tensors expose percentages only when a real denominator exists.
+Binding, open, admission, materialization, seal, backend, or workspace phases
+with no owned denominator expose activity and elapsed time only. Progress is
+coalesced; terminal lifecycle and failure evidence is retained.
 
 Speculative events carry availability-bearing named generation mode, cycle,
 candidate extent, selected-verification, accepted, rejected, stop-discarded,
@@ -117,6 +173,21 @@ population histogram. These are publication facts rather than values inferred
 from tensor sizes. A measured
 zero synchronization duration is never interpreted as zero synchronization
 cost.
+
+## Observability cost
+
+Correctness-required execution, normal operational telemetry, and detailed
+profiling are distinct modes. The minimal mode exists for controlled
+qualification; the product default uses bounded summary/stage events; detailed
+profiling may publish materially more attribution and must disclose its cost.
+Changing observability does not change semantic generation-plan identity.
+
+Normal telemetry performs no measurement-only device or stream synchronization,
+keeps ring/event volume bounded, and is qualified with paired whole-model runs
+against a predeclared variance/overhead limit. Detailed profiling is not a
+release benchmark mode. Output identity, execution identity, warm/cold state,
+device, contention, and workload remain fixed in a paired comparison; the run
+manifest records the intentionally different observability condition.
 
 ## Side effects and failure
 

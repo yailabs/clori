@@ -186,7 +186,7 @@ static int session_store_view_valid(const server_session_store_view *view)
     if (!view || view->policy_set < 0 || view->policy_set > 1 ||
         view->generation_checkpoint_present < 0 ||
         view->generation_checkpoint_present > 1 ||
-        view->reasoning_policy > YVEX_REASONING_MAXIMUM ||
+        !yvex_reasoning_policy_valid(view->reasoning_policy) ||
         (view->message_count && !view->messages) ||
         (view->committed_count && !view->committed_tokens) ||
         (view->committed_count &&
@@ -225,8 +225,12 @@ static int session_store_view_valid(const server_session_store_view *view)
         return 0;
     }
     for (index = 0ull; index < view->message_count; ++index)
-        if (view->messages[index].role > YVEX_PROMPT_ROLE_TOOL ||
-            (view->messages[index].content_len && !view->messages[index].content))
+        if (view->messages[index].schema_version !=
+                YVEX_PROMPT_MESSAGE_SCHEMA_V1 ||
+            view->messages[index].role > YVEX_PROMPT_ROLE_TOOL ||
+            (view->messages[index].content_len && !view->messages[index].content) ||
+            (view->messages[index].reasoning_content_len &&
+             !view->messages[index].reasoning_content))
             return 0;
     return 1;
 }
@@ -237,8 +241,13 @@ static int session_store_measure(const server_session_store_view *view,
     unsigned long long bytes = SESSION_STORE_FIXED_BYTES;
     unsigned long long index, aligned, tokens;
     for (index = 0ull; index < view->message_count; ++index) {
+        unsigned long long reasoning_aligned;
         if (!session_store_align(view->messages[index].content_len, &aligned) ||
-            !session_store_add(bytes, 16ull, &bytes) ||
+            !session_store_align(
+                view->messages[index].reasoning_content_len,
+                &reasoning_aligned) ||
+            !session_store_add(bytes, 24ull, &bytes) ||
+            !session_store_add(bytes, reasoning_aligned, &bytes) ||
             !session_store_add(bytes, aligned, &bytes))
             return 0;
     }
@@ -317,7 +326,7 @@ int yvex_server_session_store_encode(
                                     "session checkpoint allocation failed");
     if (!session_store_writer_bytes(&writer, SESSION_STORE_MAGIC,
                                     SESSION_STORE_MAGIC_BYTES) ||
-        !session_store_writer_u64(&writer, YVEX_SERVER_SESSION_STORE_SCHEMA_V1) ||
+        !session_store_writer_u64(&writer, YVEX_SERVER_SESSION_STORE_SCHEMA_V2) ||
         !session_store_writer_u64(&writer, total) ||
         !session_store_writer_u64(&writer, view->message_count) ||
         !session_store_writer_u64(&writer, view->committed_count) ||
@@ -343,8 +352,13 @@ int yvex_server_session_store_encode(
         if (!session_store_writer_u64(&writer, view->messages[index].role) ||
             !session_store_writer_u64(&writer,
                                       view->messages[index].content_len) ||
+            !session_store_writer_u64(
+                &writer, view->messages[index].reasoning_content_len) ||
             !session_store_writer_blob(&writer, view->messages[index].content,
-                                       view->messages[index].content_len))
+                                       view->messages[index].content_len) ||
+            !session_store_writer_blob(
+                &writer, view->messages[index].reasoning_content,
+                view->messages[index].reasoning_content_len))
             goto failure;
     for (index = 0ull; index < view->committed_count; ++index)
         if (!session_store_writer_u64(&writer, view->committed_tokens[index]))
@@ -446,10 +460,14 @@ static int session_store_header_read(
         return 0;
     for (index = 0u; index < 8u; ++index)
         if (!session_store_parser_u64(parser, &fields[index])) return 0;
-    if (schema != YVEX_SERVER_SESSION_STORE_SCHEMA_V1 || total != expected_bytes ||
-        fields[5] > 1ull || fields[6] > YVEX_REASONING_MAXIMUM ||
+    if ((schema != YVEX_SERVER_SESSION_STORE_SCHEMA_V1 &&
+         schema != YVEX_SERVER_SESSION_STORE_SCHEMA_V2) ||
+        total != expected_bytes ||
+        fields[5] > 1ull ||
+        !yvex_reasoning_policy_valid((yvex_reasoning_policy)fields[6]) ||
         fields[7] > 1ull)
         return 0;
+    state->schema_version = schema;
     state->message_count = fields[0];
     state->committed_count = fields[1];
     state->turn_count = fields[2];
@@ -474,17 +492,25 @@ static int session_store_decode_messages(
     unsigned long long index, transcript_bytes = 0ull;
     const unsigned char *content;
     for (index = 0ull; index < state->message_count; ++index) {
-        unsigned long long role, content_len, next;
+        unsigned long long role, content_len, reasoning_len = 0ull, next;
         if (!session_store_parser_u64(&scan, &role) ||
             !session_store_parser_u64(&scan, &content_len) ||
+            (state->schema_version >= YVEX_SERVER_SESSION_STORE_SCHEMA_V2 &&
+             !session_store_parser_u64(&scan, &reasoning_len)) ||
             role > YVEX_PROMPT_ROLE_TOOL ||
             !session_store_add(content_len, 1ull, &next) ||
             !session_store_add(transcript_bytes, next, &transcript_bytes) ||
+            !session_store_add(reasoning_len, 1ull, &next) ||
+            !session_store_add(transcript_bytes, next, &transcript_bytes) ||
             transcript_bytes > maximum_transcript_bytes ||
-            !session_store_parser_blob(&scan, content_len, &content))
+            !session_store_parser_blob(&scan, content_len, &content) ||
+            (state->schema_version >= YVEX_SERVER_SESSION_STORE_SCHEMA_V2 &&
+             !session_store_parser_blob(&scan, reasoning_len, &content)))
             return 0;
+        state->messages[index].schema_version = YVEX_PROMPT_MESSAGE_SCHEMA_V1;
         state->messages[index].role = (yvex_prompt_role)role;
         state->messages[index].content_len = content_len;
+        state->messages[index].reasoning_content_len = reasoning_len;
     }
     if (transcript_bytes) {
         state->transcript = yvex_core_calloc(1u, (size_t)transcript_bytes);
@@ -492,11 +518,14 @@ static int session_store_decode_messages(
     }
     transcript_bytes = 0ull;
     for (index = 0ull; index < state->message_count; ++index) {
-        unsigned long long role, content_len;
+        unsigned long long role, content_len, reasoning_len = 0ull;
         if (!session_store_parser_u64(parser, &role) ||
             !session_store_parser_u64(parser, &content_len) ||
+            (state->schema_version >= YVEX_SERVER_SESSION_STORE_SCHEMA_V2 &&
+             !session_store_parser_u64(parser, &reasoning_len)) ||
             role != (unsigned long long)state->messages[index].role ||
             content_len != state->messages[index].content_len ||
+            reasoning_len != state->messages[index].reasoning_content_len ||
             !session_store_parser_blob(parser, content_len, &content))
             return 0;
         state->messages[index].content =
@@ -505,6 +534,16 @@ static int session_store_decode_messages(
             memcpy(state->transcript + transcript_bytes, content,
                    (size_t)content_len);
         transcript_bytes += content_len + 1ull;
+        state->messages[index].reasoning_content =
+            (const char *)state->transcript + transcript_bytes;
+        if (state->schema_version >= YVEX_SERVER_SESSION_STORE_SCHEMA_V2) {
+            if (!session_store_parser_blob(parser, reasoning_len, &content))
+                return 0;
+            if (reasoning_len)
+                memcpy(state->transcript + transcript_bytes, content,
+                       (size_t)reasoning_len);
+        }
+        transcript_bytes += reasoning_len + 1ull;
     }
     state->transcript_count = transcript_bytes;
     return 1;
@@ -707,10 +746,19 @@ static int session_store_state_fits(
     for (index = 0ull; index < state->message_count; ++index) {
         const unsigned char *content =
             (const unsigned char *)state->messages[index].content;
+        const unsigned char *reasoning =
+            (const unsigned char *)state->messages[index].reasoning_content;
         unsigned long long next;
         if (content != state->transcript + offset ||
             !yvex_core_u64_add(offset, state->messages[index].content_len + 1ull,
                                &next) ||
+            next > state->transcript_count)
+            return 0;
+        offset = next;
+        if (reasoning != state->transcript + offset ||
+            !yvex_core_u64_add(
+                offset, state->messages[index].reasoning_content_len + 1ull,
+                &next) ||
             next > state->transcript_count)
             return 0;
         offset = next;
@@ -733,12 +781,19 @@ static void session_store_state_apply(
         memcpy(session->transcript, state->transcript,
                (size_t)state->transcript_count);
     for (index = 0ull; index < state->message_count; ++index) {
+        session->messages[index].schema_version =
+            YVEX_PROMPT_MESSAGE_SCHEMA_V1;
         session->messages[index].role = state->messages[index].role;
         session->messages[index].content =
             (const char *)session->transcript + offset;
         session->messages[index].content_len =
             state->messages[index].content_len;
         offset += state->messages[index].content_len + 1ull;
+        session->messages[index].reasoning_content =
+            (const char *)session->transcript + offset;
+        session->messages[index].reasoning_content_len =
+            state->messages[index].reasoning_content_len;
+        offset += state->messages[index].reasoning_content_len + 1ull;
     }
     if (state->committed_count)
         memcpy(session->committed_tokens, state->committed_tokens,

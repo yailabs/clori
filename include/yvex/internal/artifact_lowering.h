@@ -82,7 +82,7 @@ typedef struct yvex_artifact_lowering_contribution {
     char source_name[256];
     yvex_native_dtype source_dtype;
     unsigned int source_rank;
-    unsigned long long source_dims[2];
+    unsigned long long source_dims[YVEX_TENSOR_MAX_DIMS];
     yvex_artifact_lowering_contribution_kind kind;
     unsigned long long source_row_index, descriptor_index, expert_index;
 } yvex_artifact_lowering_contribution;

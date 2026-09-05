@@ -7,6 +7,7 @@
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_operator.h>
 #include <yvex/internal/runtime_prefill.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -351,11 +352,11 @@ static void runtime_attention_result_initialize(const yvex_graph_attention_opera
     result->requested_layer_start = request->layer_start;
     result->requested_layer_count = request->select_layer ? request->layer_count : 0ull;
 }
-static int runtime_attention_result_bind(const yvex_runtime_model *model,
+static int runtime_attention_result_bind(const yvex_model_engine *model,
                                          yvex_graph_attention_operator_result *result, yvex_error *err) {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
     const yvex_graph_execution_api *graph = view ? view->graph : NULL;
-    yvex_runtime_model_summary model_summary;
+    yvex_model_engine_summary model_summary;
     const yvex_runtime_binding_summary *binding = view ? view->binding : NULL;
     const yvex_artifact_physical_compatibility *compatibility =
         binding ? &binding->physical_compatibility : NULL;
@@ -365,7 +366,7 @@ static int runtime_attention_result_bind(const yvex_runtime_model *model,
         yvex_runtime_descriptor_summary_get(view ? view->descriptor : NULL);
     const yvex_attention_summary *attention = graph
         ? yvex_attention_plan_summary(view->attention) : NULL;
-    if (!graph || yvex_runtime_model_summary_copy(model, &model_summary, err) != YVEX_OK ||
+    if (!graph || yvex_model_engine_summary_copy(model, &model_summary, err) != YVEX_OK ||
         !model_summary.sealed || !model_summary.valid || !binding ||
         !compatibility || !compatibility->physical_payload_compatible ||
         !materialization || !materialization->committed || !descriptor || !attention)
@@ -401,7 +402,6 @@ static int runtime_attention_result_bind(const yvex_runtime_model *model,
     result->artifact_identity_verified =
         model_summary.artifact_hash_passes == 1ull ||
         model_summary.artifact_verified_reopen_passes == 1ull;
-    memcpy(&result->runtime_model_builds, &model_summary.runtime_model_builds, 4u * sizeof(unsigned long long));
     memcpy(result->lifecycle_seconds, model_summary.lifecycle_seconds, sizeof(result->lifecycle_seconds));
     return 1;
 }
@@ -450,12 +450,12 @@ static int runtime_attention_execution_identity(
     return 1;
 }
 static int runtime_attention_execution_descriptor_identity(
-    const yvex_graph_attention_operator_request *request, const yvex_runtime_model *model,
+    const yvex_graph_attention_operator_request *request, const yvex_model_engine *model,
     const yvex_runtime_execution_session *session,
     const yvex_graph_attention_capacity_plan *capacity,
     const yvex_graph_attention_operator_result *result,
     char output[YVEX_SHA256_HEX_CAP], yvex_error *err) {
-    const yvex_runtime_model_view *model_view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *model_view = yvex_model_engine_view_get(model);
     const yvex_runtime_session_view *session_view = yvex_runtime_session_view_get(session);
     const yvex_runtime_binding_summary *binding = model_view ? model_view->binding : NULL;
     yvex_runtime_residency_summary residency_storage;
@@ -490,7 +490,7 @@ static int runtime_attention_execution_descriptor_identity(
         return runtime_refuse(err, YVEX_ERR_FORMAT, "runtime.attention.workspace",
                               "session workspace identity disagrees with execution facts");
     {
-        yvex_runtime_execution_descriptor_facts facts = {
+        yvex_runtime_operator_execution_facts facts = {
             .schema_version = YVEX_RUNTIME_EXECUTION_DESCRIPTOR_SCHEMA_V2,
             .runtime_model_identity = result->runtime_model_identity, .runtime_binding_identity = binding->identity,
             .artifact_identity = binding->artifact_identity, .selected_mode = result->selected_mode,
@@ -535,7 +535,7 @@ static int runtime_attention_execution_descriptor_identity(
         memcpy(facts.qtype_binding_counts, residency->qtype_binding_counts,
                sizeof(facts.qtype_binding_counts));
         memcpy(facts.qtype_bytes, residency->qtype_bytes, sizeof(facts.qtype_bytes));
-        return yvex_runtime_execution_descriptor_identity_compute(&facts, output, err);
+        return yvex_runtime_operator_execution_identity_compute(&facts, output, err);
     }
 }
 static int runtime_attention_action_dispatches(yvex_runtime_operator_action action) {
@@ -725,11 +725,11 @@ static int runtime_attention_graph_lifecycle_partition(yvex_graph_attention_oper
     return YVEX_OK;
 }
 int yvex_runtime_session_prepare_attention_scope_state(
-    yvex_runtime_execution_session *session, yvex_runtime_model *model,
+    yvex_runtime_execution_session *session, yvex_model_engine *model,
     yvex_tensor_scope scope, const yvex_graph_attention_capacity_plan *capacity,
     yvex_attention_failure *failure, yvex_error *err) {
     const yvex_runtime_session_view *session_view = yvex_runtime_session_view_get(session);
-    const yvex_runtime_model_view *model_view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *model_view = yvex_model_engine_view_get(model);
     const yvex_attention_state_provider *provider = session_view
         ? (scope == YVEX_TENSOR_SCOPE_DRAFT
                ? session_view->draft_attention_state_provider
@@ -744,7 +744,7 @@ int yvex_runtime_session_prepare_attention_scope_state(
         yvex_graph_attention_capacity_plan_summary(capacity);
     unsigned long long index, prepared = 0ull;
     if ((scope != YVEX_TENSOR_SCOPE_GLOBAL && scope != YVEX_TENSOR_SCOPE_DRAFT) ||
-        !session_view || session_view->model != model || !provider || !provider->prepare ||
+        !session_view || session_view->engine != model || !provider || !provider->prepare ||
         !attention_summary || !capacity_summary ||
         strcmp(attention_summary->attention_plan_identity,
                capacity_summary->attention_plan_identity) != 0)
@@ -776,13 +776,13 @@ int yvex_runtime_session_prepare_attention_scope_state(
         return runtime_refuse(err, YVEX_ERR_STATE, "runtime.attention.capacity",
                               "capacity-plan selection was not prepared completely");
     {
-        yvex_runtime_model_failure model_failure;
+        yvex_model_engine_failure model_failure;
         return yvex_runtime_session_prepare_persistent_scope_state(
             session, scope, capacity, &model_failure, err);
     }
 }
 int yvex_runtime_session_prepare_attention_probe_state(
-    yvex_runtime_execution_session *session, yvex_runtime_model *model,
+    yvex_runtime_execution_session *session, yvex_model_engine *model,
     const yvex_graph_attention_capacity_plan *capacity,
     yvex_attention_failure *failure, yvex_error *err)
 {
@@ -882,11 +882,11 @@ static int runtime_attention_phase_lane_close(runtime_attention_phase_lane *lane
     return YVEX_OK;
 }
 static int runtime_attention_phase_lane_execute(
-    runtime_attention_phase_lane *lane, yvex_runtime_model *model,
+    runtime_attention_phase_lane *lane, yvex_model_engine *model,
     const yvex_graph_execution_api *graph, const yvex_attention_probe_request *base_request,
     unsigned long long layer_ordinal, unsigned long long token_count,
     int decode_steps, yvex_attention_failure *failure, yvex_error *err) {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
     yvex_attention_probe_request request = *base_request;
     unsigned long long step, steps = decode_steps ? token_count : 1ull;
     int rc = YVEX_OK;
@@ -1047,11 +1047,11 @@ static int runtime_attention_phase_context_open(
     return rc;
 }
 static int runtime_attention_phase_equivalence(
-    yvex_runtime_execution_session *session, yvex_runtime_model *model,
+    yvex_runtime_execution_session *session, yvex_model_engine *model,
     const yvex_graph_execution_api *graph, const yvex_attention_probe_request *base_request,
     runtime_attention_phase_context *context,
     unsigned long long start_position, unsigned long long token_count,
-    yvex_runtime_model_failure *model_failure,
+    yvex_model_engine_failure *model_failure,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
     yvex_sha256 output_hash, state_hash;
     yvex_attention_failure failure;
@@ -1130,7 +1130,7 @@ static int runtime_attention_phase_equivalence(
     if (rc == YVEX_OK)
         yvex_sha256_hex(digest, result->probe.state_delta_digest);
     if (rc == YVEX_OK)
-        rc = yvex_runtime_model_validate(model, model_failure, err);
+        rc = yvex_model_engine_validate(model, model_failure, err);
     if (acquired) rc = yvex_runtime_session_finish(session, rc, err);
     if (rc == YVEX_OK) {
         yvex_sha256 evidence_hash;
@@ -1186,10 +1186,10 @@ static int runtime_attention_batch_validate(yvex_runtime_execution_session *sess
     return YVEX_OK;
 }
 int yvex_runtime_attention_probe_execute(yvex_runtime_execution_session *session,
-    yvex_runtime_model *model, const yvex_attention_probe_request *request,
-    yvex_attention_probe_result *result, yvex_runtime_model_failure *model_failure,
+    yvex_model_engine *model, const yvex_attention_probe_request *request,
+    yvex_attention_probe_result *result, yvex_model_engine_failure *model_failure,
     yvex_error *err) {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
     const yvex_runtime_session_view *session_view = yvex_runtime_session_view_get(session);
     yvex_attention_probe_request execution;
     yvex_attention_probe_state_provider state_provider;
@@ -1202,7 +1202,7 @@ int yvex_runtime_attention_probe_execute(yvex_runtime_execution_session *session
     const yvex_attention_state_provider *persistent_state;
     yvex_runtime_state_residency *state_residency;
     if (!request || !result || !view || !view->binding || !view->graph ||
-        !session_view || session_view->model != model ||
+        !session_view || session_view->engine != model ||
         (request->tensor_scope != YVEX_TENSOR_SCOPE_GLOBAL &&
          request->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT) ||
         !session_view->backend ||
@@ -1257,7 +1257,7 @@ int yvex_runtime_attention_probe_execute(yvex_runtime_execution_session *session
     if (rc == YVEX_OK)
         rc = runtime_attention_batch_validate(session, &execution, err);
     if (rc != YVEX_OK && err) execution_error = *err;
-    validation_rc = acquired ? yvex_runtime_model_validate(model, model_failure, err) : YVEX_OK;
+    validation_rc = acquired ? yvex_model_engine_validate(model, model_failure, err) : YVEX_OK;
     if (validation_rc != YVEX_OK) rc = validation_rc;
     else if (rc != YVEX_OK && err) *err = execution_error;
     if (acquired)
@@ -1267,9 +1267,9 @@ int yvex_runtime_attention_probe_execute(yvex_runtime_execution_session *session
     if (rc == YVEX_OK) *result = probe;
     return rc;
 }
-static int runtime_attention_state_probe(yvex_runtime_execution_session *session, yvex_runtime_model *model,
+static int runtime_attention_state_probe(yvex_runtime_execution_session *session, yvex_model_engine *model,
     const yvex_attention_probe_request *base, unsigned long long tokens, unsigned long long position,
-    int perturb, yvex_attention_probe_result *result, yvex_runtime_model_failure *failure, yvex_error *err) {
+    int perturb, yvex_attention_probe_result *result, yvex_model_engine_failure *failure, yvex_error *err) {
     yvex_attention_probe_request request = *base;
     request.backend_context = NULL; request.workspace = NULL;
     request.logical_model_identity = NULL;
@@ -1279,12 +1279,12 @@ static int runtime_attention_state_probe(yvex_runtime_execution_session *session
 }
 static int runtime_attention_operator_dispatch(
     const yvex_graph_attention_operator_request *request,
-    yvex_runtime_execution_session *session, yvex_runtime_model *model,
+    yvex_runtime_execution_session *session, yvex_model_engine *model,
     const yvex_graph_execution_api *graph, yvex_attention_probe_request *probe_request,
     runtime_attention_phase_context *phase_context,
     unsigned long long first, unsigned long long count,
     unsigned long long warmup, unsigned long long total, double *samples, double *device_samples,
-    yvex_runtime_model_failure *model_failure,
+    yvex_model_engine_failure *model_failure,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
     unsigned long long offset;
     int rc = YVEX_OK;
@@ -1396,7 +1396,7 @@ static int runtime_attention_operator_dispatch(
     return rc;
 }
 typedef struct {
-    yvex_runtime_model_summary model;
+    yvex_model_engine_summary model;
     yvex_materialization_access_summary materialization;
     yvex_runtime_residency_summary residency;
     yvex_runtime_session_summary session;
@@ -1424,15 +1424,15 @@ static const char *const runtime_warm_counter_names[RUNTIME_WARM_COUNTERS] = {
     "host_releases", "h2d_bytes", "d2h_bytes", "graph_workspace_capacity",
     "residency_generation", "workspace_generation"};
 static int runtime_attention_warm_snapshot_take(
-    yvex_runtime_model *model, yvex_runtime_execution_session *session,
+    yvex_model_engine *model, yvex_runtime_execution_session *session,
     runtime_attention_warm_snapshot *out, yvex_error *err) {
-    const yvex_runtime_model_view *model_view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *model_view = yvex_model_engine_view_get(model);
     const yvex_runtime_session_view *session_view = yvex_runtime_session_view_get(session);
     const yvex_attention_workspace_summary *workspace = session_view
         ? yvex_attention_workspace_summary_get(session_view->attention_workspace) : NULL;
     memset(out, 0, sizeof(*out));
     if (!model_view || !session_view || !workspace ||
-        yvex_runtime_model_summary_copy(model, &out->model, err) != YVEX_OK ||
+        yvex_model_engine_summary_copy(model, &out->model, err) != YVEX_OK ||
         yvex_materialization_session_access_summary(model_view->materialization, &out->materialization, err) !=
             YVEX_OK ||
         yvex_runtime_residency_snapshot(model_view->residency, &out->residency, NULL, NULL, err) != YVEX_OK ||
@@ -1619,11 +1619,11 @@ static int runtime_attention_cleanup(yvex_runtime_cleanup_lease **lease, double 
     return status;
 }
 static int runtime_attention_open(const yvex_graph_attention_operator_request *request,
-    yvex_runtime_cleanup_lease **cleanup, yvex_runtime_model **model,
+    yvex_runtime_cleanup_lease **cleanup, yvex_model_engine **model,
     yvex_runtime_execution_session **session,
-    yvex_runtime_execution_mode *selected_mode, yvex_runtime_model_failure *failure,
+    yvex_runtime_execution_mode *selected_mode, yvex_model_engine_failure *failure,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
-    yvex_runtime_model_open_request model_request = {0};
+    yvex_model_engine_open_request model_request = {0};
     yvex_runtime_session_open_request session_request = {0};
     unsigned long long started;
     int rc;
@@ -1658,9 +1658,9 @@ static int runtime_attention_open(const yvex_graph_attention_operator_request *r
     return rc;
 }
 static int runtime_attention_capacity_build(const yvex_graph_attention_operator_request *request,
-    const yvex_runtime_model *model,
+    const yvex_model_engine *model,
     unsigned long long execution_count, yvex_graph_attention_capacity_plan **out, yvex_error *err) {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
     yvex_graph_attention_capacity_request facts;
     unsigned long long exercise_capacity;
     memset(&facts, 0, sizeof(facts));
@@ -1717,11 +1717,11 @@ static int runtime_attention_qualify(yvex_graph_attention_operator_result *resul
 }
 int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_request *request,
     yvex_graph_attention_operator_result *result, yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err) {
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine *model = NULL;
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_cleanup_lease *cleanup = NULL;
     yvex_graph_attention_capacity_plan *capacity = NULL;
-    yvex_runtime_model_failure failure;
+    yvex_model_engine_failure failure;
     yvex_attention_probe_request probe_request;
     runtime_attention_phase_context *phase_context = NULL;
     runtime_attention_trace trace;
@@ -1823,7 +1823,7 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
         probe_request.evidence_context = &trace;
     }
     if (rc == YVEX_OK && request->operator_action == YVEX_RUNTIME_OPERATOR_STATE_EXERCISE) {
-        const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+        const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
         yvex_attention_failure phase_failure;
         probe_request.logical_model_identity = view && view->binding ? view->binding->logical_model_identity : NULL;
         probe_request.backend_context = yvex_runtime_session_view_get(session)->backend;

@@ -13,24 +13,11 @@
     "source_special_boundaries": ["platform-interface", "backend-kernel", "generated-abi"]
   },
   "limits": {
-    "production_files": 284,
-    "translation_units": 210,
-    "headers": 74,
-    "public_headers": 14,
-    "internal_headers": 46,
-    "source_headers": 14,
     "translation_unit_lines": 2000,
     "header_lines": 600,
     "function_lines": 200,
     "preferred_line_width": 100,
     "hard_line_width": 120,
-    "physical_lines": 223032,
-    "code_lines": 208804,
-    "executable_lines": 136669,
-    "semantic_owners": 254,
-    "public_function_declarations": 400,
-    "library_global_symbols": 1506,
-    "nonpublic_global_symbols": 1106,
     "family_sources": 4,
     "family_headers": 2,
     "family_sources_per_subsystem": 1,
@@ -120,8 +107,8 @@
   "symbols": {
     "namespace": "yvex_",
     "forbidden_public_fragments": ["_fixture_", "_reference_", "_test_", "_render_", "_deepseek_"],
-    "family_entrypoints": ["yvex_model_register_deepseek_v4", "yvex_compiler_family_deepseek_v4", "yvex_graph_register_minimax_h3", "yvex_graph_deepseek_v4_execution_binding", "yvex_graph_deepseek_v4_quant_presets", "yvex_graph_minimax_h3_component_adapter", "yvex_graph_minimax_h3_source_adapter"],
-    "required_internal_entrypoints": ["yvex_backend_attention_execute", "yvex_backend_text_embedding_execute", "yvex_backend_text_encoder_execute"]
+    "family_entrypoints": ["yvex_model_register_deepseek_v4", "yvex_compiler_family_deepseek_v4", "yvex_graph_register_minimax_h3"],
+    "required_internal_entrypoints": ["yvex_backend_attention_execute", "yvex_backend_component_operations_get"]
   },
   "archive": {
     "path": "build/lib/libyvex.a",

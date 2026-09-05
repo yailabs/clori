@@ -2,379 +2,344 @@
 
 Status: normative implemented contract
 
-Authority: hosted model, session, execution, publication, failure, and cleanup
-semantics. C interfaces are documented separately in [YVEX C API](c-api.md).
+Authority: host/engine lifecycle, execution sessions, scheduling, transactional
+publication, resource admission, failure, and cleanup. C interfaces are
+documented separately in [YVEX C API](c-api.md).
 
 ## Parties and scope
 
-Producer: foreground `yvex server`, common runtime, graph/backend, tokenizer,
-generation, and server owners.
+The foreground `yvex serve`, common runtime, graph/backend, tokenizer,
+generation, and server owners produce this contract. Native clients, the
+interactive console, the loopback OpenAI adapter, and focused tests consume it.
 
-Consumers: runtime-client operations and the interactive console in `yvex`,
-the in-process OpenAI adapter, and focused runtime tests.
+The contract begins with a healthy host and one locally known model profile. It
+may open an authenticated package as an engine generation and ends each
+operation with typed state/results, committed output, or refusal. It does not
+define source acquisition, compilation, command syntax, HTTP field syntax,
+evaluation, benchmark policy, or release state.
 
-The contract begins with one admitted complete artifact, exact runtime binding,
-Physical Execution IR and compiled execution profile and ends with typed
-state/results, committed text, events, or refusal.
-It does not define compilation, command grammar, HTTP syntax, evaluation,
-benchmark policy, or release state.
+## Host lifecycle
 
-## Runtime model lifecycle
-
-One hosted process owns one immutable runtime model:
+The server host lifecycle is independent from every model:
 
 ```text
-closed -> opening -> authenticated -> materialized -> ready -> stopping -> closed
+configured -> starting -> ready -> stopping -> stopped
+                         \-> failed
 ```
 
-Opening validates artifact snapshot and identity, runtime binding identity and
-schema, model descriptor, physical variant, Physical Execution IR,
-qtype/backend prerequisites, compiled profile, and resource budgets before
-readiness. The runtime imports compiler facts; it does not reconstruct
-transformation or writer plans.
+A ready host owns its private Unix listener, optional loopback OpenAI listener,
+telemetry, engine manager, and bounded external request capacity. It is valid
+and useful with zero loaded engines. Host stop refuses new connections, drains
+bounded client work, closes every engine, releases listeners, and then
+terminates the process.
 
-A first admission hashes the complete artifact. A later open may skip that
-model-sized hash only when a rebuildable local verified-reopen lease binds the
-expected artifact identity to the same device, inode, size, modification time,
-and change time. The runtime still opens and validates the live snapshot;
-missing, malformed, or stale lease data falls back to complete authentication.
-The lease is neither an artifact identity authority nor portable evidence.
+Engine count has three separate bounds. The implementation safety maximum is a
+memory/indexing guard, `--max-engines` selects the configured host-slot limit,
+and live package/resource admission decides how many engines can actually fit.
+Host status reports the configured maximum and current population; neither fact
+changes model or package meaning.
 
-Startup performs bounded binding admission before artifact open. The retained
-system reserve is the greater of 8 GiB and one eighth of the effective memory
-capacity, where the effective capacity is constrained by the caller's host
-budget and the process's complete cgroup-v2 `memory.max`/`memory.high`
-hierarchy. When the binding's admitted resident payload plus that reserve
-exceeds the configured or currently available extent, opening refuses with the
-exact capacity component and byte extents. The same live check runs again after
-artifact authentication and immediately before residency allocation, so memory
-consumed during a long hash cannot turn a previously valid observation into an
-OOM allocation. No materialization arena or model residency is created after
-either refusal.
+A client connection is not a session. A model engine is not the server.
+Disconnecting a client, closing a session, or unloading one engine does not
+stop the host.
 
-CUDA free memory is a separate constraint unless backend facts prove that the
-selected placement and the host use one physical memory domain. Managed
-placement requires unified addressing, managed access, and an exact match
-between effective system and device capacity. An artifact-backed candidate
-additionally requires one admitted immutable CUDA registration and
-device-address operation. On devices using host page tables, the registration
-need not claim a distinct read-only registration capability; YVEX still makes
-the tensor immutable at its backend contract. In either shared-domain case Linux
-`MemAvailable`, already bounded by the cgroup hierarchy, owns reclaimable-capacity
-admission; `cuMemGetInfo` is not allowed to turn reclaimable page cache into a
-false refusal. A shared CUDA session inherits the same immutable domain facts
-from its model-owned context.
+## Engine lifecycle
 
-The model owns model-lifetime artifact/binding handles, encoded weights,
-backend resources, tokenizer plan, output-head residency, immutable execution
-descriptors, target and draft plans, and shared caches. A DSpark plan shares the
-target model, tokenizer, output head, backend context, and immutable residency;
-it is not a second runtime model. Readiness is published only after every
-requirement of the selected generation mode and the worker is usable.
-
-Residency schema v7 selects one explicit physical backing. When the compiled
-physical plan requires no derived asset and CUDA admits immutable host mapping,
-the authenticated artifact remains the model-lifetime execution backing and
-tensor views resolve its exact file offsets without a second anonymous copy.
-Readiness requires one successful registration and its exact device address;
-raw pageable addressability does not establish the path and whole-artifact
-prefetch is not a readiness condition. A physical plan that requires derived
-layouts instead selects managed residency and its completed prefetch. Neither
-placement is a backend-local fallback. Artifact-backed bytes, registration and
-managed-prefetch facts are reported separately from stable host-resident
-allocations, and process RSS reports the pages actually touched. The residency
-identity seals artifact and materialization identities, placement, and exact
-tensor source/backing ranges. Snapshot drift, unsupported placement,
-registration or prefetch failure, and read failure remain typed refusals.
-
-Failure during opening publishes no ready model and releases every acquired
-resource transactionally. Shutdown closes the model once after request/session
-admission stops and the worker has resolved bounded work.
-
-## Session lifecycle
-
-Each server session owns one mutable runtime execution session plus token
-ledger, transcript, tokenizer decoder, sampling state, turn state, and
-persistent sequence state. Sessions sharing one model share no mutable state.
+Each engine slot follows:
 
 ```text
-absent -> created -> attached/detached -> active turn -> retained -> reset/closed
+unloaded -> loading -> loaded -> draining -> unloading -> unloaded
+                \-> failed               \-> failed
 ```
 
-A client connection is not a session. Disconnect and detach do not reset or
-close retained state. Reset clears committed sequence/text/sampling state while
-retaining compatible allocation; close releases the session. Repeated close
-and cleanup are bounded and safe.
+A load request names one complete local registry profile. The host reserves the
+alias, assigns a new nonzero process-local generation, and opens the profile
+outside the engine-manager lock. A text engine authenticates one artifact and
+runtime binding. A composite engine authenticates every required component and
+publishes one logical engine identity. No engine is routable while loading or
+failed.
 
-## Prompt and prefix admission
+Engine open validates package identity, runtime binding, model descriptor,
+Physical Execution IR, specialization compatibility, backend capability, and
+resource budgets before publishing `loaded`. The runtime imports compiler
+facts; it never reconstructs transformation or writer plans or resolves a
+concrete family implementation from a target string.
 
-The server renders and tokenizes the complete conversational prompt. Reuse is
-admitted only when the committed token ledger is an exact prefix of the new
-token sequence. The runtime prefills only the suffix. Position, reusable token
-count, and new-prefill token count are authoritative server/runtime facts.
+A first artifact admission hashes every byte. A later open may use a rebuildable
+verified-reopen lease only when expected identity and the complete filesystem
+snapshot agree. Invalid, stale, or missing lease data falls back to complete
+authentication. The lease is neither artifact authority nor portable evidence.
+Composite components apply the same rule independently.
 
-An incompatible prefix, context overflow, malformed UTF-8, unsupported prompt
-template, or invalid session state refuses before mutation. Reset is explicit;
-the runtime never silently discards committed state to make a turn fit.
+Unload requires the exact loaded alias and, when supplied, generation. It marks
+the engine draining before waiting: new work and new sessions refuse, active
+work receives cancellation, and the manager waits for its lease count to reach
+zero. Cleanup then releases sessions, scheduler, backend resources, residency,
+package handles, and component resources. The host and unrelated engines remain
+ready. Reloading the alias produces a distinct generation.
 
-## Transformer execution
+An opening or cleanup failure never publishes a ready engine. A failed slot
+remains observable with its generation and state but owns no executable
+resources.
 
-Prefill and decode are explicit phases over one admitted Transformer owner.
-The execution consumes exact token input, immutable model resources, reusable
-workspace, and a candidate persistent-state transaction. It executes selected
-embedding, the ordered layer stack, family-correct attention/state, FFN or MoE,
-residual composition, final collapse, and final normalization.
+## Package and specialization
 
-The normalized hidden result is not logits or text. Output-head projection
-consumes it once and publishes a complete finite vocabulary row. Sampling
-consumes the complete admitted row. A selected ordinary token is fed through
-decode exactly once before it is appended and detokenized. EOS or tokenizer
-stop tokens terminate according to the tokenizer contract without fabricated
-state advancement.
+The engine authenticates package facts from runtime binding v15 and PEIR v5.
+Package facts include model/operator identities, terminal tensor roles and
+encoded ranges, canonical qtype/layout, compiled plans, tokenizer/conversation
+policy, and numerical obligations.
 
-CPU and CUDA consume the same typed logical contract. Numerical device values
-carry explicit typed views; scalar, row, audit-digest, and forensic-full host
-materialization are distinct requests. Production CUDA greedy selection
-returns a bounded token/status result without full-vocabulary host transfer.
-The exact host stochastic path remains an explicit portable-reference class.
-Unsupported CUDA qtypes, operations, modes, workspace, or resources refuse;
-no explicit CUDA request falls back to CPU.
+The engine then seals a backend/device specialization. It binds package
+decisions to admitted implementation classes, activation representations, real
+width envelopes, equivalent fallback class, and hardware crossovers. The
+specialization identity changes when those deployment-significant facts change;
+the artifact and package identities do not.
 
-## Generation modes and verification
+A backend may select another tile, warp, grid, stream, or graph implementation
+only when it is equivalent under the selected specialization. An exact
+accumulation/reduction contract is not an equivalent-choice detail. No explicit
+CUDA request falls back to CPU, and no explicit exact request silently changes
+implementation class.
 
-One model may admit `target-only` and `dspark` modes. The selected mode is a
-runtime-profile fact and appears in live status and turn results. Target-only
-is the ordinary target reference path. DSpark is admitted only when artifact,
-binding, draft plan, target-verification plan, qtypes, workspace, and backend
-capabilities all agree. An explicit DSpark request never falls back silently.
+Current v14 runtime bindings remain readable only through their explicit
+authenticated compatibility importer. Legacy records that describe canonical
+package storage are normalized to PEIR v5; a v14 derived-layout requirement that
+cannot be represented truthfully refuses. V14 bytes are never decoded as v15.
 
-A DSpark cycle produces a bounded candidate block and confidence facts without
-mutating committed target truth. The complete target evaluates the ordered
-candidate prefix. Greedy verification accepts exact target-token matches.
-Stochastic verification uses the admitted target-distribution-preserving
-accept/reject and residual-sampling rule; drafter confidence and decoded text
-are never correctness authorities.
+## Resource admission and accounting
 
-An admitted source-authored reasoning terminator is also an execution-shape
-boundary. DSpark may commit the target-authored delimiter, but subsequent final
-channel tokens use the ordinary target path so another speculative verification
-row cannot cross the typed channel transition. Generation-result schema v5
-binds the committed-token extent at that boundary into the execution identity;
-the exact target-only continuation is the final committed extent minus that
-boundary. This remains one explicit DSpark turn, not a backend-local fallback.
-The `source-boundary` telemetry event reports the boundary extent in `a`, the
-target-only final continuation in `b`, and replayed accepted target rows in `c`;
-that last value remains zero.
+Before large allocation, engine open compares required bytes with configured
+host/device budgets, the process cgroup hierarchy, live system availability,
+and typed backend facts. The retained system reserve is the greater of 8 GiB
+and one eighth of effective capacity. A second live check after artifact
+authentication prevents a long hash from turning an earlier observation into
+an unsafe allocation.
 
-`decode_step_count` retains its sequence meaning: it counts target-verified
-positions committed to model state. It is not a target-forward counter. Draft
-forwards and target block verifications have separate counters because one
-verification may commit several positions.
+Residency schema v7 owns one explicit storage backing and one backend execution
+resource. Artifact-mapped placement borrows the immutable authenticated mapping;
+CUDA execution requires an admitted registration and device address. Copied
+host, locked-host, or CUDA-managed placement owns the copied prepared bytes.
+The engine reports mapped package, prepared, resident host, and resident device
+bytes separately. Unified physical memory does not collapse these classes.
 
-## Persistent state transaction
+Sequence state, reusable workspace, and transient allocations are session or
+execution resources, not model-package meaning. Live free bytes may admit or
+refuse a resource action but never enter semantic/package identity.
 
-Persistent sequence state is session-owned. The state provider and backend
-residency coordinate the same candidate generation:
+Each engine generation owns a bounded resource catalog. Canonical mappings,
+component resources, prepared tensors/groups/layouts, backend handles,
+executable caches, sequence state, workspace, and temporaries are distinct
+entry kinds. Every entry declares package provenance, specialization and
+admission provenance where applicable, numerical class, byte classes,
+dependency, lifetime, readiness, borrows, release behavior, and eviction
+eligibility. Stale generations refuse. Referenced entries and entries with live
+dependents cannot be released.
+
+Evicting a prepared entry releases only its owned bytes and invalidates its
+process-local resource handle. The admitted package mapping and package
+identity remain unchanged, so an equivalent entry may be prepared again from
+the same package and specialization facts. The contract admits this lifecycle;
+it does not claim that a retained optimized DeepSeek selective layout or an
+automatic eviction policy currently exists.
+
+## Session lifecycle and routing
+
+Every server session binds to one alias and exact engine generation. Alias
+equality never migrates a session to a reloaded engine.
 
 ```text
-validate input and capacity
--> begin candidate
--> execute and stage output/state
--> validate finite/numeric/device status
--> check cancellation
--> publish output and candidate state
--> commit logical state
+absent -> created -> ready/detached -> running -> retained/partial
+                                        \-> reset -> ready
+                                        \-> closing -> closed
 ```
 
-Failure aborts the candidate. Earlier successful chunks or tokens remain
-committed, and the result identifies the exact completed prefix and first
-incomplete unit. State position and generation come from the committed owner,
-not from a renderer or decode-local counter.
+A session owns one mutable runtime execution session plus token ledger,
+conversation transcript, incremental decoder, RNG/sampling state, turn state,
+and persistent sequence state. Sessions sharing an engine share immutable
+resources but no mutable state or workspace. Detach and disconnect retain
+session state. Reset clears committed semantic state while retaining compatible
+allocation. Close releases it.
 
-Speculation uses one bounded prefix-addressable candidate transaction. Ordered
-candidate deltas retain the target checkpoint after every verified position;
-SWA uses a ring projection while compressed, indexer and rolling state retain
-exact per-position boundaries. The transaction covers target attention/KV
-state, DSpark candidate state, position, token ledger, decoder, generated text,
-target and draft RNG state, stop class, and turn identities. It promotes the
-checkpoint for exactly the accepted target-authored prefix plus any separately
-executed correction or bonus token defined by the algorithm. Accepted target
-rows are not replayed, rejected suffixes are discarded, and rollback never
-means decrementing counters after publication.
+An engine-scoped operation may omit a model only when exactly one loaded engine
+is unambiguous. Multiple loaded engines require explicit model selection.
+Unknown, unloaded, loading, draining, failed, or stale generations refuse
+before session mutation. OpenAI `model` and native `--model` resolve through
+the same engine manager.
 
-An idle, complete paged provider may capture its committed attention state as
-an immutable in-memory prefix. Capture is admitted against an explicit byte
-budget and seals the state-layout, capacity-plan, content and backing
-identities before publication. A compatible empty provider may attach that
-backing without charging it as private residency. Shared pages remain
-immutable; the first write to an attached tail faults a private copy, so a
-child extension cannot mutate its source or another child. Incompatible
-geometry, identity, capacity or destination state refuses before attachment.
-Reset, invalidation and close release references through the prefix owner.
+## Prompt, execution, and publication
 
-This in-memory prefix contract is not durable persistence. The server session
-lifecycle combines it with a deep semantic clone of the token ledger, RNG,
-decoder, transcript and conversation state, then publishes one child only after
-both physical and semantic extents agree. Persisted state continues to use the
-separate versioned checkpoint/store contract.
+Conversation rendering and tokenization produce the complete prompt. Prefix
+reuse is admitted only when the session's committed token ledger is an exact
+prefix. The runtime prefills only the suffix. Incompatible prefix, context
+overflow, malformed UTF-8, unsupported prompt policy, or invalid session state
+refuses before mutation.
 
-## Execution and evidence admission
+Prefill, decode, draft, verification, and correction are phases over common
+engine/operator primitives. A normalized hidden row is not logits, sampling is
+not decode, and a selected token is fed through stateful decode exactly once.
 
-Every request consumes one immutable compiled execution profile binding the
-logical model, physical variant, Physical Execution IR, artifact,
-materialization, runtime binding, kernel bundle, hardware, context, mode,
-workload, evidence profile, and execution class. Profile v2 also records typed
-attention, MoE, and sampling resolutions. An executable resolution is either
-`exact` or `compatible-degraded`; resource pressure, unsupported capability,
-and trust failure cannot be sealed as an executable profile. The aggregate
-resolution is derived from those three operation facts rather than supplied as
-a second authority. Backend owners report capability facts but never select a
-resolution. `production` admits bounded
-status and accounting only; `audit` may add selected probes and device digests;
-`forensic` may explicitly materialize full intermediates. Trace verbosity does
-not select evidence depth, and production identity does not require complete
-hidden, logits, probability, state, or event hashing.
+Generation uses a three-part lifecycle:
 
-Forensic CUDA attention comparison may select the canonical-order numerical
-adapter rather than the production Q8-activation/F32 implementation. The
-adapter exists only to compare every intermediate against the independent
-reference contract; it cannot be selected by a production execution profile.
+```text
+begin prompt/prefill transaction
+-> advance one target step or one speculative cycle per work budget unit
+-> finish, validate, publish terminal result, release turn state
+```
 
-Descriptor-bearing execution also consumes independently sealed hardware and
-workload profiles plus one capacity plan. Context limits, pooled state,
-candidate and prefix reserves, logical batching, physical row geometry,
-workspace and system reserve remain separately identified. Persistent-state
-page tokens are a per-state-class planning result, not a global runtime flag.
-The model-authored maximum is sealed upstream in Semantic Model IR and must
-match the target/draft maxima in the compiled context envelope. Requested
-context is owned by the workload profile; hardware-fit admission remains the
-generic capacity planner's responsibility. No family projection owns selected
-capacity or a machine-memory constant.
+Fragments publish only after model state, token ledger, incremental decoder,
+and internal text ledger agree. A sink failure after committed output returns a
+typed partial-turn snapshot. It never relabels a partial result as complete or
+rewinds already committed state.
 
-The identity-bearing capacity plan uses stable physical and configured-budget
-facts. Before generation allocates session state or workspace, a separate
-transient preflight compares the plan's non-weight requirement with current
-system/cgroup availability and, for CUDA, current free device memory. Transient
-free bytes therefore prevent overcommit without changing page geometry,
-capacity identity, or persistent-state compatibility between requests and
-restarts.
+## Transactional sequence state
 
-Target prefill/decode, draft width five, verification widths two through six,
-correction, and reset select an execution shape before mutation. The key binds
-scope, phase, operation, width, context band, visibility, capacity, workspace,
-attention/state/kernel identities, and evidence profile. The runtime may admit
-a compatible eager/reference shape before execution; otherwise refusal names
-the exact capacity component, configured and required values, position, width,
-scope and shape/workspace/state identities. It never changes the active shape
-after output begins.
+State representations remain domain-specific, but their lifecycle is generic.
+The transaction coordinator owns a bounded participant collection. Each
+participant may stage, prepare commit, publish commit, abort, reset, and close
+its own representation.
 
-## Generation and text publication
+```text
+validate -> begin candidate -> execute/stage -> validate/cancel check
+         -> prepare every participant -> publish every participant
+         -> commit visible output
+```
 
-One generation turn composes tokenizer, prompt rendering, prefix admission,
-prefill, logits, sampling, decode, stop classification, incremental decoding,
-and server publication. It does not create alternative implementations of
-those domains.
+Failure before publication aborts every participant and preserves prior
+committed state. A prepare failure cannot leave one participant visible.
+Attention/KV providers, backend state residency, target/draft state, token
+ledger, decoder, RNG, and publication metadata remain separate participants.
 
-Fragments are published only after:
+DSpark candidates are private. The complete target selects one ordered
+checkpoint; the transaction promotes exactly the accepted target-authored
+prefix and discards the rejected suffix. Accepted target rows are not replayed.
+Greedy DSpark must commit the same target token sequence as target-only from the
+same initial state.
 
-1. model execution has committed the corresponding state;
-2. the incremental decoder has accepted the token bytes; and
-3. the internal text ledger has committed the same fragment.
+An idle committed provider may expose a bounded immutable in-memory prefix.
+Attach checks layout, capacity, identity, and empty destination state before
+copy-on-write sharing. This is not a durable cross-process prefix cache.
 
-Sink failure or disconnect stops further publication and preserves exact
-model-committed partial state. The typed partial result records committed
-position/tokens/text, participating state generations and identities, failure
-class, and recovery requirement. A partial session is visibly distinct,
-refuses ordinary continuation, and requires explicit reset unless a future
-versioned recovery operation is admitted. A partial turn is never labeled
-complete.
+## Scheduling and executable batches
 
-Draft candidates are not fragments. They never enter native streaming, HTTP
-or SSE output, transcript, completion usage, or ordinary generated-token
-counts. Those surfaces count only target-verified committed tokens.
+The host routes external operations and owns per-session serialization. Each
+engine owns one compatible-work scheduler. Distinct sessions may run
+concurrently within admitted worker and sequence capacity; the same session key
+never mutates concurrently.
 
-## Cancellation
+Active generation contexts submit real ready rows to the engine scheduler. The
+scheduler compares typed compatibility keys, performs a bounded rendezvous, and
+forms one physical batch only from matching engine generation, phase, operation,
+backend, scope, execution class, geometry, and implementation envelope.
+Cancellation removes or refuses stale work before publication.
 
-Cancellation is server-owned and correlated to the exact session/request/turn.
-It remains observable during tokenization, prefill, Transformer/MoE execution,
-decode, output-head projection, sampling, and publication at the bounded safe
-points provided by those owners.
+The execution batch retains source and row provenance. The expert worklist
+retains deterministic expert-major routed populations. CUDA receives those
+objects and may execute bounded tails, but it cannot regroup semantics or
+manufacture width.
 
-A cancellation during drafting or verification discards uncommitted candidate
-state. A cancellation after atomic accepted-prefix commit reports that exact
-committed prefix. Every cancelled request publishes a typed cancellation
-class, completed token and position facts, and no false terminal success. It
-does not close the server, model, or unrelated sessions, poison immutable
-caches, or prevent reset and a subsequent request.
+The engine scheduler retains multiple independent runnable turns and advances
+them cooperatively at transaction-safe execution quanta. This logical runnable
+capacity is distinct from both the number of resident sessions and the physical
+sequence width of one backend operation. Compatible active operations may
+rendezvous into one physical batch, but ready sequences do not dynamically join
+and leave decode batches. This contract therefore does not claim continuous
+batching; `continuous_batching_ready` remains false.
 
-## Resource and concurrency rules
+## Execution accounting
 
-The server owns one bounded queue and one scheduler mutation authority.
-Listener threads admit, frame, and project requests but never mutate model
-state directly. A bounded worker set may execute distinct session keys
-concurrently; requests sharing a session key remain strictly serialized. This
-is independent-session scheduling, not compatible-row continuous batching.
-The startup capacity plan accounts the admitted worker count before readiness
-and the protocol exposes both capabilities separately.
+Execution measurement schema v1 binds every available duration or rate to an
+explicit scope, host/device clock, composition, work unit, and denominator.
+Top-level, nested, enclosing, and overlapping measurements are not silently
+added together. Unavailable attribution stays unavailable.
 
-Prepared warm execution reuses immutable weights, output-head residency,
-workspace, persistent-state allocation, and stable execution resources within
-their admitted capacities. A request outside capacity refuses rather than
-silently resizing a stable or captured execution.
+For text generation, cumulative decode rate is all committed decode work divided
+by its complete measured decode wall. Rolling decode rate uses only the most
+recent committed intervals, currently bounded to 32 tokens, and carries its own
+work and duration. Prefill, first decode, later decode, model forward, attention,
+output, logits publication, sampling, state commit, synchronization,
+detokenization, and client publication are distinct when their owners can time
+them. Media uses the same scopes with typed evaluation, frame, sample, byte, or
+operation units rather than pretending every workload is token execution.
 
-Host mapping, anonymous host residency, CUDA-addressable storage,
-accelerator-resident storage, KV, workspace, and staging remain separately
-accounted. Unified physical memory does not erase placement or movement facts.
+## Cancellation and draining
 
-## Inputs and outputs
+Cancellation is correlated to one engine generation, session, request, and
+turn. It remains observable at the bounded safe points provided by tokenizer,
+prefill, Transformer/MoE, verification, logits, sampling, media execution, and
+publication owners.
 
-Inputs include exact model/session/request identities, prompt or provider
-messages, generation policy, token/context limits, cancellation correlation,
-and output sink. Semantic defaults come from typed generation/sampling owners.
+Cancellation before commit discards the candidate. Cancellation after an atomic
+accepted-prefix commit reports that prefix. Engine draining stops new leases,
+requests cancellation of active work, and waits for bounded completion before
+resource release. It does not invalidate another engine or stop the host.
 
-Outputs include streamed channel fragments, complete turn result, usage,
-prompt/reuse/prefill/generation facts, TTFT, stop/cancellation class, final
-position, state/turn identity, and typed errors. Speculative results also name
-the execution mode and policy and report draft cycles/forwards, proposed and
-selected tokens, target verifications, accepted and rejected drafts,
-correction/bonus tokens, accepted-prefix statistics, and separate draft,
-verification, and commit durations. Unavailable data is marked unavailable;
-zero is retained for real zero values.
+## Failure and recovery
 
-## Side effects
+Every internal runtime failure has an origin and a recovery action. Origins are
+external request, integrity, capability, resource, backend, sequence, engine,
+and internal invariant. Recovery actions are request refusal, transaction
+abort, retry of an already-admitted equivalent, prepare/evict and retry,
+sequence invalidation, engine drain, engine-open refusal, and internal invariant
+failure.
 
-Admitted side effects are session creation/reset/close, persistent-state and
-token-ledger commit, bounded model/session memory use, event publication, local
-socket/loopback output, and optional explicitly configured traces. The runtime
+The two axes are not collapsed into diagnostic prose. Artifact/integrity failure
+always fails closed. `auto` may select another admitted numerically equivalent
+strategy when state is still private and policy permits it. An explicit exact
+request refuses when unavailable. Cleanup failure is reported without
+pretending the owner was released.
+
+## Resource truth
+
+Resource summary schema v1 separates artifact/mapped/prepared model spans,
+explicit host/device allocations, device-addressable bytes, typed session state,
+activation arenas, reusable workspace, transients, process RSS, current/peak,
+and logical movement. Artifact and mapped spans may overlap; typed state classes
+are subsets of physical session state; peak classes may overlap in time. They
+are not an additive total.
+
+Placement and availability qualify every number. On unified-memory hardware, a
+mapped artifact may be CUDA-addressable while physical page residency remains
+unmeasured. A zero explicit CUDA allocation therefore never means a zero GPU
+working set. The server aggregates only facts owned by each engine/component and
+does not duplicate immutable model bytes per session.
+
+## Evidence
+
+Production carries only the state, counters, compact lineage, and event seams
+needed for correct operation. Audit and forensic profiles may request selected
+digests or full intermediates. Benchmark and roofline owners build rich records
+from these seams; trace verbosity never changes the numerical path.
+
+Cold package identities and transaction identities remain complete. Transient
+engine-generation handles can be joined back to package, binding,
+specialization, session, operation, and source-row lineage by retained evidence.
+
+## Inputs, outputs, and side effects
+
+Inputs include exact model/session/request identities, provider messages or
+text, generation and sampling policy, token/context bounds, cancellation
+correlation, and output sink.
+
+Outputs include typed host/engine/session summaries, committed channel
+fragments, terminal turn or media results, usage, prompt/reuse/prefill and
+generation facts, stop/cancellation class, final position, state/turn identity,
+or typed refusal. Unavailable facts remain unavailable; real zero remains zero.
+
+Admitted side effects are engine load/drain/unload, session
+create/reset/fork/close, state and token-ledger commit, bounded resource use,
+event publication, local socket/loopback output, and explicit traces. Runtime
 does not modify source snapshots or artifacts.
 
-## Failure and refusal
+## Compatibility and non-claims
 
-Failure classes remain owned and distinguishable: input, source/artifact drift,
-binding incompatibility, capability, resource, backend, numerical, state,
-cancellation, timeout, transport, sink, and cleanup. Error text is a projection
-and never becomes the classifier.
-
-No output or state is published before its producer completes. Cleanup failure
-is reported without pretending the owner was released. Malformed or hostile
-requests cannot terminate the server or corrupt another session.
-
-Malformed draft geometry, feature taps, noise token, Markov rank, missing
-companions, unsupported draft qtypes, candidate workspace overflow,
-verification-state mismatch, RNG mismatch, and rejected-state reuse are typed
-refusals or failures. None may become a successful target-only turn.
-
-## Compatibility
-
-The runtime behavior is consumed through private local protocol v11 and the
-bounded OpenAI compatibility profile v2. Public C ABI and internal ABI follow
-their header/version contracts. Pre-v0.1 private protocol versions may be
-refused rather than decoded compatibly.
-
-## Explicit non-claims
+Hosted behavior crosses private local protocol v20 and the bounded OpenAI
+compatibility profile v2. Pre-v0.1 private protocol versions may refuse rather
+than decode compatibly. Public and internal C ABI follow their typed header and
+schema contracts.
 
 This contract does not establish public/remote serving, authentication, TLS,
-continuous batching, multi-model hosting, distributed execution,
-restart-persistent sessions, complete accelerator residency, complete
-device-side stochastic sampling/tokenization, load-aware confidence scheduling, DSpark acceleration,
-model evaluation, release benchmark performance, or release qualification.
+global ready-sequence continuous batching, independently evictable selective
+prepared layouts, distributed execution, restart-persistent engine instances,
+complete device-side stochastic sampling/tokenization, load-aware confidence
+scheduling, DSpark acceleration, model evaluation, release benchmark
+performance, or release qualification.

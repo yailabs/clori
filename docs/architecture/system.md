@@ -31,7 +31,8 @@ curated explanation, not runtime evidence.
 - the runtime-client lane uses the private local protocol for chat, one-shot
   generation, runtime administration, sessions, live model inspection,
   cancellation, and the single human/JSON log surface;
-- the foreground `server MODEL` lane directly owns persistent model hosting;
+- the foreground `server` lane owns the persistent multi-engine host and its
+  independently loaded engine generations;
 - the finite offline-engine lane calls admitted library owners for compilation,
   artifact operations, inspection, direct component execution, profiling, and
   system facts.
@@ -41,11 +42,11 @@ Transformer, or host a model. The offline lane closes all resources before the
 process exits and never owns persistent sessions. The server lane is explicit
 in the invocation and never shells out to or executes a hidden binary.
 
-The foreground server lane owns one process-lifetime runtime model containing target and DSpark
-draft/verification plans, one bounded worker and queue, one server-session
-registry, one private Unix listener, one loopback OpenAI-compatible listener,
-and one telemetry authority. HTTP and native clients enter the same worker,
-model, session, KV, and cancellation owners.
+The foreground server lane owns one private Unix listener, one loopback
+OpenAI-compatible listener, one telemetry authority, and a bounded set of
+engine generations. Each loaded engine owns its immutable runtime model,
+scheduler, sessions, state, and resources. HTTP and native clients bind work to
+an exact alias and generation rather than a process-global model pointer.
 
 ## Subsystem direction
 
@@ -73,26 +74,29 @@ not reconstruct model topology.
 
 The product levels are verified source, logical model, family projection,
 Transformation IR, quantization decisions, physical variant, Physical
-Execution IR, complete artifact, admission, materialization, optional derived
-execution asset, runtime binding, immutable runtime model, compiled execution
-profile, mutable session, request transaction, workload evidence, benchmark,
-and release qualification. These levels are identities and lifecycle
-boundaries, not aliases for directories.
+Execution IR, complete artifact, admission, materialization, runtime binding,
+deployment specialization, model-engine generation, mutable session, executable
+batch, request transaction, workload evidence, benchmark, and release
+qualification. These levels are identities and lifecycle boundaries, not
+aliases for directories.
 
 ## Authority boundaries
 
 | Boundary | Current owner |
 | --- | --- |
 | Source provenance, inventory, payload trust | `src/source/` |
+| Remote provider discovery and remote representation records | `src/accounts/`, `src/model/remote.c`, `include/yvex/catalog.h` |
+| Local acquired-source and admitted-package catalogs | `src/model/catalog.c`, `src/model/artifacts/`, `include/yvex/catalog.h` |
 | Family source facts, coverage and logical lowering | `src/model/families/` |
 | Artifact-neutral transformation and physical policy | `src/model/compilation/`, model compilation owners |
 | GGUF container, qtypes, writer, layout | `src/gguf/` |
-| Artifact snapshot, integrity, admission, materialization | `src/artifact/` |
+| Artifact snapshot, integrity, admission, and bounded artifact ranges | `src/artifact/` |
+| Backend-owned weight materialization | `src/model/materialization.c`, `include/yvex/materialization.h` |
 | Semantic/executable graph and state protocols | `src/graph/` |
-| Runtime binding, immutable model, sessions, residency, workspace | `src/runtime/` |
+| Runtime binding, model engines, specialization, sessions, residency, scheduler | `src/runtime/` |
 | Device capability, memory, kernels, launch graphs | `src/backend/` |
 | Autoregressive composition | `src/runtime/generation.c` and typed generation owners |
-| Hosted model, sessions, protocol, telemetry | `src/server/` |
+| Persistent host, live engine observation, routing, protocol, telemetry | `src/server/` |
 | OpenAI-compatible projection | `src/server/openai/` and `src/provider/` |
 | Command metadata and projections | `config/operator/registry.json`, generated descriptors, `src/cli/` |
 
@@ -115,10 +119,11 @@ ownership rules are in
 
 ## Application surfaces
 
-The private local protocol is version 6. It carries typed requests, streamed
-channels, status, session and partial-turn results, progress, terminal results,
-and refusals. Version 5 is refused rather than interpreted under the changed
-fixed-layout contract.
+The private local protocol is version 13. It carries typed host and engine
+lifecycle operations, exact engine-generation routing, streamed channels,
+status, session and partial-turn results, progress, terminal results, and
+refusals. Every earlier version, including v12, is refused rather than
+interpreted under the current fixed-layout contract.
 The in-process OpenAI adapter translates the bounded compatibility profile to
 the same protocol/session semantics. Neither transport enters graph, tokenizer,
 sampling, or model APIs directly.
@@ -132,9 +137,15 @@ REPL slash schemas consume that one authority.
 
 The admitted DeepSeek-V4-Flash-DSpark vertical reaches target-only and
 target-verified speculative text through one complete artifact, binding,
-runtime model, worker, and session authority on CPU and the admitted mixed GB10
+engine generation, scheduler, and session authority on CPU and the admitted mixed GB10
 path. Candidate tokens remain private until the complete target admits an
 accepted prefix; native and HTTP clients see only committed text and usage.
+
+The admitted MiniMax-H3 FL2VA vertical reaches one bounded typed media result
+through the same foreground server, session, protocol, artifact and telemetry
+owners. Its logical hosted model is composite: independently authenticated
+component artifacts use staged residency and one transactional publication
+without introducing a family-specific server or runtime.
 
 The current CUDA path keeps target and draft model execution on CUDA while
 tokenizer work, sampling, protocol handling, and orchestration remain

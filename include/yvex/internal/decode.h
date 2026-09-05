@@ -58,13 +58,11 @@ typedef struct yvex_runtime_speculation_context yvex_runtime_speculation_context
 typedef struct {
     yvex_backend_kind backend;
     unsigned long long context_capacity, prefill_chunk_tokens, maximum_host_bytes, maximum_device_bytes;
-    unsigned long long compatible_batch_width;
-    int compatible_batching;
-    const unsigned long long *execution_width;
+    unsigned long long scheduler_maximum_width;
+    int engine_scheduling;
     int (*cancel_requested)(void *context);
     void *cancel_context;
-    const yvex_compiled_execution_profile *execution_profile;
-    yvex_execution_shape_registry *shape_registry;
+    const yvex_runtime_execution_profile *execution_profile;
 } yvex_runtime_speculation_options;
 
 typedef struct {
@@ -164,7 +162,7 @@ int yvex_speculation_commit_plan_build(
     unsigned long long terminal_index,
     yvex_speculation_commit_plan *plan, yvex_error *err);
 int yvex_runtime_speculation_context_open(
-    yvex_runtime_speculation_context **out, yvex_runtime_model *model,
+    yvex_runtime_speculation_context **out, yvex_model_engine *model,
     yvex_runtime_execution_session *session,
     yvex_runtime_transformer_context *target_transformer,
     yvex_runtime_logits_context *target_logits,
@@ -193,13 +191,15 @@ int yvex_runtime_speculation_commit_prefix(
     yvex_runtime_speculation_context *context,
     unsigned long long committed_count, float *final_hidden,
     unsigned long long final_hidden_capacity,
-    const yvex_runtime_commit_participant *publication,
+    const yvex_runtime_transaction_participant *participants,
+    unsigned int participant_count,
     yvex_runtime_speculation_commit_result *result, yvex_error *err);
 int yvex_runtime_speculation_cycle_abort(
     yvex_runtime_speculation_context *context, yvex_error *err);
 int yvex_runtime_speculation_finish_terminal(
     yvex_runtime_speculation_context *context,
-    const yvex_runtime_commit_participant *publication, yvex_error *err);
+    const yvex_runtime_transaction_participant *participants,
+    unsigned int participant_count, yvex_error *err);
 int yvex_runtime_speculation_context_close(
     yvex_runtime_speculation_context **context, yvex_error *err);
 typedef enum {
@@ -223,10 +223,10 @@ typedef struct {
     unsigned long long embedding_weight_bytes, attention_weight_bytes;
     unsigned long long expert_weight_bytes, final_weight_bytes;
     yvex_execution_memory_facts memory;
-    unsigned long long h2d_bytes, d2h_bytes, kernel_launches, tensor_core_launches;
+    unsigned long long h2d_bytes, d2h_bytes, kernel_launches, accelerated_matrix_launches;
     unsigned long long graph_launches, graph_captures, graph_replays;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
-    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long queue_synchronizations, device_synchronizations;
     unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;
     unsigned long long synchronization_ns;
     unsigned long long full_array_host_scan_bytes;
@@ -254,10 +254,10 @@ typedef struct {
     unsigned long long embedding_weight_bytes, attention_weight_bytes;
     unsigned long long expert_weight_bytes, final_weight_bytes;
     yvex_execution_memory_facts memory;
-    unsigned long long h2d_bytes, d2h_bytes, kernel_launches, tensor_core_launches;
+    unsigned long long h2d_bytes, d2h_bytes, kernel_launches, accelerated_matrix_launches;
     unsigned long long graph_launches, graph_captures, graph_replays;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
-    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long queue_synchronizations, device_synchronizations;
     unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;
     unsigned long long synchronization_ns;
     char input_identity[YVEX_SHA256_HEX_CAP];

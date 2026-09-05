@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820" role="img" aria-labelledby="title desc">
   <title id="title">YVEX system overview</title>
-  <desc id="desc">Verified sources pass through the YVEX compiler into an identity-bound physical artifact. One foreground YVEX server owns the keyed scheduler, sessions, persistent KV, private protocol, integrated loopback OpenAI adapter, and typed events. CPU or CUDA executes the model while YVEX clients and OpenAI-compatible applications use the same runtime authority.</desc>
+  <desc id="desc">Verified sources pass through the YVEX compiler into an immutable model package and runtime binding. One persistent foreground YVEX host owns zero or more specialized engine generations, generation-bound sessions, private protocol, integrated loopback OpenAI adapter, and typed events. Per-engine schedulers form executable work for CPU or CUDA while YVEX clients and OpenAI-compatible applications use the same host authority.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L0 6L9 3z" class="arrow-fill"/>
@@ -34,7 +34,7 @@
   <text class="small" x="332" y="482">artifact admission</text>
 
   <rect class="compile-panel" x="465" y="250" width="130" height="270" rx="12"/>
-  <text class="text" x="530" y="292">Identity-bound</text>
+  <text class="text" x="530" y="292">Immutable package</text>
   <text class="text" x="530" y="315">GGUF + binding</text>
   <text class="small" x="530" y="375">content-addressed</text>
   <text class="small" x="530" y="405">immutable</text>
@@ -49,27 +49,27 @@
 
   <text class="section" x="655" y="126" fill="#6d28d9">B. Run</text>
   <rect class="run-panel" x="645" y="145" width="445" height="510" rx="15"/>
-  <text class="text" x="867" y="181">yvex server MODEL · foreground host</text>
+  <text class="text" x="867" y="181">yvex serve · persistent host</text>
   <rect class="box" x="680" y="205" width="375" height="70" rx="10"/>
   <text class="text" x="867" y="234">Server listeners</text>
   <text class="small" x="867" y="257">private Unix protocol · loopback HTTP/SSE</text>
 
   <rect class="state" x="680" y="300" width="175" height="105" rx="10"/>
-  <text class="text" x="767" y="331">Session registry</text>
-  <text class="small" x="767" y="358">conversation state</text>
-  <text class="small" x="767" y="382">persistent KV</text>
+  <text class="text" x="767" y="331">Engine manager</text>
+  <text class="small" x="767" y="358">load · route · drain</text>
+  <text class="small" x="767" y="382">engine generations</text>
   <rect class="state" x="880" y="300" width="175" height="105" rx="10"/>
-  <text class="text" x="967" y="331">Immutable model</text>
-  <text class="small" x="967" y="358">tokenizer + plans</text>
-  <text class="small" x="967" y="382">residency</text>
+  <text class="text" x="967" y="331">Engine resources</text>
+  <text class="small" x="967" y="358">package + specialization</text>
+  <text class="small" x="967" y="382">prepared + session state</text>
 
   <rect class="box" x="680" y="435" width="375" height="170" rx="10"/>
-  <text class="text" x="867" y="466">Bounded keyed scheduler</text>
+  <text class="text" x="867" y="466">Per-engine scheduler</text>
   <rect class="box" x="710" y="495" width="130" height="70" rx="8"/>
   <text class="small" x="775" y="525">request queue</text>
   <text class="small" x="775" y="547">one mutation</text>
   <rect class="box" x="875" y="495" width="145" height="70" rx="8"/>
-  <text class="small" x="947" y="525">generation turns</text>
+  <text class="small" x="947" y="525">executable batches</text>
   <text class="small" x="947" y="547">typed events</text>
   <path class="line" d="M840 530H868"/>
   <path class="assoc" d="M767 405V430H867"/>
@@ -102,10 +102,10 @@
   <text class="small" x="1465" y="318">compact operations</text>
   <rect class="orange-box" x="1380" y="360" width="170" height="65" rx="10"/>
   <text class="text" x="1465" y="387">yvex chat</text>
-  <text class="small" x="1465" y="408">multi-turn streaming</text>
+  <text class="small" x="1465" y="408">native interactive client</text>
   <rect class="orange-box" x="1380" y="450" width="170" height="65" rx="10"/>
-  <text class="text" x="1465" y="477">yvex run</text>
-  <text class="small" x="1465" y="498">one-shot client</text>
+  <text class="text" x="1465" y="477">host · engine · session</text>
+  <text class="small" x="1465" y="498">native admin clients</text>
   <rect class="orange-box" x="1380" y="540" width="170" height="75" rx="10"/>
   <text class="text" x="1465" y="568">OpenAI clients</text>
   <text class="small" x="1465" y="590">HTTP/SSE · SDKs/apps</text>

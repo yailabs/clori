@@ -136,114 +136,10 @@ static __device__ float tensorcore_scaled_group(const unsigned char *row,
 
 typedef struct {
     const unsigned char *base;
-    unsigned long long row_bytes, expert_bytes, storage_bytes;
+    unsigned long long row_bytes, expert_bytes;
     unsigned long long row_width, row_count, expert_count;
-    unsigned long long blocks_per_row, block_count, scale_offset, code_offset;
-    unsigned int qtype, derived;
+    unsigned int qtype;
 } tensorcore_expert_view;
-
-static __device__ unsigned long long tensorcore_align64(unsigned long long value)
-{
-    return (value + 63ull) & ~63ull;
-}
-
-static __device__ int tensorcore_derived_geometry(tensorcore_expert_view *view)
-{
-    if (!view || !view->derived ||
-        !view->base || !view->row_width || view->row_width % 256ull ||
-        !view->row_count || !view->expert_count) return 0;
-    view->blocks_per_row = view->row_width / 256ull;
-    view->block_count = view->expert_count * view->row_count * view->blocks_per_row;
-    if (view->qtype == YVEX_GGUF_QTYPE_IQ2_XXS) {
-        view->scale_offset = 0ull;
-        view->code_offset = tensorcore_align64(view->block_count * 2ull);
-        return view->storage_bytes == view->code_offset + view->block_count * 64ull;
-    }
-    if (view->qtype == YVEX_GGUF_QTYPE_Q2_K && !(view->row_count & 1ull)) {
-        unsigned long long pairs = view->expert_count * (view->row_count / 2ull) *
-                                   view->blocks_per_row;
-        view->scale_offset = tensorcore_align64(pairs * 8ull);
-        view->code_offset = tensorcore_align64(view->scale_offset + pairs * 32ull);
-        return view->storage_bytes == view->code_offset + pairs * 128ull;
-    }
-    return 0;
-}
-
-static __device__ const unsigned char *tensorcore_derived_q2_field(
-    const tensorcore_expert_view *view, unsigned long long expert,
-    unsigned long long row, unsigned long long index,
-    unsigned int field)
-{
-    unsigned long long block = index / 256ull, lane = index % 256ull;
-    unsigned long long pair, parity = row & 1ull;
-    pair = (expert * (view->row_count / 2ull) + row / 2ull) *
-               view->blocks_per_row + block;
-    if (field == 0u) return view->base + pair * 8ull + parity * 4ull;
-    if (field == 1u) {
-        unsigned long long word = (lane / 16ull) / 4ull;
-        unsigned long long byte = (lane / 16ull) & 3ull;
-        unsigned long long target = pair * 32ull + (word / 2ull) * 16ull +
-                                    parity * 8ull + (word & 1ull) * 4ull + byte;
-        return view->base + view->scale_offset + target;
-    }
-    {
-        unsigned long long raw = (lane / 128ull) * 32ull +
-                                 ((lane / 16ull) & 1ull) * 16ull + (lane & 15ull);
-        unsigned long long word = raw / 4ull, byte = raw & 3ull;
-        return view->base + view->code_offset + pair * 128ull + word * 8ull +
-               parity * 4ull + byte;
-    }
-}
-
-static __device__ int tensorcore_derived_weight_i8(
-    const tensorcore_expert_view *view, unsigned long long expert,
-    unsigned long long row, unsigned long long index)
-{
-    if (view->qtype == YVEX_GGUF_QTYPE_Q2_K) {
-        const unsigned char *packed = tensorcore_derived_q2_field(
-            view, expert, row, index, 2u);
-        unsigned int group = (unsigned int)(((index % 256ull) / 16ull) & 7ull) / 2u;
-        return packed ? (int)((*packed >> (group * 2u)) & 3u) : 0;
-    }
-    unsigned long long block =
-        (expert * view->row_count + row) * view->blocks_per_row + index / 256ull;
-    unsigned int lane = (unsigned int)(index % 256ull);
-    const unsigned char *codes = view->base + view->code_offset + block * 64ull;
-    unsigned int group = lane / 32u, subgroup = (lane & 31u) / 8u, local = lane & 7u;
-    unsigned int grids = qtype_load_u32(codes + group * 8u);
-    unsigned int sign_scale = qtype_load_u32(codes + group * 8u + 4u);
-    unsigned int grid_index = (grids >> (8u * subgroup)) & 255u;
-    unsigned int signs = iq2_xxs_signs((sign_scale >> (7u * subgroup)) & 127u);
-    unsigned int digit = (iq2_xxs_grid[grid_index] >> (2u * local)) & 3u;
-    int level = digit == 0u ? 8 : digit == 1u ? 25 : 43;
-    return signs & (1u << local) ? -level : level;
-}
-
-static __device__ void tensorcore_derived_factors(
-    const tensorcore_expert_view *view, unsigned long long expert,
-    unsigned long long row, unsigned long long segment,
-    int *product, int *minimum, float *scale)
-{
-    if (view->qtype == YVEX_GGUF_QTYPE_Q2_K) {
-        const unsigned char *factor = tensorcore_derived_q2_field(
-            view, expert, row, segment, 1u);
-        const unsigned char *dm = tensorcore_derived_q2_field(
-            view, expert, row, segment, 0u);
-        *product = factor ? (int)(*factor & 15u) : 0;
-        *minimum = factor ? (int)(*factor >> 4u) : 0;
-        *scale = dm ? f16_bits_to_float(qtype_load_u16(dm)) : 0.0f;
-        scale[1] = dm ? f16_bits_to_float(qtype_load_u16(dm + 2u)) : 0.0f;
-    } else {
-        unsigned long long block =
-            (expert * view->row_count + row) * view->blocks_per_row + segment / 256ull;
-        const unsigned char *codes = view->base + view->code_offset + block * 64ull;
-        unsigned int group = (unsigned int)((segment % 256ull) / 32ull);
-        unsigned int sign_scale = qtype_load_u32(codes + group * 8u + 4u);
-        *product = (int)(2u * (sign_scale >> 28u) + 1u);
-        *minimum = 0;
-        *scale = 0.125f * f16_bits_to_float(qtype_load_u16(view->base + block * 2ull));
-    }
-}
 
 extern "C" __global__ void yvex_qtype_tensorcore_rows(
     const unsigned char *encoded, unsigned long long row_bytes,
@@ -411,23 +307,10 @@ static __device__ void tensorcore_expert_bucket_dot(
                 wmma::fragment<wmma::matrix_b, 16, 16, 16,
                                signed char, wmma::col_major> values;
                 wmma::fragment<wmma::accumulator, 16, 16, 16, int> product;
-                if (view->derived) {
-                    for (unsigned int index = lane; index < 256u; index += 32u) {
-                        unsigned int tile_row = index / 16u;
-                        unsigned int tile_column = index % 16u;
-                        unsigned long long output_row = row_base + tile_row;
-                        weight_tile[index] = output_row < view->row_count
-                            ? (signed char)tensorcore_derived_weight_i8(
-                                  view, expert, output_row,
-                                  segment + tile_column)
-                            : 0;
-                    }
-                } else {
-                    tensorcore_canonical_weight_tile(
-                        view->base + expert * view->expert_bytes,
-                        view->row_bytes, view->row_count, row_base, segment,
-                        view->qtype, weight_tile);
-                }
+                tensorcore_canonical_weight_tile(
+                    view->base + expert * view->expert_bytes,
+                    view->row_bytes, view->row_count, row_base, segment,
+                    view->qtype, weight_tile);
                 for (unsigned int index = lane; index < 256u; index += 32u) {
                     unsigned int column = index / 16u;
                     unsigned int input_lane = index % 16u;
@@ -459,17 +342,8 @@ static __device__ void tensorcore_expert_bucket_dot(
                         view->base + expert * view->expert_bytes +
                         (row_base + lane) * view->row_bytes;
                     int product_factor, minimum_factor;
-                    float derived_scale[2] = {0.0f, 0.0f};
-                    if (view->derived)
-                        tensorcore_derived_factors(
-                            view, expert, row_base + lane, segment,
-                            &product_factor, &minimum_factor, derived_scale);
-                    else {
-                        product_factor = tensorcore_product_factor(
-                            row, segment, view->qtype);
-                        minimum_factor = tensorcore_minimum_factor(
-                            row, segment, view->qtype);
-                    }
+                    product_factor = tensorcore_product_factor(row, segment, view->qtype);
+                    minimum_factor = tensorcore_minimum_factor(row, segment, view->qtype);
                     for (unsigned int column = 0u; column < population;
                          ++column) {
                         unsigned long long ordered_pair = bucket_offset + column;
@@ -487,17 +361,9 @@ static __device__ void tensorcore_expert_bucket_dot(
                         if (local_segment == 15u) {
                             float activation_scale =
                                 __uint_as_float(qtype_load_u32(q8));
-                            totals[column] = view->derived
-                                ? activation_scale *
-                                      (derived_scale[0] *
-                                           (float)integer_totals[column] -
-                                       derived_scale[1] *
-                                           (float)minimum_totals[column])
-                                : tensorcore_scaled_group(
-                                      row, segment, view->qtype,
-                                      activation_scale,
-                                      integer_totals[column],
-                                      minimum_totals[column]);
+                            totals[column] = tensorcore_scaled_group(
+                                row, segment, view->qtype, activation_scale,
+                                integer_totals[column], minimum_totals[column]);
                         }
                     }
                 }
@@ -526,11 +392,9 @@ static __device__ void tensorcore_expert_bucket_dot(
 
 extern "C" __global__ void yvex_moe_grouped_up_tensorcore(
     const unsigned char *gate, unsigned long long gate_row_bytes,
-    unsigned long long gate_expert_bytes, unsigned long long gate_storage_bytes,
-    unsigned int gate_derived, unsigned int gate_qtype,
+    unsigned long long gate_expert_bytes, unsigned int gate_qtype,
     const unsigned char *up, unsigned long long up_row_bytes,
-    unsigned long long up_expert_bytes, unsigned long long up_storage_bytes,
-    unsigned int up_derived, unsigned int up_qtype,
+    unsigned long long up_expert_bytes, unsigned int up_qtype,
     const unsigned long long *selected, const float *weights,
     const unsigned long long *order, const unsigned long long *expert_ids,
     const unsigned long long *bucket_offsets,
@@ -580,19 +444,13 @@ extern "C" __global__ void yvex_moe_grouped_up_tensorcore(
     __syncwarp();
     if (*status) return;
     tensorcore_expert_view gate_view = {
-        gate, gate_row_bytes, gate_expert_bytes, gate_storage_bytes,
-        input_width, intermediate_width, expert_count, 0ull, 0ull, 0ull, 0ull,
-        gate_qtype, gate_derived};
+        gate, gate_row_bytes, gate_expert_bytes, input_width,
+        intermediate_width, expert_count, gate_qtype};
     tensorcore_expert_view up_view = {
-        up, up_row_bytes, up_expert_bytes, up_storage_bytes,
-        input_width, intermediate_width, expert_count, 0ull, 0ull, 0ull, 0ull,
-        up_qtype, up_derived};
-    int gate_geometry = gate_derived
-        ? tensorcore_derived_geometry(&gate_view)
-        : tensorcore_row_geometry(gate_qtype, input_width, gate_row_bytes);
-    int up_geometry = up_derived
-        ? tensorcore_derived_geometry(&up_view)
-        : tensorcore_row_geometry(up_qtype, input_width, up_row_bytes);
+        up, up_row_bytes, up_expert_bytes, input_width,
+        intermediate_width, expert_count, up_qtype};
+    int gate_geometry = tensorcore_row_geometry(gate_qtype, input_width, gate_row_bytes);
+    int up_geometry = tensorcore_row_geometry(up_qtype, input_width, up_row_bytes);
     if (*status || !gate_geometry || !up_geometry ||
         gate_expert_bytes != intermediate_width * gate_row_bytes ||
         up_expert_bytes != intermediate_width * up_row_bytes) {
@@ -627,8 +485,7 @@ extern "C" __global__ void yvex_moe_grouped_up_tensorcore(
 
 extern "C" __global__ void yvex_moe_grouped_down_tensorcore(
     const unsigned char *down, unsigned long long row_bytes,
-    unsigned long long expert_bytes, unsigned long long storage_bytes,
-    unsigned int derived, unsigned int qtype,
+    unsigned long long expert_bytes, unsigned int qtype,
     const unsigned long long *selected, const unsigned long long *order,
     const unsigned long long *expert_ids,
     const unsigned long long *bucket_offsets,
@@ -675,11 +532,8 @@ extern "C" __global__ void yvex_moe_grouped_down_tensorcore(
     __syncwarp();
     if (*status) return;
     tensorcore_expert_view down_view = {
-        down, row_bytes, expert_bytes, storage_bytes, intermediate_width,
-        hidden, expert_count, 0ull, 0ull, 0ull, 0ull, qtype, derived};
-    int down_geometry = derived
-        ? tensorcore_derived_geometry(&down_view)
-        : tensorcore_row_geometry(qtype, intermediate_width, row_bytes);
+        down, row_bytes, expert_bytes, intermediate_width, hidden, expert_count, qtype};
+    int down_geometry = tensorcore_row_geometry(qtype, intermediate_width, row_bytes);
     if (*status || !down_geometry || expert_bytes != hidden * row_bytes) {
         if (!lane && !*status) atomicCAS(status, 0, 2);
         return;
@@ -698,5 +552,5 @@ extern "C" __global__ void yvex_moe_grouped_down_tensorcore(
             else pair_outputs[source_pair * hidden + row_base + lane] = value;
         }
     if (!lane && !row_base && !*status)
-        atomicAdd(&summary->tensor_core_executed_pairs, population);
+        atomicAdd(&summary->matrix_tile_executed_pairs, population);
 }

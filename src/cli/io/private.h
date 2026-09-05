@@ -8,14 +8,18 @@
 #include <time.h>
 #include <yvex/artifact.h>
 #include <yvex/backend.h>
+#include <yvex/catalog.h>
+#include <yvex/content.h>
 #include <yvex/core.h>
 #include <yvex/gguf.h>
+#include <yvex/internal/cli_table.h>
 #include <yvex/model.h>
 #include <yvex/registry.h>
 #include <yvex/server.h>
 #include <yvex/source.h>
 #include <yvex/tokenizer.h>
 
+struct yvex_operator_descriptor;
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,13 +30,81 @@ typedef enum {
     YVEX_SOURCE_RENDER_AUDIT,
     YVEX_SOURCE_RENDER_JSON
 } yvex_source_render_mode;
-
 typedef enum {
     YVEX_MODELS_OUTPUT_NORMAL = 0,
     YVEX_MODELS_OUTPUT_TABLE,
-    YVEX_MODELS_OUTPUT_AUDIT
+    YVEX_MODELS_OUTPUT_AUDIT,
+    YVEX_MODELS_OUTPUT_JSON
 } yvex_models_output_mode;
-
+typedef struct {
+    char alias[YVEX_SERVER_MODEL_ALIAS_CAP];
+    unsigned long long generation;
+} yvex_cli_engine_binding;
+typedef struct {
+    char model_selector[YVEX_MODEL_LIBRARY_ID_CAP];
+    char model_name[YVEX_MODEL_LIBRARY_NAME_CAP];
+    char family[YVEX_REMOTE_FAMILY_CAP];
+    char profile_alias[YVEX_MODEL_LIBRARY_NAME_CAP];
+    char variant[YVEX_REMOTE_PRECISION_CAP + 24u];
+    char artifact_identity[YVEX_MODEL_ARTIFACT_ID_CAP];
+    char format[YVEX_REMOTE_FORMAT_CAP];
+    char quant_precision[YVEX_REMOTE_PRECISION_CAP];
+    char backend[32];
+    char engine_kind[32];
+    char execution_strategy[32];
+    char runtime_target[YVEX_MODEL_LIBRARY_NAME_CAP];
+    unsigned long long representation_bytes;
+    unsigned long long context_capacity;
+} yvex_cli_model_profile_selection;
+typedef struct {
+    yvex_cli_model_profile_selection model;
+    yvex_cli_engine_binding engine;
+    unsigned long long session_count;
+} yvex_cli_loaded_model_fact;
+typedef enum {
+    YVEX_MODEL_CATALOG_OUTPUT_TABLE = 0,
+    YVEX_MODEL_CATALOG_OUTPUT_AUDIT,
+    YVEX_MODEL_CATALOG_OUTPUT_JSON
+} yvex_model_catalog_output_mode;
+typedef struct {
+    const char *query;
+    const char *author;
+    const char *filter;
+    const char *provider;
+    const char *models_root;
+    unsigned int page;
+    unsigned int page_size;
+    yvex_model_catalog_output_mode output_mode;
+} yvex_cli_model_search_options;
+typedef struct {
+    const char *repository;
+    const char *revision;
+    const char *provider;
+    const char *models_root;
+    yvex_model_catalog_output_mode output_mode;
+} yvex_cli_model_inspect_options;
+typedef struct {
+    const char *models_root;
+    const char *registry_path;
+    yvex_model_catalog_output_mode output_mode;
+    int all_representations;
+    int wide;
+} yvex_cli_model_list_options;
+int yvex_cli_model_profile_select(const char *model, const char *variant,
+                                  int text_only,
+                                  yvex_cli_model_profile_selection *selection);
+int yvex_cli_model_profile_resolve_alias(
+    const char *alias, yvex_cli_model_profile_selection *selection);
+int yvex_cli_model_load_command(int argc, char **argv, size_t consumed);
+int yvex_cli_model_unload_command(int argc, char **argv, size_t consumed);
+int yvex_cli_model_loaded_select(const char *model, const char *variant,
+                                 int text_only,
+                                 yvex_cli_engine_binding *binding,
+                                 yvex_cli_model_profile_selection *selection);
+int yvex_cli_loaded_models_snapshot(yvex_cli_loaded_model_fact *models,
+                                    unsigned long long capacity,
+                                    unsigned long long *count,
+                                    yvex_error *err);
 typedef enum {
     YVEX_CLI_FIELD_TEXT = 0,
     YVEX_CLI_FIELD_TEXT_ARRAY,
@@ -44,14 +116,12 @@ typedef enum {
     YVEX_CLI_FIELD_FLOAT9,
     YVEX_CLI_FIELD_HEX64
 } yvex_cli_field_kind;
-
 typedef struct {
     const char *key;
     yvex_cli_field_kind kind;
     size_t offset;
     const char *fallback;
 } yvex_cli_field_spec;
-
 typedef struct {
     const char *reset;
     const char *strong;
@@ -61,36 +131,33 @@ typedef struct {
     const char *warning;
     const char *error;
 } yvex_cli_terminal_style;
-
 typedef enum {
     YVEX_CLI_STREAM_STYLE_NORMAL = 0,
     YVEX_CLI_STREAM_STYLE_DIM,
     YVEX_CLI_STREAM_STYLE_ACCENT,
     YVEX_CLI_STREAM_STYLE_STRONG
 } yvex_cli_stream_style;
-
+#define YVEX_CLI_STREAM_LINE_CAP 16384u
 typedef struct {
     FILE *output;
     yvex_cli_terminal_style style;
     yvex_client_stream_channel channel;
     yvex_cli_stream_style active_style, line_style;
-    unsigned char utf8[4];
-    unsigned int utf8_count, utf8_expected, backtick_count;
-    char fence_language[32];
-    unsigned int fence_language_count;
-    int enhanced, line_start, in_fence, in_inline_code;
-    int collecting_language, closing_fence, pending_cr;
+    unsigned char line[YVEX_CLI_STREAM_LINE_CAP], inline_previous;
+    size_t line_count;
+    unsigned int column, prose_width, line_indent, inline_flags;
+    int enhanced, in_fence, pending_cr, channel_announced, line_started;
     int wrote_bytes, last_newline;
 } yvex_cli_stream_renderer;
-
 typedef struct {
     yvex_cli_terminal_style style;
     char session_id[YVEX_SERVER_ID_CAP];
     char request_id[YVEX_SERVER_ID_CAP];
-    unsigned long long cycles, proposed, accepted, rejected, discarded;
-    int request_open, detailed;
+    unsigned long long cycles, proposed, accepted, rejected;
+    unsigned long long discarded, progress_tokens;
+    double progress_seconds;
+    int request_open, detailed, progress_reasoning;
 } yvex_cli_watch_renderer;
-
 typedef enum {
     YVEX_MODELS_OPTION_TEXT = 0,
     YVEX_MODELS_OPTION_FLAG,
@@ -102,18 +169,14 @@ typedef struct {
     yvex_models_option_kind kind;
     size_t offset;
 } yvex_models_option_spec;
-
 #define YVEX_MODEL_DOWNLOAD_PATTERN_CAP 32u
 #define YVEX_MODELS_ARTIFACT_ROWS_CAP 256u
-
 enum { YVEX_MODEL_DOWNLOAD_INTERRUPT_TIMEOUT_SECONDS = 5 };
-
 typedef enum {
     YVEX_MODEL_DOWNLOAD_AUTH_AUTO = 0,
     YVEX_MODEL_DOWNLOAD_AUTH_REQUIRED,
     YVEX_MODEL_DOWNLOAD_AUTH_NEVER
 } yvex_model_download_auth_mode;
-
 typedef enum {
     YVEX_MODEL_DOWNLOAD_PROGRESS_AUTO = 0,
     YVEX_MODEL_DOWNLOAD_PROGRESS_LIVE,
@@ -121,20 +184,6 @@ typedef enum {
     YVEX_MODEL_DOWNLOAD_PROGRESS_LOG,
     YVEX_MODEL_DOWNLOAD_PROGRESS_OFF
 } yvex_model_download_progress_mode;
-
-typedef struct yvex_model_download_catalog_row {
-    const char *target_id;
-    const char *family;
-    const char *provider;
-    const char *repo_id;
-    const char *local_name;
-    const char *revision_default;
-    const char *artifact_class;
-    const char *source_container;
-    const char *model_class_hint;
-    const char *boundary;
-} yvex_model_download_catalog_row;
-
 typedef struct yvex_cli_models_download_options {
     const char *target;
     const char *repo;
@@ -175,10 +224,10 @@ typedef struct yvex_cli_models_download_options {
     unsigned long long tick_seconds;
     unsigned long long timeout_seconds;
 } yvex_cli_models_download_options;
-
 typedef struct yvex_model_download_source_scan {
     unsigned long long file_count;
     unsigned long long safetensors_count;
+    unsigned long long gguf_count;
     unsigned long long total_regular_file_bytes;
     unsigned long long largest_file_bytes;
     unsigned long long partial_file_count;
@@ -190,7 +239,6 @@ typedef struct yvex_model_download_source_scan {
     char largest_file_name[YVEX_PATH_CAP];
     char lock_paths[YVEX_MODEL_DOWNLOAD_PATTERN_CAP][YVEX_PATH_CAP];
 } yvex_model_download_source_scan;
-
 typedef struct yvex_model_download_report {
     char status[64];
     char target_id[128];
@@ -223,6 +271,8 @@ typedef struct yvex_model_download_report {
     char account_hint[128];
     char accounts_state_path[YVEX_PATH_CAP];
     char token_env_name[64];
+    char source_payload_digest[65], representation_format[YVEX_REMOTE_FORMAT_CAP];
+    char representation_precision[YVEX_REMOTE_PRECISION_CAP];
     char created_at[32];
     char top_blocker[128];
     char error[256];
@@ -253,6 +303,7 @@ typedef struct yvex_model_download_report {
     int orphan_check_performed;
     int partial_source_preserved;
     int lock_files_deleted;
+    int upstream_identity_verified, remote_lookup_performed, payload_hash_verified;
     pid_t provider_pid;
     pid_t provider_process_group;
     char child_exit_status[32];
@@ -263,6 +314,7 @@ typedef struct yvex_model_download_report {
     unsigned long long tick_last_elapsed_seconds;
     unsigned long long tick_last_file_count;
     unsigned long long tick_last_safetensors_count;
+    unsigned long long tick_last_gguf_count;
     unsigned long long tick_last_partial_file_count;
     unsigned long long tick_last_cache_file_count;
     unsigned long long tick_last_total_regular_file_bytes;
@@ -273,7 +325,6 @@ typedef struct yvex_model_download_report {
     int report_written;
     int registry_written;
 } yvex_model_download_report;
-
 typedef struct yvex_model_download_safetensors_check {
     int checked;
     int ok_count;
@@ -281,7 +332,6 @@ typedef struct yvex_model_download_safetensors_check {
     int invalid_count;
     char status[32];
 } yvex_model_download_safetensors_check;
-
 typedef struct yvex_model_download_resolved_target {
     int found;
     char target_id[128];
@@ -296,13 +346,11 @@ typedef struct yvex_model_download_resolved_target {
     char manifest_path[YVEX_PATH_CAP];
     char native_inventory_path[YVEX_PATH_CAP];
 } yvex_model_download_resolved_target;
-
 typedef struct yvex_model_download_process_match {
     unsigned int count;
     pid_t first_pid;
     pid_t first_pgid;
 } yvex_model_download_process_match;
-
 typedef enum {
     YVEX_FULLMODEL_COMMAND_REPORT = 0,
     YVEX_FULLMODEL_COMMAND_MATERIALIZATION_PLAN,
@@ -310,7 +358,6 @@ typedef enum {
     YVEX_FULLMODEL_COMMAND_DESCRIPTOR,
     YVEX_FULLMODEL_COMMAND_FAMILY_RUNTIME
 } yvex_fullmodel_command_kind;
-
 typedef struct yvex_cli_fullmodel_options {
     const char *model;
     const char *backend;
@@ -339,7 +386,6 @@ typedef struct yvex_cli_fullmodel_options {
     yvex_models_output_mode output_mode;
     yvex_fullmodel_command_kind command;
 } yvex_cli_fullmodel_options;
-
 typedef struct fullmodel_materialize_report {
     const yvex_cli_fullmodel_options *options;
     const char *status;
@@ -377,7 +423,6 @@ typedef struct fullmodel_materialize_report {
     unsigned long long cpu_resident_bytes;
     unsigned long long cuda_resident_bytes;
 } fullmodel_materialize_report;
-
 typedef struct yvex_fullmodel_collections {
     unsigned long long embedding;
     unsigned long long embedding_bytes;
@@ -411,7 +456,6 @@ typedef struct yvex_fullmodel_collections {
     int has_output_head;
     int has_tokenizer_metadata;
 } yvex_fullmodel_collections;
-
 typedef struct yvex_fullmodel_backend_fit {
     int available;
     int memory_known;
@@ -479,8 +523,21 @@ int models_registry_open(yvex_model_registry **registry, const char *registry_pa
 int yvex_operator_paths_resolve_target(const yvex_operator_paths *operator_paths,
                                        const char *family, const char *kind, char *out, size_t cap,
                                        int *out_exists, yvex_error *err);
+int yvex_quant_command_execute(int arg_count, char **args, int render_result);
+typedef struct yvex_cli_content_stage yvex_cli_content_stage;
+int yvex_cli_content_stage_open(yvex_cli_content_stage **, yvex_error *);
+void yvex_cli_content_stage_close(yvex_cli_content_stage **);
+void yvex_cli_content_stage_clear(yvex_cli_content_stage *);
+unsigned long long yvex_cli_content_stage_count(const yvex_cli_content_stage *);
+const yvex_content_part *yvex_cli_content_stage_parts(const yvex_cli_content_stage *);
+int yvex_cli_content_stage_attach(
+    yvex_cli_content_stage *, const char *, yvex_content_part *, yvex_error *);
+int yvex_cli_content_stage_turn(
+    const yvex_cli_content_stage *, const unsigned char *, unsigned long long,
+    yvex_content_part[YVEX_CONTENT_MAX_PARTS], unsigned long long *, yvex_error *);
 
 /* JSON output. */
+void yvex_cli_out_json_string(FILE *fp, const char *text);
 void yvex_cli_json_begin(FILE *fp);
 void yvex_cli_json_end(FILE *fp);
 void yvex_cli_json_field_str(FILE *fp, const char *key, const char *value, int comma);
@@ -493,6 +550,12 @@ int yvex_cli_json_fields(FILE *fp, const void *object, const yvex_cli_field_spec
 int yvex_cli_out_writef(FILE *fp, const char *fmt, ...);
 int yvex_cli_out_vwritef(FILE *fp, const char *fmt, va_list ap);
 int yvex_cli_completion_command(int argc, char **argv, size_t consumed);
+void yvex_cli_client_request_init(yvex_client_request *request, yvex_client_operation operation);
+int yvex_cli_client_request_open(yvex_client **client, const yvex_client_request *request, yvex_error *err);
+int yvex_client_render_help_path(size_t path_count, const char *const *path,
+                                 int advanced, int json);
+void yvex_client_render_usage_error(
+    const struct yvex_operator_descriptor *operation);
 int yvex_cli_out_puts(FILE *fp, const char *text);
 int yvex_cli_out_fputs(const char *text, FILE *fp);
 int yvex_cli_out_char(FILE *fp, int ch);
@@ -512,10 +575,12 @@ const char *yvex_cli_out_stop_reason(unsigned long long reason);
 void yvex_cli_out_turn_metrics(
     FILE *, const yvex_client_message *, unsigned long long,
     const yvex_cli_terminal_style *);
+void yvex_cli_out_turn_complete(FILE *, const yvex_client_message *, unsigned long long,
+    const yvex_cli_terminal_style *);
 int yvex_cli_out_server_event(const yvex_server_event *event, int detailed);
 void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer, int detailed);
 int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
-                                  const yvex_server_event *event);
+    const yvex_server_event *event, const yvex_server_summary *live);
 void yvex_cli_watch_renderer_finish(yvex_cli_watch_renderer *renderer);
 void yvex_cli_out_repl_catalog(void);
 void yvex_cli_out_line(FILE *fp, const char *text);

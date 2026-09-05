@@ -988,8 +988,7 @@ static int artifact_variant_bind(
     if (rc == YVEX_OK)
         rc = yvex_physical_execution_ir_build(
             &physical_execution, materialization, descriptor,
-            emitted->admission.profile_identity,
-            adapter->physical_execution_policy, &error);
+            emitted->admission.profile_identity, &error);
     if (rc == YVEX_OK) {
         compiled_request.operator_graph = operator_graph;
         compiled_request.materialization = materialization;

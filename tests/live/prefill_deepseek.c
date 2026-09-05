@@ -53,12 +53,12 @@ static float live_activation_value(unsigned long long layer,
 }
 
 static int live_activation_open(live_activation *activation,
-                                const yvex_runtime_model *model,
+                                const yvex_model_engine *model,
                                 unsigned long long start,
                                 unsigned long long tokens,
                                 unsigned int variant, yvex_error *err)
 {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
     const yvex_runtime_binding_summary *binding = view ? view->binding : NULL;
     const yvex_attention_plan *plan = view ? view->attention : NULL;
     unsigned long long layers = yvex_attention_plan_layer_count(plan);
@@ -151,18 +151,18 @@ static int live_cancel_requested(void *context)
 }
 
 static int live_session_open(yvex_runtime_execution_session **session,
-                             yvex_runtime_model *model,
+                             yvex_model_engine *model,
                              yvex_backend_kind backend, yvex_error *err)
 {
     yvex_runtime_session_open_request request;
-    yvex_runtime_model_failure failure;
+    yvex_model_engine_failure failure;
     memset(&request, 0, sizeof(request));
     memset(&failure, 0, sizeof(failure));
     request.backend = backend;
     return yvex_runtime_session_open(session, model, &request, &failure, err);
 }
 
-static int live_execute(yvex_runtime_model *model,
+static int live_execute(yvex_model_engine *model,
                         yvex_runtime_execution_session *session,
                         const live_activation *activation,
                         yvex_backend_kind backend,
@@ -171,7 +171,7 @@ static int live_execute(yvex_runtime_model *model,
                         live_cancel *cancel, yvex_error *err)
 {
     yvex_runtime_activation_prefill_request request;
-    yvex_runtime_model_failure failure;
+    yvex_model_engine_failure failure;
     memset(&request, 0, sizeof(request));
     memset(&failure, 0, sizeof(failure));
     request.backend = backend;
@@ -195,7 +195,7 @@ static int live_session_close(yvex_runtime_execution_session **session,
 }
 
 /* Prove whole-chunk, subchunk, clear, cancellation, and rollback on CPU. */
-static int live_cpu_suite(yvex_runtime_model *model,
+static int live_cpu_suite(yvex_model_engine *model,
                           const live_activation *full,
                           const live_activation *prefix_a,
                           const live_activation *prefix_b,
@@ -208,7 +208,7 @@ static int live_cpu_suite(yvex_runtime_model *model,
     yvex_runtime_activation_prefill_result prefix_result, suffix_a, suffix_b;
     yvex_runtime_activation_prefill_result clear_result, cancelled_result;
     yvex_runtime_activation_prefill_result failed_result;
-    yvex_runtime_model_failure failure;
+    yvex_model_engine_failure failure;
     live_cancel cancellation;
     yvex_error cleanup_error;
     int rc = YVEX_OK, close_rc;
@@ -333,7 +333,7 @@ static int live_cpu_suite(yvex_runtime_model *model,
     return rc;
 }
 
-static int live_cuda_suite(yvex_runtime_model *model,
+static int live_cuda_suite(yvex_model_engine *model,
                            const live_activation *full, yvex_error *err)
 {
     yvex_runtime_execution_session *cpu = NULL, *cuda = NULL;
@@ -385,9 +385,9 @@ static int live_cuda_suite(yvex_runtime_model *model,
 
 int main(int argc, char **argv)
 {
-    yvex_runtime_model_open_request request;
-    yvex_runtime_model_failure failure;
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine_open_request request;
+    yvex_model_engine_failure failure;
+    yvex_model_engine *model = NULL;
     live_activation full, prefix_a, prefix_b, suffix;
     yvex_error err;
     int rc;
@@ -407,7 +407,7 @@ int main(int argc, char **argv)
     request.artifact_path = argv[1];
     request.runtime_binding_path = argv[2];
     request.target_id = "deepseek4-v4-flash-dspark";
-    rc = yvex_runtime_model_open(&model, &request, &failure, &err);
+    rc = yvex_model_engine_open(&model, &request, &failure, &err);
     if (rc != YVEX_OK || !model) {
         live_fail("model-open", rc, &err);
         return 1;
@@ -432,7 +432,7 @@ int main(int argc, char **argv)
     live_activation_close(&prefix_b);
     live_activation_close(&prefix_a);
     live_activation_close(&full);
-    yvex_runtime_model_close(&model);
+    yvex_model_engine_close(&model);
     if (model) {
         fprintf(stderr, "prefill_live step=model-close status=state\n");
         rc = YVEX_ERR_STATE;

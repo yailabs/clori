@@ -345,8 +345,8 @@ extern "C" __global__ void yvex_expert_worklist_build_cuda(
         summary->pair_count = pairs;
         summary->bucket_count = 0ull;
         summary->maximum_bucket_population = 0ull;
-        summary->tensor_core_eligible_pairs = 0ull;
-        summary->tensor_core_executed_pairs = 0ull;
+        summary->matrix_tile_eligible_pairs = 0ull;
+        summary->matrix_tile_executed_pairs = 0ull;
         summary->narrow_pairs = 0ull;
         summary->tail_rows = 0ull;
         for (unsigned int index = 0u; index < YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP;
@@ -375,7 +375,7 @@ extern "C" __global__ void yvex_expert_worklist_build_cuda(
                     ? counts[expert] : YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP - 1u;
             summary->population_histogram[histogram]++;
             if (tensor_core_minimum && counts[expert] >= tensor_core_minimum) {
-                summary->tensor_core_eligible_pairs += counts[expert];
+                summary->matrix_tile_eligible_pairs += counts[expert];
                 if (counts[expert] % admitted_width)
                     summary->tail_rows += admitted_width - counts[expert] % admitted_width;
             } else summary->narrow_pairs += counts[expert];

@@ -9,54 +9,12 @@
 #include <string.h>
 #include <yvex/core.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/source_catalog.h>
 #include <yvex/source.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* Immutable source provenance shared with planning and target catalogs without
- * exporting release policy through the installed ABI. */
-typedef struct {
-    const char *target_id;
-    const char *family_key;
-    const char *family_display;
-    const char *model_name;
-    const char *upstream_repo_id;
-    const char *source_dir_leaf;
-    const char *upstream_revision;
-    const char *upstream_index_path;
-    const char *upstream_index_oid;
-    unsigned long long upstream_index_size;
-    const char *upstream_inventory_authority;
-    const char *config_model_type;
-    const char *config_architecture;
-} yvex_source_target_identity;
-
-#define YVEX_SOURCE_RELEASE_TARGET_ID "deepseek4-v4-flash-dspark"
-#define YVEX_SOURCE_RETIRED_TARGET_ID "deepseek4-v4-flash"
-#define YVEX_SOURCE_RELEASE_FAMILY_KEY "deepseek"
-#define YVEX_SOURCE_RELEASE_FAMILY_DISPLAY "DeepSeek"
-#define YVEX_SOURCE_RELEASE_NAME "DeepSeek-V4-Flash-DSpark"
-#define YVEX_SOURCE_RELEASE_REPOSITORY "deepseek-ai/DeepSeek-V4-Flash-DSpark"
-#define YVEX_SOURCE_RELEASE_SOURCE_LEAF "DeepSeek-V4-Flash-DSpark"
-#define YVEX_SOURCE_RELEASE_MANIFEST_LEAF \
-    "deepseek-v4-flash-dspark-source-manifest.json"
-#define YVEX_SOURCE_RELEASE_REVISION \
-    "62af8fffb2f7030cac4de2f0169f5b8d1101b646"
-#define YVEX_SOURCE_RELEASE_INDEX_PATH "model.safetensors.index.json"
-#define YVEX_SOURCE_RELEASE_INDEX_OID \
-    "c3b10d45a829545fbf0d9d2880a1aa0b9ab3b43a"
-#define YVEX_SOURCE_RELEASE_INDEX_SIZE 5602871ull
-#define YVEX_SOURCE_RELEASE_INVENTORY_AUTHORITY "upstream-index"
-#define YVEX_SOURCE_RELEASE_CONFIG_TYPE "deepseek_v4"
-#define YVEX_SOURCE_RELEASE_CONFIG_ARCHITECTURE "DeepseekV4ForCausalLM"
-
-/* Return the process-lifetime canonical release source identity. */
-const yvex_source_target_identity *yvex_source_release_identity(void);
-
-/* Match a target identifier against the canonical release source. */
-int yvex_source_is_release_target(const char *target_id);
 
 /* Return the final non-empty component of one borrowed source path. */
 static inline const char *yvex_source_path_basename(const char *path)
@@ -97,12 +55,6 @@ static inline int yvex_source_payload_name_is_canonical(const char *name)
     return segment && !(segment == 1u && cursor[-1] == '.') &&
            !(segment == 2u && cursor[-1] == '.' && cursor[-2] == '.');
 }
-
-/* Project an immutable source identity beneath a caller-owned models root. */
-int yvex_source_target_path(char *out,
-                            size_t cap,
-                            const char *models_root,
-                            const yvex_source_target_identity *identity);
 
 /* Source verification. */
 struct yvex_source_tensor_snapshot;
@@ -271,6 +223,9 @@ typedef struct yvex_source_verification {
 int yvex_source_verify(const yvex_source_verify_options *options,
                        yvex_source_verification *out,
                        yvex_error *err);
+int yvex_source_verification_required_sidecars_valid(
+    const yvex_source_target_identity *identity,
+    const yvex_source_verification *verification);
 int yvex_source_verify_with_snapshot(
     const yvex_source_verify_options *options,
     yvex_source_verification *out,
@@ -382,8 +337,11 @@ typedef struct {
 typedef struct {
     char canonical_name[YVEX_PATH_CAP];
     char revision[65];
+    char provider_identity_kind[24];
     char expected_git_blob_oid[41];
     char observed_git_blob_oid[41];
+    char expected_sha256[65];
+    char observed_sha256[65];
     unsigned long long file_bytes;
     int revision_matches;
     int identity_verified;

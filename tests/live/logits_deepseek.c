@@ -5,7 +5,7 @@
  */
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/execution.h>
+#include <yvex/internal/deployment.h>
 #include <yvex/internal/logits.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/sampling.h>
@@ -90,14 +90,14 @@ static int live_input_open(yvex_transformer_input **input,
     return rc;
 }
 
-static int live_open(live_logits *execution, yvex_runtime_model *model,
+static int live_open(live_logits *execution, yvex_model_engine *model,
                      yvex_backend_kind backend, yvex_error *err)
 {
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_transformer_options transformer_options = {.context_capacity = 3ull};
     yvex_runtime_decode_options decode_options = {.maximum_steps = 2ull};
     yvex_runtime_logits_options logits_options = {.maximum_rows = LIVE_LOGITS_ROWS};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     memset(execution, 0, sizeof(*execution));
     if (yvex_runtime_session_open(&execution->session, model, &session_options,
                                   &failure, err) != YVEX_OK)
@@ -242,10 +242,10 @@ static int live_execute(live_logits *execution,
 }
 
 /* Compute three complete independent rows from the exact resident output head. */
-static int live_reference(live_logits *execution, yvex_runtime_model *model,
+static int live_reference(live_logits *execution, yvex_model_engine *model,
                           yvex_error *err)
 {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
     const yvex_runtime_tensor_binding *runtime_binding;
     const yvex_materialized_tensor_binding *binding;
     const yvex_runtime_logits_plan_summary *plan =
@@ -308,68 +308,67 @@ static int live_compare(const float *actual, const float *reference,
     return comparison->first_failure == count;
 }
 
-static int live_device_profile(live_logits *execution, yvex_runtime_model *model,
-                               yvex_compiled_execution_profile *profile,
+static int live_device_profile(live_logits *execution, yvex_model_engine *model,
+                               yvex_runtime_execution_profile *profile,
                                yvex_error *err)
 {
-    const yvex_runtime_model_view *model_view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *model_view = yvex_model_engine_view_get(model);
     const yvex_runtime_session_view *session_view =
         yvex_runtime_session_view_get(execution->session);
-    const yvex_physical_execution_summary *physical = model_view
-        ? yvex_physical_execution_ir_summary(model_view->physical_execution) : NULL;
     const yvex_runtime_binding_summary *binding = model_view ? model_view->binding : NULL;
     yvex_backend_cuda_attention_graph_summary kernels;
     yvex_runtime_session_summary session;
-    yvex_compiled_execution_profile_request request = {0};
-    char hardware[YVEX_EXECUTION_TEXT_CAP];
-    int written;
-    if (!model_view || !session_view || !physical || !binding) {
+    yvex_runtime_execution_profile_request request = {0};
+    yvex_execution_workload_profile workload = {0};
+    if (!model_view || !session_view || !binding) {
         yvex_error_set(err, YVEX_ERR_STATE, "test.logits.device-profile",
-                       "compiled device profile owners are unavailable");
+                       "runtime workload profile owners are unavailable");
         return YVEX_ERR_STATE;
     }
     if (yvex_runtime_session_summary_copy(execution->session, &session, err) != YVEX_OK ||
         yvex_backend_cuda_attention_graph_summary_get(
             session_view->backend, &kernels, err) != YVEX_OK)
         return yvex_error_code(err);
-    written = snprintf(hardware, sizeof(hardware), "native-cuda-sm%d%d",
-                       session.compute_capability_major, session.compute_capability_minor);
-    if (written < 0 || (size_t)written >= sizeof(hardware)) {
-        yvex_error_set(err, YVEX_ERR_BOUNDS, "test.logits.device-profile",
-                       "hardware-profile rendering overflowed");
-        return YVEX_ERR_BOUNDS;
+    if (!session.engine_generation ||
+        !yvex_sha256_hex_valid(session.engine_specialization_identity)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "test.logits.device-profile",
+                       "runtime workload profile engine owners are unavailable");
+        return YVEX_ERR_STATE;
     }
-    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2;
-    request.logical_model_identity = binding->logical_model_identity;
-    request.physical_variant_identity = binding->profile_identity;
-    request.physical_execution_identity = physical->identity;
-    request.artifact_identity = binding->artifact_identity;
-    request.materialization_identity = binding->materialization_identity;
-    request.runtime_binding_identity = binding->identity;
+    workload.schema_version = YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1;
+    workload.kind = YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
+    workload.minimum_session_context = workload.requested_session_context = 3ull;
+    workload.concurrent_sequences = 1ull;
+    workload.logical_batch_tokens = 3ull;
+    workload.prefill_chunk_tokens = 1ull;
+    workload.attention_microbatch_rows = workload.moe_row_tile = 1ull;
+    workload.output_head_rows = LIVE_LOGITS_ROWS;
+    workload.system_reserve_bytes = YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE;
+    workload.latency_priority = 1;
+    yvex_core_text_copy(workload.name, sizeof(workload.name), "logits-qualification");
+    if (yvex_execution_workload_profile_seal(&workload, err) != YVEX_OK)
+        return yvex_error_code(err);
+    request.schema_version = YVEX_RUNTIME_EXECUTION_PROFILE_SCHEMA_V1;
+    request.engine_generation = session.engine_generation;
+    request.engine_specialization_identity = session.engine_specialization_identity;
     request.kernel_bundle_identity = kernels.cuda_build_identity;
-    request.hardware_profile = hardware;
-    request.backend = YVEX_BACKEND_KIND_CUDA;
-    request.device_index = session.device_index;
-    request.compute_major = session.compute_capability_major;
-    request.compute_minor = session.compute_capability_minor;
-    request.context_capacity = 3ull;
+    request.workload_profile_identity = workload.identity;
     request.generation_mode = YVEX_EXECUTION_GENERATION_TARGET_ONLY;
-    request.workload = YVEX_EXECUTION_WORKLOAD_QUALIFICATION;
     request.evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
     request.execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
     request.attention_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     request.moe_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     request.sampling_resolution = YVEX_EXECUTION_RESOLUTION_EXACT;
-    return yvex_compiled_execution_profile_seal(&request, profile, err);
+    return yvex_runtime_execution_profile_seal(&request, profile, err);
 }
 
-static int live_device_batch(live_logits *execution, yvex_runtime_model *model,
+static int live_device_batch(live_logits *execution, yvex_model_engine *model,
                              const live_sampling_result *host_greedy,
                              live_device_result *out, yvex_error *err)
 {
     yvex_runtime_logits_context *logits = NULL;
     yvex_runtime_sampling_context *sampling = NULL;
-    yvex_compiled_execution_profile profile;
+    yvex_runtime_execution_profile profile;
     yvex_runtime_logits_options logits_options = {
         .maximum_rows = LIVE_LOGITS_ROWS + 1ull,
         .maximum_host_bytes = 128ull * 1024ull,
@@ -467,7 +466,7 @@ static int live_device_batch(live_logits *execution, yvex_runtime_model *model,
         sampling_d2h += out->sampling.rows[index].d2h_bytes;
         sampling_kernels += out->sampling.rows[index].kernel_launches;
         sampling_synchronizations +=
-            out->sampling.rows[index].stream_synchronizations +
+            out->sampling.rows[index].queue_synchronizations +
             out->sampling.rows[index].device_synchronizations;
         if (!out->sampling.rows[index].device_selection ||
             out->sampling.rows[index].full_array_host_scan_bytes ||
@@ -601,7 +600,7 @@ static int live_cancel_always(void *context)
     return 1;
 }
 
-static int live_failure_proofs(live_logits *execution, yvex_runtime_model *model,
+static int live_failure_proofs(live_logits *execution, yvex_model_engine *model,
                                yvex_error *err)
 {
     const yvex_runtime_logits_plan_summary *plan =
@@ -746,9 +745,9 @@ cleanup:
 
 int main(int argc, char **argv)
 {
-    yvex_runtime_model_open_request request = {0};
-    yvex_runtime_model_failure failure = {0};
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine_open_request request = {0};
+    yvex_model_engine_failure failure = {0};
+    yvex_model_engine *model = NULL;
     yvex_transformer_input *stream = NULL, *prefill = NULL, *decode = NULL;
     live_logits cpu = {0}, cuda = {0};
     live_comparison cpu_reference, cuda_reference, cpu_cuda;
@@ -783,7 +782,7 @@ int main(int argc, char **argv)
     request.artifact_path = argv[1];
     request.runtime_binding_path = argv[2];
     request.target_id = "deepseek4-v4-flash-dspark";
-    rc = yvex_runtime_model_open(&model, &request, &failure, &err);
+    rc = yvex_model_engine_open(&model, &request, &failure, &err);
     if (rc == YVEX_OK) { step = "cuda-open"; rc = live_open(&cuda, model, YVEX_BACKEND_KIND_CUDA, &err); }
     if (rc == YVEX_OK) { step = "cpu-open"; rc = live_open(&cpu, model, YVEX_BACKEND_KIND_CPU, &err); }
     plan = yvex_transformer_plan_summary_get(
@@ -882,7 +881,7 @@ int main(int argc, char **argv)
                "aggregate_sampling_identity=%s selected_probability=%.17g "
                "selected_log_probability=%.17g rng_draws=%llu\n"
                "logits_ready=1 sampling_ready=1 token_append_ready=0 tokenizer_runtime_ready=0 "
-               "generation_ready=0 cuda_sampling_ready=0\n",
+               "generation_ready=0 device_sampling_ready=0\n",
                values, cpu_reference.maximum_absolute,
                cuda_reference.maximum_absolute, cuda_reference.maximum_relative,
                sqrt(cuda_reference.squared / (double)values),
@@ -920,7 +919,7 @@ int main(int argc, char **argv)
     yvex_error_clear(&cleanup);
     close_rc = live_close(&cpu, &cleanup);
     if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; err = cleanup; }
-    yvex_runtime_model_close(&model);
+    yvex_model_engine_close(&model);
     if (model && rc == YVEX_OK) rc = YVEX_ERR_STATE;
     return rc == YVEX_OK ? 0 : 1;
 }

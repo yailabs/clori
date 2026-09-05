@@ -6,6 +6,8 @@
  * generation available.
  */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/transformer_ops.h"
+#include <yvex/internal/component.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/transformer.h>
 #include <dlfcn.h>
@@ -14,6 +16,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #define CUDA_QTYPE_MATVEC_BLOCK 256u
 #define CUDA_QTYPE_MATVEC_ROWS 8u
 #define CUDA_BLAS_OP_N 0
@@ -26,6 +29,18 @@
 #define CUDA_BLAS_LT_DESC_TRANSB 4
 #define CUDA_BLAS_LT_DESC_EPILOGUE 7
 #define CUDA_BLAS_LT_DESC_BIAS_POINTER 8
+
+static int cuda_encoded_matvec(
+    yvex_backend *, const unsigned char *, unsigned long long, unsigned int,
+    unsigned long long, unsigned long long, unsigned long long, unsigned long long,
+    const yvex_device_tensor *, const yvex_device_tensor *, unsigned long long,
+    const yvex_device_tensor *, yvex_device_tensor *, int,
+    yvex_backend_operation_facts *, yvex_error *);
+static int cuda_encoded_gather(
+    yvex_backend *, const unsigned char *, unsigned long long, unsigned int,
+    unsigned long long, unsigned long long, unsigned long long,
+    const unsigned int *, unsigned long long, yvex_device_tensor *,
+    yvex_backend_operation_facts *, yvex_error *);
 #define CUDA_BLAS_LT_EPILOGUE_BIAS 4
 #define CUDA_BLAS_LT_PREF_WORKSPACE 1
 #define CUDA_BLAS_LT_PREF_ALIGNMENT_A 5
@@ -41,6 +56,10 @@
 #define CUDA_BLAS_LT_STAGES_8X5 28u
 #define CUDA_BLAS_LT_REDUCTION_INPLACE 1u
 #define CUDA_BLAS_LT_REDUCTION_COMPUTE_TYPE 2u
+#define CUDA_DENSE_WORKSPACE_LIMIT (64ull * 1024ull * 1024ull)
+#define CUDA_DENSE_ALIGNMENT 256ull
+#define CUDA_DENSE_POINTER_ALIGNMENT 16u
+#define CUDA_DENSE_HEURISTIC_COUNT 8
 
 typedef struct { uint64_t data[8]; } cuda_blas_lt_algo;
 typedef struct {
@@ -68,6 +87,50 @@ typedef struct {
                   const void *, void *, const void *, void *, const void *,
                   void *, void *, const cuda_blas_lt_algo *, void *, size_t, CUstream);
 } cuda_blas_lt;
+
+struct yvex_transformer_linear_executable {
+    yvex_backend *backend;
+    cuda_blas_lt lt;
+    void *operation, *weight_layout, *input_layout, *output_layout;
+    cuda_blas_lt_algo algorithm;
+    yvex_transformer_linear_requirement requirement;
+    yvex_transformer_linear_executable_summary summary;
+    size_t algorithm_workspace;
+    int in_use;
+};
+
+typedef struct {
+    yvex_transformer_linear_operation operation;
+    unsigned long long input_width, output_width, workspace_bytes;
+    int algorithm_id, split_k, compute_major, compute_minor;
+    unsigned int tile, reduction, stages;
+} cuda_linear_implementation;
+
+/* These exact algorithms are CUDA implementation facts. The generic plan seals the operation,
+ * numerical contract, geometry, backend, and workspace; this owner alone maps that contract to
+ * cuBLASLt algorithm attributes and the device generation on which they were qualified. */
+static const cuda_linear_implementation cuda_linear_implementations[] = {
+    {YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT,
+     5376ull, 96ull, 1024ull * 1024ull, 10, 10, 12, 1,
+     CUDA_BLAS_LT_TILE_32X32, CUDA_BLAS_LT_REDUCTION_INPLACE, 0u},
+    {YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT,
+     5376ull, 32ull, 1024ull * 1024ull, 20, 3, 12, 1,
+     CUDA_BLAS_LT_TILE_128X32, CUDA_BLAS_LT_REDUCTION_COMPUTE_TYPE,
+    CUDA_BLAS_LT_STAGES_8X5},
+};
+
+static const yvex_backend_encoded_operations cuda_encoded_operations = {
+    .matvec = cuda_encoded_matvec,
+    .gather = cuda_encoded_gather,
+};
+
+const yvex_backend_encoded_operations *yvex_cuda_encoded_operations_get(
+    const yvex_backend *backend)
+{
+    return backend && yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA
+               ? &cuda_encoded_operations
+               : NULL;
+}
 
 static unsigned int cuda_blas_lt_alignment(CUdeviceptr pointer)
 {
@@ -136,8 +199,8 @@ static int cuda_blas_lt_bias(
     CUdeviceptr output, unsigned long long rows, unsigned long long columns,
     unsigned long long batches, int dtype, size_t preference_workspace,
     CUdeviceptr workspace, size_t workspace_capacity,
-    const yvex_transformer_linear_physical_plan *physical_plan,
-    CUstream stream, yvex_error *err)
+    const cuda_linear_implementation *implementation,
+    CUstream stream, int *physical_geometry_refused, yvex_error *err)
 {
     void *operation = NULL, *weight_layout = NULL, *input_layout = NULL;
     void *output_layout = NULL, *preference = NULL;
@@ -147,20 +210,16 @@ static int cuda_blas_lt_bias(
     int transa = CUDA_BLAS_OP_T, transb = CUDA_BLAS_OP_N, split_k = 0, algorithm_id = 0;
     int epilogue = CUDA_BLAS_LT_EPILOGUE_BIAS, returned = 0, status = 0;
     unsigned int tile = 0u, reduction = 0u, stages = 0u;
+    if (physical_geometry_refused) *physical_geometry_refused = 0;
     if (!lt || !lt->handle || (dtype != CUDA_BLAS_R_16BF && dtype != CUDA_BLAS_R_32F) ||
         rows > INT_MAX || columns > INT_MAX || batches > INT_MAX)
         return YVEX_ERR_BOUNDS;
-    if (physical_plan) {
-        algorithm_id = (int)physical_plan->algorithm_id;
-        split_k = (int)physical_plan->split_k;
-        tile = physical_plan->tile_rows == 32u ? CUDA_BLAS_LT_TILE_32X32
-                                               : CUDA_BLAS_LT_TILE_128X32;
-        reduction = physical_plan->reduction == YVEX_TRANSFORMER_LINEAR_REDUCTION_INPLACE
-                        ? CUDA_BLAS_LT_REDUCTION_INPLACE
-                        : CUDA_BLAS_LT_REDUCTION_COMPUTE_TYPE;
-        stages = physical_plan->stages == YVEX_TRANSFORMER_LINEAR_STAGES_8X5
-                     ? CUDA_BLAS_LT_STAGES_8X5
-                     : 0u;
+    if (implementation) {
+        algorithm_id = implementation->algorithm_id;
+        split_k = implementation->split_k;
+        tile = implementation->tile;
+        reduction = implementation->reduction;
+        stages = implementation->stages;
     } else if (dtype == CUDA_BLAS_R_32F) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.encoded-linear.lt-policy",
                        "F32 linear execution requires one compiler-sealed physical plan");
@@ -215,6 +274,7 @@ static int cuda_blas_lt_bias(
         if (!status)
             status = lt->algo_check(lt->handle, operation, weight_layout, input_layout,
                                     output_layout, output_layout, &result.algo, &result);
+        if (status && physical_geometry_refused) *physical_geometry_refused = 1;
         returned = status ? 0 : 1;
     } else if (!status) {
         status = lt->heuristic(lt->handle, operation, weight_layout, input_layout,
@@ -222,7 +282,10 @@ static int cuda_blas_lt_bias(
                                &result, &returned);
     }
     if (!status && (returned != 1 || result.state != 0 ||
-                    result.workspace_size > workspace_capacity)) status = 1;
+                    result.workspace_size > workspace_capacity)) {
+        if (implementation && physical_geometry_refused) *physical_geometry_refused = 1;
+        status = 1;
+    }
     if (!status)
         status = lt->matmul(lt->handle, operation, &alpha,
                             (const void *)(uintptr_t)weight, weight_layout,
@@ -243,42 +306,574 @@ static int cuda_blas_lt_bias(
     return YVEX_OK;
 }
 
+/* A sealed split-K algorithm may require workspace proportional to the independent batch-row
+ * extent even though each output element reduces over the same immutable K dimension. Retry a
+ * refused batch geometry at smaller row extents and preserve the exact per-element reduction,
+ * bias epilogue, and source order. Completed chunks never overlap and share one ordered stream. */
+static int cuda_blas_lt_bias_f32_batches(
+    cuda_blas_lt *lt, CUdeviceptr weight, CUdeviceptr input, CUdeviceptr bias,
+    CUdeviceptr output, unsigned long long rows, unsigned long long columns,
+    unsigned long long batches, size_t preference_workspace, CUdeviceptr workspace,
+    size_t workspace_capacity,
+    const cuda_linear_implementation *implementation,
+    CUstream stream, unsigned long long *launches, yvex_error *err)
+{
+    unsigned long long completed = 0ull, chunk = batches;
+    unsigned long long input_row_bytes, output_row_bytes;
+    int rc;
+    if (launches) *launches = 0ull;
+    if (!lt || !implementation || !launches ||
+        !yvex_core_u64_mul(columns, sizeof(float), &input_row_bytes) ||
+        !yvex_core_u64_mul(rows, sizeof(float), &output_row_bytes)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.encoded-linear.lt-batches",
+                       "bounded F32 batch-row geometry is required");
+        return YVEX_ERR_BOUNDS;
+    }
+    while (completed < batches) {
+        unsigned long long remaining = batches - completed;
+        unsigned long long input_offset, output_offset;
+        int geometry_refused = 0;
+        if (chunk > remaining) chunk = remaining;
+        if (!yvex_core_u64_mul(completed, input_row_bytes, &input_offset) ||
+            !yvex_core_u64_mul(completed, output_row_bytes, &output_offset) ||
+            input_offset > UINT64_MAX - input || output_offset > UINT64_MAX - output) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.encoded-linear.lt-batches",
+                           "F32 batch-row device offsets overflowed");
+            return YVEX_ERR_BOUNDS;
+        }
+        rc = cuda_blas_lt_bias(
+            lt, weight, input + input_offset, bias, output + output_offset,
+            rows, columns, chunk, CUDA_BLAS_R_32F, preference_workspace,
+            workspace, workspace_capacity, implementation, stream,
+            &geometry_refused, err);
+        if (rc == YVEX_OK) {
+            completed += chunk;
+            (*launches)++;
+            continue;
+        }
+        if (!geometry_refused || chunk == 1ull) return rc;
+        chunk /= 2ull;
+        yvex_error_clear(err);
+    }
+    return YVEX_OK;
+}
+
 static int cuda_linear_physical_validate(
     yvex_backend *backend, const yvex_transformer_linear_physical_plan *plan,
-    unsigned long long input_width, unsigned long long output_width, yvex_error *err)
+    unsigned long long input_width, unsigned long long output_width,
+    const cuda_linear_implementation **selected, yvex_error *err)
 {
     yvex_backend_device_info device;
-    int profile_10, profile_20, rc;
+    const cuda_linear_implementation *match = NULL;
+    size_t index;
+    int rc;
+    if (selected) *selected = NULL;
     if (!backend || !plan || plan->input_width != input_width ||
         plan->output_width != output_width || plan->backend != YVEX_BACKEND_KIND_CUDA ||
-        plan->implementation != YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_CUBLAS_LT_F32_BIAS) {
+        plan->implementation != YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_DEVICE_F32_BIAS ||
+        !selected) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "cuda.encoded-linear-f32.physical",
                        "compiled linear operation and runtime geometry do not match");
         return YVEX_ERR_FORMAT;
     }
     rc = yvex_transformer_linear_physical_validate(plan, err);
     if (rc != YVEX_OK) return rc;
-    profile_10 = plan->algorithm_id == 10u && plan->tile_rows == 32u &&
-                 plan->tile_columns == 32u && plan->split_k == 10u &&
-                 plan->reduction == YVEX_TRANSFORMER_LINEAR_REDUCTION_INPLACE &&
-                 plan->stages == YVEX_TRANSFORMER_LINEAR_STAGES_DEFAULT;
-    profile_20 = plan->algorithm_id == 20u && plan->tile_rows == 128u &&
-                 plan->tile_columns == 32u && plan->split_k == 3u &&
-                 plan->reduction == YVEX_TRANSFORMER_LINEAR_REDUCTION_COMPUTE_TYPE &&
-                 plan->stages == YVEX_TRANSFORMER_LINEAR_STAGES_8X5;
-    if ((!profile_10 && !profile_20) || plan->workspace_bytes > SIZE_MAX) {
+    for (index = 0u;
+         index < sizeof(cuda_linear_implementations) / sizeof(cuda_linear_implementations[0]);
+         ++index) {
+        const cuda_linear_implementation *candidate = cuda_linear_implementations + index;
+        if (candidate->operation == plan->operation &&
+            candidate->input_width == plan->input_width &&
+            candidate->output_width == plan->output_width &&
+            candidate->workspace_bytes == plan->workspace_bytes) {
+            if (match) {
+                yvex_error_set(err, YVEX_ERR_STATE, "cuda.encoded-linear-f32.physical",
+                               "linear operation has ambiguous CUDA implementations");
+                return YVEX_ERR_STATE;
+            }
+            match = candidate;
+        }
+    }
+    if (!match || match->workspace_bytes > SIZE_MAX) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.encoded-linear-f32.physical",
-                       "compiled linear algorithm is unavailable in this CUDA executor");
+                       "compiled linear implementation is unavailable in this CUDA executor");
         return YVEX_ERR_UNSUPPORTED;
     }
     rc = yvex_backend_get_device_info(backend, &device, err);
     if (rc != YVEX_OK) return rc;
-    if (device.compute_capability_major != (int)plan->compute_capability_major ||
-        device.compute_capability_minor != (int)plan->compute_capability_minor) {
+    if (device.compute_capability_major != match->compute_major ||
+        device.compute_capability_minor != match->compute_minor) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.encoded-linear-f32.hardware",
                        "compiled linear algorithm is incompatible with this CUDA device");
         return YVEX_ERR_UNSUPPORTED;
     }
+    *selected = match;
+    return YVEX_OK;
+}
+
+static int cuda_dense_fault(const char *phase)
+{
+    const char *value = getenv("YVEX_TEST_CUDA_LINEAR_PLAN_FAILURE");
+    return value && phase && strcmp(value, phase) == 0;
+}
+
+static unsigned long long cuda_dense_elapsed_ns(const struct timespec *start,
+                                                 const struct timespec *finish)
+{
+    unsigned long long seconds, nanoseconds;
+    if (!start || !finish || finish->tv_sec < start->tv_sec) return 0ull;
+    seconds = (unsigned long long)(finish->tv_sec - start->tv_sec);
+    nanoseconds = (unsigned long long)finish->tv_nsec;
+    if (finish->tv_nsec < start->tv_nsec) {
+        if (!seconds) return 0ull;
+        seconds--;
+        nanoseconds += 1000000000ull;
+    }
+    nanoseconds -= (unsigned long long)start->tv_nsec;
+    return seconds <= ULLONG_MAX / 1000000000ull
+               ? seconds * 1000000000ull + nanoseconds
+               : 0ull;
+}
+
+static int cuda_dense_align(unsigned long long value, unsigned long long *out)
+{
+    unsigned long long expanded;
+    if (!out || !yvex_core_u64_add(value, CUDA_DENSE_ALIGNMENT - 1ull, &expanded))
+        return 0;
+    *out = expanded & ~(CUDA_DENSE_ALIGNMENT - 1ull);
+    return 1;
+}
+
+static int cuda_dense_workspace_geometry(
+    const yvex_transformer_linear_compile_request *request,
+    unsigned long long algorithm_bytes, unsigned long long *pack_bytes,
+    unsigned long long *total_bytes, yvex_error *err)
+{
+    unsigned long long elements, packed, status, algorithm, total;
+    int rc = request && request->requirement
+                 ? yvex_transformer_linear_requirement_validate(request->requirement, err)
+                 : YVEX_ERR_INVALID_ARG;
+    if (rc == YVEX_OK &&
+        (request->requirement->operation < YVEX_TRANSFORMER_LINEAR_OPERATION_MODULATION ||
+         request->requirement->operation > YVEX_TRANSFORMER_LINEAR_OPERATION_PROJECTION)) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.dense-plan.workspace",
+                       "the CUDA compiled dense plan does not implement this linear class");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    if (rc != YVEX_OK || !request->semantic_domain || !request->semantic_domain[0] ||
+        !request->input_rows || request->input_rows > INT_MAX ||
+        request->requirement->input_width > INT_MAX ||
+        request->requirement->output_width > INT_MAX ||
+        !yvex_core_u64_mul(request->requirement->input_width, request->input_rows,
+                           &elements) ||
+        !yvex_core_u64_mul(elements, sizeof(unsigned short), &packed) ||
+        !cuda_dense_align(packed, &packed) ||
+        !cuda_dense_align(sizeof(int), &status) ||
+        !cuda_dense_align(algorithm_bytes, &algorithm) ||
+        !yvex_core_u64_add(packed, status, &total) ||
+        !yvex_core_u64_add(total, algorithm, &total)) {
+        if (rc == YVEX_OK)
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.dense-plan.workspace",
+                           "dense plan workspace geometry is not representable");
+        return rc == YVEX_OK ? YVEX_ERR_BOUNDS : rc;
+    }
+    if (pack_bytes) *pack_bytes = packed;
+    if (total_bytes) *total_bytes = total;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int cuda_dense_identity(
+    const yvex_transformer_linear_compile_request *request,
+    const yvex_backend_device_info *device, char output[YVEX_SHA256_HEX_CAP])
+{
+    const yvex_transformer_linear_requirement *requirement = request->requirement;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    yvex_sha256 hash;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.cuda.dense-executable.v1") ||
+        !yvex_sha256_update_text(&hash, request->semantic_domain) ||
+        !yvex_sha256_update_u64(&hash, requirement->operation) ||
+        !yvex_sha256_update_u64(&hash, requirement->publication_contract) ||
+        !yvex_sha256_update_u64(&hash, requirement->source_dtype) ||
+        !yvex_sha256_update_u64(&hash, requirement->input_dtype) ||
+        !yvex_sha256_update_u64(&hash, requirement->accumulation_dtype) ||
+        !yvex_sha256_update_u64(&hash, requirement->output_dtype) ||
+        !yvex_sha256_update_u64(&hash, requirement->publication_dtype) ||
+        !yvex_sha256_update_u64(&hash, requirement->input_width) ||
+        !yvex_sha256_update_u64(&hash, requirement->output_width) ||
+        !yvex_sha256_update_u64(&hash, request->input_rows) ||
+        !yvex_sha256_update_u64(&hash, (unsigned long long)device->kind) ||
+        !yvex_sha256_update_u64(&hash, (unsigned long long)device->device_index) ||
+        !yvex_sha256_update_u64(&hash,
+                                (unsigned long long)device->compute_capability_major) ||
+        !yvex_sha256_update_u64(&hash,
+                                (unsigned long long)device->compute_capability_minor) ||
+        !yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
+static void cuda_dense_plan_discard(yvex_transformer_linear_executable *plan)
+{
+    if (!plan) return;
+    if (plan->output_layout) (void)plan->lt.layout_destroy(plan->output_layout);
+    if (plan->input_layout) (void)plan->lt.layout_destroy(plan->input_layout);
+    if (plan->weight_layout) (void)plan->lt.layout_destroy(plan->weight_layout);
+    if (plan->operation) (void)plan->lt.operation_destroy(plan->operation);
+    (void)cuda_blas_lt_close(&plan->lt, YVEX_OK, NULL);
+    free(plan);
+}
+
+int yvex_cuda_transformer_linear_workspace_required(
+    const yvex_transformer_linear_compile_request *request,
+    unsigned long long *required, yvex_error *err)
+{
+    if (required) *required = 0ull;
+    if (!required) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.dense-plan.workspace",
+                       "dense plan workspace output is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    return cuda_dense_workspace_geometry(
+        request, CUDA_DENSE_WORKSPACE_LIMIT, NULL, required, err);
+}
+
+int yvex_cuda_transformer_linear_compile(
+    yvex_backend *backend, const yvex_transformer_linear_compile_request *request,
+    yvex_transformer_linear_executable **out,
+    yvex_transformer_linear_executable_summary *summary, yvex_error *err)
+{
+    yvex_transformer_linear_executable *plan = NULL;
+    cuda_blas_lt_result candidates[CUDA_DENSE_HEURISTIC_COUNT];
+    yvex_backend_device_info device;
+    struct timespec started = {0}, finished = {0};
+    void *preference = NULL;
+    unsigned long long pack_bytes, total_bytes;
+    size_t workspace_limit = (size_t)CUDA_DENSE_WORKSPACE_LIMIT;
+    unsigned int alignment = CUDA_DENSE_POINTER_ALIGNMENT;
+    int transa = CUDA_BLAS_OP_T, transb = CUDA_BLAS_OP_N;
+    int returned = 0, selected = -1, status = 0, rc, index;
+    if (out) *out = NULL;
+    if (summary) memset(summary, 0, sizeof(*summary));
+    if (!backend || !out || !summary || yvex_backend_kind_of(backend) != YVEX_BACKEND_KIND_CUDA) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.dense-plan.compile",
+                       "one CUDA backend and plan output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = cuda_dense_workspace_geometry(
+        request, CUDA_DENSE_WORKSPACE_LIMIT, &pack_bytes, &total_bytes, err);
+    if (rc != YVEX_OK) return rc;
+    if (cuda_dense_fault("compile")) {
+        yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.dense-plan.compile",
+                       "injected dense plan compilation failure");
+        return YVEX_ERR_BACKEND;
+    }
+    if (cuda_dense_fault("unsupported")) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.dense-plan.compile",
+                       "injected unsupported dense plan capability");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    (void)clock_gettime(CLOCK_MONOTONIC, &started);
+    plan = calloc(1u, sizeof(*plan));
+    if (!plan) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "cuda.dense-plan.compile",
+                       "dense executable plan allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    plan->backend = backend;
+    plan->requirement = *request->requirement;
+    rc = yvex_backend_get_device_info(backend, &device, err);
+    if (rc == YVEX_OK) rc = cuda_blas_lt_open(&plan->lt, err);
+    if (rc == YVEX_OK)
+        status = plan->lt.operation_create(
+            &plan->operation, CUDA_BLAS_COMPUTE_32F, CUDA_BLAS_R_32F);
+    if (!status && rc == YVEX_OK)
+        status = plan->lt.operation_set(
+            plan->operation, CUDA_BLAS_LT_DESC_TRANSA, &transa, sizeof(transa));
+    if (!status && rc == YVEX_OK)
+        status = plan->lt.operation_set(
+            plan->operation, CUDA_BLAS_LT_DESC_TRANSB, &transb, sizeof(transb));
+    if (!status && rc == YVEX_OK)
+        status = plan->lt.layout_create(
+            &plan->weight_layout, CUDA_BLAS_R_16BF,
+            request->requirement->input_width, request->requirement->output_width,
+            (int64_t)request->requirement->input_width);
+    if (!status && rc == YVEX_OK)
+        status = plan->lt.layout_create(
+            &plan->input_layout, CUDA_BLAS_R_16BF,
+            request->requirement->input_width, request->input_rows,
+            (int64_t)request->requirement->input_width);
+    if (!status && rc == YVEX_OK)
+        status = plan->lt.layout_create(
+            &plan->output_layout, CUDA_BLAS_R_32F,
+            request->requirement->output_width, request->input_rows,
+            (int64_t)request->requirement->output_width);
+    if (!status && rc == YVEX_OK) status = plan->lt.preference_create(&preference);
+    if (!status && rc == YVEX_OK)
+        status = plan->lt.preference_set(
+            preference, CUDA_BLAS_LT_PREF_WORKSPACE, &workspace_limit, sizeof(workspace_limit));
+    if (!status && rc == YVEX_OK)
+        status = plan->lt.preference_set(
+            preference, CUDA_BLAS_LT_PREF_ALIGNMENT_A, &alignment, sizeof(alignment));
+    if (!status && rc == YVEX_OK)
+        status = plan->lt.preference_set(
+            preference, CUDA_BLAS_LT_PREF_ALIGNMENT_B, &alignment, sizeof(alignment));
+    if (!status && rc == YVEX_OK)
+        status = plan->lt.preference_set(
+            preference, CUDA_BLAS_LT_PREF_ALIGNMENT_C, &alignment, sizeof(alignment));
+    if (!status && rc == YVEX_OK)
+        status = plan->lt.preference_set(
+            preference, CUDA_BLAS_LT_PREF_ALIGNMENT_D, &alignment, sizeof(alignment));
+    memset(candidates, 0, sizeof(candidates));
+    if (!status && rc == YVEX_OK)
+        status = plan->lt.heuristic(
+            plan->lt.handle, plan->operation, plan->weight_layout, plan->input_layout,
+            plan->output_layout, plan->output_layout, preference,
+            CUDA_DENSE_HEURISTIC_COUNT, candidates, &returned);
+    for (index = 0; !status && index < returned; ++index)
+        if (candidates[index].state == 0 &&
+            candidates[index].workspace_size <= CUDA_DENSE_WORKSPACE_LIMIT) {
+            selected = index;
+            break;
+        }
+    if (preference) (void)plan->lt.preference_destroy(preference);
+    if (rc == YVEX_OK && (status || selected < 0)) {
+        yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "cuda.dense-plan.compile",
+                        "cuBLASLt has no compatible exact BF16 plan (status %d)", status);
+        rc = YVEX_ERR_UNSUPPORTED;
+    }
+    if (rc == YVEX_OK) {
+        plan->algorithm = candidates[selected].algo;
+        plan->algorithm_workspace = candidates[selected].workspace_size;
+        rc = cuda_dense_workspace_geometry(
+            request, plan->algorithm_workspace, &pack_bytes, &total_bytes, err);
+    }
+    (void)clock_gettime(CLOCK_MONOTONIC, &finished);
+    if (rc == YVEX_OK && !cuda_dense_identity(request, &device, plan->summary.identity)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "cuda.dense-plan.compile",
+                       "dense executable identity derivation failed");
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc != YVEX_OK) {
+        cuda_dense_plan_discard(plan);
+        return rc;
+    }
+    plan->summary.schema_version = YVEX_TRANSFORMER_LINEAR_EXECUTABLE_SCHEMA_V1;
+    plan->summary.input_rows = request->input_rows;
+    plan->summary.workspace_bytes = total_bytes;
+    plan->summary.input_pack_bytes = pack_bytes;
+    plan->summary.plan_host_bytes = sizeof(*plan);
+    plan->summary.preparation_nanoseconds = cuda_dense_elapsed_ns(&started, &finished);
+    plan->summary.algorithm_selection_count = 1ull;
+    plan->summary.accelerated_matrix = 1;
+    plan->summary.exact = 1;
+    *summary = plan->summary;
+    *out = plan;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_cuda_transformer_linear_execute(
+    yvex_backend *backend, const yvex_transformer_linear_execution_request *request,
+    yvex_backend_operation_facts *facts, yvex_error *err)
+{
+    yvex_transformer_linear_executable *plan = request ? request->executable : NULL;
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    const yvex_component_encoded_weight *weight = request ? request->weight : NULL;
+    yvex_cuda_work work = {0};
+    CUdeviceptr weight_ptr = 0ull, packed = 0ull, device_status = 0ull, algorithm = 0ull;
+    CUdeviceptr input_ptr, output_ptr;
+    unsigned long long expected_weight, input_values, output_values, input_bytes, output_bytes;
+    unsigned long long activation_bytes, pack_bytes, total_bytes;
+    unsigned long long input_tasks, output_tasks;
+    const float alpha = 1.0f, beta = 0.0f;
+    int host_status = 0, rc = YVEX_OK, cleanup_rc, blas_status = 0, submitted = 0;
+    yvex_error cleanup;
+    if (facts) memset(facts, 0, sizeof(*facts));
+    if (!backend || !state || !request || !plan || !facts || plan->backend != backend ||
+        plan->in_use || !weight || weight->qtype != YVEX_GGUF_QTYPE_BF16 ||
+        weight->row_width != plan->requirement.input_width ||
+        weight->row_count != plan->requirement.output_width ||
+        !yvex_core_u64_mul(weight->row_width, weight->row_count, &expected_weight) ||
+        !yvex_core_u64_mul(expected_weight, sizeof(unsigned short), &expected_weight) ||
+        weight->encoded_bytes != expected_weight ||
+        yvex_backend_resident_resolve(backend, weight->encoded, weight->encoded_bytes,
+                                      &weight_ptr) != YVEX_BACKEND_RESIDENT_HIT ||
+        !backend_tensor_owner_is(backend, request->input) || !request->input->is_written ||
+        request->input->dtype != YVEX_DTYPE_F32 ||
+        !backend_tensor_owner_is(backend, request->output) ||
+        request->output->dtype != YVEX_DTYPE_F32 ||
+        !yvex_core_u64_mul(plan->summary.input_rows, plan->requirement.input_width,
+                           &input_values) ||
+        !yvex_core_u64_mul(plan->summary.input_rows, plan->requirement.output_width,
+                           &output_values) ||
+        !yvex_core_u64_mul(input_values, sizeof(float), &input_bytes) ||
+        !yvex_core_u64_mul(output_values, sizeof(float), &output_bytes) ||
+        !yvex_core_u64_add(input_bytes, output_bytes, &activation_bytes) ||
+        request->input->bytes < input_bytes || request->output->bytes < output_bytes ||
+        !yvex_core_u64_add(input_values, CUDA_QTYPE_MATVEC_BLOCK - 1ull, &input_tasks) ||
+        !yvex_core_u64_add(output_values, CUDA_QTYPE_MATVEC_BLOCK - 1ull, &output_tasks) ||
+        input_tasks / CUDA_QTYPE_MATVEC_BLOCK > UINT_MAX ||
+        output_tasks / CUDA_QTYPE_MATVEC_BLOCK > UINT_MAX ||
+        cuda_dense_workspace_geometry(
+            &(yvex_transformer_linear_compile_request){
+                plan->summary.identity, &plan->requirement, plan->summary.input_rows},
+            plan->algorithm_workspace, &pack_bytes, &total_bytes, err) != YVEX_OK) {
+        if (!err || err->code == YVEX_OK)
+            yvex_error_set(err, YVEX_ERR_FORMAT, "cuda.dense-plan.execute",
+                           "dense executable bindings do not match their compiled geometry");
+        return err && err->code != YVEX_OK ? err->code : YVEX_ERR_FORMAT;
+    }
+    request->output->is_written = 0;
+    if (cuda_dense_fault("execute")) {
+        yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.dense-plan.execute",
+                       "injected dense plan execution failure");
+        return YVEX_ERR_BACKEND;
+    }
+    plan->in_use = 1;
+    backend_workspace_reset(backend);
+    work.backend = backend;
+    work.state = state;
+    work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
+    rc = yvex_cuda_set_current(backend, "cuda.dense-plan.execute", err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_blas_bind_launch_stream(backend, "cuda.dense-plan.stream", err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_work_allocate(
+            &work, &packed, (size_t)pack_bytes, NULL, 0, "cuda.dense-plan.pack", NULL, err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_work_allocate(
+            &work, &device_status, (size_t)CUDA_DENSE_ALIGNMENT, NULL, 1,
+            "cuda.dense-plan.status", NULL, err);
+    if (rc == YVEX_OK && plan->algorithm_workspace)
+        rc = yvex_cuda_work_allocate(
+            &work, &algorithm, plan->algorithm_workspace, NULL, 0,
+            "cuda.dense-plan.algorithm", NULL, err);
+    input_ptr = yvex_cuda_tensor_ptr(request->input);
+    output_ptr = yvex_cuda_tensor_ptr(request->output);
+    if (rc == YVEX_OK) {
+        void *parameters[] = {&input_ptr, &packed, &input_values, &device_status};
+        rc = yvex_cuda_launch(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            state->bf16_pack_function,
+            (unsigned int)(input_tasks / CUDA_QTYPE_MATVEC_BLOCK),
+            CUDA_QTYPE_MATVEC_BLOCK, 0u, parameters, "cuda.dense-plan.pack", err);
+        if (rc == YVEX_OK) submitted = 1;
+    }
+    if (rc == YVEX_OK) {
+        blas_status = plan->lt.matmul(
+            plan->lt.handle, plan->operation, &alpha,
+            (const void *)(uintptr_t)weight_ptr, plan->weight_layout,
+            (const void *)(uintptr_t)packed, plan->input_layout, &beta,
+            (void *)(uintptr_t)output_ptr, plan->output_layout,
+            (void *)(uintptr_t)output_ptr, plan->output_layout, &plan->algorithm,
+            (void *)(uintptr_t)algorithm, plan->algorithm_workspace,
+            yvex_cuda_launch_stream(backend));
+        if (!blas_status) submitted = 1;
+        else {
+            yvex_error_setf(err, YVEX_ERR_BACKEND, "cuda.dense-plan.matmul",
+                            "compiled cuBLASLt submission failed with status %d", blas_status);
+            rc = YVEX_ERR_BACKEND;
+        }
+    }
+    if (rc == YVEX_OK && plan->requirement.publication_dtype == YVEX_DTYPE_BF16) {
+        void *parameters[] = {&output_ptr, &output_values, &device_status};
+        rc = yvex_cuda_launch(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            state->attention_bf16_round_function,
+            (unsigned int)(output_tasks / CUDA_QTYPE_MATVEC_BLOCK),
+            CUDA_QTYPE_MATVEC_BLOCK, 0u, parameters, "cuda.dense-plan.publish", err);
+        if (rc == YVEX_OK) submitted = 1;
+    }
+    if (submitted) {
+        int sync_rc = yvex_cuda_synchronize(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            "cuda.dense-plan.complete", rc == YVEX_OK ? err : NULL);
+        if (rc == YVEX_OK) rc = sync_rc;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemcpyDtoH_v2(&host_status, device_status, sizeof(host_status)),
+            "cuda.dense-plan.status", err);
+    if (rc == YVEX_OK && host_status) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "cuda.dense-plan.execute",
+                       "dense executable produced or consumed invalid numerics");
+        rc = YVEX_ERR_FORMAT;
+    }
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
+    backend_workspace_reset(backend);
+    plan->in_use = 0;
+    if (rc == YVEX_OK && cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    }
+    if (rc != YVEX_OK) return rc;
+    if (plan->summary.use_count == ULLONG_MAX) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.dense-plan.execute",
+                       "dense executable use accounting overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    request->output->is_written = 1;
+    plan->summary.use_count++;
+    facts->d2h_bytes = sizeof(host_status);
+    facts->kernel_launches = plan->requirement.publication_dtype == YVEX_DTYPE_BF16 ? 3ull : 2ull;
+    facts->download_count = 1ull;
+    facts->device_synchronizations = 1ull;
+    facts->active_weight_bytes = weight->encoded_bytes;
+    facts->activation_bytes = activation_bytes;
+    facts->temporary_bytes = total_bytes;
+    facts->accelerated_matrix_launches = 1ull;
+    facts->compulsory_memory_facts_available = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_cuda_transformer_linear_summary(
+    const yvex_transformer_linear_executable *plan,
+    yvex_transformer_linear_executable_summary *summary, yvex_error *err)
+{
+    if (!plan || !summary ||
+        plan->summary.schema_version != YVEX_TRANSFORMER_LINEAR_EXECUTABLE_SCHEMA_V1) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.dense-plan.summary",
+                       "one admitted dense executable is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    *summary = plan->summary;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_cuda_transformer_linear_release(
+    yvex_backend *backend, yvex_transformer_linear_executable **owner, yvex_error *err)
+{
+    yvex_transformer_linear_executable *plan = owner ? *owner : NULL;
+    int status = 0;
+    if (!owner || (plan && (!backend || plan->backend != backend || plan->in_use))) {
+        yvex_error_set(err, YVEX_ERR_STATE, "cuda.dense-plan.release",
+                       "idle dense executable ownership is required");
+        return YVEX_ERR_STATE;
+    }
+    if (!plan) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (plan->output_layout) status |= plan->lt.layout_destroy(plan->output_layout);
+    if (plan->input_layout) status |= plan->lt.layout_destroy(plan->input_layout);
+    if (plan->weight_layout) status |= plan->lt.layout_destroy(plan->weight_layout);
+    if (plan->operation) status |= plan->lt.operation_destroy(plan->operation);
+    status |= cuda_blas_lt_close(&plan->lt, YVEX_OK, NULL) != YVEX_OK;
+    memset(plan, 0, sizeof(*plan));
+    free(plan);
+    *owner = NULL;
+    if (status) {
+        yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.dense-plan.release",
+                       "dense executable cleanup reported a backend failure");
+        return YVEX_ERR_BACKEND;
+    }
+    yvex_error_clear(err);
     return YVEX_OK;
 }
 
@@ -371,7 +966,7 @@ static int cuda_blas_bf16_projection(
     unsigned long long row_count, unsigned long long row_width,
     unsigned long long input_rows, const yvex_device_tensor *input,
     const yvex_device_tensor *additive, yvex_device_tensor *output,
-    unsigned long long activation_bytes, yvex_backend_cuda_operation_facts *facts,
+    unsigned long long activation_bytes, yvex_backend_operation_facts *facts,
     yvex_error *err)
 {
     const float alpha = 1.0f, beta = additive ? 1.0f : 0.0f;
@@ -476,13 +1071,13 @@ static int cuda_blas_bf16_projection(
     return YVEX_OK;
 }
 
-int yvex_backend_cuda_encoded_linear_bf16(
+int yvex_cuda_transformer_linear_bf16(
     yvex_backend *backend, const unsigned char *resident_weight,
     unsigned long long weight_bytes, const unsigned char *resident_bias,
     unsigned long long bias_bytes, unsigned long long output_width,
     unsigned long long input_width, unsigned long long input_rows,
     const yvex_device_tensor *input, yvex_device_tensor *output,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
@@ -563,7 +1158,7 @@ int yvex_backend_cuda_encoded_linear_bf16(
                                output_width, input_width, input_rows, CUDA_BLAS_R_16BF,
                                256u * 1024u * 1024u, 0ull, 0u,
                                NULL,
-                               yvex_cuda_launch_stream(backend), err);
+                               yvex_cuda_launch_stream(backend), NULL, err);
     if (rc == YVEX_OK) {
         void *parameters[] = {&packed_output, &output_ptr, &output_values};
         rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -608,27 +1203,28 @@ int yvex_backend_cuda_encoded_linear_bf16(
     return YVEX_OK;
 }
 
-int yvex_backend_cuda_encoded_linear_f32(
+int yvex_cuda_transformer_linear_f32(
     yvex_backend *backend, const unsigned char *resident_weight,
     unsigned long long weight_bytes, const unsigned char *resident_bias,
     unsigned long long bias_bytes, unsigned long long output_width,
     unsigned long long input_width, unsigned long long input_rows,
     const yvex_device_tensor *input, yvex_device_tensor *output,
     const yvex_transformer_linear_physical_plan *physical_plan,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
     cuda_blas_lt lt = {0};
     CUdeviceptr resident_weight_device = 0ull, resident_bias_device = 0ull;
     CUdeviceptr weight = 0ull, bias = 0ull, workspace = 0ull;
+    const cuda_linear_implementation *implementation = NULL;
     unsigned long long input_values, output_values, expected_weight, expected_bias, temporary_bytes;
+    unsigned long long launches = 0ull;
     int rc, cleanup_rc;
     yvex_error cleanup;
     if (facts) memset(facts, 0, sizeof(*facts));
     if (!state || !facts || !physical_plan || !resident_weight || !resident_bias ||
-        !output_width || physical_plan->split_k > INT_MAX ||
-        !input_width || !input_rows ||
+        !output_width || !input_width || !input_rows ||
         !yvex_core_u64_mul(output_width, input_width, &expected_weight) ||
         !yvex_core_u64_mul(expected_weight, sizeof(float), &expected_weight) ||
         !yvex_core_u64_mul(output_width, sizeof(float), &expected_bias) ||
@@ -649,10 +1245,10 @@ int yvex_backend_cuda_encoded_linear_f32(
         return YVEX_ERR_FORMAT;
     }
     rc = cuda_linear_physical_validate(
-        backend, physical_plan, input_width, output_width, err);
+        backend, physical_plan, input_width, output_width, &implementation, err);
     if (rc != YVEX_OK) return rc;
     if (!yvex_core_u64_add(weight_bytes, bias_bytes, &temporary_bytes) ||
-        !yvex_core_u64_add(temporary_bytes, physical_plan->workspace_bytes, &temporary_bytes)) {
+        !yvex_core_u64_add(temporary_bytes, implementation->workspace_bytes, &temporary_bytes)) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.encoded-linear-f32.physical",
                        "compiled linear workspace accounting overflowed");
         return YVEX_ERR_BOUNDS;
@@ -673,17 +1269,17 @@ int yvex_backend_cuda_encoded_linear_f32(
         rc = yvex_cuda_work_allocate(&work, &bias, (size_t)bias_bytes,
                                      resident_bias, 0, "cuda.encoded-linear-f32.bias", NULL, err);
     if (rc == YVEX_OK)
-        rc = yvex_cuda_work_allocate(&work, &workspace, (size_t)physical_plan->workspace_bytes,
+        rc = yvex_cuda_work_allocate(&work, &workspace, (size_t)implementation->workspace_bytes,
                                      NULL, 1,
                                      "cuda.encoded-linear-f32.workspace", NULL, err);
     if (rc == YVEX_OK) rc = cuda_blas_lt_open(&lt, err);
     if (rc == YVEX_OK)
-        rc = cuda_blas_lt_bias(&lt, weight, (CUdeviceptr)input->data, bias,
-                               (CUdeviceptr)output->data, output_width, input_width,
-                               input_rows, CUDA_BLAS_R_32F,
-                               (size_t)physical_plan->workspace_bytes, workspace,
-                               (size_t)physical_plan->workspace_bytes, physical_plan,
-                               yvex_cuda_launch_stream(backend), err);
+        rc = cuda_blas_lt_bias_f32_batches(
+            &lt, weight, (CUdeviceptr)input->data, bias,
+            (CUdeviceptr)output->data, output_width, input_width, input_rows,
+            (size_t)implementation->workspace_bytes, workspace,
+            (size_t)implementation->workspace_bytes, implementation,
+            yvex_cuda_launch_stream(backend), &launches, err);
     if (rc == YVEX_OK)
         rc = yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
                                    "cuda.encoded-linear-f32.sync", err);
@@ -697,13 +1293,13 @@ int yvex_backend_cuda_encoded_linear_f32(
     if (rc != YVEX_OK) return rc;
     output->is_written = 1;
     facts->h2d_bytes = weight_bytes + bias_bytes;
-    facts->kernel_launches = 1ull;
+    facts->kernel_launches = launches;
     facts->upload_count = 2ull;
     facts->device_synchronizations = 1ull;
     facts->active_weight_bytes = weight_bytes + bias_bytes;
     facts->activation_bytes = (input_values + output_values) * sizeof(float);
     facts->temporary_bytes = temporary_bytes;
-    facts->tensor_core_launches = 1ull;
+    facts->accelerated_matrix_launches = launches;
     facts->compulsory_memory_facts_available = 1;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -716,7 +1312,7 @@ static int cuda_blas_f32_projection(
     unsigned long long row_count, unsigned long long row_width,
     unsigned long long input_rows, const yvex_device_tensor *input,
     const yvex_device_tensor *additive, yvex_device_tensor *output,
-    unsigned long long activation_bytes, yvex_backend_cuda_operation_facts *facts,
+    unsigned long long activation_bytes, yvex_backend_operation_facts *facts,
     yvex_error *err)
 {
     const float alpha = 1.0f, beta = additive ? 1.0f : 0.0f;
@@ -781,7 +1377,7 @@ static int cuda_blas_f32_projection(
  *
  * Exact resident span/geometry and stable backend-owned F32 input/output tensors.
  */
-int yvex_backend_cuda_encoded_matvec(
+static int cuda_encoded_matvec(
     yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype,
     unsigned long long row_count, unsigned long long row_width,
@@ -789,7 +1385,7 @@ int yvex_backend_cuda_encoded_matvec(
     const yvex_device_tensor *input, const yvex_device_tensor *input_tail,
     unsigned long long input_head_width, const yvex_device_tensor *additive,
     yvex_device_tensor *output, int activation_q8,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
@@ -966,7 +1562,7 @@ int yvex_backend_cuda_encoded_matvec(
         facts->active_weight_bytes = encoded_bytes;
         facts->activation_bytes = activation_bytes;
         facts->temporary_bytes = temporary_bytes;
-        facts->tensor_core_launches = tensorcore_path ? 1ull : 0ull;
+        facts->accelerated_matrix_launches = tensorcore_path ? 1ull : 0ull;
         facts->compulsory_memory_facts_available = 1;
         yvex_error_clear(err);
     }
@@ -977,13 +1573,13 @@ int yvex_backend_cuda_encoded_matvec(
  * Decode selected rows from one admitted resident matrix into a backend-owned F32 view.
  * Row identifiers are bounded host control facts; encoded values never leave device residency.
  */
-int yvex_backend_cuda_encoded_gather(
+static int cuda_encoded_gather(
     yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype,
     unsigned long long row_count, unsigned long long row_width,
     unsigned long long row_bytes, const unsigned int *row_ids,
     unsigned long long selected_rows, yvex_device_tensor *output,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     const yvex_gguf_qtype_geometry *geometry = yvex_gguf_qtype_geometry_find(qtype);
     const yvex_quant_numeric_capability *capability =

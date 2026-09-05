@@ -1,9 +1,8 @@
 /*
- * Project source-owned release identity into model-target catalog reports.
+ * Project source-owned target identity and bounded current capability into catalog reports.
  *
- * The exact v0.1.0 identity is borrowed from the source owner and remains distinct from support;
- * catalog facts do not claim runtime or generation. Target catalog entries are not capability
- * claims.
+ * Source selection remains distinct from support. Runtime and generation fields only project
+ * capability already owned by an executable consumer; this catalog never creates that capability.
  */
 #include <yvex/internal/core.h>
 #include <yvex/internal/model_target.h>
@@ -26,8 +25,8 @@ static const yvex_model_target_class_record catalog_model_target_classes[] = {
     {"source-model-candidate", "false", "unsupported", "unsupported",
      "backend-neutral model/source target candidate; backend pressure and runtime "
      "compatibility are reported separately"},
-    {"composite-source-model", "false", "unsupported", "unsupported",
-     "identity-bound multi-component source target with artifact-neutral transformation semantics"},
+    {"composite-source-model", "bounded-hosted-media", "hosted-composite", "typed-media",
+     "identity-bound composite source with bounded hosted direct-media execution"},
     {"full-runtime-model", "false", "planned", "planned",
      "complete tensor set required for transformer prefill, decode, logits, sampling, "
      "and generation after runtime support exists"},
@@ -83,10 +82,10 @@ static const yvex_model_target_record catalog_model_targets[] = {
      "unsupported", "false"},
     {"minimax-h3-fl2va", "MiniMax-H3", "MiniMax-H3 Base FL2VA",
      "composite-source-model", "official-immutable-fl2va-source",
-     "component-artifacts-not-produced", "source-to-transformation-ir",
+     "four-YVEX-component-GGUFs", "source-to-transformation-ir-and-hosted-media",
      "four-weighted-components", "hf/minimax/MiniMax-H3/immutable-revision",
-     "144051204180 bytes", "source and logical IR only; execution unsupported",
-     "unsupported", "unsupported", "false"},
+     "144051204180 bytes", "bounded staged composite media execution; no quality, performance claim",
+     "hosted-composite", "typed-media", "false"},
 };
 
 int yvex_model_target_release_source_paths(
@@ -340,7 +339,7 @@ static void catalog_path_report(const yvex_model_target_request *request,
                                          catalog_artifact_status(record));
         yvex_model_target_report_add_row(report, "runtime_execution: %s",
                                          catalog_runtime_status(record));
-        yvex_model_target_report_add_row(report, "generation: unsupported");
+        yvex_model_target_report_add_row(report, "generation: %s", record->generation);
     } else {
         yvex_model_target_report_add_row(report, "target: %s", record->target_id);
         yvex_model_target_report_add_row(report, "source: %s  %s",
@@ -350,14 +349,12 @@ static void catalog_path_report(const yvex_model_target_request *request,
                                          source_path);
         yvex_model_target_report_add_row(report, "source_class: %s", record->source_artifact_class);
         yvex_model_target_report_add_row(report, "artifact: %s  %s",
-                                         artifact_unselected
-                                             ? "not-produced"
-                                             : "planned",
+                                         catalog_artifact_status(record),
                                          artifact_path);
         yvex_model_target_report_add_row(report, "artifact_class: %s", record->target_artifact_class);
         yvex_model_target_report_add_row(report, "reports: %s", report_dir);
         yvex_model_target_report_add_row(report, "registry: %s", registry_dir);
-        yvex_model_target_report_add_row(report, "boundary: path report only, no runtime execution");
+        yvex_model_target_report_add_row(report, "boundary: %s", record->runtime_boundary);
     }
 }
 
@@ -402,6 +399,7 @@ static const catalog_projection_row catalog_projection_rows[] = {
       "source/storage pressure only; no GLM runtime/generation"}},
     {"source-model-candidate", {"missing", "V010.MAP.8",
                                 "target/source profile only; no source download/runtime/generation"}},
+    {"composite-source-model", {"verified", "", "bounded hosted media; no quality/release claim"}},
 };
 
 static const char *catalog_projection(const yvex_model_target_record *rec,
@@ -427,7 +425,8 @@ static const char *catalog_artifact_status(const yvex_model_target_record *rec)
     if (yvex_source_is_release_target(rec->target_id)) {
         return "not-produced";
     }
-    return strcmp(rec->target_class, "selected-runtime-slice") == 0
+    return strcmp(rec->target_class, "selected-runtime-slice") == 0 ||
+                   strcmp(rec->target_class, "composite-source-model") == 0
                ? "present"
                : "planned";
 }
@@ -440,7 +439,7 @@ static const char *catalog_runtime_status(const yvex_model_target_record *rec)
     if (strcmp(rec->target_id, "deepseek4-v4-flash-dspark-selected-embed-rmsnorm") == 0) {
         return "selected-segment-boundary-only";
     }
-    return "unsupported";
+    return rec->runtime_execution;
 }
 
 static const char *catalog_next_row(const yvex_model_target_record *rec)

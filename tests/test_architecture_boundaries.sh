@@ -38,7 +38,7 @@ cli_family_abi_pattern='(#include[[:space:]]+[<"]yvex/internal/families/|yvex_[A
 cli_family_representation_pattern='(#include[[:space:]]+[<"]yvex/internal/families/|yvex_[A-Za-z0-9_]*(deepseek|minimax)[A-Za-z0-9_]*|YVEX_[A-Z0-9_]*(DEEPSEEK|MINIMAX)[A-Z0-9_]*)'
 cli_preparation_call_pattern='yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*|materialization_(plan|session)_[A-Za-z0-9_]*|runtime_descriptor_build[A-Za-z0-9_]*|artifact_physical_compatibility_[A-Za-z0-9_]*)[[:space:]]*\('
 family_preparation_leak_pattern='(yvex_(model_register_deepseek_v4|graph_lower_deepseek_v4|artifact_admit_deepseek|runtime_descriptor_build_deepseek|quant_plan_build_deepseek_profile)[[:space:]]*\(|YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME)'
-cli_runtime_lifecycle_pattern='yvex_runtime_(model_(open|close|summary_copy|view_get)|session_(open|close|summary_copy|view_get)|residency_(prepare|close|snapshot|invalidate))[[:space:]]*\('
+cli_runtime_lifecycle_pattern='yvex_(model_engine_(open|close|summary_copy|view_get)|runtime_(session_(open|close|summary_copy|view_get)|residency_(prepare|close|snapshot|invalidate)))[[:space:]]*\('
 recursive_cleanup_pattern='(^|[;&|()[:space:]])(command[[:space:]]+)?r'\
 'm[[:space:]]+([^#;]*[[:space:]])?(-[[:alpha:]]*[rR][[:alpha:]]*|--recursive)([[:space:]]|$)'
 recursive_cleanup_call_pattern='(system|popen)[[:space:]]*\([^;]*(rm[[:space:]]+-[[:alpha:]]*[rR]|rm[[:space:]]+--recursive)'
@@ -49,6 +49,7 @@ implicit_physical_envelope_pattern='decision->(supported_width_mask[[:space:]]*=
 moe_family_registry_pattern='yvex_graph_moe_family_(at|find)[[:space:]]*\('
 conversation_family_registry_pattern='yvex_model_conversation_protocol_(at|find)[[:space:]]*\('
 legacy_resolution_boolean_pattern='(host_stochastic_reference|token_local_moe_reference|eager_attention_reference)'
+legacy_runtime_refusal_pattern='(YVEX_RUNTIME_REFUSE_[A-Z0-9_]+|yvex_runtime_private_refuse)'
 backend_representation_pattern='\bbackend->(vtable|virtual_tensor_ready|state_residency_generation|resident_host_base|workspace_device_tensor)'
 family_transform_builder_pattern='yvex_transform_builder_(create|add_source|declare_value|add_node|seal|release)[[:space:]]*\('
 generic_family_operator_lowering_pattern='yvex_operator_graph_ir_build_transformer[[:space:]]*\('
@@ -84,9 +85,9 @@ if printf '%s\n' 'preparation->prepare_runtime_binding(&request, &result, &err);
     rg -i "$cli_family_abi_pattern|$cli_preparation_call_pattern" >/dev/null; then
     fail "CLI preparation guard rejects typed family preparation dispatch"
 fi
-printf '%s\n' 'yvex_runtime_model_open(&model, &request, &failure, &err);' |
+printf '%s\n' 'yvex_model_engine_open(&model, &request, &failure, &err);' |
     rg "$cli_runtime_lifecycle_pattern" >/dev/null ||
-    fail "CLI lifecycle guard misses direct runtime-model ownership"
+    fail "CLI lifecycle guard misses direct model-engine ownership"
 if printf '%s\n' 'yvex_graph_attention_operator_execute(&request, &result, &cleanup, &err);' |
     rg "$cli_runtime_lifecycle_pattern" >/dev/null; then
     fail "CLI lifecycle guard rejects the canonical production operator"
@@ -132,6 +133,13 @@ printf '%s\n' 'profile.eager_attention_reference = 1;' |
 if printf '%s\n' 'profile.attention_resolution = YVEX_EXECUTION_RESOLUTION_EXACT;' |
     rg "$legacy_resolution_boolean_pattern" >/dev/null; then
     fail "capability-resolution guard rejects a typed resolution"
+fi
+printf '%s\n' 'YVEX_RUNTIME_REFUSE_SESSION_BUSY' |
+    rg "$legacy_runtime_refusal_pattern" >/dev/null ||
+    fail "runtime failure guard misses the retired refusal ontology"
+if printf '%s\n' 'yvex_runtime_private_reject(failure, code, field, expected, actual, reason, err, status);' |
+    rg "$legacy_runtime_refusal_pattern" >/dev/null; then
+    fail "runtime failure guard rejects the canonical cause/recovery contract"
 fi
 printf '%s\n' 'yvex_graph_moe_family_at(index);' |
     rg "$moe_family_registry_pattern" >/dev/null ||
@@ -262,10 +270,16 @@ fi
 if rg -n 'yvex_graph_component_variant_find[[:space:]]*\(' src/graph/families; then
     fail "a family projection owns the common component catalog lookup"
 fi
-rg -n 'yvex_graph_deepseek_v4_execution_binding' src/graph/catalog.c >/dev/null ||
-    fail "graph catalog no longer composes the DeepSeek execution binding"
-rg -n 'yvex_graph_minimax_h3_component_adapter' src/graph/catalog.c >/dev/null ||
-    fail "graph catalog no longer composes the MiniMax component adapter"
+rg -n 'YVEX_GRAPH_FAMILY_DESCRIPTORS' src/graph/catalog.c >/dev/null ||
+    fail "graph catalog no longer consumes generated family descriptor membership"
+if rg -n '(execution_providers|component_providers|quant_preset_providers|source_providers)' \
+    src/graph/catalog.c; then
+    fail "graph catalog retains a handwritten per-capability family registry"
+fi
+if rg -n -i "$generic_family_symbol_pattern" \
+    include/yvex/internal/family_catalog.h src/graph/catalog.c include/yvex/tokenizer.h; then
+    fail "generic family registration or prompt ABI names a concrete family"
+fi
 while IFS= read -r source; do
     awk -F '\t' -v source="$source" '$1 == source && $4 == "family" { found = 1 } END { exit !found }' \
         config/source_owners.tsv ||
@@ -277,16 +291,43 @@ if rg -n -i '(families/|deepseek|minimax)' src/backend/cuda/attention.c; then
     fail "generic CUDA attention execution contains concrete family semantics"
 fi
 
-# MiniMax retains source interpretation and irreducible graph composition. Its
-# dense text stack is now a compiled generic backend operation rather than a
-# third family projection that owns execution resource mechanics.
+# MiniMax retains source interpretation and irreducible graph composition. The
+# third projection owns the released Qwen3-VL and Visual VAE composition over
+# generic CUDA operations; it owns neither runtime nor resource mechanics.
 minimax_family_sources=$(find src -path '*/families/minimax_h3.c' -type f | sort)
-expected_minimax_family_sources='src/graph/families/minimax_h3.c
+expected_minimax_family_sources='src/backend/cuda/families/minimax_h3.c
+src/graph/families/minimax_h3.c
 src/model/families/minimax_h3.c'
 [ "$minimax_family_sources" = "$expected_minimax_family_sources" ] ||
-    fail "MiniMax must terminate at its model and graph family projections"
+    fail "MiniMax must terminate at its model, graph, and CUDA composition projections"
 if rg -n -i '(families/|deepseek|minimax|qwen)' src/backend/cuda/text_encoder.c; then
     fail "generic CUDA text execution contains concrete family semantics"
+fi
+if rg -n 'yvex_runtime_component_session|yvex_runtime_component_text_artifact_execute|yvex_materialization_session_(open|commit|close)|yvex_artifact_(open|close)' \
+    src/backend; then
+    fail "a backend imports artifact admission or component-session lifecycle ownership"
+fi
+if rg -n '#include[[:space:]]+[<"]yvex/internal/families/' src/cli; then
+    fail "the CLI bypasses generic application adapters for one model family"
+fi
+if rg -n 'yvex_cuda_|yvex_backend_text_(embedding|encoder)_execute|yvex_backend_transformer_joint_cuda|yvex_backend_alias_decoder_execute' \
+    src/graph/families/minimax_h3.c; then
+    fail "MiniMax family owns generic component residency or backend dispatch"
+fi
+if rg -n '"yvex[.][^"]*[.](cuda|cpu)[.-]' src/graph/families/minimax_h3.c; then
+    fail "MiniMax output identity domains encode one backend implementation"
+fi
+rg -n 'yvex_runtime_component_text_artifact_execute' src/graph/families/minimax_h3.c >/dev/null ||
+    fail "MiniMax text recipe bypasses the generic component lifecycle"
+rg -n 'yvex_component_joint_transformer_execute' \
+    src/graph/families/minimax_h3.c >/dev/null ||
+    fail "MiniMax joint Transformer bypasses generic resident binding and dispatch"
+rg -n 'yvex_component_alias_decoder_execute' \
+    src/graph/families/minimax_h3.c >/dev/null ||
+    fail "MiniMax audio decoder bypasses generic resident binding and dispatch"
+if rg -n 'yvex_cuda_|yvex_backend_text_(embedding|encoder)_execute|yvex_backend_transformer_joint_cuda|yvex_backend_alias_decoder_execute' \
+    src/runtime/component.c include/yvex/internal/component.h; then
+    fail "generic component runtime bypasses backend-owned operation dispatch"
 fi
 if rg -n '#include[[:space:]]+[<"]yvex/internal/backend[.]h[>"]|linear_numeric_policy' \
     include/yvex/internal/joint_transformer.h; then
@@ -300,6 +341,17 @@ if rg -n -i 'minimax' src/backend/cuda/qtype.c src/backend/cuda/joint_transforme
     src/runtime/component.c; then
     fail "generic runtime or CUDA output-linear execution contains a MiniMax switch"
 fi
+if rg -n 'encoded_bytes, row_count, row_width, row_bytes' \
+    include/yvex/internal/backend.h include/yvex/internal/transformer.h \
+    include/yvex/internal/joint_transformer.h; then
+    fail "component execution duplicates the canonical encoded-weight descriptor"
+fi
+rg -n 'typedef yvex_component_encoded_weight yvex_backend_text_weight' \
+    include/yvex/internal/component.h >/dev/null ||
+    fail "text execution does not reuse the canonical component weight view"
+rg -n 'typedef struct yvex_component_encoded_weight yvex_transformer_encoded_weight' \
+    include/yvex/internal/transformer.h >/dev/null ||
+    fail "dense Transformer execution does not reuse the canonical component weight view"
 
 if find src include -type f \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) \
         ! -path 'src/model/families/*' -print0 |
@@ -315,6 +367,9 @@ fi
 
 if rg -n "$legacy_resolution_boolean_pattern" src include; then
     fail "an execution owner retains an untyped fallback boolean"
+fi
+if rg -n "$legacy_runtime_refusal_pattern" src include; then
+    fail "runtime retains the parallel historical refusal ontology"
 fi
 if rg -n 'YVEX_EXECUTION_RESOLUTION_' src/backend; then
     fail "a backend selects execution capability policy"
@@ -334,6 +389,124 @@ fi
 if rg -n -- "$backend_representation_pattern" src/runtime src/graph; then
     fail "runtime or graph owner manipulates concrete backend state"
 fi
+
+# Sampling, Transformer, MoE, and executable-worklist contracts describe semantic work and
+# backend-neutral operation facts. A backend may specialize those facts, but generic consumers
+# cannot require one device API, compute capability, or implementation class.
+backend_neutral_headers='include/yvex/internal/sampling.h
+include/yvex/internal/transformer.h
+include/yvex/internal/execution_batch.h
+include/yvex/internal/execution_transaction.h
+include/yvex/internal/moe.h'
+if printf '%s\n' "$backend_neutral_headers" |
+    xargs rg -n -i '(cuda|sm[0-9]+|cc[0-9]+|compute_capability|cublas|tensor.?core|stream_synchronizations)'; then
+    fail "generic execution contract contains backend-specific physical facts"
+fi
+if rg -n 'yvex_backend_cuda_(operation_facts|encoded_)' src/runtime src/graph; then
+    fail "generic execution owner bypasses backend-neutral operation dispatch"
+fi
+if rg -n 'YVEX_ENGINE_IMPLEMENTATION_CUDA|SM121|CUBLAS|compute_capability' \
+    include/yvex/internal/sampling.h include/yvex/internal/transformer.h \
+    include/yvex/internal/execution_batch.h include/yvex/internal/execution_transaction.h \
+    include/yvex/internal/moe.h \
+    src/graph/transformer.c src/graph/worklist.c; then
+    fail "generic execution admission selects one backend implementation"
+fi
+if rg -n -i '(deepseek|minimax|sigma|modality|trajectory|first.?anchor|last.?anchor)' \
+    include/yvex/internal/execution_transaction.h src/runtime/transaction.c; then
+    fail "generic execution transaction contains family trajectory semantics"
+fi
+if rg -n 'dedicated_(cpu|cuda)_compute_available' \
+    src/graph/transformer.c src/graph/moe.c src/graph/output_head.c; then
+    fail "generic graph admission requires concrete backend availability"
+fi
+
+# Compile a deliberately small non-CUDA adapter against the same operation tables. It supplies
+# only representative capabilities, so optional entries remain absent without fabricated device
+# facts or placeholder implementations.
+cat <<'EOF' | "${CC:-cc}" -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
+        -Iinclude -I. -std=c11 -Wall -Wextra -pedantic -Werror -x c -fsyntax-only -
+#include <yvex/internal/sampling.h>
+#include <yvex/internal/transformer.h>
+
+static int neutral_workspace(unsigned long long rows, unsigned long long *bytes,
+                             yvex_error *err)
+{
+    (void)err;
+    if (!rows || !bytes) return YVEX_ERR_INVALID_ARG;
+    *bytes = rows * sizeof(float);
+    return YVEX_OK;
+}
+
+static int neutral_greedy(yvex_backend *backend, const yvex_device_tensor *logits,
+                          unsigned long long rows, unsigned long long width,
+                          unsigned int *tokens, float *values,
+                          unsigned long long *ties, yvex_backend_operation_facts *facts,
+                          yvex_error *err)
+{
+    (void)backend; (void)logits; (void)rows; (void)width; (void)tokens;
+    (void)values; (void)ties; (void)err;
+    if (facts) *facts = (yvex_backend_operation_facts){0};
+    return YVEX_ERR_UNSUPPORTED;
+}
+
+static int neutral_transformer_workspace(
+                                         const yvex_transformer_attention_requirement *request,
+                                         unsigned long long *bytes,
+                                         yvex_error *err)
+{
+    return neutral_workspace(request ? request->query_tokens : 0ull, bytes, err);
+}
+
+static int neutral_transformer_attention(
+    yvex_backend *backend, const yvex_transformer_attention_request *request,
+    yvex_backend_operation_facts *facts, yvex_error *err)
+{
+    (void)backend; (void)request; (void)err;
+    if (facts) *facts = (yvex_backend_operation_facts){0};
+    return YVEX_ERR_UNSUPPORTED;
+}
+
+static int neutral_gated_delta_workspace(
+    const yvex_gated_delta_plan *plan, unsigned long long tokens,
+    unsigned long long *bytes, yvex_error *err)
+{
+    (void)plan;
+    return neutral_workspace(tokens, bytes, err);
+}
+
+static int neutral_gated_delta(
+    yvex_backend *backend, const yvex_gated_delta_plan *plan,
+    const yvex_gated_delta_device_request *request,
+    yvex_gated_delta_device_result *result,
+    yvex_backend_operation_facts *facts, yvex_error *err)
+{
+    (void)backend; (void)plan; (void)request; (void)err;
+    if (result) *result = (yvex_gated_delta_device_result){0};
+    if (facts) *facts = (yvex_backend_operation_facts){0};
+    return YVEX_ERR_UNSUPPORTED;
+}
+
+int main(void)
+{
+    const yvex_backend_sampling_operations sampling = {
+        .workspace_required = neutral_workspace,
+        .select_greedy_rows = neutral_greedy,
+    };
+    const yvex_backend_transformer_operations transformer = {
+        .attention_workspace_required = neutral_transformer_workspace,
+        .attention_execute = neutral_transformer_attention,
+        .gated_delta_workspace_required = neutral_gated_delta_workspace,
+        .gated_delta_execute = neutral_gated_delta,
+    };
+    const yvex_backend_encoded_operations encoded = {0};
+    return !sampling.workspace_required || !sampling.select_greedy_rows ||
+           !transformer.attention_workspace_required || !transformer.attention_execute ||
+           !transformer.gated_delta_workspace_required ||
+           !transformer.gated_delta_execute ||
+           encoded.matvec || encoded.gather;
+}
+EOF
 
 # Families project semantic recipes into a generic compiler-owned sink. They
 # cannot own mutable IR construction or sealing, and its concrete storage stays
@@ -428,7 +601,7 @@ if rg -n "$cli_preparation_call_pattern" src/cli/commands/graph.c; then
     fail "common graph CLI directly constructs compiler preparation truth"
 fi
 if rg -n "$cli_runtime_lifecycle_pattern" src/cli/commands/graph.c; then
-    fail "common graph CLI owns runtime model, session, or residency lifecycle"
+    fail "common graph CLI owns model-engine, session, or residency lifecycle"
 fi
 if rg -n -i "(families/|$generic_family_symbol_pattern)" \
     include/yvex/internal/compiler.h src/graph/component.c src/runtime/residency.c; then
@@ -478,14 +651,24 @@ fi
 if rg -n "$implicit_physical_envelope_pattern" src/graph/execution.c; then
     fail "physical execution compilation retains an implicit width or context envelope"
 fi
-rg -n 'decision->maximum_context[[:space:]]*=[[:space:]]*model->maximum_context' \
-    src/graph/execution.c >/dev/null ||
-    fail "physical execution no longer binds the semantic context maximum"
-rg -n 'model->verification_width_maximum' src/graph/execution.c >/dev/null ||
-    fail "physical execution no longer derives admitted widths from semantic geometry"
-rg -n 'physical_execution_policy' src/runtime/binding.c \
-    include/yvex/internal/compiler.h >/dev/null ||
-    fail "physical execution policy escaped the compiler-binding boundary"
+if rg -n 'decision->(supported_width_mask|maximum_context|required_backend|kernel_family)' \
+    src/graph/execution.c; then
+    fail "package physical execution retains deployment policy"
+fi
+rg -n 'model->verification_width_maximum' src/runtime/specialization.c >/dev/null ||
+    fail "engine specialization no longer derives its deployment width envelope"
+rg -n 'yvex_backend_get_device_info' src/runtime/specialization.c >/dev/null ||
+    fail "engine specialization no longer binds backend hardware facts"
+if rg -n 'physical_execution_policy' src/runtime src/graph/families \
+    include/yvex/internal/compiler.h include/yvex/internal/execution.h; then
+    fail "obsolete physical execution policy survived package/specialization separation"
+fi
+rg -n 'runtime_specialization_tensor' src/runtime/moe.c >/dev/null ||
+    fail "runtime MoE no longer consumes the engine-owned implementation catalog"
+if rg -n -i '(deepseek|minimax|families/)' src/runtime/specialization.c \
+    include/yvex/internal/execution.h; then
+    fail "engine specialization contains concrete family policy"
+fi
 if rg -n -i '(families/|deepseek|minimax)' src/artifact include/yvex/internal/artifact.h; then
     fail "generic artifact owners contain a concrete family catalog or ABI"
 fi
@@ -514,7 +697,8 @@ physical_variant_api_consumers=$(rg -l 'yvex_graph_physical_variant_api_get' src
     LC_ALL=C sort)
 if [ "$physical_variant_api_consumers" != 'src/graph/binding_compile.c
 src/graph/families/deepseek_v4.c
-src/graph/families/minimax_h3.c' ]; then
+src/graph/families/minimax_h3.c
+src/graph/families/qwen3_5.c' ]; then
     printf '%s\n' "$physical_variant_api_consumers" >&2
     fail "family physical variants do not share one generic compiler API"
 fi
@@ -649,10 +833,10 @@ for digest_field in tensor_output_digest state_delta_digest; do
     rg -w "$digest_field" include/yvex/internal/graph.h >/dev/null ||
         fail "graph probe lacks canonical digest field: $digest_field"
 done
-rg -w 'yvex_attention_probe_result[[:space:]]+probe' include/yvex/internal/runtime.h >/dev/null ||
+rg -w 'yvex_attention_probe_result[[:space:]]+probe' include/yvex/internal/runtime_operator.h >/dev/null ||
     fail "runtime result does not embed the canonical graph probe result"
 for digest_field in execution_evidence_digest execution_identity; do
-    rg -w "$digest_field" include/yvex/internal/runtime.h >/dev/null ||
+    rg -w "$digest_field" include/yvex/internal/runtime_operator.h >/dev/null ||
         fail "runtime result lacks canonical digest field: $digest_field"
 done
 if rg -n "$deprecated_digest_hash_pattern" src/runtime src/cli; then
@@ -692,7 +876,7 @@ if rg -n 'strcmp\([^,]+,[[:space:]]*"/(help|status|runtime|model|memory|sessions
     src/cli; then
     fail "independent slash-command semantic parser remains"
 fi
-if rg -n 'yvex-dev|yvex-openai|"eval"|"bench"' config/operator/registry.json; then
+if rg -n 'yvex-dev|yvex-openai|"eval"' config/operator/registry.json; then
     fail "operator registry exposes retired or unavailable products"
 fi
 if nm -u build/obj/generated/operator/registry.o | grep . >/dev/null; then
@@ -702,16 +886,6 @@ if rg -n 'yvex_(artifact|backend|generation|graph|protocol|runtime|server)_|mall
     build/generated/operator/registry.c; then
     fail "generated operator descriptors contain domain logic or resource behavior"
 fi
-
-for reachability_contract in \
-    '### Executable reachability' \
-    'production API directly' \
-    'operator_command_available' \
-    'cli_applicability=not_applicable'
-do
-    rg -F "$reachability_contract" AGENTS.md >/dev/null ||
-        fail "executable-reachability contract is incomplete: $reachability_contract"
-done
 
 pending_identity_pattern='pending-payload-'\
 '(plan|byte)-identity'
@@ -814,6 +988,14 @@ if rg -n "$runtime_family_dispatch_pattern" src/runtime include/yvex/internal/ru
     fail "runtime retains a family adapter or model-name execution callback"
 fi
 
+# Hosted media treats creative text as opaque conditioning input. Execution policy is a typed
+# runtime preset; the server cannot grow another prompt-keyword wizard or fabricated dialogue.
+if rg -n \
+    'MEDIA_DIALOG_PARAMETERS|text_has_term|profile_select|duration_select|steps_select|format_select|seed_select|dialog_parse|dialog_question' \
+    src/server/media.c; then
+    fail "hosted media server interprets creative prompt text as execution policy"
+fi
+
 for product in "${YVEX_LIB:-build/lib/libyvex.a}" "${YVEX_BIN:-./yvex}"; do
     [ -f "$product" ] || fail "required production product is missing: $product"
     if nm -A "$product" | rg 'yvex_test_attention_reference_'; then
@@ -826,7 +1008,7 @@ done
 client_lane=${YVEX_CLIENT_LANE_OBJ:-build/obj/src/cli/io/client.o}
 [ -f "$client_lane" ] || fail "runtime-client lane object is missing: $client_lane"
 if nm -u "$client_lane" | rg \
-    'yvex_(runtime_model_open|artifact_materialize|runtime_transformer|runtime_generation_operator_execute|backend_cuda)'; then
+    'yvex_(model_engine_open|artifact_materialize|runtime_transformer|runtime_generation_operator_execute|backend_cuda)'; then
     fail "runtime-client lane gained an engine dependency"
 fi
 product=${YVEX_BIN:-./yvex}

@@ -16,25 +16,20 @@ static int worklist_test_compatibility(void)
 {
     yvex_execution_compatibility_key first = {0}, same, different;
     yvex_error err;
-    first.schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1;
+    first.schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2;
     first.phase = YVEX_EXECUTION_PHASE_DECODE;
+    first.operation = YVEX_EXECUTION_COMPATIBILITY_MOE;
     first.backend_kind = 1u;
     first.tensor_scope = 2u;
     first.execution_class = 1u;
-    first.publication_contract = 1u;
-    first.model_generation = 7ull;
+    first.engine_generation = 7ull;
     first.layer_ordinal = 3ull;
     first.row_width = 14336ull;
     first.admitted_width = 8ull;
-    worklist_test_identity(first.runtime_model_identity, '1');
-    worklist_test_identity(first.runtime_binding_identity, '2');
-    worklist_test_identity(first.physical_variant_identity, '3');
-    worklist_test_identity(first.execution_profile_identity, '4');
-    worklist_test_identity(first.operation_identity, '5');
     YVEX_TEST_ASSERT(
-        yvex_execution_compatibility_key_seal(&first, &err) == YVEX_OK &&
+        sizeof(first) <= 64u &&
             yvex_execution_compatibility_key_validate(&first, &err) == YVEX_OK,
-        "complete execution compatibility facts should seal");
+        "compact engine-local compatibility facts should validate");
     same = first;
     YVEX_TEST_ASSERT(
         yvex_execution_compatibility_keys_match(&first, &same, &err),
@@ -42,21 +37,32 @@ static int worklist_test_compatibility(void)
     different = first;
     different.layer_ordinal++;
     YVEX_TEST_ASSERT(
-        yvex_execution_compatibility_key_seal(&different, &err) == YVEX_OK &&
+        yvex_execution_compatibility_key_validate(&different, &err) == YVEX_OK &&
             !yvex_execution_compatibility_keys_match(&first, &different, &err),
         "equal row geometry must not merge distinct compiled operations");
     different = first;
     different.admitted_width = 0ull;
     YVEX_TEST_ASSERT(
-        yvex_execution_compatibility_key_seal(&different, &err) ==
+        yvex_execution_compatibility_key_validate(&different, &err) ==
             YVEX_ERR_INVALID_ARG,
         "unbounded compatibility width should refuse");
     different = first;
-    different.runtime_binding_identity[0] = 'f';
+    different.engine_generation++;
+    YVEX_TEST_ASSERT(
+        yvex_execution_compatibility_key_validate(&different, &err) == YVEX_OK &&
+            !yvex_execution_compatibility_keys_match(&first, &different, &err),
+        "distinct engine generations must never share executable work");
+    different = first;
+    different.operation = YVEX_EXECUTION_COMPATIBILITY_OUTPUT_HEAD;
+    YVEX_TEST_ASSERT(
+        !yvex_execution_compatibility_keys_match(&first, &different, &err),
+        "typed operations must remain distinct without identity strings");
+    different = first;
+    different.schema_version = 1u;
     YVEX_TEST_ASSERT(
         yvex_execution_compatibility_key_validate(&different, &err) ==
-            YVEX_ERR_FORMAT,
-        "stale compatibility identity should refuse");
+            YVEX_ERR_INVALID_ARG,
+        "obsolete transient compatibility schemas should refuse");
     return 0;
 }
 
@@ -78,12 +84,12 @@ static int worklist_test_build(void)
     yvex_expert_worklist first, repeated;
     yvex_error err;
 
-    batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V1;
+    batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V2;
     batch.provenance = YVEX_EXECUTION_BATCH_SPECULATIVE_VERIFICATION;
     batch.phase = 3u;
     batch.row_count = 4ull;
     batch.source_count = 1ull;
-    batch.model_generation = 9ull;
+    batch.engine_generation = 9ull;
     batch.sources = &source;
     batch.rows = batch_rows;
     worklist_test_identity(source.identity, '0');
@@ -94,19 +100,16 @@ static int worklist_test_build(void)
         batch_rows[row].candidate_ordinal = row;
         batch_rows[row].publication_ordinal = row;
     }
-    worklist_test_identity(batch.runtime_model_identity, '1');
-    worklist_test_identity(batch.runtime_binding_identity, '2');
-    worklist_test_identity(batch.physical_variant_identity, '3');
     worklist_test_identity(batch.execution_profile_identity, '4');
     worklist_test_identity(batch.operation_identity, '5');
     YVEX_TEST_ASSERT(yvex_execution_batch_seal(&batch, &err) == YVEX_OK,
                      "verification execution batch should seal");
 
-    policy.schema_version = YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V1;
+    policy.schema_version = YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V2;
     policy.supported_width_mask = 0x1feull;
-    policy.tensor_core_minimum = 3ull;
-    strcpy(policy.narrow_kernel_family, "exact-narrow");
-    strcpy(policy.tensor_core_kernel_family, "exact-wide");
+    policy.matrix_tile_minimum = 3ull;
+    policy.row_implementation = YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW;
+    policy.matrix_implementation = YVEX_ENGINE_IMPLEMENTATION_DEVICE_MATRIX_TILE;
     YVEX_TEST_ASSERT(yvex_expert_worklist_policy_seal(&policy, &err) == YVEX_OK,
                      "compiled expert worklist policy should seal");
 
@@ -133,7 +136,7 @@ static int worklist_test_build(void)
     YVEX_TEST_ASSERT(first.bucket_count == 4ull && first.pair_count == 12ull &&
                          first.actual_width == 4ull &&
                          first.maximum_bucket_population == 3ull &&
-                         first.tensor_core_eligible_pairs == 12ull &&
+                         first.matrix_tile_eligible_pairs == 12ull &&
                          first.narrow_pairs == 0ull && first.tail_rows == 20ull &&
                          first.population_histogram[3] == 4ull,
                      "worklist should expose exact populations and admitted tails");
@@ -168,24 +171,37 @@ static int worklist_test_refusals(void)
     yvex_expert_worklist_storage storage = {
         experts, offsets, populations, pairs, rows, destinations, ordered, 2ull, 2ull};
     yvex_expert_worklist worklist;
+    char batch_identity[YVEX_SHA256_HEX_CAP];
     yvex_error err;
 
-    batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V1;
+    batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V2;
     batch.provenance = YVEX_EXECUTION_BATCH_SINGLE_ROW;
-    batch.row_count = batch.source_count = batch.model_generation = 1ull;
+    batch.row_count = batch.source_count = batch.engine_generation = 1ull;
     batch.sources = &source;
     batch.rows = batch_rows;
     worklist_test_identity(source.identity, '0');
-    worklist_test_identity(batch.runtime_model_identity, 'a');
-    worklist_test_identity(batch.runtime_binding_identity, 'b');
-    worklist_test_identity(batch.physical_variant_identity, 'c');
     worklist_test_identity(batch.execution_profile_identity, 'd');
     worklist_test_identity(batch.operation_identity, 'e');
     YVEX_TEST_ASSERT(yvex_execution_batch_seal(&batch, &err) == YVEX_OK,
                      "single-row execution batch should seal");
-    policy.schema_version = YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V1;
+    memcpy(batch_identity, batch.identity, sizeof(batch_identity));
+    batch.engine_generation++;
+    YVEX_TEST_ASSERT(yvex_execution_batch_seal(&batch, &err) == YVEX_OK &&
+                         strcmp(batch.identity, batch_identity) != 0,
+                     "engine-generation handle should remain batch identity-bearing");
+    batch.engine_generation--;
+    batch.execution_profile_identity[0] = 'c';
+    YVEX_TEST_ASSERT(yvex_execution_batch_seal(&batch, &err) == YVEX_OK &&
+                         strcmp(batch.identity, batch_identity) != 0,
+                     "workload profile should remain batch identity-bearing");
+    batch.execution_profile_identity[0] = 'd';
+    YVEX_TEST_ASSERT(yvex_execution_batch_seal(&batch, &err) == YVEX_OK &&
+                         strcmp(batch.identity, batch_identity) == 0,
+                     "restored compact lineage should reproduce the batch identity");
+    policy.schema_version = YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V2;
     policy.supported_width_mask = 2ull;
-    strcpy(policy.narrow_kernel_family, "exact-narrow");
+    policy.row_implementation = YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW;
+    policy.matrix_implementation = YVEX_ENGINE_IMPLEMENTATION_COUNT;
     YVEX_TEST_ASSERT(yvex_expert_worklist_policy_seal(&policy, &err) == YVEX_OK,
                      "narrow-only worklist policy should seal");
     request = (yvex_expert_worklist_request){YVEX_EXPERT_WORKLIST_SCHEMA_V1, &batch,
@@ -296,15 +312,12 @@ static int worklist_test_multi_session_sources(void)
     yvex_error err;
     worklist_test_identity(sources[0].identity, '6');
     worklist_test_identity(sources[1].identity, '7');
-    batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V1;
+    batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V2;
     batch.provenance = YVEX_EXECUTION_BATCH_MULTI_SESSION;
     batch.phase = YVEX_EXECUTION_PHASE_DECODE;
-    batch.row_count = batch.source_count = batch.model_generation = 2ull;
+    batch.row_count = batch.source_count = batch.engine_generation = 2ull;
     batch.sources = sources;
     batch.rows = rows;
-    worklist_test_identity(batch.runtime_model_identity, 'a');
-    worklist_test_identity(batch.runtime_binding_identity, 'b');
-    worklist_test_identity(batch.physical_variant_identity, 'c');
     worklist_test_identity(batch.execution_profile_identity, 'd');
     worklist_test_identity(batch.operation_identity, 'e');
     YVEX_TEST_ASSERT(yvex_execution_batch_seal(&batch, &err) == YVEX_OK,

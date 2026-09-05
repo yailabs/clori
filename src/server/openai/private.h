@@ -84,7 +84,7 @@ typedef struct {
     char session_name[YVEX_SERVER_SESSION_NAME_CAP];
     char model[YVEX_PROVIDER_MODEL_CAP];
     yvex_provider_request *context;
-    unsigned long long created_seconds, last_used_sequence;
+    unsigned long long engine_generation, created_seconds, last_used_sequence;
 } openai_response_record;
 typedef struct {
     char host[64];
@@ -111,14 +111,15 @@ int openai_http_sse_done(int fd, yvex_error *err);
 int openai_http_peer_wait(int fd, unsigned int milliseconds, int *closed,
                           yvex_error *err);
 int openai_json_admit(const openai_http_request *http, openai_endpoint endpoint,
-    const char *model, yvex_reasoning_policy default_reasoning, openai_admitted_request *request, yvex_error *err);
+    yvex_reasoning_policy default_reasoning, openai_admitted_request *request,
+    yvex_error *err);
 void openai_admitted_request_clear(openai_admitted_request *request);
 int openai_json_error(int status, const char *type, const char *param,
                       const char *code, const char *message,
                       unsigned char **output, unsigned long long *count,
                       yvex_error *err);
-int openai_json_models(const yvex_server_summary *summary,
-                       const char *selected_model, int list,
+int openai_json_models(const yvex_server_engine_summary *engines,
+                       unsigned long long engine_count, int list,
                        unsigned char **output, unsigned long long *count,
                        yvex_error *err);
 int openai_json_result(openai_endpoint endpoint, const char *id,
@@ -151,11 +152,13 @@ openai_response_record *openai_state_find(openai_gateway *gateway,
                                           unsigned long long now);
 int openai_state_store(openai_gateway *gateway, const char *response_id,
                        const char *session_name,
+                       unsigned long long engine_generation,
                        const yvex_provider_request *context,
                        unsigned long long now, yvex_error *err);
 int openai_state_replace(openai_gateway *gateway,
                          openai_response_record *record,
                          const char *response_id,
+                         unsigned long long engine_generation,
                          const yvex_provider_request *context,
                          unsigned long long now, yvex_error *err);
 void openai_state_remove(openai_response_record *record);

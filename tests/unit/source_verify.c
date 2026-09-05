@@ -6,6 +6,7 @@
 
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/gguf.h>
 #include <yvex/internal/source.h>
 #include <yvex/internal/source_payload.h>
 
@@ -528,6 +529,109 @@ static int source_verify_json_iteration(void)
     yvex_json_init(&json, "{\"key\":1,}", 10u);
     YVEX_TEST_ASSERT(!yvex_json_skip_value(&json),
                      "canonical recursive JSON objects still reject trailing commas");
+    yvex_json_init(&json, "[0,Infinity]", 12u);
+    YVEX_TEST_ASSERT(!yvex_json_skip_value(&json),
+                     "wire/default JSON rejects nonstandard Infinity");
+    yvex_json_init(&json, "[0,Infinity]", 12u);
+    json.extensions = YVEX_JSON_EXTENSION_POSITIVE_INFINITY;
+    YVEX_TEST_ASSERT(yvex_json_skip_value(&json) && yvex_json_complete(&json),
+                     "explicit source metadata policy can preserve an unbounded limit");
+    yvex_json_init(&json, "Infinity", 8u);
+    json.extensions = YVEX_JSON_EXTENSION_POSITIVE_INFINITY;
+    YVEX_TEST_ASSERT(!yvex_json_u64(&json, &value),
+                     "metadata extension never turns Infinity into a numeric value");
+    yvex_json_init(&json, "[NaN]", 5u);
+    json.extensions = YVEX_JSON_EXTENSION_POSITIVE_INFINITY;
+    YVEX_TEST_ASSERT(!yvex_json_skip_value(&json), "NaN remains inadmissible");
+    return 0;
+}
+
+static int source_verify_family_semantic_policy(void)
+{
+    const char *root = "build/tests/source-verify-family-semantic";
+    const char *repository = "Qwen/Fixture";
+    yvex_source_target_identity identity = *yvex_source_release_identity();
+    yvex_source_verification result;
+    yvex_error err;
+    struct stat status;
+    char path[768];
+    char index_oid[41];
+
+    YVEX_TEST_ASSERT(
+        system("rm -rf build/tests/source-verify-family-semantic") == 0 &&
+            source_verify_make_valid(root),
+        "create family-semantic source fixture");
+    identity.target_id = "qwen3.8-fixture";
+    identity.family_key = "qwen3_5";
+    identity.family_display = "Qwen3.5";
+    identity.model_name = "Qwen3.8 Fixture";
+    identity.upstream_repo_id = repository;
+    identity.config_model_type = "qwen3_5";
+    identity.config_architecture = "Qwen3_5ForConditionalGeneration";
+    identity.config_validation = YVEX_SOURCE_CONFIG_VALIDATION_FAMILY_SEMANTIC;
+    identity.required_sidecars = YVEX_SOURCE_SIDECARS_TEXT;
+    snprintf(path, sizeof(path), "%s/model.safetensors.index.json", root);
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        stat(path, &status) == 0 &&
+            yvex_source_git_blob_oid_file(path, index_oid, &err) == YVEX_OK,
+        "bind family-semantic fixture index identity");
+    identity.upstream_index_oid = index_oid;
+    identity.upstream_index_size = (unsigned long long)status.st_size;
+    YVEX_TEST_ASSERT(
+        source_verify_write_manifest(root, "huggingface", repository,
+                                     "in-progress", source_verify_revision),
+        "write family-semantic fixture provenance");
+    snprintf(path, sizeof(path), "%s/config.json", root);
+    YVEX_TEST_ASSERT(
+        source_verify_write_text(
+            path,
+            "{\"architectures\":[\"Qwen3_5ForConditionalGeneration\"],"
+            "\"model_type\":\"qwen3_5\",\"text_config\":{"
+            "\"model_type\":\"qwen3_5_text\",\"hidden_size\":5120}}") &&
+            source_verify_write_metadata(root, "config.json"),
+        "write nested family-owned configuration");
+    snprintf(path, sizeof(path), "%s/generation_config.json", root);
+    YVEX_TEST_ASSERT(
+        source_verify_write_text(
+            path,
+            "{\"bos_token_id\":248044,\"eos_token_id\":[248046,248044]}") &&
+            source_verify_write_metadata(root, "generation_config.json"),
+        "write family-owned generation policy");
+    snprintf(path, sizeof(path), "%s/inference/config.json", root);
+    YVEX_TEST_ASSERT(unlink(path) == 0,
+                     "remove unrequired family-specific inference sidecar");
+    snprintf(path, sizeof(path),
+             "%s/.cache/huggingface/download/inference/config.json.metadata",
+             root);
+    YVEX_TEST_ASSERT(unlink(path) == 0,
+                     "remove unrequired inference acquisition metadata");
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        source_verify_run_identity(root, &identity, NULL, NULL, 1, &result,
+                                   &err) == YVEX_OK &&
+            result.verified && result.config_valid &&
+            result.tokenizer_json_valid && result.tokenizer_config_valid &&
+            result.generation_config_valid && !result.inference_config_valid &&
+            result.tokenizer_effective_vocab_size == 129280u &&
+            strcmp(result.model_type, "qwen3_5") == 0 &&
+            strcmp(result.architecture,
+                   "Qwen3_5ForConditionalGeneration") == 0 &&
+            !source_verify_has_blocker(
+                &result, "missing-dspark-inference-config"),
+        "generic source verification defers nested semantics without weakening identity");
+    snprintf(path, sizeof(path), "%s/config.json", root);
+    YVEX_TEST_ASSERT(
+        source_verify_write_text(
+            path,
+            "{\"architectures\":[\"OtherArchitecture\"],"
+            "\"model_type\":\"qwen3_5\",\"text_config\":{}}") &&
+            source_verify_write_metadata(root, "config.json") &&
+            source_verify_run_identity(root, &identity, NULL, NULL, 0,
+                                       &result, &err) == YVEX_OK &&
+            !result.config_valid &&
+            source_verify_has_blocker(&result, "wrong-source-architecture"),
+        "family-owned nested semantics cannot weaken outer source identity");
     return 0;
 }
 
@@ -541,6 +645,86 @@ static int source_acquisition_digest(const char *text, char output[65])
         !yvex_sha256_final(&hash, digest)) return 0;
     yvex_sha256_hex(digest, output);
     return 1;
+}
+
+static int source_verify_write_metadata_sha256(const char *root,
+                                               const char *name,
+                                               const char *payload)
+{
+    char path[768];
+    char text[256];
+    char digest[65];
+    int n;
+
+    if (!source_acquisition_digest(payload, digest)) return 0;
+    n = snprintf(path, sizeof(path),
+                 "%s/.cache/huggingface/download/%s.metadata", root, name);
+    if (n < 0 || (size_t)n >= sizeof(path)) return 0;
+    n = snprintf(text, sizeof(text), "%s\n%s\n0\n",
+                 source_verify_revision, digest);
+    return n >= 0 && (size_t)n < sizeof(text) &&
+           source_verify_write_text(path, text);
+}
+
+static int source_verify_lfs_tokenizer_metadata(void)
+{
+    static const char tokenizer_json[] =
+        "{\"added_tokens\":[{\"id\":2,\"content\":\"<eos>\","
+        "\"special\":true}],\"model\":{\"type\":\"BPE\","
+        "\"vocab\":{\"a\":0,\"b\":1},\"merges\":[\"a b\"]}}";
+    static const char tokenizer_config[] =
+        "{\"add_bos_token\":false,\"add_eos_token\":null,"
+        "\"bos_token\":null,\"eos_token\":\"<eos>\","
+        "\"pad_token\":null,\"chat_template\":null}";
+    const char *root = "build/tests/source-lfs-tokenizer";
+    yvex_gguf_tokenizer_metadata *metadata = NULL;
+    const yvex_gguf_tokenizer_summary *summary;
+    yvex_gguf_tokenizer_failure failure;
+    yvex_source_verification verification;
+    yvex_error err;
+    char path[768];
+
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-lfs-tokenizer") == 0 &&
+                         source_verify_make_dir(root),
+                     "create LFS tokenizer metadata fixture");
+    snprintf(path, sizeof(path), "%s/.cache", root);
+    YVEX_TEST_ASSERT(source_verify_make_dir(path), "create tokenizer cache root");
+    snprintf(path, sizeof(path), "%s/.cache/huggingface", root);
+    YVEX_TEST_ASSERT(source_verify_make_dir(path), "create tokenizer provider cache");
+    snprintf(path, sizeof(path), "%s/.cache/huggingface/download", root);
+    YVEX_TEST_ASSERT(source_verify_make_dir(path), "create tokenizer download cache");
+    snprintf(path, sizeof(path), "%s/tokenizer.json", root);
+    YVEX_TEST_ASSERT(source_verify_write_text(path, tokenizer_json) &&
+                         source_verify_write_metadata_sha256(
+                             root, "tokenizer.json", tokenizer_json),
+                     "write SHA-256-authenticated tokenizer JSON");
+    snprintf(path, sizeof(path), "%s/tokenizer_config.json", root);
+    YVEX_TEST_ASSERT(source_verify_write_text(path, tokenizer_config) &&
+                         source_verify_write_metadata(
+                             root, "tokenizer_config.json"),
+                     "write Git-authenticated nullable tokenizer config");
+    memset(&verification, 0, sizeof(verification));
+    YVEX_TEST_ASSERT(realpath(root, verification.resolved_source_path) != NULL,
+                     "resolve tokenizer fixture root");
+    yvex_core_text_copy(verification.revision, sizeof(verification.revision),
+                        source_verify_revision);
+    verification.tokenizer_json_valid = 1;
+    verification.tokenizer_config_valid = 1;
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        yvex_gguf_tokenizer_metadata_load(
+            &metadata, &verification, 3u, "qwen2", 1024u * 1024u,
+            &failure, &err) == YVEX_OK &&
+            (summary = yvex_gguf_tokenizer_summary_get(metadata)) != NULL &&
+            summary->token_count == 3u && summary->eos_token_present &&
+            summary->eos_token_id == 2u &&
+            !summary->add_eos_token_declared &&
+            strcmp(summary->pre_tokenizer, "qwen2") == 0,
+        "LFS tokenizer identity and nullable policy seal exact metadata");
+    yvex_gguf_tokenizer_metadata_release(&metadata);
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-lfs-tokenizer") == 0,
+                     "release LFS tokenizer metadata fixture");
+    return 0;
 }
 
 static int source_acquisition_fixture_write(const char *root,
@@ -629,7 +813,8 @@ static int source_verify_acquisition(void)
     char path[512];
     int rc;
 
-    (void)system("rm -rf build/tests/source-acquisition");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-acquisition") == 0,
+                     "clear source acquisition fixture");
     YVEX_TEST_ASSERT(source_verify_make_dir(root), "create acquisition root");
     snprintf(path, sizeof(path), "%s/FL2VA", root);
     YVEX_TEST_ASSERT(source_verify_make_dir(path), "create acquisition subtree");
@@ -713,7 +898,8 @@ static int source_verify_acquisition(void)
                              &acquisition, &options, &failure, &err) != YVEX_OK &&
                          failure.code == YVEX_SOURCE_ACQUISITION_FAILURE_MANIFEST_FORMAT,
                      "source admission rejects subtree traversal");
-    (void)system("rm -rf build/tests/source-acquisition");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-acquisition") == 0,
+                     "release source acquisition fixture");
     return 0;
 }
 
@@ -730,7 +916,11 @@ int yvex_test_source_verify(void)
 
     if (source_verify_json_iteration() != 0)
         return 1;
+    if (source_verify_family_semantic_policy() != 0)
+        return 1;
     if (source_verify_payload_publication() != 0)
+        return 1;
+    if (source_verify_lfs_tokenizer_metadata() != 0)
         return 1;
     if (source_verify_acquisition() != 0)
         return 1;
@@ -746,8 +936,50 @@ int yvex_test_source_verify(void)
                                     yvex_source_release_identity()) &&
             strcmp(path, "/models/hf/deepseek/DeepSeek-V4-Flash-DSpark") == 0,
         "source owner exposes the exact release identity and canonical path");
+    YVEX_TEST_ASSERT(
+        yvex_source_target_identity_find_repository(
+                YVEX_SOURCE_RELEASE_REPOSITORY) ==
+                yvex_source_release_identity() &&
+            strcmp(yvex_source_target_identity_find(
+                       YVEX_SOURCE_MINIMAX_H3_TARGET_ID)
+                       ->upstream_repo_id,
+                   YVEX_SOURCE_MINIMAX_H3_REPOSITORY) == 0 &&
+            strcmp(yvex_source_target_identity_find_repository(
+                       YVEX_SOURCE_MINIMAX_H3_REPOSITORY)
+                       ->upstream_revision,
+                   YVEX_SOURCE_MINIMAX_H3_REVISION) == 0 &&
+            strcmp(yvex_source_target_identity_find(
+                       YVEX_SOURCE_QWEN3_8_27B_TARGET_ID)
+                       ->upstream_repo_id,
+                   YVEX_SOURCE_QWEN3_8_27B_REPOSITORY) == 0 &&
+            strcmp(yvex_source_target_identity_find_repository(
+                       YVEX_SOURCE_QWEN3_8_27B_REPOSITORY)
+                       ->upstream_revision,
+                   YVEX_SOURCE_QWEN3_8_27B_REVISION) == 0 &&
+            yvex_source_target_identity_find_repository(
+                       YVEX_SOURCE_QWEN3_8_27B_REPOSITORY)
+                       ->upstream_index_size ==
+                   YVEX_SOURCE_QWEN3_8_27B_INDEX_SIZE &&
+            !yvex_source_target_identity_find_repository("unknown/model"),
+        "one source catalog owns qualified target repository and revision truth");
+    {
+        const yvex_source_acquisition_target *qwen =
+            yvex_source_acquisition_target_find("qwen3-8b");
+        const yvex_source_acquisition_target *gemma =
+            yvex_source_acquisition_target_find("gemma-4-12b-it");
 
-    system("rm -rf build/tests/source-verify");
+        YVEX_TEST_ASSERT(
+            qwen && strcmp(qwen->family_key, "qwen") == 0 &&
+                strcmp(qwen->repository, "Qwen/Qwen3-8B") == 0 &&
+                strcmp(qwen->default_reference, "main") == 0 && gemma &&
+                strcmp(gemma->family_key, "gemma") == 0 &&
+                strcmp(gemma->repository, "google/gemma-4-12B-it") == 0 &&
+                !yvex_source_acquisition_target_find("unknown-target"),
+            "one source catalog owns provider acquisition defaults");
+    }
+
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear source verification fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "create valid source fixture");
     {
         yvex_source_manifest_file_list files;
@@ -909,7 +1141,8 @@ int yvex_test_source_verify(void)
                          "derived inventory is deterministic");
     }
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear wrong repository fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "recreate wrong repo fixture");
     YVEX_TEST_ASSERT(source_verify_write_manifest(root, "huggingface",
                                                   "wrong/repository",
@@ -961,7 +1194,8 @@ int yvex_test_source_verify(void)
                          &result, "source-manifest-incomplete"),
                      "in-progress manifest is refused");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear wrong config fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "recreate wrong config fixture");
     YVEX_TEST_ASSERT(source_verify_write_config(root, "not_deepseek_v4",
                                                 yvex_source_release_identity()->config_architecture),
@@ -976,7 +1210,8 @@ int yvex_test_source_verify(void)
                      source_verify_has_blocker(&result, "malformed-source-config"),
                      "malformed config is refused");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear tokenizer fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "recreate tokenizer fixture");
     snprintf(path, sizeof(path), "%s/tokenizer.json", root);
     YVEX_TEST_ASSERT(unlink(path) == 0, "remove tokenizer");
@@ -990,7 +1225,8 @@ int yvex_test_source_verify(void)
                          &result, "malformed-tokenizer-json"),
                      "tokenizer structure is validated, not only JSON syntax");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear generation config fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root),
                      "recreate generation config fixture");
     snprintf(path, sizeof(path), "%s/generation_config.json", root);
@@ -1011,7 +1247,8 @@ int yvex_test_source_verify(void)
                          &result, "generation-config-token-mismatch"),
                      "generation token identity must match model config");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear stale revision fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root),
                      "recreate stale revision fixture");
     YVEX_TEST_ASSERT(source_verify_write_metadata_revision(
@@ -1025,7 +1262,8 @@ int yvex_test_source_verify(void)
                          &result, "inconsistent-source-revision"),
                      "stale provider metadata fails provenance");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear manifest promotion fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root),
                      "recreate manifest promotion refusal fixture");
     YVEX_TEST_ASSERT(source_verify_write_config(
@@ -1038,7 +1276,8 @@ int yvex_test_source_verify(void)
                                                "wrong-source-model-type"),
                      "invalid verifier facts cannot promote manifest");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear atomic publication fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root),
                      "recreate atomic publication fixture");
     YVEX_TEST_ASSERT(setenv("YVEX_TEST_FAIL_SOURCE_PUBLISH_AFTER_WRITE",
@@ -1056,7 +1295,8 @@ int yvex_test_source_verify(void)
     YVEX_TEST_ASSERT(access(path, F_OK) != 0,
                      "failed publication removes temporary output");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear missing index fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root),
                      "recreate missing upstream index fixture");
     snprintf(path, sizeof(path), "%s/model.safetensors.index.json", root);
@@ -1138,7 +1378,8 @@ int yvex_test_source_verify(void)
                          "duplicate tensor names across headers fail closed");
     }
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear malformed index fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "recreate index fixture");
     snprintf(path, sizeof(path), "%s/model.safetensors.index.json", root);
     YVEX_TEST_ASSERT(source_verify_write_text(path, "{"),
@@ -1159,6 +1400,21 @@ int yvex_test_source_verify(void)
                      "duplicate index tensor is refused explicitly");
     YVEX_TEST_ASSERT(source_verify_write_text(
                          path,
+                         "{\"metadata\":{\"total_size\":11.0},\"weight_map\":{"
+                         "\"model.embed_tokens.weight\":"
+                         "\"model-00001-of-00001.safetensors\","
+                         "\"model.scale\":\"model-00001-of-00001.safetensors\","
+                         "\"model.values\":\"model-00001-of-00001.safetensors\"}}"),
+                     "write integral-decimal index size");
+    YVEX_TEST_ASSERT(source_verify_run(root, &result, &err) == YVEX_OK &&
+                         result.shard_index_valid &&
+                         !source_verify_has_blocker(&result,
+                                                    "malformed-shard-index") &&
+                         !source_verify_has_blocker(&result,
+                                                    "shard-index-size-mismatch"),
+                     "exact integral JSON decimal is accepted as a byte count");
+    YVEX_TEST_ASSERT(source_verify_write_text(
+                         path,
                          "{\"metadata\":{\"total_size\":9},\"weight_map\":{"
                          "\"model.embed_tokens.weight\":"
                          "\"model-00001-of-00001.safetensors\"}}"),
@@ -1176,7 +1432,8 @@ int yvex_test_source_verify(void)
                      source_verify_has_blocker(&result, "missing-referenced-shard"),
                      "missing referenced shard is refused");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear unexpected shard fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "recreate unexpected shard fixture");
     snprintf(path, sizeof(path), "%s/weights.safetensors", root);
     YVEX_TEST_ASSERT(source_verify_write_safetensors(path),
@@ -1194,7 +1451,8 @@ int yvex_test_source_verify(void)
                                                "duplicate-source-shard"),
                      "inconsistent and duplicate shard numbering is refused");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear invalid header fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "recreate invalid header fixture");
     snprintf(path, sizeof(path), "%s/model-00001-of-00001.safetensors", root);
     YVEX_TEST_ASSERT(source_verify_write_text(path, "bad"),

@@ -84,8 +84,9 @@ prompt rendering, UTF-8 encode/decode, special/EOS classification,
 incremental detokenization, and committed-token append semantics.
 
 The source declares a one-million-token context contract. Hosted context
-capacity is selected and admitted independently by the runtime; source
-capacity is not an automatic runtime configuration or performance claim.
+capacity is selected by the startup profile and admitted by the engine
+specialization; source capacity is not an automatic runtime configuration or
+performance claim.
 
 These facts are sealed once by the family projection into model-execution
 descriptor schema v1. The descriptor also carries RoPE/YaRN, attention-class,
@@ -143,8 +144,9 @@ establish DSpark support.
 
 ## Hosted execution
 
-One immutable runtime model owns both `target-only` and `dspark` execution
-plans. One server session owns committed target state, token ledger,
+One immutable engine generation owns both `target-only` and `dspark` execution
+plans under its authenticated package and deployment specialization. One
+engine-bound server session owns committed target state, token ledger,
 transcript, incremental decoder and sampling state, plus bounded draft and
 verification candidate state. No second process, model opening, tokenizer,
 session registry, CUDA context, or output head is created for drafting.
@@ -169,7 +171,7 @@ DeepSeek-V4-Flash-DSpark is the sole complete YVEX source-to-streamed-text verti
 The hosted native, interactive, and bounded OpenAI-compatible paths
 consume one target-verified runtime authority. Target-only and DSpark modes,
 multi-turn reuse, cancellation, reset, and committed-only streaming are
-implemented under private local protocol v11. The admitted tokenizer/prompt
+implemented under private local protocol v20. The admitted tokenizer/prompt
 profile also supports explicit reasoning high, maximum, and disabled policies
 through separate reasoning, final, tool, and error channels.
 

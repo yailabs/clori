@@ -36,56 +36,6 @@ struct yvex_source_acquisition {
     yvex_source_acquisition_file *files;
 };
 
-static const yvex_source_target_identity release_source_identity = {
-    YVEX_SOURCE_RELEASE_TARGET_ID,
-    YVEX_SOURCE_RELEASE_FAMILY_KEY,
-    YVEX_SOURCE_RELEASE_FAMILY_DISPLAY,
-    YVEX_SOURCE_RELEASE_NAME,
-    YVEX_SOURCE_RELEASE_REPOSITORY,
-    YVEX_SOURCE_RELEASE_SOURCE_LEAF,
-    YVEX_SOURCE_RELEASE_REVISION,
-    YVEX_SOURCE_RELEASE_INDEX_PATH,
-    YVEX_SOURCE_RELEASE_INDEX_OID,
-    YVEX_SOURCE_RELEASE_INDEX_SIZE,
-    YVEX_SOURCE_RELEASE_INVENTORY_AUTHORITY,
-    YVEX_SOURCE_RELEASE_CONFIG_TYPE,
-    YVEX_SOURCE_RELEASE_CONFIG_ARCHITECTURE,
-};
-
-/*
- * Expose the immutable release source identity owned by provenance.
- *
- * Releases only resources owned by source provenance; cleanup remains deterministic.
- */
-const yvex_source_target_identity *yvex_source_release_identity(void) {
-    return &release_source_identity;
-}
-
-/*
- * Test target equality without importing model-catalog policy.
- *
- * Releases only resources owned by source provenance; cleanup remains deterministic.
- */
-int yvex_source_is_release_target(const char *target_id) {
-    return target_id && strcmp(target_id, release_source_identity.target_id) == 0;
-}
-
-/* Derive the canonical source directory for an admitted identity. */
-int yvex_source_target_path(char *out,
-                            size_t cap,
-                            const char *models_root,
-                            const yvex_source_target_identity *identity) {
-    int n;
-
-    if (!out || cap == 0u || !models_root || !models_root[0] || !identity ||
-        !identity->family_key || !identity->source_dir_leaf) {
-        return 0;
-    }
-    n = snprintf(
-        out, cap, "%s/hf/%s/%s", models_root, identity->family_key, identity->source_dir_leaf);
-    return n >= 0 && (size_t)n < cap;
-}
-
 typedef struct {
     uint32_t state[5];
     unsigned long long length;
@@ -874,6 +824,49 @@ static int source_oid_is_sha1(const char *oid) {
     return 1;
 }
 
+static int source_sha256_bytes(const unsigned char *bytes, size_t byte_count,
+                               char out[65]) {
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+
+    yvex_sha256_init(&hash);
+    if ((!bytes && byte_count) ||
+        !yvex_sha256_update(&hash, bytes, byte_count) ||
+        !yvex_sha256_final(&hash, digest))
+        return 0;
+    yvex_sha256_hex(digest, out);
+    return 1;
+}
+
+static int source_sha256_file(const char *path, char out[65], yvex_error *err) {
+    unsigned char buffer[64u * 1024u];
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    yvex_sha256 hash;
+    FILE *fp;
+    size_t got;
+    int failed;
+
+    fp = fopen(path, "rb");
+    if (!fp)
+        return provenance_refuse(err, YVEX_ERR_IO, "source_metadata_identity",
+                                 "metadata sidecar digest open failed");
+    yvex_sha256_init(&hash);
+    while ((got = fread(buffer, 1u, sizeof(buffer), fp)) > 0u)
+        if (!yvex_sha256_update(&hash, buffer, got)) {
+            (void)fclose(fp);
+            return provenance_refuse(err, YVEX_ERR_BOUNDS, "source_metadata_identity",
+                                     "metadata sidecar digest update failed");
+        }
+    failed = ferror(fp);
+    if (fclose(fp) != 0)
+        failed = 1;
+    if (failed || !yvex_sha256_final(&hash, digest))
+        return provenance_refuse(err, YVEX_ERR_IO, "source_metadata_identity",
+                                 "metadata sidecar digest read failed");
+    yvex_sha256_hex(digest, out);
+    return YVEX_OK;
+}
+
 static int source_metadata_name_valid(const char *name) {
     const char *cursor;
 
@@ -911,9 +904,9 @@ static int source_metadata_identity(const yvex_source_verification *verification
                               sizeof(provider_revision),
                               provider_oid,
                               sizeof(provider_oid)) ||
-        !source_oid_is_sha1(provider_oid)) {
+        (!source_oid_is_sha1(provider_oid) && !yvex_sha256_hex_valid(provider_oid))) {
         return provenance_refuse(err, YVEX_ERR_FORMAT, "source_metadata_identity",
-            "provider metadata lacks a pinned Git blob identity");
+            "provider metadata lacks a pinned Git or SHA-256 identity");
     }
     fact.revision_matches = strcmp(provider_revision, verification->revision) == 0;
     if (!fact.revision_matches) {
@@ -929,13 +922,31 @@ static int source_metadata_identity(const yvex_source_verification *verification
     rc = yvex_source_git_blob_oid_file(path, fact.observed_git_blob_oid, err);
     if (rc != YVEX_OK)
         return rc;
-    if (strcmp(provider_oid, fact.observed_git_blob_oid) != 0) {
+    if (source_oid_is_sha1(provider_oid) &&
+        strcmp(provider_oid, fact.observed_git_blob_oid) != 0) {
         return provenance_refuse(err, YVEX_ERR_FORMAT, "source_metadata_identity",
             "metadata sidecar Git blob identity mismatch");
     }
+    if (yvex_sha256_hex_valid(provider_oid)) {
+        rc = source_sha256_file(path, fact.observed_sha256, err);
+        if (rc != YVEX_OK)
+            return rc;
+        if (strcmp(provider_oid, fact.observed_sha256) != 0)
+            return provenance_refuse(err, YVEX_ERR_FORMAT, "source_metadata_identity",
+                                     "metadata sidecar SHA-256 identity mismatch");
+    }
     yvex_core_text_copy(fact.canonical_name, sizeof(fact.canonical_name), canonical_name);
     memcpy(fact.revision, provider_revision, 41u);
-    memcpy(fact.expected_git_blob_oid, provider_oid, 41u);
+    if (source_oid_is_sha1(provider_oid)) {
+        yvex_core_text_copy(fact.provider_identity_kind,
+                            sizeof(fact.provider_identity_kind), "git-blob-sha1");
+        memcpy(fact.expected_git_blob_oid, provider_oid, 41u);
+    } else {
+        yvex_core_text_copy(fact.provider_identity_kind,
+                            sizeof(fact.provider_identity_kind), "sha256");
+        yvex_core_text_copy(fact.expected_sha256,
+                            sizeof(fact.expected_sha256), provider_oid);
+    }
     fact.file_bytes = file_bytes;
     fact.identity_verified = 1;
     *out = fact;
@@ -953,6 +964,7 @@ int yvex_source_provenance_metadata_read(const yvex_source_verification *verific
     yvex_source_metadata_identity_fact after;
     char path[YVEX_PATH_CAP];
     char retained_oid[41];
+    char retained_sha256[65];
     FILE *fp;
     size_t got;
     int read_failed;
@@ -1000,7 +1012,12 @@ int yvex_source_provenance_metadata_read(const yvex_source_verification *verific
         return YVEX_ERR_IO;
     }
     if (!source_git_blob_oid_bytes(blob.bytes, blob.byte_count, retained_oid) ||
-        strcmp(retained_oid, blob.identity.expected_git_blob_oid) != 0) {
+        strcmp(retained_oid, blob.identity.observed_git_blob_oid) != 0 ||
+        (blob.identity.expected_git_blob_oid[0] &&
+         strcmp(retained_oid, blob.identity.expected_git_blob_oid) != 0) ||
+        (blob.identity.expected_sha256[0] &&
+         (!source_sha256_bytes(blob.bytes, blob.byte_count, retained_sha256) ||
+          strcmp(retained_sha256, blob.identity.expected_sha256) != 0))) {
         yvex_source_metadata_blob_release(&blob);
         return provenance_refuse(err, YVEX_ERR_FORMAT, "source_metadata_read",
             "retained metadata bytes differ from provider identity");
@@ -1008,7 +1025,11 @@ int yvex_source_provenance_metadata_read(const yvex_source_verification *verific
     memset(&after, 0, sizeof(after));
     rc = source_metadata_identity(verification, canonical_name, &after, err);
     if (rc != YVEX_OK || after.file_bytes != blob.identity.file_bytes ||
-        strcmp(after.observed_git_blob_oid, blob.identity.observed_git_blob_oid) != 0) {
+        strcmp(after.provider_identity_kind,
+               blob.identity.provider_identity_kind) != 0 ||
+        strcmp(after.observed_git_blob_oid,
+               blob.identity.observed_git_blob_oid) != 0 ||
+        strcmp(after.observed_sha256, blob.identity.observed_sha256) != 0) {
         yvex_source_metadata_blob_release(&blob);
         if (rc == YVEX_OK)
             yvex_error_set(err,

@@ -1644,7 +1644,7 @@ if (context->rc != YVEX_OK) {
     return context->rc;
 }
 context->result->cuda_tensor_core_launches =
-    context->cuda_output.tensor_core_launches;
+    context->cuda_output.accelerated_matrix_launches;
     return YVEX_OK;
 }
 static int graph_cuda_request_execute(const yvex_attention_plan *plan, const void *family_ir,

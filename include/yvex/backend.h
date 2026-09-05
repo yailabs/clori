@@ -190,6 +190,9 @@ int yvex_backend_tensor_read(yvex_backend *backend,
                              void *dst,
                              unsigned long long len,
                              yvex_error *err);
+int yvex_backend_tensor_zero(yvex_backend *backend,
+                             yvex_device_tensor *tensor,
+                             yvex_error *err);
 int yvex_backend_tensor_copy(yvex_backend *backend,
                              yvex_device_tensor *dst,
                              const yvex_device_tensor *src,

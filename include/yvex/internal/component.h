@@ -2,7 +2,9 @@
 #ifndef INCLUDE_YVEX_INTERNAL_COMPONENT_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_COMPONENT_H_INCLUDED
 
+#include <yvex/backend.h>
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/execution_transaction.h>
 #include <yvex/internal/latent.h>
 
 #ifdef __cplusplus
@@ -13,6 +15,14 @@ typedef struct yvex_runtime_residency yvex_runtime_residency;
 typedef struct yvex_runtime_component_session yvex_runtime_component_session;
 typedef struct yvex_runtime_av_layout_output yvex_runtime_av_layout_output;
 typedef struct yvex_runtime_av_layout_result yvex_runtime_av_layout_result;
+typedef struct yvex_transformer_linear_physical_plan yvex_transformer_linear_physical_plan;
+typedef struct yvex_transformer_joint_request yvex_transformer_joint_request;
+typedef struct yvex_transformer_joint_result yvex_transformer_joint_result;
+typedef struct yvex_transformer_joint_prepared yvex_transformer_joint_prepared;
+typedef struct yvex_transformer_joint_prepared_summary yvex_transformer_joint_prepared_summary;
+typedef struct yvex_alias_decoder_request yvex_alias_decoder_request;
+typedef struct yvex_alias_decoder_result yvex_alias_decoder_result;
+typedef struct yvex_media_condition yvex_media_condition;
 
 typedef struct {
     float *data;
@@ -24,6 +34,62 @@ typedef struct yvex_component_encoded_weight {
     unsigned long long encoded_bytes, row_count, row_width, row_bytes;
     unsigned int qtype;
 } yvex_component_encoded_weight;
+
+/* A runtime-owned component session lends this view for synchronous family/backend execution.
+ * A runtime transaction may retain the owner through the typed resource lease; backend and
+ * family consumers still cannot acquire, invalidate, or release resources directly. */
+#define YVEX_COMPONENT_EXECUTION_SCHEMA_V1 1u
+typedef int (*yvex_component_weight_view_fn)(
+    void *, const char *, yvex_component_encoded_weight *, yvex_error *);
+typedef int (*yvex_component_workspace_reserve_fn)(void *, unsigned long long, yvex_error *);
+typedef struct yvex_component_execution {
+    unsigned int schema_version;
+    yvex_materialization_session *materialization;
+    yvex_backend *backend;
+    char residency_identity[YVEX_SHA256_HEX_CAP];
+    unsigned long long resident_encoded_bytes;
+    void *owner_context;
+    yvex_component_weight_view_fn weight_view;
+    yvex_component_workspace_reserve_fn workspace_reserve;
+} yvex_component_execution;
+
+typedef enum {
+    YVEX_BACKEND_TEXT_EMBEDDING = 0,
+    YVEX_BACKEND_TEXT_INPUT_NORM,
+    YVEX_BACKEND_TEXT_Q_PROJECTION,
+    YVEX_BACKEND_TEXT_K_PROJECTION,
+    YVEX_BACKEND_TEXT_V_PROJECTION,
+    YVEX_BACKEND_TEXT_O_PROJECTION,
+    YVEX_BACKEND_TEXT_Q_NORM,
+    YVEX_BACKEND_TEXT_K_NORM,
+    YVEX_BACKEND_TEXT_POST_NORM,
+    YVEX_BACKEND_TEXT_GATE_PROJECTION,
+    YVEX_BACKEND_TEXT_UP_PROJECTION,
+    YVEX_BACKEND_TEXT_DOWN_PROJECTION,
+    YVEX_BACKEND_TEXT_WEIGHT_COUNT,
+    YVEX_BACKEND_TEXT_LAYER_WEIGHT_COUNT = YVEX_BACKEND_TEXT_WEIGHT_COUNT - 1
+} yvex_backend_text_weight_slot;
+typedef yvex_component_encoded_weight yvex_backend_text_weight;
+typedef struct {
+    unsigned long long token_count, hidden_width, layer_count, resident_bytes;
+    unsigned long long kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
+    char residency_identity[YVEX_SHA256_HEX_BYTES];
+    char execution_identity[YVEX_SHA256_HEX_BYTES];
+    int complete;
+} yvex_backend_text_execution_result;
+
+typedef struct {
+    const unsigned long long *position_ids;
+    unsigned long long position_capacity;
+    const unsigned int *visual_token_indices;
+    unsigned long long visual_token_count;
+    const float *visual_embeddings;
+    unsigned long long visual_embedding_capacity;
+    const float *deepstack_embeddings;
+    unsigned long long deepstack_layer_count, deepstack_embedding_capacity;
+    unsigned long long mrope_sections[3];
+    const char *vision_execution_identity;
+} yvex_backend_text_multimodal_input;
 
 typedef enum {
     YVEX_COMPONENT_LOAD_NONE = 0,
@@ -61,12 +127,114 @@ typedef struct yvex_component_execution_failure {
 
 typedef struct yvex_runtime_av_conditioning_result {
     unsigned long long token_count, hidden_width, layer_count;
+    unsigned long long condition_count, condition_rows;
+    unsigned long long condition_latent_height, condition_latent_width;
+    unsigned long long condition_latent_values;
     unsigned long long resident_bytes, kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
     unsigned long long peak_workspace_bytes;
+    char prompt_identity[YVEX_SHA256_HEX_CAP];
+    char processor_identity[YVEX_SHA256_HEX_CAP];
+    char vision_identity[YVEX_SHA256_HEX_CAP];
+    char condition_identity[YVEX_SHA256_HEX_CAP];
+    char media_identities[2][YVEX_SHA256_HEX_CAP];
+    char latent_identities[2][YVEX_SHA256_HEX_CAP];
     char residency_identity[YVEX_SHA256_HEX_CAP];
     char execution_identity[YVEX_SHA256_HEX_CAP];
     int complete;
 } yvex_runtime_av_conditioning_result;
+
+typedef struct yvex_runtime_av_keyframe_result {
+    unsigned long long condition_count, condition_rows;
+    unsigned long long latent_channels, latent_height, latent_width, latent_values;
+    unsigned long long resident_bytes, kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
+    unsigned long long peak_workspace_bytes;
+    char residency_identity[YVEX_SHA256_HEX_CAP];
+    char media_identities[2][YVEX_SHA256_HEX_CAP];
+    char latent_identities[2][YVEX_SHA256_HEX_CAP];
+    char execution_identity[YVEX_SHA256_HEX_CAP];
+    int complete;
+} yvex_runtime_av_keyframe_result;
+
+/* Families supply stable text-stack meaning and canonical weight names. Component runtime owns
+ * artifact residency, transactional publication, and backend dispatch for that recipe. */
+#define YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1 1u
+#define YVEX_COMPONENT_TEXT_LAYER_WEIGHT_COUNT 11u
+typedef struct yvex_component_text_recipe {
+    unsigned int schema_version;
+    const char *semantic_identity;
+    unsigned long long layer_capacity, hidden_width, ffn_width;
+    unsigned long long query_heads, kv_heads, head_dimension;
+    unsigned long long vocabulary_size, rope_theta;
+    float normalization_epsilon;
+} yvex_component_text_recipe;
+typedef int (*yvex_component_text_weight_name_fn)(
+    void *, unsigned long long, unsigned int, char[256], yvex_error *);
+typedef struct {
+    const yvex_component_text_recipe *recipe;
+    const char *embedding_weight_name;
+    yvex_component_text_weight_name_fn layer_weight_name;
+    void *weight_name_context;
+    const unsigned int *token_ids;
+    unsigned long long token_count, layer_count;
+    float *output;
+    unsigned long long output_capacity, maximum_host_bytes, maximum_device_bytes;
+} yvex_component_text_request;
+typedef int (*yvex_component_joint_weight_name_fn)(
+    void *, unsigned long long, unsigned int, char[256], yvex_error *);
+
+/* Component runtime binds package-backed weights; the selected backend owns their execution. */
+typedef struct yvex_backend_component_operations {
+    int (*text_embedding_execute)(
+        yvex_backend *, const yvex_component_text_recipe *, const unsigned char *,
+        unsigned long long, unsigned int, unsigned long long, unsigned long long,
+        unsigned long long, const char *, unsigned long long, const unsigned int *,
+        unsigned long long, float *, unsigned long long,
+        yvex_backend_text_execution_result *, yvex_error *);
+    int (*text_encoder_execute)(
+        yvex_backend *, const yvex_component_text_recipe *, const yvex_backend_text_weight *,
+        unsigned long long, const char *, unsigned long long, const unsigned int *,
+        unsigned long long, float *, unsigned long long,
+        yvex_backend_text_execution_result *, yvex_error *);
+    int (*text_encoder_multimodal_execute)(
+        yvex_backend *, const yvex_component_text_recipe *, const yvex_backend_text_weight *,
+        unsigned long long, const char *, unsigned long long, const unsigned int *,
+        unsigned long long, const yvex_backend_text_multimodal_input *, float *,
+        unsigned long long, yvex_backend_text_execution_result *, yvex_error *);
+    int (*joint_transformer_execute)(
+        yvex_backend *, const yvex_component_encoded_weight *,
+        const yvex_component_encoded_weight *, const char *, unsigned long long,
+        const yvex_transformer_joint_request *, yvex_transformer_joint_result *, yvex_error *);
+    int (*joint_transformer_prepare)(
+        yvex_backend *, const yvex_component_encoded_weight *,
+        const yvex_component_encoded_weight *, const char *, unsigned long long,
+        const char *, const yvex_transformer_joint_request *,
+        yvex_transformer_joint_prepared **,
+        yvex_transformer_joint_prepared_summary *, yvex_error *);
+    int (*joint_transformer_prepared_execute)(
+        yvex_backend *, const yvex_component_encoded_weight *,
+        const yvex_component_encoded_weight *, const char *, unsigned long long,
+        yvex_transformer_joint_prepared *, const yvex_transformer_joint_request *,
+        yvex_transformer_joint_result *, yvex_error *);
+    int (*joint_transformer_prepared_release)(
+        yvex_backend *, yvex_transformer_joint_prepared **, yvex_error *);
+    int (*alias_decoder_execute)(
+        yvex_backend *, const yvex_alias_decoder_request *, yvex_alias_decoder_result *,
+        yvex_error *);
+} yvex_backend_component_operations;
+
+#define YVEX_COMPONENT_RESOURCE_SUMMARY_SCHEMA_V1 1u
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long host_arena_bytes, device_arena_bytes;
+    unsigned long long request_prepared_bytes, condition_prepared_bytes;
+    unsigned long long preparation_nanoseconds, preparation_count;
+    unsigned long long use_count, reuse_count, rebuild_count;
+    unsigned long long allocation_count, execution_allocation_events;
+    unsigned long long last_execution_allocation_events;
+    unsigned long long resource_count, resource_generation;
+    char prepared_identity[YVEX_SHA256_HEX_CAP];
+    int ready, request_ready, condition_ready, retained_by_transaction;
+} yvex_component_resource_summary;
 
 typedef struct yvex_runtime_av_audio_decode_options {
     const float *latent;
@@ -108,16 +276,24 @@ typedef struct yvex_runtime_av_video_decode_result {
 } yvex_runtime_av_video_decode_result;
 
 typedef struct yvex_runtime_av_latent_context {
-    yvex_runtime_component_session *transformer_session;
+    const yvex_component_execution *transformer_component;
     const float *conditioning;
     unsigned long long conditioning_capacity;
+    const float *condition_latents;
+    unsigned long long condition_latent_capacity;
+    const yvex_runtime_av_keyframe_result *keyframes;
+    const yvex_media_condition *conditions;
+    unsigned long long condition_count;
     const yvex_runtime_av_layout_output *layout;
     const yvex_runtime_av_layout_result *layout_result;
+    const yvex_transformer_linear_physical_plan *video_output_specialization;
+    const yvex_transformer_linear_physical_plan *audio_output_specialization;
     unsigned int *timestep_indices;
     unsigned long long timestep_capacity, block_count;
     const char *conditioning_identity;
     int (*cancelled)(void *);
     void *cancellation_context;
+    const yvex_execution_yield_control *yield_control;
     yvex_runtime_latent_observe_fn observe;
     void *observer_context;
 } yvex_runtime_av_latent_context;
@@ -126,14 +302,6 @@ int yvex_component_buffer_open(
     yvex_component_f32_buffer *, unsigned long long, unsigned long long,
     unsigned long long *, unsigned long long *, const char *, const char *, yvex_error *);
 void yvex_component_buffer_close(yvex_component_f32_buffer *, unsigned long long *);
-const yvex_materialized_tensor_binding *yvex_component_binding_find(
-    const yvex_materialization_session *, const char *);
-int yvex_component_weight_bind(
-    const yvex_materialization_session *, const yvex_runtime_residency *,
-    const char *, yvex_component_encoded_weight *, yvex_error *);
-int yvex_component_weight_bind_sized(
-    void *, const char *, unsigned long long, unsigned long long,
-    yvex_component_encoded_weight *, yvex_error *);
 int yvex_component_f32_load(
     yvex_materialization_session *, const char *, unsigned int,
     const unsigned long long *, yvex_component_f32_buffer *, unsigned long long,
@@ -145,15 +313,26 @@ int yvex_runtime_component_session_open(
     const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *, yvex_backend_kind,
     unsigned long long, unsigned long long, yvex_error *);
 int yvex_runtime_component_session_close(yvex_runtime_component_session **, yvex_error *);
-int yvex_runtime_component_session_prepare_workspace(
-    yvex_runtime_component_session *, unsigned long long, yvex_error *);
-yvex_materialization_session *yvex_runtime_component_session_materialization(
-    const yvex_runtime_component_session *);
-const yvex_runtime_residency *yvex_runtime_component_session_residency(
-    const yvex_runtime_component_session *);
-yvex_backend *yvex_runtime_component_session_backend(const yvex_runtime_component_session *);
-const yvex_runtime_residency_summary *yvex_runtime_component_session_summary(
-    const yvex_runtime_component_session *);
+int yvex_runtime_component_session_borrow(
+    yvex_runtime_component_session *, yvex_component_execution *, yvex_error *);
+int yvex_component_execution_resource_lease(
+    const yvex_component_execution *, yvex_execution_resource_lease *, yvex_error *);
+int yvex_component_execution_resource_summary(
+    const yvex_component_execution *, yvex_component_resource_summary *, yvex_error *);
+int yvex_component_execution_weight_view(
+    const yvex_component_execution *, const char *, yvex_component_encoded_weight *,
+    yvex_error *);
+int yvex_component_text_execute(
+    const yvex_component_execution *, const yvex_component_text_request *,
+    yvex_runtime_av_conditioning_result *, yvex_error *);
+int yvex_runtime_component_text_artifact_execute(
+    const yvex_complete_artifact_admission *, const yvex_artifact *, const yvex_gguf *,
+    const yvex_tensor_table *, yvex_backend_kind, const yvex_component_text_request *,
+    yvex_runtime_av_conditioning_result *, yvex_error *);
+int yvex_component_joint_transformer_execute(
+    const yvex_component_execution *, const char *const *, unsigned long long,
+    yvex_component_joint_weight_name_fn, void *, const yvex_transformer_joint_request *,
+    yvex_transformer_joint_result *, yvex_error *);
 
 #ifdef __cplusplus
 }

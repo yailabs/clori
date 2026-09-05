@@ -39,7 +39,8 @@ static void model_download_restore_provider_signal_handlers(
     const struct sigaction *old_term);
 static void model_download_print_start_progress(
     const yvex_model_download_report *report,
-    yvex_model_download_progress_mode effective_mode);
+    yvex_model_download_progress_mode effective_mode,
+    int dry_run);
 static void model_download_print_tick_progress(
     const char *source_dir,
     time_t started_at,
@@ -56,33 +57,6 @@ static void model_download_mark_provider_interrupted(
     pid_t pgid);
 static void model_download_orphan_check(yvex_model_download_report *report);
 static const char *model_download_safetensors_file_status(const char *path);
-
-static const yvex_model_download_catalog_row model_download_catalog[] = {
-    { "gemma-4-e2b", "gemma", "hf", "google/gemma-4-E2B", "gemma-4-e2b", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-e2b", "target-routing-default" },
-    { "gemma-4-e2b-it", "gemma", "hf", "google/gemma-4-E2B-it", "gemma-4-e2b-it", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-e2b-it", "target-routing-default" },
-    { "gemma-4-e4b", "gemma", "hf", "google/gemma-4-E4B", "gemma-4-e4b", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-e4b", "target-routing-default" },
-    { "gemma-4-e4b-it", "gemma", "hf", "google/gemma-4-E4B-it", "gemma-4-e4b-it", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-e4b-it", "target-routing-default" },
-    { "gemma-4-12b", "gemma", "hf", "google/gemma-4-12B", "gemma-4-12b", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-12b", "target-routing-default" },
-    { "gemma-4-12b-it", "gemma", "hf", "google/gemma-4-12B-it", "gemma-4-12b-it", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-12b-it", "target-routing-default" },
-    { "gemma-4-26b-a4b", "gemma", "hf", "google/gemma-4-26B-A4B", "gemma-4-26b-a4b", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-26b-a4b", "target-routing-default" },
-    { "gemma-4-26b-a4b-it", "gemma", "hf", "google/gemma-4-26B-A4B-it", "gemma-4-26b-a4b-it", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-26b-a4b-it", "target-routing-default" },
-    { "gemma-4-31b", "gemma", "hf", "google/gemma-4-31B", "gemma-4-31b", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-31b", "target-routing-default" },
-    { "gemma-4-31b-it", "gemma", "hf", "google/gemma-4-31B-it", "gemma-4-31b-it", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-31b-it", "target-routing-default" },
-    { "qwen3-8b", "qwen", "hf", "Qwen/Qwen3-8B", "qwen3-8b", "main",
-      "official-safetensors", "huggingface-repository", "qwen3-8b", "target-routing-default" },
-    { "qwen3-32b", "qwen", "hf", "Qwen/Qwen3-32B", "qwen3-32b", "main",
-      "official-safetensors", "huggingface-repository", "qwen3-32b", "source-download-routing-only" }
-};
 
 static const char *const model_download_default_includes[] = { "*.safetensors",
     "*.json",
@@ -101,26 +75,21 @@ static const char *const model_download_default_excludes[] = { "*.bin",
     "*.tar",
     "*.zip"};
 
-const yvex_model_download_catalog_row *model_download_find_catalog(const char *target)
-{
-    unsigned long i;
-
-    if (!target) return NULL;
-    for (i = 0; i < sizeof(model_download_catalog) / sizeof(model_download_catalog[0]); ++i) {
-        if (strcmp(model_download_catalog[i].target_id, target) == 0) {
-            return &model_download_catalog[i];
-        }
-    }
-    return NULL;
-}
-
 int model_download_family_valid(const char *family)
 {
-    return family &&
-           (strcmp(family, "deepseek") == 0 ||
-            strcmp(family, "glm") == 0 ||
-            strcmp(family, "qwen") == 0 ||
-            strcmp(family, "gemma") == 0);
+    const unsigned char *cursor = (const unsigned char *)family;
+    size_t length;
+
+    if (!family || !family[0]) return 0;
+    length = strlen(family);
+    if (length >= YVEX_REMOTE_FAMILY_CAP || !islower(*cursor)) return 0;
+    while (*cursor) {
+        if (!(islower(*cursor) || isdigit(*cursor) || *cursor == '-' ||
+              *cursor == '_' || *cursor == '.'))
+            return 0;
+        ++cursor;
+    }
+    return 1;
 }
 
 int model_download_local_name_valid(const char *name)
@@ -350,10 +319,30 @@ static int model_download_walk_tree(const char *root,
             unsigned long long bytes = st.st_size > 0 ? (unsigned long long)st.st_size : 0ull;
             if (walk->scan) {
                 yvex_model_download_source_scan *scan = walk->scan;
+                int acquisition_cache =
+                    model_download_name_starts_with(rel_path, ".cache/") ||
+                    model_download_name_contains(rel_path, "/.cache/");
 
-                scan->file_count++;
-                scan->total_regular_file_bytes += bytes;
-                if (yvex_source_ends_with(rel_path, ".safetensors")) scan->safetensors_count++;
+                if (acquisition_cache) {
+                    scan->cache_file_count++;
+                } else {
+                    scan->file_count++;
+                    scan->total_regular_file_bytes += bytes;
+                    if (yvex_source_ends_with(rel_path, ".safetensors"))
+                        scan->safetensors_count++;
+                    if (yvex_source_ends_with(rel_path, ".gguf")) scan->gguf_count++;
+                    if (strcmp(base, "config.json") == 0) scan->config_present = 1;
+                    if (strcmp(base, "tokenizer.json") == 0 ||
+                        strcmp(base, "tokenizer.model") == 0 ||
+                        strcmp(base, "tokenizer_config.json") == 0 ||
+                        model_download_name_starts_with(base, "tokenizer."))
+                        scan->tokenizer_present = 1;
+                    if (bytes > scan->largest_file_bytes) {
+                        scan->largest_file_bytes = bytes;
+                        snprintf(scan->largest_file_name, sizeof(scan->largest_file_name), "%s",
+                                 rel_path);
+                    }
+                }
                 if (yvex_source_ends_with(rel_path, ".lock")) {
                     unsigned long long idx = scan->lock_count;
                     if (idx < YVEX_MODEL_DOWNLOAD_PATTERN_CAP) {
@@ -368,20 +357,6 @@ static int model_download_walk_tree(const char *root,
                     yvex_source_ends_with(rel_path, ".tmp") ||
                     model_download_name_contains(rel_path, ".part"))
                     scan->partial_file_count++;
-                if (model_download_name_starts_with(rel_path, ".cache/") ||
-                    model_download_name_contains(rel_path, "/.cache/"))
-                    scan->cache_file_count++;
-                if (strcmp(base, "config.json") == 0) scan->config_present = 1;
-                if (strcmp(base, "tokenizer.json") == 0 ||
-                    strcmp(base, "tokenizer.model") == 0 ||
-                    strcmp(base, "tokenizer_config.json") == 0 ||
-                    model_download_name_starts_with(base, "tokenizer."))
-                    scan->tokenizer_present = 1;
-                if (bytes > scan->largest_file_bytes) {
-                    scan->largest_file_bytes = bytes;
-                    snprintf(scan->largest_file_name, sizeof(scan->largest_file_name), "%s",
-                             rel_path);
-                }
             }
             if (walk->safetensors && yvex_source_ends_with(rel_path, ".safetensors")) {
                 const char *status = model_download_safetensors_file_status(abs_path);
@@ -843,7 +818,7 @@ static int provider_process_run_streaming(const char *const *args,
     state.pgid = getpgid(state.pid);
     if (state.pgid <= 0) state.pgid = state.pid;
     report->provider_process_group = state.pgid;
-    if (report->active_receipt_path[0]) {
+    if ((!options || !options->dry_run) && report->active_receipt_path[0]) {
         yvex_error receipt_err;
         yvex_error_clear(&receipt_err);
         (void)model_download_write_control_receipt(report->active_receipt_path,
@@ -895,8 +870,10 @@ int model_download_run_hf(const yvex_cli_models_download_options *options,
     args[n++] = report->repo_id;
     args[n++] = "--revision";
     args[n++] = report->revision;
-    args[n++] = "--local-dir";
-    args[n++] = report->local_source_dir;
+    if (!options->dry_run) {
+        args[n++] = "--local-dir";
+        args[n++] = report->local_source_dir;
+    }
     for (i = 0; i < model_download_effective_include_count(options); ++i) {
         args[n++] = "--include";
         args[n++] = model_download_effective_include_at(options, i);
@@ -917,16 +894,13 @@ int model_download_run_hf(const yvex_cli_models_download_options *options,
     args[n] = NULL;
 
     effective_mode = model_download_effective_progress_mode(options->progress_mode);
-    model_download_print_start_progress(report, effective_mode);
-    return provider_process_run_streaming(args,
-                                               report->stdout_log_path,
-                                               report->stderr_log_path,
-                                               options,
-                                               effective_mode,
-                                               options->tick_seconds,
-                                               report->local_source_dir,
-                                               report,
-                                               err);
+    model_download_print_start_progress(report, effective_mode, options->dry_run);
+    return provider_process_run_streaming(
+        args,
+        options->dry_run ? "/dev/null" : report->stdout_log_path,
+        options->dry_run ? "/dev/null" : report->stderr_log_path,
+        options, effective_mode, options->dry_run ? 0ull : options->tick_seconds,
+        options->dry_run ? "" : report->local_source_dir, report, err);
 }
 
 int model_download_run_github(const yvex_cli_models_download_options *options,
@@ -1145,17 +1119,20 @@ static const char *const download_status_lines[] = {
 
 static void model_download_print_start_progress(
     const yvex_model_download_report *report,
-    yvex_model_download_progress_mode effective_mode)
+    yvex_model_download_progress_mode effective_mode,
+    int dry_run)
 {
     if (!report || effective_mode == YVEX_MODEL_DOWNLOAD_PROGRESS_OFF) {
         return;
     }
-    yvex_cli_out_writef(stdout, "model-download: start target=%s\n", report->target_id);
+    yvex_cli_out_writef(stdout, "model-download: %s target=%s\n",
+                        dry_run ? "plan" : "start", report->target_id);
     yvex_cli_out_writef(stdout, "provider: %s\n", report->provider);
     yvex_cli_out_writef(stdout, "repo: %s\n", report->repo_id);
     yvex_cli_out_writef(stdout, "source: %s\n", report->local_source_dir);
     yvex_cli_out_writef(stdout, "stage: account-provider %s\n", report->stage_account_provider);
-    yvex_cli_out_writef(stdout, "stage: download running\n");
+    yvex_cli_out_writef(stdout, "stage: download %s\n",
+                        dry_run ? "planned (dry-run)" : "running");
     fflush(stdout);
 }
 
@@ -1238,8 +1215,8 @@ static int model_download_tick_scan_sync(yvex_model_download_report *report,
                                          const yvex_model_download_source_scan *scan,
                                          int store)
 {
-    unsigned long long facts[6] = {
-        scan->file_count, scan->safetensors_count, scan->partial_file_count,
+    unsigned long long facts[7] = {
+        scan->file_count, scan->safetensors_count, scan->gguf_count, scan->partial_file_count,
         scan->cache_file_count, scan->total_regular_file_bytes, scan->largest_file_bytes};
     int changed = report->tick_count == 0ull ||
                   memcmp(&report->tick_last_file_count, facts, sizeof(facts)) != 0 ||
@@ -1299,11 +1276,12 @@ static void model_download_print_tick_progress(const char *source_dir,
     model_download_short_file_name(largest_name, sizeof(largest_name),
                                    scan.largest_file_name[0] ? scan.largest_file_name : "none");
     yvex_cli_out_writef(stdout,
-        "tick: elapsed=%s files=%llu partial=%llu safetensors=%llu bytes=%s delta=%s%s largest=%s (%s)\n",
+        "tick: elapsed=%s files=%llu partial=%llu safetensors=%llu gguf=%llu bytes=%s delta=%s%s largest=%s (%s)\n",
            elapsed_text,
            scan.file_count,
            scan.partial_file_count,
            scan.safetensors_count,
+           scan.gguf_count,
            total_text,
            delta_sign,
            delta_text,
@@ -1338,6 +1316,36 @@ void model_download_print_status_report(
     char largest_text[32];
     char largest_name[64];
 
+    if (options && options->output_mode == YVEX_MODELS_OUTPUT_JSON) {
+        yvex_cli_out_fputs(
+            "{\"schema\":\"yvex.model.acquisition.status.v1\",\"model\":",
+            stdout);
+        yvex_cli_out_json_string(stdout, report->target_id);
+        yvex_cli_out_fputs(",\"provider\":", stdout);
+        yvex_cli_out_json_string(stdout, report->provider);
+        yvex_cli_out_fputs(",\"repository\":", stdout);
+        yvex_cli_out_json_string(stdout, report->repo_id);
+        yvex_cli_out_fputs(",\"revision\":", stdout);
+        yvex_cli_out_json_string(stdout, report->revision);
+        yvex_cli_out_fputs(",\"location\":", stdout);
+        yvex_cli_out_json_string(stdout, report->local_source_dir);
+        yvex_cli_out_writef(
+            stdout,
+            ",\"active\":%s,\"resume_available\":%s,\"stop_available\":%s,"
+            "\"files\":%llu,\"partial_files\":%llu,\"bytes\":%llu,"
+            "\"provider_pid\":%lld,\"provider_pgid\":%lld,\"receipt\":",
+            process_alive ? "true" : "false",
+            resume_available ? "true" : "false",
+            stop_available ? "true" : "false", report->source_scan.file_count,
+            report->source_scan.partial_file_count,
+            report->source_scan.total_regular_file_bytes,
+            (long long)provider_pid, (long long)provider_pgid);
+        yvex_cli_out_json_string(
+            stdout, active_receipt_present ? report->active_receipt_path
+                                           : report->last_receipt_path);
+        yvex_cli_out_fputs("}\n", stdout);
+        return;
+    }
     if (options && options->output_mode == YVEX_MODELS_OUTPUT_AUDIT) {
         yvex_cli_out_writef(stdout, "models: download status\n");
         yvex_cli_out_writef(stdout, "target_id: %s\n", report->target_id);
@@ -1372,6 +1380,7 @@ void model_download_print_status_report(
         }
         yvex_cli_out_writef(stdout, "source_file_count: %llu\n", report->source_scan.file_count);
         yvex_cli_out_writef(stdout, "safetensors_count: %llu\n", report->source_scan.safetensors_count);
+        yvex_cli_out_writef(stdout, "gguf_count: %llu\n", report->source_scan.gguf_count);
         yvex_cli_out_writef(stdout, "total_regular_file_bytes: %llu\n", report->source_scan.total_regular_file_bytes);
         yvex_cli_out_writef(stdout, "largest_file_name: %s\n",
                report->source_scan.largest_file_name[0] ? report->source_scan.largest_file_name : "none");
@@ -1407,10 +1416,11 @@ void model_download_print_status_report(
            last_receipt_present ? (last_receipt_status && last_receipt_status[0]
                                    ? last_receipt_status : "unknown") : "none");
     yvex_cli_out_writef(stdout, "locks: %llu\n", report->source_scan.lock_count);
-    yvex_cli_out_writef(stdout, "files: %llu partial=%llu safetensors=%llu bytes=%s\n",
+    yvex_cli_out_writef(stdout, "files: %llu partial=%llu safetensors=%llu gguf=%llu bytes=%s\n",
            report->source_scan.file_count,
            report->source_scan.partial_file_count,
            report->source_scan.safetensors_count,
+           report->source_scan.gguf_count,
            bytes_text);
     yvex_cli_out_writef(stdout, "largest: %s (%s)\n", largest_name, largest_text);
     yvex_cli_out_writef(stdout, "safetensors_size_status: %s\n", safe_check->status);

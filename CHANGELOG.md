@@ -12,13 +12,18 @@ change. Git history preserves implementation chronology.
 
 ### Added
 
+- Provider-neutral remote model discovery with Hugging Face search and exact-revision
+  inspection, typed safetensors/GGUF representation records, and a table-first local
+  lifecycle catalog that keeps acquired source, package readiness, and live host engine state
+  distinct.
 - DeepSeek-V4-Flash-DSpark as the sole current DeepSeek source target, with
   target-only reference generation and target-verified speculative generation
   in the same resident runtime model and session authority.
 - Complete server-backed DeepSeek-V4-Flash source-to-streamed-text execution
   through native and bounded OpenAI-compatible local surfaces.
 - Exact server-owned multi-turn sessions with committed-prefix reuse,
-  cancellation, partial-progress truth, and one persistent model lifecycle.
+  cancellation, partial-progress truth, and generation-bound engine lifecycle
+  under one persistent host.
 - Bounded copy-on-write session fork through `yvex session fork SOURCE CHILD
   MAXIMUM_SHARED_BYTES`: immutable committed state pages are shared while token,
   RNG, decoder, transcript and conversation state remain independently mutable.
@@ -27,9 +32,12 @@ change. Git history preserves implementation chronology.
   protocol v9 facts that distinguish it from still-open continuous batching.
 - Registry-driven command discovery, advanced help, JSON discovery, and Bash,
   Zsh, and Fish completion.
-- A server-backed `yvex>` console with composed attachment state, live prefill
-  progress, direct streamed output, typed turn metrics, registry-derived slash
-  completion, semantic watch/human trace, and clean Ctrl-C/Ctrl-D handling.
+- One client-owned linear console at `yvex`. It consumes typed protocol/catalog
+  facts for live prefill, committed output, turn metrics, runtime inspection,
+  cancellation, reconnect, and bounded terminal restoration without reading
+  backend-private state. The foreground server owns host lifetime and log
+  projection only; deterministic `yvex host ...` and `yvex engine ...` commands
+  own lifecycle control.
 - Exact source-authored chat/non-think, think-high and think-max conversation
   encoding, including tool continuity and drop-thinking multi-turn behavior.
   Typed reasoning, final, tool and error streams remain separate; REPL and raw
@@ -178,6 +186,39 @@ change. Git history preserves implementation chronology.
 
 ### Changed
 
+- Advanced the installed `yvex_server_options` ABI to schema v4 for the
+  `maximum_engines` field added by persistent multi-engine hosting. The
+  historical v3 identity remains explicit and is refused before legacy bytes
+  can be reinterpreted; a deterministic C/C++ guard now binds current
+  versioned public records to their declared layouts.
+- Separated the installed server engine kind from semantic text execution
+  strategy. Engine schema v2 and runtime event schema v4 expose `text` versus
+  `media` independently from `target-only` versus `speculative`; local protocol
+  v16 refuses v15 and earlier peers instead of reinterpreting them.
+- Model hosting is now a persistent zero-engine `yvex serve` process. Explicit
+  `engine load`, `engine unload`, and `engine list` operations manage
+  identity-bound engine generations without restarting the private protocol or
+  OpenAI listener; native and OpenAI requests route to an exact loaded model.
+  Local protocol v16 carries engine lifecycle, routing, generation, and resource
+  facts.
+- Physical Execution IR v5 and runtime binding v15 retain stable package/storage
+  truth while one deployment specialization owns backend, hardware, activation,
+  implementation-class, width, and crossover choices. The explicit v14 reader
+  imports compatible canonical package records and refuses legacy derived-layout
+  requirements that cannot cross the new boundary truthfully.
+- MiniMax hosted media turns now send Unicode creative prompts directly to the
+  native tokenizer/conditioning pipeline under one identity-bearing YVEX
+  interactive preset. Protocol v16 carries typed first- and last-image
+  conditions, and the same FL2VA engine generation executes text-only,
+  first-frame, last-frame, or dual-anchor requests through Qwen3-VL vision,
+  Visual VAE encoding and condition-aware Omni execution. The removed hardcoded
+  questionnaire parses no creative words or numbers as execution controls;
+  progress remains server-authored control state with a typed media result.
+- Composite artifact startup now reuses the generic verified-reopen authority
+  independently for every component. Cold or invalid-cache opens fully verify
+  and publish or repair receipts, unchanged warm opens avoid complete payload
+  hashing, and selective fallback cannot admit mismatched bytes or imply
+  materialization or residency.
 - Hosted startup now reuses a content-addressed verified-reopen lease for an
   unchanged local artifact snapshot and falls back to complete authentication
   when cache evidence is absent, malformed, or stale. On admitted pageable
@@ -188,12 +229,12 @@ change. Git history preserves implementation chronology.
   their explicit prefetch. Memory status distinguishes mapped artifact extent,
   registration, managed prefetch, non-artifact host residency, accelerator
   residency and process RSS.
-- Terminal-bound one-shot generation now renders explicit reasoning and final
-  output as distinct blocks and flushes the completed model stream before
-  metrics. Redirected `run` output retains its exact canonical byte stream.
-- Model hosting is now the explicit foreground `yvex server MODEL [--ctx N]`
-  operation. Status, model, memory, logs and shutdown use the same public
-  `server` noun; `server log [--json]` is the sole observability stream.
+- Native generation renders explicit reasoning and final output as distinct
+  typed channels and flushes the completed model stream before metrics.
+- Model hosting now uses the explicit foreground `yvex serve` host plus
+  interactive `engine load` or scripted `engine load PROFILE`, and `engine unload ENGINE`. Status, engine inventory,
+  memory, logs and shutdown use the public `host` noun;
+  `host logs [--json]` is the sole observability stream.
 - Generation plan ABI v5 now binds the compiled workload-profile identity, so
   CUDA phase-roofline evidence validates against its actual workload instead
   of being rejected against the distinct per-request profiling identity.
@@ -270,6 +311,10 @@ change. Git history preserves implementation chronology.
 
 ### Removed
 
+- Retired public one-shot generation, implicit bare-command chat, and the
+  stdin-driven foreground server operator console. Bare `yvex` renders the
+  product map, `yvex chat` is the sole interactive REPL, and `yvex serve`
+  either becomes the foreground host or refuses a duplicate without attaching.
 - The separate `yvexd` product, implicit persisted model selection,
   `runtime start`, and duplicate public `watch`/`trace` grammar.
 - Retired the separate `yvex-dev` and `yvex-openai` product executables.

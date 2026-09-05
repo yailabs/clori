@@ -35,7 +35,7 @@ typedef struct {
 struct yvex_tokenizer_reasoning_stream {
     yvex_tokenizer_reasoning_sink sink;
     void *sink_context;
-    const unsigned char *reasoning_end;
+    unsigned char reasoning_end[REASONING_DELIMITER_CAP];
     unsigned int reasoning_end_count;
     unsigned char pending[REASONING_DELIMITER_CAP];
     unsigned int pending_count;
@@ -45,7 +45,10 @@ struct yvex_tokenizer_reasoning_stream {
 static int conversation_admitted(const yvex_tokenizer *tokenizer)
 {
     return tokenizer && tokenizer->conversation == &tokenizer->conversation_view &&
-           tokenizer->conversation->schema_version == YVEX_CONVERSATION_PROTOCOL_SCHEMA_V1 &&
+           (tokenizer->conversation->schema_version ==
+                YVEX_CONVERSATION_PROTOCOL_SCHEMA_V1 ||
+            tokenizer->conversation->schema_version ==
+                YVEX_CONVERSATION_PROTOCOL_SCHEMA_V2) &&
            yvex_tokenizer_family_policy_validate(&tokenizer->compiled_policy, NULL) == YVEX_OK;
 }
 
@@ -67,11 +70,13 @@ int yvex_tokenizer_reasoning_stream_open(
     if (out) *out = NULL;
     if (!out || !tokenizer || !tokenizer->plan.sealed ||
         !conversation_admitted(tokenizer) || !sink ||
-        policy > YVEX_REASONING_MAXIMUM ||
+        !yvex_reasoning_policy_valid(policy) ||
         (policy != YVEX_REASONING_DISABLED &&
          !tokenizer->plan.explicit_reasoning_supported) ||
         (policy == YVEX_REASONING_MAXIMUM &&
-         !tokenizer->plan.maximum_reasoning_supported)) {
+         !tokenizer->plan.maximum_reasoning_supported) ||
+        (policy == YVEX_REASONING_LOW &&
+         !tokenizer->plan.low_reasoning_supported)) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "tokenizer.reasoning",
                        "reasoning policy is not supported by the tokenizer plan");
         return YVEX_ERR_UNSUPPORTED;
@@ -84,12 +89,27 @@ int yvex_tokenizer_reasoning_stream_open(
     }
     stream->sink = sink;
     stream->sink_context = sink_context;
-    stream->reasoning_end = (const unsigned char *)
-        tokenizer->conversation->thinking_end;
-    stream->reasoning_end_count = (unsigned int)strlen(
-        tokenizer->conversation->thinking_end);
-    if (!stream->reasoning_end_count ||
-        stream->reasoning_end_count > sizeof(stream->pending)) {
+    {
+        const char *parts[] = {
+            tokenizer->conversation->thinking_end_prefix,
+            tokenizer->conversation->thinking_end,
+            tokenizer->conversation->thinking_end_suffix};
+        unsigned int index;
+        for (index = 0u; index < sizeof(parts) / sizeof(parts[0]); ++index) {
+            size_t count = strlen(parts[index]);
+            if (count > sizeof(stream->reasoning_end) -
+                            stream->reasoning_end_count) {
+                free(stream);
+                yvex_error_set(err, YVEX_ERR_BOUNDS, "tokenizer.reasoning",
+                               "source reasoning delimiter exceeds stream capacity");
+                return YVEX_ERR_BOUNDS;
+            }
+            memcpy(stream->reasoning_end + stream->reasoning_end_count,
+                   parts[index], count);
+            stream->reasoning_end_count += (unsigned int)count;
+        }
+    }
+    if (!stream->reasoning_end_count) {
         free(stream);
         yvex_error_set(err, YVEX_ERR_BOUNDS, "tokenizer.reasoning",
                        "source reasoning delimiter exceeds stream capacity");
@@ -275,6 +295,26 @@ static int valid_utf8(const unsigned char *bytes, unsigned long long count)
     if (!bytes && count) return 0;
     while (offset < count)
         if (!yvex_tokenizer_utf8_next(bytes, count, &offset, &point)) return 0;
+    return 1;
+}
+
+static int span_trim(yvex_provider_span input, yvex_provider_span *output)
+{
+    unsigned long long offset = 0u, first = ULLONG_MAX, last = 0u;
+    uint32_t point;
+    if (!output || (!input.bytes && input.count)) return 0;
+    while (offset < input.count) {
+        unsigned long long begin = offset;
+        if (!yvex_tokenizer_utf8_next(input.bytes, input.count, &offset,
+                                      &point))
+            return 0;
+        if ((yvex_tokenizer_unicode_class(point) & TOKENIZER_UNICODE_SPACE) == 0u) {
+            if (first == ULLONG_MAX) first = begin;
+            last = offset;
+        }
+    }
+    output->bytes = first == ULLONG_MAX ? input.bytes : input.bytes + first;
+    output->count = first == ULLONG_MAX ? 0u : last - first;
     return 1;
 }
 
@@ -613,9 +653,11 @@ static int append_arguments(provider_builder *builder,
              append(builder, key.data, key.count, err) != YVEX_OK ||
              literal(builder, conversation->tool_parameter_name_end, err) !=
                  YVEX_OK ||
-             literal(builder, is_string ? "true" : "false", err) != YVEX_OK ||
-             literal(builder, conversation->tool_parameter_kind_end, err) !=
-                 YVEX_OK))
+             (conversation->tool_grammar ==
+                      YVEX_CONVERSATION_TOOL_GRAMMAR_TYPED_ATTRIBUTES &&
+              (literal(builder, is_string ? "true" : "false", err) != YVEX_OK ||
+               literal(builder, conversation->tool_parameter_kind_end, err) !=
+                   YVEX_OK))))
             rc = yvex_error_code(err);
         if (rc == YVEX_OK && is_string)
             rc = json_string_decode(&json, &decoded, err);
@@ -666,18 +708,25 @@ static int append_tool_calls(provider_builder *builder,
         if (rc == YVEX_OK)
             rc = literal(builder, conversation->tool_invoke_end, err);
     }
-    if (rc == YVEX_OK) rc = literal(builder, "\n", err);
+    if (rc == YVEX_OK && conversation->tool_grammar ==
+                             YVEX_CONVERSATION_TOOL_GRAMMAR_TYPED_ATTRIBUTES)
+        rc = literal(builder, "\n", err);
     if (rc == YVEX_OK)
         rc = literal(builder, conversation->tool_calls_end, err);
     return rc;
 }
 
 static int append_tool_schema(provider_builder *builder,
+                              const yvex_conversation_protocol *conversation,
                               unsigned int request_schema,
                               const yvex_provider_function_tool *tool,
                               yvex_error *err)
 {
-    int rc = literal(builder, "{\"name\": ", err);
+    int wrapped = conversation->tool_grammar ==
+                  YVEX_CONVERSATION_TOOL_GRAMMAR_XML_ELEMENTS;
+    int rc = literal(builder, wrapped
+                                  ? "{\"type\": \"function\", \"function\": {\"name\": "
+                                  : "{\"name\": ", err);
     if (rc == YVEX_OK)
         rc = json_string(builder, (const unsigned char *)tool->name,
                          strlen(tool->name), err);
@@ -697,7 +746,7 @@ static int append_tool_schema(provider_builder *builder,
         tool->strict_present)
         rc = literal(builder, tool->strict ? ", \"strict\": true"
                                            : ", \"strict\": false", err);
-    if (rc == YVEX_OK) rc = literal(builder, "}", err);
+    if (rc == YVEX_OK) rc = literal(builder, wrapped ? "}}" : "}", err);
     return rc;
 }
 
@@ -715,7 +764,8 @@ static int append_controls(provider_builder *builder,
         for (index = 0u; rc == YVEX_OK && index < request->tool_count; ++index) {
             if (index) rc = literal(builder, "\n", err);
             if (rc == YVEX_OK)
-                rc = append_tool_schema(builder, request->schema_version,
+                rc = append_tool_schema(builder, conversation,
+                                        request->schema_version,
                                         &request->tools[index], err);
         }
         if (rc == YVEX_OK)
@@ -796,6 +846,240 @@ static const yvex_provider_message *ordered_tool_result(
     return NULL;
 }
 
+static const char *provider_reasoning_instruction(
+    const yvex_conversation_protocol *conversation,
+    yvex_reasoning_policy policy)
+{
+    if (policy == YVEX_REASONING_MAXIMUM)
+        return conversation->reasoning_effort_max;
+    if (policy == YVEX_REASONING_LOW)
+        return conversation->reasoning_effort_low;
+    return "";
+}
+
+static int provider_prompt_policy(
+    const yvex_tokenizer *tokenizer, const yvex_provider_request *request,
+    yvex_reasoning_policy *reasoning, int *drop, yvex_error *err)
+{
+    const yvex_conversation_protocol *conversation = tokenizer->conversation;
+    yvex_reasoning_policy resolved = request->reasoning_policy;
+    int resolved_drop;
+    if (resolved == YVEX_REASONING_SOURCE_DEFAULT)
+        resolved = conversation->default_reasoning_policy;
+    if (!yvex_reasoning_policy_valid(resolved) ||
+        (resolved != YVEX_REASONING_DISABLED &&
+         !tokenizer->plan.explicit_reasoning_supported) ||
+        (resolved == YVEX_REASONING_MAXIMUM &&
+         !tokenizer->plan.maximum_reasoning_supported) ||
+        (resolved == YVEX_REASONING_LOW &&
+         !tokenizer->plan.low_reasoning_supported)) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED,
+                       "tokenizer.provider.reasoning",
+                       "source-default or requested reasoning policy is unavailable");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    if (request->schema_version == YVEX_PROVIDER_SCHEMA_V4) {
+        if (request->reasoning_history_policy ==
+            YVEX_REASONING_HISTORY_SOURCE_DEFAULT)
+            resolved_drop = conversation->drop_prior_reasoning_by_default;
+        else
+            resolved_drop = request->reasoning_history_policy ==
+                            YVEX_REASONING_HISTORY_DROP;
+    } else {
+        resolved_drop = request->schema_version == YVEX_PROVIDER_SCHEMA_V1 ||
+                        request->drop_thinking;
+    }
+    *reasoning = resolved;
+    *drop = resolved_drop;
+    return YVEX_OK;
+}
+
+static int provider_v2_system(
+    provider_builder *builder, const yvex_conversation_protocol *conversation,
+    const yvex_provider_request *request, yvex_reasoning_policy reasoning,
+    yvex_error *err)
+{
+    const yvex_provider_message *system =
+        request->messages[0].role == YVEX_PROVIDER_ROLE_SYSTEM
+            ? &request->messages[0] : NULL;
+    const char *instruction = provider_reasoning_instruction(conversation,
+                                                              reasoning);
+    yvex_provider_span content = {0};
+    unsigned long long index;
+    int controls = instruction[0] || request->tool_count ||
+                   request->response_format != YVEX_PROVIDER_RESPONSE_TEXT;
+    int rc;
+    if (system && !span_trim(system->content, &content))
+        return YVEX_ERR_FORMAT;
+    if (request->response_format != YVEX_PROVIDER_RESPONSE_TEXT &&
+        !conversation->response_format_prefix[0]) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED,
+                       "tokenizer.provider.response-format",
+                       "source conversation policy has no JSON response-format grammar");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    if (!controls && !content.count) return YVEX_OK;
+    rc = literal(builder, conversation->system, err);
+    if (rc == YVEX_OK && instruction[0])
+        rc = literal(builder, instruction, err);
+    if (rc == YVEX_OK && instruction[0] &&
+        (request->tool_count || request->response_format !=
+                                    YVEX_PROVIDER_RESPONSE_TEXT ||
+         content.count))
+        rc = literal(builder, "\n\n", err);
+    if (rc == YVEX_OK && request->tool_count)
+        rc = literal(builder, conversation->tools_prefix, err);
+    for (index = 0u; rc == YVEX_OK && index < request->tool_count; ++index) {
+        rc = literal(builder, "\n", err);
+        if (rc == YVEX_OK)
+            rc = append_tool_schema(builder, conversation,
+                                    request->schema_version,
+                                    &request->tools[index], err);
+    }
+    if (rc == YVEX_OK && request->tool_count)
+        rc = literal(builder, conversation->tools_suffix, err);
+    if (rc == YVEX_OK &&
+        request->response_format == YVEX_PROVIDER_RESPONSE_JSON_OBJECT) {
+        if (request->tool_count) rc = literal(builder, "\n\n", err);
+        if (rc == YVEX_OK)
+            rc = literal(builder, conversation->response_format_prefix, err);
+        if (rc == YVEX_OK)
+            rc = literal(builder, "{\"type\": \"json_object\"}", err);
+    }
+    if (rc == YVEX_OK && content.count && controls)
+        rc = literal(builder, "\n\n", err);
+    if (rc == YVEX_OK && content.count)
+        rc = append(builder, content.bytes, content.count, err);
+    return rc == YVEX_OK
+               ? literal(builder, conversation->message_end, err) : rc;
+}
+
+static int provider_v2_assistant(
+    provider_builder *builder, const yvex_conversation_protocol *conversation,
+    const yvex_provider_message *message, int preserve_reasoning,
+    yvex_error *err)
+{
+    yvex_provider_span content, reasoning = {0};
+    int rc;
+    if (!span_trim(message->content, &content) ||
+        !span_trim(message->reasoning_content, &reasoning))
+        return YVEX_ERR_FORMAT;
+    rc = literal(builder, conversation->assistant, err);
+    if (rc == YVEX_OK && preserve_reasoning)
+        rc = literal(builder, conversation->thinking_start, err);
+    if (rc == YVEX_OK && preserve_reasoning)
+        rc = literal(builder, conversation->thinking_start_suffix, err);
+    if (rc == YVEX_OK && preserve_reasoning && reasoning.count)
+        rc = append(builder, reasoning.bytes, reasoning.count, err);
+    if (rc == YVEX_OK && preserve_reasoning)
+        rc = literal(builder, conversation->thinking_end_prefix, err);
+    if (rc == YVEX_OK && preserve_reasoning)
+        rc = literal(builder, conversation->thinking_end, err);
+    if (rc == YVEX_OK && preserve_reasoning)
+        rc = literal(builder, conversation->thinking_end_suffix, err);
+    if (rc == YVEX_OK && content.count)
+        rc = append(builder, content.bytes, content.count, err);
+    if (rc == YVEX_OK && message->tool_call_count && content.count)
+        rc = literal(builder, "\n\n", err);
+    if (rc == YVEX_OK && message->tool_call_count)
+        rc = append_tool_calls(builder, conversation, message->tool_calls,
+                               message->tool_call_count, err);
+    return rc == YVEX_OK
+               ? literal(builder, conversation->message_end, err) : rc;
+}
+
+static int provider_v2_turns(
+    provider_builder *builder, const yvex_conversation_protocol *conversation,
+    const yvex_provider_request *request, int drop_reasoning,
+    yvex_error *err)
+{
+    unsigned long long index = request->messages[0].role ==
+                                       YVEX_PROVIDER_ROLE_SYSTEM,
+                       last_user = ULLONG_MAX;
+    yvex_provider_role prior = YVEX_PROVIDER_ROLE_SYSTEM;
+    int tool_group = 0, rc = YVEX_OK;
+    for (unsigned long long scan = request->message_count; scan > index; --scan)
+        if (request->messages[scan - 1u].role == YVEX_PROVIDER_ROLE_USER) {
+            last_user = scan - 1u;
+            break;
+        }
+    for (; index < request->message_count && rc == YVEX_OK; ++index) {
+        const yvex_provider_message *message = &request->messages[index];
+        yvex_provider_span content;
+        if (!span_trim(message->content, &content)) return YVEX_ERR_FORMAT;
+        if (message->role == YVEX_PROVIDER_ROLE_DEVELOPER ||
+            message->role == YVEX_PROVIDER_ROLE_SYSTEM)
+            return YVEX_ERR_UNSUPPORTED;
+        if (message->role == YVEX_PROVIDER_ROLE_USER) {
+            tool_group = 0;
+            rc = literal(builder, conversation->user, err);
+            if (rc == YVEX_OK)
+                rc = append(builder, content.bytes, content.count, err);
+            if (rc == YVEX_OK)
+                rc = literal(builder, conversation->message_end, err);
+        } else if (message->role == YVEX_PROVIDER_ROLE_ASSISTANT) {
+            if (prior != YVEX_PROVIDER_ROLE_USER &&
+                prior != YVEX_PROVIDER_ROLE_TOOL)
+                return YVEX_ERR_FORMAT;
+            tool_group = 0;
+            rc = provider_v2_assistant(
+                builder, conversation, message,
+                !drop_reasoning || index > last_user, err);
+        } else if (message->role == YVEX_PROVIDER_ROLE_TOOL) {
+            if (!tool_group)
+                rc = literal(builder, conversation->tool_result_group_start,
+                             err);
+            if (rc == YVEX_OK)
+                rc = literal(builder, conversation->tool_result_start, err);
+            if (rc == YVEX_OK)
+                rc = append(builder, content.bytes, content.count, err);
+            if (rc == YVEX_OK)
+                rc = literal(builder, conversation->tool_result_end, err);
+            tool_group = 1;
+            if (rc == YVEX_OK &&
+                (index + 1u == request->message_count ||
+                 request->messages[index + 1u].role !=
+                     YVEX_PROVIDER_ROLE_TOOL)) {
+                rc = literal(builder, conversation->message_end, err);
+                tool_group = 0;
+            }
+        }
+        prior = message->role;
+    }
+    if (rc == YVEX_OK && prior != YVEX_PROVIDER_ROLE_USER &&
+        prior != YVEX_PROVIDER_ROLE_TOOL)
+        rc = YVEX_ERR_FORMAT;
+    return rc;
+}
+
+static int provider_prompt_v2(
+    provider_builder *builder, const yvex_tokenizer *tokenizer,
+    const yvex_provider_request *request, yvex_error *err)
+{
+    const yvex_conversation_protocol *conversation = tokenizer->conversation;
+    yvex_reasoning_policy reasoning;
+    int drop, rc = provider_prompt_policy(tokenizer, request, &reasoning,
+                                           &drop, err);
+    if (rc == YVEX_OK)
+        rc = provider_v2_system(builder, conversation, request, reasoning,
+                                err);
+    if (rc == YVEX_OK)
+        rc = provider_v2_turns(builder, conversation, request, drop, err);
+    if (rc == YVEX_OK)
+        rc = literal(builder, conversation->assistant, err);
+    if (rc == YVEX_OK)
+        rc = literal(builder, conversation->thinking_start, err);
+    if (rc == YVEX_OK)
+        rc = literal(builder, conversation->thinking_start_suffix, err);
+    if (rc == YVEX_OK && reasoning == YVEX_REASONING_DISABLED)
+        rc = literal(builder, conversation->thinking_end_prefix, err);
+    if (rc == YVEX_OK && reasoning == YVEX_REASONING_DISABLED)
+        rc = literal(builder, conversation->thinking_end, err);
+    if (rc == YVEX_OK && reasoning == YVEX_REASONING_DISABLED)
+        rc = literal(builder, conversation->thinking_end_suffix, err);
+    return rc;
+}
+
 /*
  * Render the sealed provider request through the exact compiled conversation policy.
  *
@@ -810,6 +1094,7 @@ int yvex_tokenizer_provider_prompt(
     unsigned long long index, controls_at = ULLONG_MAX;
     unsigned long long last_user = ULLONG_MAX;
     yvex_provider_role prior = YVEX_PROVIDER_ROLE_SYSTEM;
+    yvex_reasoning_policy reasoning;
     int user_group = 0, effective_drop, thinking, rc;
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -819,10 +1104,23 @@ int yvex_tokenizer_provider_prompt(
         yvex_provider_request_validate(request, err) != YVEX_OK)
         return YVEX_ERR_INVALID_ARG;
     conversation = tokenizer->conversation;
+    rc = provider_prompt_policy(tokenizer, request, &reasoning,
+                                &effective_drop, err);
+    if (rc != YVEX_OK) return rc;
+    if (conversation->schema_version ==
+        YVEX_CONVERSATION_PROTOCOL_SCHEMA_V2) {
+        rc = provider_prompt_v2(&builder, tokenizer, request, err);
+        if (rc != YVEX_OK) {
+            free(builder.data);
+            if (!yvex_error_code(err))
+                yvex_error_set(err, rc, "tokenizer.provider.prompt",
+                               "provider messages do not satisfy the role-enveloped prompt semantics");
+            return rc;
+        }
+        goto publish;
+    }
     thinking = request->schema_version != YVEX_PROVIDER_SCHEMA_V1 &&
-               request->reasoning_policy != YVEX_REASONING_DISABLED;
-    effective_drop = request->schema_version == YVEX_PROVIDER_SCHEMA_V1 ||
-                     request->drop_thinking;
+               reasoning != YVEX_REASONING_DISABLED;
     if (request->tool_count && conversation->tools_preserve_reasoning)
         effective_drop = 0;
     memset(rendered, 0, sizeof(*rendered));
@@ -843,7 +1141,7 @@ int yvex_tokenizer_provider_prompt(
     }
     rc = literal(&builder, conversation->bos, err);
     if (rc == YVEX_OK &&
-        request->reasoning_policy == YVEX_REASONING_MAXIMUM)
+        reasoning == YVEX_REASONING_MAXIMUM)
         rc = literal(&builder, conversation->reasoning_effort_max, err);
     if (rc == YVEX_OK && controls_at == ULLONG_MAX)
         rc = append_controls(&builder, conversation, request, err);
@@ -933,6 +1231,7 @@ int yvex_tokenizer_provider_prompt(
                        "provider messages do not satisfy the compiled prompt semantics");
         return rc;
     }
+publish:
     rendered->text = (char *)builder.data;
     rendered->len = builder.count;
     rendered->generation_prompt = 1;
@@ -1035,12 +1334,79 @@ static int attribute(const unsigned char **cursor, const unsigned char *end,
     return 1;
 }
 
-static int tool_admitted(const yvex_provider_request *request, const char *name)
+static const yvex_provider_function_tool *tool_find(
+    const yvex_provider_request *request, const char *name)
 {
     unsigned long long index;
     for (index = 0u; index < request->tool_count; ++index)
-        if (strcmp(request->tools[index].name, name) == 0) return 1;
-    return 0;
+        if (strcmp(request->tools[index].name, name) == 0)
+            return &request->tools[index];
+    return NULL;
+}
+
+static int tool_parameter_type(const yvex_provider_function_tool *tool,
+                               const char *parameter, int *is_string)
+{
+    yvex_json json;
+    yvex_json_iter root, properties, schema;
+    yvex_json_item item;
+    char key[YVEX_JSON_KEY_CAP], type[32];
+    int found = 0;
+
+    if (!tool || !parameter || !is_string ||
+        tool->parameters_json.count > SIZE_MAX)
+        return 0;
+    yvex_json_init(&json, (const char *)tool->parameters_json.bytes,
+                   (size_t)tool->parameters_json.count);
+    if (!yvex_json_iter_begin(&json, &root, YVEX_JSON_COLLECTION_OBJECT))
+        return 0;
+    while ((item = yvex_json_object_member(&root, key, sizeof(key))) ==
+           YVEX_JSON_ITEM_READY) {
+        if (strcmp(key, "properties") != 0) {
+            if (!yvex_json_skip_value(&json)) return 0;
+            continue;
+        }
+        if (!yvex_json_iter_begin(&json, &properties,
+                                  YVEX_JSON_COLLECTION_OBJECT))
+            return 0;
+        while ((item = yvex_json_object_member(&properties, key,
+                                               sizeof(key))) ==
+               YVEX_JSON_ITEM_READY) {
+            if (strcmp(key, parameter) != 0) {
+                if (!yvex_json_skip_value(&json)) return 0;
+                continue;
+            }
+            if (found || !yvex_json_iter_begin(
+                             &json, &schema, YVEX_JSON_COLLECTION_OBJECT))
+                return 0;
+            while ((item = yvex_json_object_member(&schema, key,
+                                                   sizeof(key))) ==
+                   YVEX_JSON_ITEM_READY) {
+                if (strcmp(key, "type") == 0) {
+                    if (found || !yvex_json_string(&json, type, sizeof(type)))
+                        return 0;
+                    found = 1;
+                    *is_string = strcmp(type, "string") == 0;
+                    if (!*is_string && strcmp(type, "number") != 0 &&
+                        strcmp(type, "integer") != 0 &&
+                        strcmp(type, "boolean") != 0 &&
+                        strcmp(type, "object") != 0 &&
+                        strcmp(type, "array") != 0 &&
+                        strcmp(type, "null") != 0)
+                        return 0;
+                } else if (!yvex_json_skip_value(&json)) {
+                    return 0;
+                }
+            }
+            if (item != YVEX_JSON_ITEM_END || schema.trailing_separator ||
+                !found)
+                return 0;
+        }
+        if (item != YVEX_JSON_ITEM_END || properties.trailing_separator)
+            return 0;
+    }
+    return item == YVEX_JSON_ITEM_END && !root.trailing_separator && found &&
+           yvex_json_complete(&json);
 }
 
 static int completion_special_valid(
@@ -1070,29 +1436,55 @@ static int conversation_output_parse(
     conversation_output_view *view, yvex_error *err)
 {
     const unsigned char *reasoning_end;
-    size_t delimiter_count;
+    unsigned char delimiter[REASONING_DELIMITER_CAP + 1u];
+    size_t delimiter_count = 0u;
 
     if (view) memset(view, 0, sizeof(*view));
     if (!tokenizer || !tokenizer->plan.sealed ||
         !conversation_admitted(tokenizer) ||
         !view || (!bytes && byte_count) || !valid_utf8(bytes, byte_count) ||
-        policy > YVEX_REASONING_MAXIMUM) {
+        !yvex_reasoning_request_policy_valid(policy)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "tokenizer.output.grammar",
                        "admitted policy and valid completion bytes are required");
         return YVEX_ERR_INVALID_ARG;
+    }
+    if (policy == YVEX_REASONING_SOURCE_DEFAULT)
+        policy = tokenizer->conversation->default_reasoning_policy;
+    if (!yvex_reasoning_policy_valid(policy)) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "tokenizer.output.grammar",
+                       "source-default reasoning policy cannot be resolved");
+        return YVEX_ERR_UNSUPPORTED;
     }
     if (policy == YVEX_REASONING_DISABLED) {
         view->final.bytes = bytes;
         view->final.count = byte_count;
     } else {
-        reasoning_end = find_bytes(bytes, byte_count,
-                                   tokenizer->conversation->thinking_end);
+        const char *parts[] = {
+            tokenizer->conversation->thinking_end_prefix,
+            tokenizer->conversation->thinking_end,
+            tokenizer->conversation->thinking_end_suffix};
+        unsigned int index;
+        for (index = 0u; index < sizeof(parts) / sizeof(parts[0]); ++index) {
+            size_t count = strlen(parts[index]);
+            if (count > REASONING_DELIMITER_CAP - delimiter_count) {
+                yvex_error_set(err, YVEX_ERR_BOUNDS,
+                               "tokenizer.output.grammar",
+                               "source reasoning delimiter exceeds parser capacity");
+                return YVEX_ERR_BOUNDS;
+            }
+            memcpy(delimiter + delimiter_count, parts[index], count);
+            delimiter_count += count;
+        }
+        delimiter[delimiter_count] = '\0';
+        reasoning_end = delimiter_count
+                            ? find_bytes(bytes, byte_count,
+                                         (const char *)delimiter)
+                            : NULL;
         if (!reasoning_end) {
             yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.output.grammar",
                            "thinking completion is missing its source delimiter");
             return YVEX_ERR_FORMAT;
         }
-        delimiter_count = strlen(tokenizer->conversation->thinking_end);
         view->reasoning.bytes = bytes;
         view->reasoning.count = (unsigned long long)(reasoning_end - bytes);
         view->final.bytes = reasoning_end + delimiter_count;
@@ -1134,32 +1526,45 @@ static int parse_invoke(const yvex_conversation_protocol *conversation,
     char string_kind[6];
     unsigned long long parameter_count = 0u;
     const unsigned char *cursor = *position;
+    const yvex_provider_function_tool *tool = NULL;
     int rc = YVEX_OK;
     if (!consume(&cursor, end, conversation->tool_invoke_start) ||
         !attribute(&cursor, end, conversation->tool_invoke_name_end,
                    call->name, sizeof(call->name)) ||
-        !tool_admitted(request, call->name) ||
+        !(tool = tool_find(request, call->name)) ||
         literal(&arguments, "{", err) != YVEX_OK)
         rc = YVEX_ERR_FORMAT;
     while (rc == YVEX_OK && cursor < end &&
            !starts_with(cursor, end, conversation->tool_invoke_end)) {
         const unsigned char *value, *close;
         size_t parameter_size;
+        int is_string = 0;
         if (!consume(&cursor, end, conversation->tool_parameter_start) ||
             !attribute(&cursor, end,
                        conversation->tool_parameter_name_end, parameter,
-                       sizeof(parameter)) ||
-            !attribute(&cursor, end,
-                       conversation->tool_parameter_kind_end, string_kind,
-                       sizeof(string_kind))) {
+                       sizeof(parameter))) {
+            rc = YVEX_ERR_FORMAT;
+            break;
+        }
+        if (conversation->tool_grammar ==
+            YVEX_CONVERSATION_TOOL_GRAMMAR_TYPED_ATTRIBUTES) {
+            if (!attribute(&cursor, end,
+                           conversation->tool_parameter_kind_end, string_kind,
+                           sizeof(string_kind)) ||
+                (strcmp(string_kind, "true") != 0 &&
+                 strcmp(string_kind, "false") != 0)) {
+                rc = YVEX_ERR_FORMAT;
+                break;
+            }
+            is_string = strcmp(string_kind, "true") == 0;
+        } else if (!tool_parameter_type(tool, parameter, &is_string)) {
             rc = YVEX_ERR_FORMAT;
             break;
         }
         value = cursor;
         close = find_bytes(cursor, (unsigned long long)(end - cursor),
                            conversation->tool_parameter_end);
-        if (!close || (strcmp(string_kind, "true") != 0 &&
-                       strcmp(string_kind, "false") != 0)) {
+        if (!close) {
             rc = YVEX_ERR_FORMAT;
             break;
         }
@@ -1177,7 +1582,7 @@ static int parse_invoke(const yvex_conversation_protocol *conversation,
             rc = json_string(&arguments, (const unsigned char *)parameter,
                              strlen(parameter), err);
         if (rc == YVEX_OK) rc = literal(&arguments, ": ", err);
-        if (rc == YVEX_OK && strcmp(string_kind, "true") == 0)
+        if (rc == YVEX_OK && is_string)
             rc = json_string(&arguments, value,
                              (unsigned long long)(close - value), err);
         else if (rc == YVEX_OK) {
@@ -1227,26 +1632,29 @@ static int parse_calls(const yvex_conversation_protocol *conversation,
 
     *calls = NULL;
     *call_count = 0u;
-    if (!consume(&cursor, end, conversation->tool_calls_start))
+    int wrapped = conversation->tool_grammar ==
+                  YVEX_CONVERSATION_TOOL_GRAMMAR_TYPED_ATTRIBUTES;
+    if (wrapped && !consume(&cursor, end, conversation->tool_calls_start))
         rc = YVEX_ERR_FORMAT;
     owned = calloc(YVEX_PROVIDER_MAX_TOOLS, sizeof(*owned));
     if (!owned) return YVEX_ERR_NOMEM;
     while (rc == YVEX_OK && cursor < end &&
-           !starts_with(cursor, end, conversation->tool_calls_end)) {
+           (!wrapped ||
+            !starts_with(cursor, end, conversation->tool_calls_end))) {
         if (count >= YVEX_PROVIDER_MAX_TOOLS)
             rc = YVEX_ERR_BOUNDS;
         else
             rc = parse_invoke(conversation, request, &cursor, end,
                               &owned[count], err);
         if (rc == YVEX_OK) ++count;
-        if (rc == YVEX_OK &&
-            (cursor >= end || cursor[0] != '\n'))
-            rc = YVEX_ERR_FORMAT;
-        if (rc == YVEX_OK) ++cursor;
+        if (rc == YVEX_OK && cursor < end) {
+            if (cursor[0] != '\n') rc = YVEX_ERR_FORMAT;
+            else ++cursor;
+        }
     }
-    if (rc == YVEX_OK &&
-        (!count || !consume(&cursor, end, conversation->tool_calls_end) ||
-         cursor != end))
+    if (rc == YVEX_OK && (!count ||
+        (wrapped && !consume(&cursor, end, conversation->tool_calls_end)) ||
+        cursor != end))
         rc = YVEX_ERR_FORMAT;
     if (rc != YVEX_OK) {
         unsigned long long index;
@@ -1293,8 +1701,12 @@ int yvex_tokenizer_parse_provider_completion(
         tokenizer, request->reasoning_policy, bytes, byte_count, &view, err);
     if (rc != YVEX_OK) return rc;
     candidate.schema_version = YVEX_TOKENIZER_PROVIDER_RESULT_SCHEMA_V2;
-    tool = find_bytes(view.final.bytes, view.final.count,
-                      tokenizer->conversation->tool_calls_start);
+    tool = find_bytes(
+        view.final.bytes, view.final.count,
+        tokenizer->conversation->tool_grammar ==
+                YVEX_CONVERSATION_TOOL_GRAMMAR_XML_ELEMENTS
+            ? tokenizer->conversation->tool_invoke_start
+            : tokenizer->conversation->tool_calls_start);
     candidate.reasoning_content_count = view.reasoning.count;
     candidate.content_count = tool
                                   ? (unsigned long long)(tool - view.final.bytes)

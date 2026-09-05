@@ -1173,6 +1173,11 @@ int yvex_transform_ir_validate_and_seal(
     yvex_core_text_copy(ir->summary.unresolved_requirements_identity,
                         sizeof(ir->summary.unresolved_requirements_identity),
                         builder->unresolved_requirements_identity);
+    ir->summary.source_population_count =
+        builder->header.schema_version ==
+                YVEX_TRANSFORM_IR_SPECIALIZATION_SCHEMA_VERSION
+            ? builder->header.source_population_count
+            : builder->header.expected_source_count;
     ir->summary.index_capacity = ir->source_index_capacity +
                                  ir->terminal_index_capacity;
     ir->summary.validation_steps = builder->value_count + builder->node_count +

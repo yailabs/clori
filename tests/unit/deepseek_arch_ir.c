@@ -229,7 +229,7 @@ static int test_arch_ir_golden_topology(void)
         "compiled execution and logical architecture identities are available");
     YVEX_TEST_ASSERT_STREQ(
         graph_execution->logical_transform_identity,
-        YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
+        YVEX_DEEPSEEK_CURRENT_LOGICAL_TRANSFORM_IDENTITY,
         "execution binding is bound to the admitted DSpark Transformation IR");
     YVEX_TEST_ASSERT(
         strcmp(logical_identity, graph_execution->logical_transform_identity) != 0,
@@ -832,18 +832,9 @@ static int test_arch_ir_report_consumer_and_family_preservation(void)
 
     arch_ir_verification_fixture(&source);
     YVEX_TEST_ASSERT(
-        compiler && compiler->physical_execution_policy &&
-            compiler->physical_execution_policy->schema_version ==
-                YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V4 &&
-            strcmp(compiler->physical_execution_policy->expert_kernel_family,
-                   YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT) == 0 &&
-            compiler->physical_execution_policy->expert_worklist_width_mask == 0x1feull &&
-            compiler->physical_execution_policy->expert_tensor_core_minimum == 0ull &&
-            !compiler->physical_execution_policy->expert_tensor_core_kernel_family &&
-            compiler->physical_execution_policy->derived_asset_qtype_mask == 0ull &&
-            (compiler->physical_execution_policy->encoded_activation_consumer_mask &
-             (1ull << YVEX_EXECUTION_CONSUMER_SHARED_EXPERT)) != 0ull,
-        "DeepSeek compilation retains real worklist width without an unproven Tensor Core cutover");
+        compiler && compiler->operator_graph_build && compiler->execution_capabilities &&
+            compiler->transformer_policy && compiler->physical_variant,
+        "DeepSeek compiler exposes semantic lowering without deployment policy");
     YVEX_TEST_ASSERT(compiler->binding_pipeline &&
                          compiler->binding_pipeline->semantic_model_build(
                              &semantic, &source, &err) == YVEX_OK,

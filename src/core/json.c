@@ -21,6 +21,7 @@ void yvex_json_init(yvex_json *json, const char *data, size_t length)
     json->cursor = data;
     json->end = data ? data + length : data;
     json->depth = 0u;
+    json->extensions = 0u;
 }
 
 char *yvex_read_bounded_file(const char *path,
@@ -399,6 +400,8 @@ int yvex_json_skip_value(yvex_json *json)
     if (*json->cursor == 't') return source_json_literal(json, "true");
     if (*json->cursor == 'f') return source_json_literal(json, "false");
     if (*json->cursor == 'n') return source_json_literal(json, "null");
+    if (*json->cursor == 'I' && (json->extensions & YVEX_JSON_EXTENSION_POSITIVE_INFINITY))
+        return source_json_literal(json, "Infinity");
     return source_json_skip_number(json);
 }
 

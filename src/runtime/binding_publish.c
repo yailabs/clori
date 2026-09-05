@@ -17,6 +17,9 @@ int yvex_runtime_binding_compile_publish(
     yvex_runtime_binding_prepare_request prepare = {0};
     yvex_runtime_binding_prepare_result result = {0};
     yvex_runtime_binding_failure failure = {0};
+    yvex_runtime_binding_failure reopen_failure = {0};
+    yvex_runtime_binding_summary reopened_summary = {0};
+    yvex_runtime_binding *reopened = NULL;
     void *owner = NULL;
     int rc;
 
@@ -76,10 +79,23 @@ int yvex_runtime_binding_compile_publish(
     }
     if (rc == YVEX_OK)
         rc = yvex_runtime_binding_prepare(&prepare, &result, &failure, err);
+    if (rc != YVEX_OK &&
+        failure.code == YVEX_RUNTIME_BINDING_FAILURE_CONFLICT &&
+        failure.path[0]) {
+        rc = yvex_runtime_binding_open(
+            &reopened, failure.path, &reopened_summary, NULL,
+            &reopen_failure, err);
+        if (rc == YVEX_OK) {
+            yvex_core_text_copy(result.path, sizeof(result.path), failure.path);
+            result.summary = reopened_summary;
+            result.published = 0;
+        }
+    }
     if (rc == YVEX_OK) {
         memcpy(path, result.path, YVEX_PATH_CAP);
         *published = result.published;
     }
+    yvex_runtime_binding_close(reopened);
     if (products.release) products.release(owner);
     return rc;
 }

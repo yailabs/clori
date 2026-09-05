@@ -1,320 +1,80 @@
 # AGENTS.md
 
-## 0. Repository contract
+## Repository purpose
 
-YVEX is a native C/CUDA model-compilation and runtime system for identity-bound
-verified open-weight inference. Every patch must make the repository more
-executable, more tested, or more internally coherent. Documentation records
-implemented truth; it does not create capability.
+YVEX is a native C/CUDA compiler and runtime for identity-bound verified
+open-weight inference. Code and tests own capability. Documentation explains
+implemented truth and never promotes a fixture, report, or name into support.
 
-Documentation changes name the admitted fact that changed and its canonical
-owning document under `docs/development/documentation-policy.md`. Generic
-instructions to “update all docs” and unrestricted README rewrites are not an
-accepted documentation scope. Projections may summarize and link, but they do
-not copy mutable authority or redefine the owning contract.
-
-Work in this order unless the delivery explicitly owns a doctrine boundary:
+Work in this order unless a delivery explicitly owns a policy boundary:
 
 1. code;
 2. tests;
-3. project control and documentation.
+3. project control and living documentation.
 
-Model weights, complete generated artifacts, runtime-state dumps, raw
-benchmark/profile records, generated charts, logs, build products, local
-registries, credentials, and downloaded dependencies are not tracked. A
-separately authorized documentation delivery may add a manually curated static
-diagram; it is not runtime evidence or release authority. A curated deterministic SVG derived from that evidence may be
-reviewed externally, but is not tracked under `docs/assets/` as documentation
-or runtime evidence. Runtime benchmark baselines and CSV/JSON evidence are
-untracked identity-bound external operator assets.
+Model weights, generated packages, runtime dumps, raw profiles, local
+registries, credentials, downloaded dependencies, and build products stay out
+of Git.
 
-### Concurrent agent development
+## Shared development
 
-Any number of agents may work concurrently on YVEX. They may use different or
-shared branches, families, tasks, files, or distinct regions of one file. A
-branch is a development and integration line, not an agent identity. Repository
-policy does not schedule agents or prescribe whether an external harness uses
-worktrees, clones, sandboxes, containers, remote environments, or another
-workspace topology.
+A branch is an integration line, not an agent or model-family identity. In a
+shared worktree, HEAD, the tree, and the index may move between operations.
 
-Each agent owns only its assigned delivery and semantic scope. Before editing,
-identify the concrete task, affected semantic owners, expected files, functions
-or regions, and affected tests or generated outputs. Expand that scope only
-when repository evidence requires it; never silently absorb unrelated work.
+Before editing or committing:
 
-Assume unrelated modifications may belong to another active delivery. Before
-editing and before committing, inspect the current branch and HEAD, the complete
-working-tree diff, the staged diff, and the files and hunks owned by the current
-delivery. Never discard, overwrite, restore, stash, reset, clean, or rewrite
-work outside that scope. In particular, `git reset --hard`, `git clean`, blanket
-`git restore`, automatic whole-worktree stashes, force-push, rebasing published
-history, and mechanical ours/theirs conflict resolution are forbidden when
-they could affect unrelated work.
+- read the current branch, HEAD, status, staged diff, complete unstaged diff,
+  and the exact file/region being changed;
+- identify the delivery's semantic owner and affected tests;
+- preserve unrelated work, including compatible changes in the same file;
+- stage only owned paths or hunks and review the staged diff.
 
-Stage only owned paths or hunks, and review the staged diff before committing.
-Do not use `git add -A` or `git add .` when unrelated modifications exist. Each
-commit contains one coherent delivery and excludes unrelated concurrent work.
+Never use destructive cleanup, whole-tree stashes, rebase of published
+history, force push, or mechanical ours/theirs resolution to remove another
+delivery. A real conflict is incompatible behavior in the same ABI, function,
+record, lines, lifecycle, or invariant; stop only that overlap. Integrate
+published histories with merge. Resource locks serialize only the actual
+exclusive resource, such as the GPU or a daemon port.
 
-Different agents may modify one file when their changes affect distinct
-functions, regions, or compatible semantics; a filename alone does not create
-a conflict. A real conflict exists when tasks require incompatible changes to
-the same lines, function, data structure, ABI, contract, ownership boundary, or
-invariant. Stop only the conflicting part, report that exact overlap, and
-continue independent work. Never silently choose one implementation or erase
-the other.
+## Source layout and ownership
 
-Multiple agents may contribute to one branch. Each agent commits focused
-semantic boundaries, rereads the current HEAD before committing, accepts valid
-concurrent branch advancement, validates the combined repository state, and
-never rewrites another agent's published history. An advancing branch HEAD is
-normal concurrent development, not corruption.
+Implementation lives under `src/`, installed headers under
+`include/yvex/`, and tests under `tests/`. Paths are the namespace:
+lowercase snake_case names, no `yvex_` source prefixes, no repeated directory
+tokens, no root C sources/private headers, no flattened object identities, and
+no mechanically paired private files.
 
-Feature branches advance independently and need not share a HEAD. Family work
-remains on its family branch. A generic change discovered there is isolated in
-a dedicated generic commit, reviewed and integrated into `main` separately,
-then merged from `main` into applicable branches. Do not merge an entire family
-branch into `main` merely to transport one generic change. `main` remains
-integration-only and is not a normal development branch.
+`config/source_owners.tsv` is the single production membership and ownership
+authority. Every C, CUDA, and header file under `src/` and `include/` appears
+exactly once. A new production file must own an ABI, lifecycle, reusable
+multi-consumer algorithm, backend/platform boundary, generated boundary,
+admitted family recipe, or executable entrypoint. Otherwise extend the
+existing owner or keep the helper static.
 
-Integrate published histories with merge, not rebase. For every textual
-conflict, understand both behaviors, preserve compatible changes, resolve the
-semantic contract rather than only conflict markers, and rerun tests for every
-affected owner. Also inspect semantic conflicts when Git reports no textual
-conflict, especially around shared ABIs, lifecycles, data structures, numeric
-policies, and ownership boundaries. Never force-push or rewrite published
-branch history.
+Headers have three tiers:
 
-Do not introduce a repository-wide agent lock, scheduler, registry, daemon, or
-agent database. Exclusive coordination is appropriate only for a genuinely
-exclusive resource such as one incompatible GPU workload, daemon or port,
-benchmark environment, mutable artifact output, or external runtime state. A
-resource-specific lock serializes only that resource and never unrelated source
-development.
+- `include/yvex/*.h`: installed public ABI;
+- `include/yvex/internal/*.h`: cross-subsystem non-installed ABI;
+- `src/<subsystem>/private.h`: source-local ABI used by multiple translation
+  units or a required backend boundary.
 
-## 1. Directory is the namespace
+Public headers are self-contained in C and C++. Production does not include
+`yvex/api.h`, internal headers do not include source-private headers, and
+source names every dependency explicitly. A non-public global requires an
+internal ABI and multiple production consumers; implementation helpers are
+`static`.
 
-The path identifies the source namespace. Owned filenames do not repeat the
-project, their immediate directory, or their complete ownership hierarchy.
+Source files are limited to 2,000 physical lines, headers to 600, functions to
+200, and code to the warning/style policy in `config/c_policy.json`. Fix
+warnings at their owner. Do not hide size in macros, generated blobs, or
+compressed one-line code.
 
-Hard rules, enforced by `tests/test_repository_layout.sh`:
+## Architecture
 
-- implementation lives under `src/`;
-- installed public headers live under `include/yvex/`;
-- tests live under `tests/` and never enter production objects;
-- filenames use lowercase snake_case;
-- owned filenames never begin with `yvex_`;
-- basenames are at most 32 characters including the extension;
-- paths are at most five components below the repository root;
-- `_internal.c`, `_private.c`, and mechanically paired private files are
-  forbidden;
-- a basename does not repeat its immediate directory token;
-- root C sources and root private headers are forbidden;
-- source-relative object paths are mandatory, for example
-  `build/obj/src/graph/plan.o`;
-- static-archive members preserve those source-relative identities; duplicate
-  member basenames are not an acceptable approximation;
-- build logic may not flatten objects or rely on long prefixes to avoid
-  collisions.
-
-The installed namespace directory `include/yvex/`, exported `yvex_` symbols,
-the `yvex` and `yvexd` executables, standard root documents, and external ABI
-filenames are the only categorical naming exceptions.
-
-## 2. Semantic owner admission
-
-A new file is not an implementation convenience. It is a new semantic owner
-or independently compiled boundary.
-
-A production source may exist only when it owns at least one of:
-
-1. a public or subsystem ABI;
-2. an independent resource lifecycle;
-3. a distinct reusable algorithm with multiple production consumers;
-4. an independently compiled platform or backend implementation;
-5. reproducibly generated code or ABI;
-6. one admitted family descriptor or recipe within the family budget;
-7. a necessary executable or daemon entrypoint.
-
-Otherwise extend the existing canonical owner, make helpers `static`, or merge
-the fragment. File size, development chronology, one differently named
-function, or hypothetical future reuse is not an owner boundary.
-
-A private header may survive only when at least two production translation
-units consume it or when it is a required backend/platform interface. Each
-subsystem has at most one general `private.h`. One-consumer declaration shells
-belong in the source owner. Public headers require a real installed ABI.
-Mechanical same-stem `.c`/`.h` pairing, forwarding headers, and compatibility
-headers for obsolete in-tree paths are forbidden.
-
-Explicit user authorization is required before:
-
-- exceeding a family budget;
-- adding another file to an existing semantic owner;
-- adding a layout or ownership exception;
-- introducing a public header;
-- introducing a subsystem.
-
-An accepted delivery contract may supply explicit authorization. Codex does
-not request duplicate interactive confirmation when the delivery already
-authorizes the boundary, but authorization never waives ownership, testing,
-guard, or acceptance requirements.
-
-## 3. Machine-readable ownership
-
-`config/source_owners.tsv` is the canonical source-ownership manifest. Every
-owned `.c`, `.h`, and `.cu` under `src/` and `include/` appears exactly once.
-Its tab-separated fields are:
+The dependency direction is:
 
 ```text
-path
-subsystem
-semantic_owner
-scope
-visibility
-boundary
-primary_consumers
-partition
-exception_id
-```
-
-Allowed scopes are `generic`, `family`, `backend`, and `entrypoint`. Allowed
-visibility is `public` or `private`. An owner may have one `interface` and one
-`implementation` partition; backend kernels and entrypoints use their named
-partitions. Exceptions are forbidden unless explicitly authorized and given a
-stable identifier.
-
-The same manifest is the only handwritten production source-membership list.
-`tools/generate_source_manifest.py` validates exact filesystem parity and
-projects deterministic product, toolchain, and test build classes beneath the
-selected `BUILD_DIR`; the generated Make fragment is never tracked or edited.
-The root Makefile composes products from those classes and may not repeat a
-per-file production inventory or admit sources through wildcards.
-
-Before adding or moving production code:
-
-1. identify the canonical owner and consumers;
-2. prove the admission reason above;
-3. update the manifest in the same patch;
-4. update build inputs without flattening objects;
-5. add or move focused tests with the owner;
-6. run the ownership, layout, and dependency guards.
-
-`tests/test_source_ownership.sh` rejects missing and duplicate registrations,
-fragmented owners, invalid private headers, family scope/path mismatch, family
-phase files, and family-budget violations. The manifest cannot be used to
-legitimize arbitrary fragmentation.
-
-## 4. Generic and family boundaries
-
-Generic owners implement reusable mechanisms. Family owners select facts,
-policies, schedules, and operation composition; they do not clone generic
-mechanisms.
-
-A new model family defaults to:
-
-```text
-src/model/families/<family>.c
-```
-
-An irreducible graph recipe may add:
-
-```text
-src/graph/families/<family>.c
-```
-
-A genuinely fused backend implementation may add:
-
-```text
-src/backend/<backend>/families/<family>.<ext>
-```
-
-Without explicit user authorization, one family has a maximum of three production
-sources repository-wide, one per subsystem, and one optional header
-repository-wide. Family-specific `plan`, `execute`, `sink`, `numeric`,
-`internal`, `reference`, and `report` files are forbidden.
-
-Generic attention owns the immutable history envelope, state transaction,
-sink protocol, Hadamard, activation quantization, scale codecs, deterministic
-top-k, masks, softmax, reductions, encoded matrix primitives, and backend
-admission. A family owns only irreducible scheduling, tensor-role lowering,
-recurrence, operation composition, and numeric-policy selection.
-
-## 5. C interfaces, symbols, and technical commentary
-
-Headers have exactly three tiers:
-
-- `include/yvex/*.h` is installed public ABI grouped by stable domain;
-- `include/yvex/internal/*.h` is non-installed cross-subsystem ABI;
-- a repository-qualified `src/<subsystem>/private.h` is source-local ABI shared
-  by several translation units in that subtree.
-
-`include/yvex/api.h` is an external convenience umbrella. Production code
-never includes it. Public headers include only public headers; they are
-self-contained in both C and C++. Internal headers are absent from the
-umbrella and never include source-local headers. Source code names every
-dependency explicitly with `<yvex/domain.h>`, `<yvex/internal/domain.h>`, or a
-repository-qualified path such as `"src/graph/private.h"`. Bare internal
-includes such as `"private.h"` or `"report.h"` are forbidden; include-path
-ordering is not a dependency mechanism.
-
-Exported symbols retain the `yvex_` namespace and use
-`yvex_<subsystem>_<operation>`. A family exposes one bounded registration or
-lowering entrypoint per applicable subsystem. Private functions are `static`
-and do not use `yvex_`. A non-public global requires a declared internal ABI
-and more than one production translation-unit consumer. Do not export helpers
-merely to connect artificially split files or promote diagnostics, fixtures,
-references, renderers, or family implementation types into installed ABI.
-
-Commentary is intent- and rationale-oriented, with selective contracts. Explain
-why code is shaped this way, which invariant must survive, and which
-non-obvious obligation a caller or maintainer must respect. Do not restate a
-function name, signature, assignment, loop, null check, or call. Obvious code
-stays visually quiet.
-
-`config/source_owners.tsv` is the source-ownership authority; file comments do
-not repeat it. A module comment is useful only when several functions share a
-responsibility, lifetime, strategy, concurrency or transaction invariant,
-hardware/format constraint, or deliberately rejected alternative that cannot
-be recovered locally.
-
-Public APIs and meaningful cross-subsystem ABIs document ownership transfer or
-borrowing, lifetime, thread safety, mutability, transactional visibility,
-cancellation, cleanup, buffer extent, identity consequences, or blocking when
-types alone do not establish them. Contracts use concise natural technical
-prose, not mandatory fields. A clear private helper normally needs no comment.
-
-Algorithms and performance-sensitive paths retain substantial commentary when
-data layout, scheduling, quantization, synchronization, hardware behavior, or
-a correctness condition is non-obvious. Explain the relevant trade-off and
-what a simpler-looking change would break. Measurements appear only with an
-identifiable machine/workload context and durable evidence.
-
-Place inline commentary immediately before the conceptual transition it
-protects: delayed publication, rollback order, fail-closed refusal, an
-unavoidable transfer, or a required synchronization. Commented-out code and
-ownerless `TODO`/`FIXME` markers are forbidden; an admitted maintenance marker
-uses `TODO(#ISSUE):` or `FIXME(#ISSUE):`. Structural guards reject old labeled
-templates and repeated boilerplate, but human review determines whether prose
-is actually useful.
-
-`.clang-format` is the canonical visual style: 100-column target and 120-column
-hard limit. Production translation units stay at or below 2,000 physical
-lines, headers at or below 600, and functions at or below 200. Required warning
-flags are recorded once in `config/c_policy.json` and enabled by the Makefile;
-warnings are fixed at their owner rather than globally suppressed. Code is not
-made shorter through macros, one-line statement compression, hidden generated
-implementation, or opaque callback dispatch.
-
-Use checked allocation and arithmetic, the existing typed failure style, and
-one canonical field for each fact. Do not hash C object memory, pointers,
-padding, local paths, or timestamps into semantic identities.
-
-## 6. Dependency DAG
-
-The intended dependency direction is:
-
-```text
-core / public ABI
+core/public ABI
   -> source, GGUF, artifact, model, tokenizer
   -> compilation and graph planning
   -> materialization and runtime
@@ -322,388 +82,167 @@ core / public ABI
   -> generation
   -> evaluation and benchmark
 
-domain facts -> typed reports -> CLI render -> CLI I/O
+domain facts -> typed report -> renderer -> CLI I/O
 ```
 
-Hard prohibitions, enforced by `tests/test_architecture_boundaries.sh`:
+Production never includes tests. Core/model/graph/runtime/generation never
+depend on CLI. Generic owners never include family implementations. Planning
+does not depend on backend implementation or payload bytes. Backends execute
+admitted operations and never reconstruct model topology. Cross-subsystem
+include cycles and duplicate global symbols are forbidden.
 
-- core does not depend on CLI or render;
-- model, graph, runtime, and generation do not depend on CLI;
-- generic graph and numeric owners do not depend on family implementations;
-- model planning does not depend on backend implementations or read payload
-  bytes;
-- backend code does not reconstruct model topology;
-- production never includes test code;
-- tests never become production objects;
-- report and render code do not become capability authorities;
-- runtime cannot bypass artifact admission or materialization identity;
-- family code cannot create a second qtype, dtype, failure, or identity
-  registry;
-- cross-subsystem include cycles are forbidden;
-- duplicate globally exported symbols are forbidden.
+The main authority split is:
 
-Cross-owner access uses the smallest typed ABI. A subsystem does not include
-another subsystem's private header. Tests use public or explicit test ABIs;
-private headers are allowed only for focused invariant tests that cannot be
-expressed through an admitted public boundary.
+- source owns provenance, inventories, ranges, trust, and delivery;
+- compilation owns semantic lowering, physical package legality, and immutable
+  bindings;
+- artifact owns package identity, admission, mapping, and lifecycle;
+- deployment specialization owns hardware-significant admitted implementation
+  choices;
+- an engine generation owns executable resources and stale-reference
+  boundaries;
+- sessions own mutable sequence/component state;
+- the engine scheduler owns ready execution progress;
+- execution batches and expert worklists describe real selected populations;
+- backends choose equivalent hardware implementation details;
+- evidence observes execution through typed counters/events and does not own it.
 
-## 7. Canonical capability ownership
+Runtime consumes an admitted content-addressed binding. It does not reopen
+source inventories, rebuild compiler plans, or switch on family names.
 
-The following boundaries remain distinct:
+### Family boundary
 
-- `TRACK.SOURCE` owns source identity, retained inventories, payload trust,
-  ranges, bounded reads, and transactional delivery;
-- `TRACK.COMPILATION` owns artifact-neutral transformation semantics,
-  derivation identity, physical-variant planning, and immutable bindings;
-- GGUF owners under `src/gguf/` own container ABI, qtype geometry, codecs,
-  writer planning, and structural admission according to their typed APIs;
-- artifact owners under `src/artifact/` own artifact snapshot identity,
-  complete-artifact admission, materialization, and lifecycle;
-- model families under `src/model/families/` own family facts, requirement
-  coverage, and family lowering composition;
-- graph owners under `src/graph/` own graph state, execution protocols,
-  reusable numerical operations, and family graph recipes;
-- runtime owners under `src/runtime/` own the family-neutral immutable runtime
-  model, versioned runtime binding, mutable execution sessions, reusable
-  workspace, phase-aware dispatch, and process-lifetime reuse;
-- backend owners execute admitted operations but do not infer model policy;
-- `TRACK.KV` owns persistent sequence-state geometry, allocation, capacity,
-  indexing, append/read, reuse, invalidation, and cleanup;
-- `TRACK.PREFILL` owns prompt/chunk execution that populates committed model
-  state; `TRACK.DECODE` owns repeated model-backed execution consuming it;
-- `TRACK.LOGITS` owns admission of transformer-normalized hidden state and
-  immutable output-head residency and projection to real vocabulary logits;
-  `TRACK.SAMPLING` owns token selection over those logits;
-- `TRACK.TOKENIZER` owns exact text/token conversion, templates, special
-  tokens, EOS, stop, and detokenization;
-- `TRACK.GENERATION` owns autoregressive composition of these admitted lower
-  owners, not their independent semantics or resources.
+A family owns source/config interpretation, tensor roles, semantic validation,
+declarative schedules, architecture-specific operations, topology/state
+meaning, and numerical obligations. Generic owners implement reusable
+mechanisms. A family normally has one model source, one optional graph recipe,
+one optional fused backend source, and one optional header.
 
-Source intake is not payload trust. Mapping is not transformation execution.
-Quantization is not a GGUF artifact. A complete artifact is not
-materialization. Materialization is not graph execution. A primitive is not a
-transformer. Transformer execution is not generation.
+Architecture-specific operations are valid when their semantics, reference,
+and backend implementation are explicit. Do not hide a family mechanism under
+a generic name or push generic session, sampling, allocation, protocol, or
+publication behavior into a family.
 
-Runtime execution consumes an admitted content-addressed runtime binding. It
-does not reopen source inventories, reconstruct Transformation IR, rebuild
-quantization or writer plans, or branch on family names. Family semantics enter
-through a typed adapter.
+### Backend boundary
 
-### Persistent sequence state
+Upstream declares legal work, numerical class, real populations, dependencies,
+and optional prepared representation. Deployment selects an admitted
+implementation class. A backend owns buffers, command submission,
+synchronization, launch geometry, equivalent kernels, and device profiling.
 
-The immutable runtime model owns descriptors, plans, weights, and reusable
-model resources. Each `yvex_runtime_execution_session` owns mutable persistent
-sequence state, committed position, capacity, generation, backend resources,
-invalidation, and lifecycle. Sessions sharing a model never share mutable
-state.
+CUDA types, streams, events, graph handles, warp details, and SM-specific
+choices stay below the backend boundary. Capability does not imply
+profitability. An unavailable optional acceleration uses a known-correct
+admitted fallback; integrity failure, missing mandatory semantics, or an
+explicit unsupported exact request fails closed.
 
-`yvex_attention_state_provider` owns checked generic storage, committed and
-candidate views, begin/stage/commit/abort, rollback, reset, invalidation, and
-cleanup. The DeepSeek graph family projects exact SWA/CSA/HCA geometry,
-representation, recurrence, compression, indexing, and continuity policy into
-that protocol; it does not clone storage or lifecycle. The runtime session
-coordinates the provider transaction with `yvex_runtime_state_residency`,
-whose CPU/CUDA resources stage and publish the same candidate generation before
-the logical provider commit becomes visible. Failure aborts both; reset and
-invalidation preserve that relationship.
+### State and identity
 
-Persistent KV is session-owned and creates no family-specific runtime
-hierarchy. Common owners never select family policy from target strings.
-Backend capability requires real backend-owned allocation, transfer,
-synchronization, execution, and cleanup; host-only reporting cannot establish
-CUDA state. A flat synthetic F32 cache cannot establish family-correct KV.
-Prefill and decode must consume the same committed provider boundary.
-Persistent state alone does not establish full-model prefill, transformer
-execution, model-backed decode, logits, sampling, tokenization, generation,
-evaluation, or release.
+Each runtime session owns independent mutable state. Transactional participants
+stage candidate state and publish atomically through begin, prepare, commit, or
+abort. Semantically different KV, rolling, draft, media, RNG, token-ledger, and
+decoder representations share lifecycle coordination, not storage geometry.
 
-## 8. CLI, reports, and output
+Persist or hash a fact only when another lifetime must reopen, authenticate,
+cache, invalidate, or inspect it independently. Never hash C object memory,
+pointers, padding, local paths, or timestamps. Inside one authenticated engine
+generation, prefer compact handles with recoverable cold lineage.
 
-`src/cli/main.c` dispatches only. Input adapters parse typed arguments.
-Commands call domain/report APIs and renderers. Renderers format typed facts.
-Only `src/cli/io/` and the daemon entrypoint write operator stdout/stderr.
-Explicit domain file serialization is allowed only for manifest-declared
-`transactional-io` or `file-serialization` boundaries.
+## Public ABI and product surface
 
-Domain code does not parse argv, own usage strings, render output, or classify
-failure from text. CLI and render code do not own trust, model selection,
-quantization policy, graph admission, runtime state, or capability decisions.
+One public schema/version identity maps to one layout and semantic contract.
+Audit every changed installed record under `include/yvex/`; reject stale
+layouts before reading fields absent from them. Wire protocol versions change
+only for wire-contract changes. Public headers expose durable concepts, not
+provider subprocesses, test injection, CUDA internals, scheduler structures,
+or benchmark machinery.
 
-`normal`, `table`, and `audit` are human-facing output modes. JSON and CSV are
-permitted only when the typed surface owns, documents, and tests its
-machine-readable schema. Normal output stays compact; audit carries evidence.
-No renderer or output format owns capability or may imply a higher stage.
+`yvex` is the single product executable. The persistent server may exist with
+zero engines; load/unload creates and retires exact engine generations without
+restarting host transport. Requests route by model and engine generation.
+Public strategy names express semantics such as target-only or speculative,
+not an implementation name such as DSpark.
 
-### Executable reachability
+CLI commands consume typed public/application APIs. `src/cli/main.c` only
+dispatches; input adapters parse; renderers format typed facts; only CLI I/O and
+the server entrypoint write operator output. No UI parses human output,
+fabricates telemetry, or reads backend-private state.
 
-The normal executable topology is one `yvex` product binary. Runtime-facing
-client handlers remain protocol-only while finite offline engineering handlers
-may consume admitted engine owners through a separately guarded dispatch lane.
-`yvex server MODEL` enters the foreground persistent server operation directly
-and owns both the private Unix listener and the loopback OpenAI-compatible
-adapter. Additional daemon, developer, or gateway executables are not
-compatibility surfaces.
+## Evidence
 
-Every first-class milestone that adds or changes executable behavior closes
-with a real operator-reachable command in the main `yvex` CLI. A milestone may
-declare `cli_applicability=not_applicable` only when its project-control owner
-records a repository-grounded `cli_non_applicability_reason`.
+Keep evidence ranks distinct:
 
-Make targets, test binaries, shell scripts, internal live runners, reports, and
-fixtures do not satisfy operator reachability. The CLI command invokes the
-production API directly; it never duplicates, mocks, shells out to, or wraps a
-test implementation. Prefer extending one coherent capability-oriented
-command hierarchy over adding a top-level command for each milestone.
+- software tests prove implementation contracts;
+- numerical conformance compares production with an independent reference;
+- runtime qualification proves lifecycle, transaction, cancellation, and
+  cleanup;
+- component benchmarks measure an admitted component;
+- model behavior/quality evaluation requires the tokenizer-to-text path and a
+  declared scorer;
+- release qualification combines all required gates.
 
-Every closure report classifies:
+Optimized YVEX matching older optimized YVEX is cross-implementation evidence,
+not independent authority. A tensor proof is not a complete package;
+materialization is not execution; component timing is not a model benchmark.
+Missing mandatory evidence is `BLOCKED` or `SKIP`, never a pass.
 
-- `production_capability_available`;
-- `production_api_available`;
-- `internal_live_runner_available`;
-- `operator_command_available`;
-- `end_user_path_available`;
-- `cli_applicability` and, when not applicable, its owned reason.
+Performance evidence records exact source/tree, package/binding,
+representation, backend/device/runtime, workload, sampler, warm/cold state,
+sample count, memory, and source stability. Report measured and derived facts
+separately. A performance candidate is judged by throughput, latency, memory,
+preparation cost, and numerical effect together.
 
-Every available operator command is listed exactly and executed during
-acceptance. Runtime, graph, backend, artifact execution, residency, KV,
-prefill, decode, logits, sampling, tokenizer, and generation milestones are
-presumed CLI-applicable. Pure documentation or project-control milestones may
-be not applicable when their owner records why no executable behavior changed.
+## Validation
 
-## 9. Evidence and claim discipline
-
-Use the lowest true evidence stage from the project ledger. A fixture, selected
-slice, report, digest, artifact, primitive, or external runner cannot promote
-the next boundary.
-
-Do not claim complete model-family support, runtime readiness, generation,
-evaluation, benchmark results, or release readiness without implementation, focused tests,
-failure proof, and an executable downstream consumer. DeepSeek-V4-Flash-DSpark is the
-v0.1.0 release target; it is not automatically supported by naming or artifact
-presence. Qwen, Gemma, and other families remain at their independently proven
-stages.
-
-Canonical artifact terms:
-
-- tensor proof artifact: one tensor or a bounded subset;
-- complete artifact: every required tensor and metadata item;
-- supported artifact: a complete artifact that passes materialization,
-  runtime, generation, evaluation, benchmark, and release gates.
-
-### Quality and evaluation taxonomy
-
-Quality evidence has distinct owners and cannot promote a higher stage:
-
-- **Software tests** prove typed implementation contracts.
-- **Numerical conformance** compares production math with an independent
-  exactness or tolerance contract.
-- **Runtime qualification** proves repeated lifecycle, identity, resource,
-  transaction, cancellation, invalidation, and cleanup invariants.
-- **Component benchmarks** measure one already-correct identity-bound component.
-- **Model behavior evaluation** requires the complete tokenizer-to-text path.
-- **Model quality evaluation** scores generated behavior against a task/scorer.
-- **Agent runtime evaluation** requires a separately admitted action loop,
-  tools, authorization, observation state, budgets, and termination.
-- **Release qualification** combines every gate required by one release target.
-
-Semantic owners own tests; graph/backend own conformance; runtime and residency
-own qualification; operator owns CLI acceptance; evaluation, benchmark, and
-release own their respective higher gates.
-No generic `qa_passed` or `qa_ready` fact may collapse these classes.
-Attention phases are not model phases;
-parity is not evaluation; component timing is not a model benchmark; and JSON,
-`yvexd`, external harnesses, or development agents do not establish an agent.
-
-## 10. Tests and validation
-
-Tests mirror semantic owners, not file fragments. Separate unit, integration,
-live, fault, sanitizer, and external-compatibility tests only when their
-harness or resource lifecycle differs materially.
-
-Every behavior needs a positive test. Every refusal needs a failure test.
-Numeric execution needs an independent reference, tolerance or exactness
-contract, edge cases, cleanup, and backend comparison where applicable.
-
-Validation is proportional to the changed boundary.
-
-`config/qa/registry.json` is the canonical test/evidence catalog and
-`config/qa/obligations.json` is the change-to-evidence authority. Before final
-validation, run:
+Use the canonical test catalog in `config/qa/registry.json` and change mapping
+in `config/qa/obligations.json`:
 
 ```sh
 python3 tools/qa.py plan --changed BASE
 python3 tools/qa.py run --changed BASE
 ```
 
-Inspect the versioned report under `build/qa/evidence/`. Contributors and
-agents do not replace resolved obligations with an ad hoc checklist. Additional
-focused evidence is permitted. Unknown ownership expands coverage. `PASS`,
-`FAIL`, `SKIP`, `BLOCKED`, and `ERROR` remain distinct; mandatory evidence that
-is blocked or skipped cannot support a downstream-safe claim. The canonical
-workflow and lane semantics are owned by `docs/development/qa.md`.
+The fast lane is for routine iteration; GB10/live qualification is separate.
+Do not run expensive model work for documentation or cosmetic UI changes. Use
+`/tmp/yvex-gpu.lock` for exclusive hardware qualification. Resource
+contention is `BLOCKED_BY_RESOURCE`, not a functional failure. Evidence from
+a source snapshot that moved during execution is invalid and must be rerun.
 
 Always run:
 
 ```sh
 git diff --check
 focused tests for changed owners
-affected documentation/ownership/layout/architecture guards
+affected ownership/layout/architecture/documentation guards
 git ls-files '*.safetensors' '*.bin' '*.dat'
 git ls-files '*.gguf'
 ```
 
-Executable capability changes also run the relevant build, smoke,
-core/integration, CLI acceptance, refusal, failure, and cleanup checks. Runtime,
-backend, CUDA, residency, and persistent-state changes additionally run the
-applicable no-`nvcc` fail-closed tests, CUDA checks, focused live CPU/CUDA
-evidence, ASan/LeakSanitizer and UBSan, cancellation, rollback, cleanup, and
-concurrency tests.
+Runtime/backend/CUDA/state changes also require the applicable no-NVCC,
+numerical, CPU/CUDA, sanitizer, cancellation, rollback, cleanup, and
+concurrency lanes. Build topology changes require two consecutive builds or
+checks without cleaning.
 
-Two consecutive builds/checks without cleaning are required when build
-topology or object membership changes, generated dependencies change, or
-repeat-run cleanliness belongs to the milestone acceptance. A delivery may
-require stricter validation for its boundary. Documentation-only work does not
-run live-model, CUDA, sanitizer, benchmark, or artifact-regeneration suites
-unless a changed executable contract or guard requires them.
+## Project control and closure
 
-## 11. Project control and closure
+`ROADMAP.md` is the only live macro project-control authority. Issues own
+bounded work; PRs own delivery diffs and evidence; ADRs own current durable
+decisions. Git history owns retired audits, migrations, milestone plans, and
+detailed implementation chronology.
 
-`ROADMAP.md` is the sole live macro project-control authority. It owns current
-milestone state, dependency order, release-gate state, explicit non-claims, and
-the single Active Next. Stable milestone IDs do not disappear, get reassigned,
-or silently change owner. A successor or supersession record names structural
-change explicitly.
+Commits are focused semantic boundaries and use conventional prefixes such as
+`feat`, `fix`, `refactor`, `perf`, `test`, `docs`, or `chore`.
+Do not commit rejected experiments or generated/runtime assets.
 
-GitHub issues own bounded implementation problems and acceptance criteria.
-Pull requests own delivery diffs and validation evidence. Decision records
-under `docs/decisions/` own durable architectural and doctrine choices.
-Technical contracts, runbooks, audits, issues, pull requests, boards, and
-decision records do not override the roadmap. There is exactly one active
-macro milestone and exactly one Active Next.
-
-Completed historical rows need not remain in a live wall. Git history and
-frozen audits preserve their exact evidence. Current open obligations and
-stable IDs remain visible in the roadmap, and a project-control change updates
-the roadmap atomically with the accepted implementation evidence.
-
-A closure that changes ownership reports before/after files and counts, semantic
-owners, private/public/global symbols, family budget, naming violations,
-dependency edges, manifest/build/object parity, moves/deletions, net lines, and
-preserved identities and refusals.
-
-No implementation may be declared complete because a report says so. Project
-control changes only after executable evidence passes.
-
-After a material checkpoint, repair, architectural cutover, comparable
-performance change, or milestone closure, use the repository
-[`engineering-worklog`](.agents/skills/engineering-worklog/SKILL.md) skill before
-final handoff. Record the semantic change and its evidence, not a Git diff
-summary. Trivial changes require no worklog, and no record or communication
-projection is published automatically.
-
-### Progression admissibility
-
-A completed boundary is progression-safe only when its next declared consumer
-can use it without bypassing semantics, ownership, identity, lifecycle,
-failure, resource, or operator contracts. Passing a build, one execution path,
-focused tests, or a self-authored closure report is not sufficient.
-
-Before activating a dependent milestone, classify each unresolved item once:
-
-- `gate_blocker`: an in-gate defect makes the consumer unsafe or incorrect;
-- `boundary_incomplete`: required production after-state is absent or partial;
-- `evidence_gap`: required independent, live, failure, cleanup, operator, or
-  scale evidence is absent;
-- `deferred_depth`: out-of-gate behavior has an explicit later owner and pass;
-- `optimization_debt`: admitted correctness remains measurably inefficient;
-- `generalization_debt`: one vertical lacks a concrete second-family test;
-- `external_blocker`: complete local work awaits an external dependency.
-
-The only progression decisions are:
-
-- `gate_blocker` or `boundary_incomplete` -> `repair_same_boundary`;
-- `evidence_gap` -> `complete_evidence`;
-- admitted `deferred_depth`, `optimization_debt`, or `generalization_debt` ->
-  `proceed`;
-- `external_blocker` -> `blocked_external`.
-
-Deferral is forbidden when the next milestone consumes the missing behavior,
-correctness depends on it, ownership or rollback is ambiguous, production uses
-a fixture, a supported mode is scaffolded, the CLI cannot reach executable
-behavior, or identity/capability admission can be bypassed. Deferral is valid
-only when the current boundary is complete, the next consumer is independent,
-the non-claim and later owner/pass are explicit, and no duplicate owner or
-compatibility shell is introduced.
-
-Every implementation closure includes:
+A closure reports exact source/tree, commits, meaningful ownership changes,
+tests/evidence, blocked gates, compatibility decisions, remaining non-claims,
+and:
 
 ```text
 progression_decision: proceed | repair_same_boundary | complete_evidence | blocked_external
 downstream_safe: true | false
-downstream_consumer; gate blockers; boundary incompleteness; evidence gaps
-deferred depth, optimization debt, and generalization debt with owners/passes/evidence
-external blockers; required repairs; higher-capability non-claims
 ```
 
-Each remaining item names its class, owner, consumer impact, progression effect,
-later pass or immediate repair, and evidence. Vague classifications such as
-“partially complete”, “good enough”, or “more work remains” are invalid.
-
-### Six-pass vertical iteration
-
-YVEX advances one accepted system through six focused passes:
-
-1. `PASS 1 — Vertical closure`: complete one real source-to-output production
-   path with truthful limitations, including the minimal correct persistent
-   state required by its prefill and decode consumers.
-2. `PASS 2 — Correctness and ownership hardening`: repair semantic, lifecycle,
-   identity, ownership, and composition defects exposed end to end.
-3. `PASS 3 — Memory and residency optimization`: optimize already-correct
-   state through paging, alternative placement, spill, quantization,
-   compression, memory reduction, and measured reuse improvements.
-4. `PASS 4 — Kernel and execution optimization`: improve fusion, scheduling,
-   graph capture, launch count, parallelism, and hardware tuning without
-   changing semantics.
-5. `PASS 5 — Evaluation and benchmark`: measure quality, regressions, latency,
-   throughput, memory, and reliability through identity-bound owners.
-6. `PASS 6 — Multi-family generalization`: admit a second complete family
-   through the common engine and change common mechanisms only where that
-   concrete vertical proves the abstraction insufficient.
-
-These passes consume earlier accepted boundaries; they are not wholesale
-rewrites. Concrete evidence may reopen an earlier boundary. Hypothetical family
-needs do not justify speculative mechanisms, and the first DeepSeek vertical
-pressures the common engine without defining it. Persistent state required by a
-consumer is correctness in PASS 1, never optimization debt.
-
-Future families reuse common source, compilation, artifact, runtime, residency,
-backend, operator, evaluation, and benchmark mechanisms. They add only their
-semantics, schedules, tensor-role lowering, sequence-mixer and state rules,
-MoE/FFN composition, tokenizer/output policy, and conformance evidence. A
-common owner changes only when a concrete family exposes a missing invariant;
-per-family runtimes, duplicated storage or registries, target-string branches,
-placeholder support, and consumer-free abstractions are forbidden.
-
-### Commit format
-
-New commits use Conventional Commits:
-
-```text
-type(scope): imperative description
-```
-
-Use the narrow semantic owner as `scope` and one of `feat`, `fix`, `refactor`,
-`perf`, `test`, `docs`, `build`, `ci`, or `chore` as `type`. The subject states
-the implemented change in natural language; wave IDs and milestone names are
-not commit subjects. Use a `BREAKING CHANGE:` footer only for an intentional
-incompatible contract change. Do not amend or rewrite existing history merely
-to normalize older commit titles.
-
-## 12. Final rule
-
-Prefer fewer, stronger owners. Extend an existing owner unless an admitted
-independent boundary is proven. Remove duplicate truth, forwarding shells, and
-phase-shaped fragmentation. Preserve identity semantics and honest capability
-boundaries.
-
-Make YVEX more real.
+`proceed` requires an implemented consumer-safe boundary. A green build alone
+does not close missing ownership, rollback, operator reachability, numerical
+authority, or required evidence.

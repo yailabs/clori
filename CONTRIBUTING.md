@@ -28,18 +28,21 @@ change when a concrete supported consumer exposes a missing invariant.
 ## Concurrent development
 
 Concurrent agents and branches are supported; a branch is not an agent
-identity. Divide work by delivery and semantic scope, preserve unrelated
-changes, and stage only owned paths or hunks. Same-file changes are valid when
-their semantics are distinct; report real overlaps instead of overwriting
-another delivery. The canonical
-[concurrent-agent policy](AGENTS.md#concurrent-agent-development) defines
+identity or a model-family identity. Shared development branches and shared
+physical worktrees are supported. Divide work by delivery and semantic scope,
+preserve unrelated changes, reread mutable source before editing, and stage
+only owned paths or hunks. Same-file changes are valid when their semantics are
+distinct; report real overlaps instead of overwriting another delivery. The
+canonical [shared-development policy](AGENTS.md#shared-development) defines
 same-branch collaboration, conflict handling, and resource-specific
 coordination.
 
-Family branches advance independently. Isolate generic changes, integrate them
-through `main`, and then merge `main` into applicable branches. Published
-histories use merge, not rebase, and are never force-pushed. `main` remains the
-accepted integration branch and is not used for normal development.
+Branch topology does not determine source ownership or QA scope. A coherent
+generic change may land directly on an active shared development branch, but
+must qualify every affected supported family. Separate family branches remain
+available when useful. Published histories use merge, not rebase, and are
+never force-pushed. `main` remains the accepted integration branch and is not
+used for normal development.
 
 ## Development order
 
@@ -79,8 +82,8 @@ Command and operation projection metadata has one source:
 `config/operator/registry.json`. When changing a command path, argument, flag,
 visibility, adapter, protocol projection, or slash projection, update that
 source and its owned tests; do not edit `build/generated/operator/registry.h`
-or `registry.c`. Validate deterministic generated products and the frozen audit
-mapping with:
+or `registry.c`. Validate deterministic generated products and current product
+projections with:
 
 ```sh
 make generate-operator-registry
@@ -183,22 +186,6 @@ A pull request must state:
 Do not mix unrelated cleanup with a capability change. Do not rewrite existing
 history solely to normalize old commit subjects.
 
-## Engineering worklogs
-
-After a material checkpoint, repair, architectural cutover, comparable
-performance change, or milestone closure, invoke the repository skill with:
-
-```text
-$engineering-worklog
-```
-
-The skill is the procedural authority for semantic records, evidence handling,
-publication review, and optional communication projections. Drafts remain under
-the ignored `build/worklog/` tree; only intentionally selected records enter
-[`docs/worklog/`](docs/worklog/2026-08-11-adaptive-memory-admission.md). Worklogs
-do not replace pull-request evidence, project control, evaluation, benchmarks,
-or release qualification, and they do not publish anything automatically.
-
 ## Capability and evidence language
 
 Use the lowest truthful evidence class:
@@ -238,18 +225,17 @@ claim authentication/TLS without a separately admitted security boundary.
 | current milestones, dependency order, gates, non-claims | `ROADMAP.md` |
 | repository ownership and contribution invariants | `AGENTS.md` |
 | documentation classes and update policy | `docs/development/documentation-policy.md` |
-| canonical terminology | `docs/doctrine/glossary.md` |
-| implementation-independent architecture | `docs/reference/verified-inference.md` |
+| repository terminology and invariants | `AGENTS.md` and owning C interfaces |
 | implemented system architecture | `docs/architecture/` |
 | runtime behavior and failure | `docs/contracts/runtime.md` |
 | installed/internal API lifetimes | `docs/contracts/c-api.md` |
 | release-gate meanings | `docs/releases/doctrine.md` |
-| exact operator workflow | `docs/operator-runbook.md` and `docs/operations/` |
+| exact operator workflow | `docs/operator-runbook.md` |
 | durable architectural choice | `docs/decisions/` |
 | bounded implementation work | GitHub issue |
 | implementation review and validation evidence | pull request |
 
-Before editing documentation, identify the admitted implementation or doctrine
+Before editing documentation, identify the admitted implementation or policy
 fact, update its canonical owner, and change only projections whose navigation
 or bounded summary is affected. Do not request or perform a generic “update all
 docs” pass. README changes only when the public entry, public capability,
