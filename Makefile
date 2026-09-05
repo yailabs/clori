@@ -775,10 +775,7 @@ test-runtime-asan:
 			NVCC=__yvex_nvcc_unavailable__ \
 			CFLAGS='$(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=address,leak' \
 			LDFLAGS='$(LDFLAGS) -fsanitize=address,leak' \
-			test-runtime client test-openai test-tiny-vertical; \
-	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:strict_string_checks=1 \
-		YVEX_BIN="$$build_dir/yvex" \
-		YVEX_TEST_HOST="$$build_dir/tests/openai_host" sh $(REPL_PTY_TEST); \
+			test-runtime client test-openai test-tiny-vertical test-repl; \
 	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:strict_string_checks=1 \
 		YVEX_TEST_FILTER=deepseek_attention \
 		"$$build_dir/tests/test"
@@ -823,10 +820,7 @@ test-runtime-ubsan:
 		CFLAGS='$(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=undefined \
 			-fno-sanitize-recover=undefined' \
 			LDFLAGS='$(LDFLAGS) -fsanitize=undefined' \
-			test-runtime client test-openai test-tiny-vertical; \
-	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-		YVEX_BIN="$$build_dir/yvex" \
-		YVEX_TEST_HOST="$$build_dir/tests/openai_host" sh $(REPL_PTY_TEST); \
+			test-runtime client test-openai test-tiny-vertical test-repl; \
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
 		YVEX_TEST_FILTER=deepseek_attention \
 		"$$build_dir/tests/test"
