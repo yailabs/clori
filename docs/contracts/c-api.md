@@ -159,7 +159,12 @@ versioned at schema v1. Callers set `schema_version` to
 reject any other value before reading the remaining fields. The former
 unversioned layout is not a binary compatibility surface. Model-library
 projections expose the separately versioned
-`yvex_model_runtime_profile_fact` v1 record.
+`yvex_model_runtime_profile_fact` v2 record.
+
+`yvex_model_library_matches` resolves exact catalog names, including original
+registry model names retained when logical entries are aggregated. The names
+belong to the snapshot and disappear at close; they do not duplicate models or
+select deployments. Callers reject matches across multiple logical models.
 
 `yvex_model_registry_startup_validate` checks the facts required by the profile
 kind and the corresponding local file or installation accessibility. It does

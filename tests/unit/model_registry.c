@@ -535,6 +535,18 @@ static int test_logical_model_library(void)
                          !strcmp(logical->model, "v4-flash") &&
                          logical->identity_kind == YVEX_MODEL_IDENTITY_FAMILY_MODEL,
                      "Flash checkpoint identity retains subordinate DSpark target profiles");
+    YVEX_TEST_ASSERT(yvex_model_library_matches(library, 0u, "v4-flash") &&
+                         yvex_model_library_matches(library, 0u, "v4-flash-dspark") &&
+                         yvex_model_library_matches(library, 0u, logical->identity) &&
+                         yvex_model_library_matches(library, 0u, logical->runtime_target),
+                     "aggregation retains exact original model names without source payloads");
+    YVEX_TEST_ASSERT(!yvex_model_library_matches(library, 0u, "flash") &&
+                         !yvex_model_library_matches(library, 0u, "V4-FLASH-DSPARK") &&
+                         !yvex_model_library_matches(library, 0u, "") &&
+                         !yvex_model_library_matches(library, 0u, NULL) &&
+                         !yvex_model_library_matches(library, 1u, "v4-flash") &&
+                         !yvex_model_library_matches(NULL, 0u, "v4-flash"),
+                     "model-name matching stays exact and rejects invalid views");
     YVEX_TEST_ASSERT(yvex_model_library_profile_at(library, 0u, 7u) &&
                          !strcmp(yvex_model_library_profile_at(library, 0u, 7u)->alias,
                                  "deepseek4-v4-flash-profile-7"),

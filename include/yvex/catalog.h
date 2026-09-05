@@ -284,6 +284,11 @@ int yvex_model_library_is_working_set(const yvex_model_library *library,
                                       unsigned long long model_index);
 const yvex_model_library_entry *yvex_model_library_at(
     const yvex_model_library *library, unsigned long long index);
+/* Exact identity/name/target/source-name match, including original registry model
+ * names retained across aggregation. Callers must reject multiple model matches;
+ * a match does not select a deployment or establish launchability. */
+int yvex_model_library_matches(const yvex_model_library *library,
+                               unsigned long long model_index, const char *selector);
 unsigned long long yvex_model_library_artifact_count(
     const yvex_model_library *library, unsigned long long model_index);
 const yvex_model_artifact_fact *yvex_model_library_artifact_at(

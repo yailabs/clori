@@ -916,30 +916,13 @@ static void product_json_model(const yvex_model_library *library,
     yvex_cli_out_fputs("]}", stdout);
 }
 
-static int product_match(const yvex_model_library_entry *model, const char *selector)
-{
-    return !strcmp(model->identity, selector) ||
-           (model->display_name[0] && !strcmp(model->display_name, selector)) ||
-           (model->model[0] && !strcmp(model->model, selector)) ||
-           (model->runtime_target[0] && !strcmp(model->runtime_target, selector));
-}
-
 int yvex_cli_model_find(const yvex_model_library *library, const char *selector,
                         unsigned long long *model_index)
 {
     unsigned long long index;
     int matches = 0;
     for (index = 0u; index < yvex_model_library_count(library); ++index) {
-        unsigned long long source_index;
-        int matched = product_match(yvex_model_library_at(library, index), selector);
-        for (source_index = 0u; !matched &&
-             source_index < yvex_model_library_source_count(library, index);
-             ++source_index) {
-            const yvex_local_source_record *source =
-                yvex_model_library_source_at(library, index, source_index);
-            matched = source->name[0] && !strcmp(source->name, selector);
-        }
-        if (!matched) continue;
+        if (!yvex_model_library_matches(library, index, selector)) continue;
         *model_index = index;
         matches++;
     }

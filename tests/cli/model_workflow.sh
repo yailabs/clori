@@ -581,4 +581,38 @@ expect_rc 1 "$YVEX_BIN" model load workflow-demo --variant f16 \
     >"$ROOT/load-no-host.out" 2>"$ROOT/load-no-host.err"
 contains "$ROOT/load-no-host.err" 'model is not launchable: workflow-demo'
 
+# Folding related registry models must not erase their exact original selectors.
+# These deliberately non-launchable profiles prove selection before host contact.
+for model in v4-flash v4-flash-dspark; do
+    "$YVEX_BIN" profile create --path "$ROOT/workflow-demo-f32.gguf" \
+        --registry "$REGISTRY" --alias "deepseek4-$model-selected-embed" \
+        --family deepseek4 --model "$model" --target workflow-target \
+        --backend cpu --runtime-binding "$ROOT/runtime.binding" \
+        --execution-strategy target-only --ctx 1024 >/dev/null
+    "$YVEX_BIN" model show "$model" --models-root "$MODELS_ROOT" \
+        --registry "$REGISTRY" --json >"$ROOT/$model-selector.json"
+    expect_rc 1 "$YVEX_BIN" model load "$model" \
+        >"$ROOT/$model-load.out" 2>"$ROOT/$model-load.err"
+    contains "$ROOT/$model-load.err" 'model is not launchable: v4-flash'
+done
+"$YVEX_BIN" model show v4-flash --models-root "$MODELS_ROOT" \
+    --registry "$REGISTRY" --json >"$ROOT/v4-flash-selector.json"
+cmp "$ROOT/v4-flash-selector.json" "$ROOT/v4-flash-dspark-selector.json"
+expect_rc 2 "$YVEX_BIN" model load v4-flash-dspark-unknown \
+    >"$ROOT/unknown-selector.out" 2>"$ROOT/unknown-selector.err"
+contains "$ROOT/unknown-selector.err" 'not found'
+
+# A second logical model carrying the same name must remain ambiguous.
+"$YVEX_BIN" profile create --path "$ROOT/workflow-demo-f32.gguf" \
+    --registry "$REGISTRY" --alias qwen-v4-flash-dspark-selected-embed \
+    --family qwen3_5 --model v4-flash-dspark --target workflow-target \
+    --backend cpu --runtime-binding "$ROOT/runtime.binding" \
+    --execution-strategy target-only --ctx 1024 >/dev/null
+expect_rc 2 "$YVEX_BIN" model load v4-flash-dspark \
+    >"$ROOT/ambiguous-selector.out" 2>"$ROOT/ambiguous-selector.err"
+contains "$ROOT/ambiguous-selector.err" 'ambiguous; use the exact identity'
+expect_rc 1 "$YVEX_BIN" model load family:deepseek4/model:v4-flash \
+    >"$ROOT/exact-selector.out" 2>"$ROOT/exact-selector.err"
+contains "$ROOT/exact-selector.err" 'model is not launchable: v4-flash'
+
 printf 'model workflow porcelain: ok\n'

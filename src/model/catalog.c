@@ -740,6 +740,8 @@ typedef struct {
     unsigned long long artifact_count, artifact_capacity;
     yvex_model_runtime_profile_fact *profiles;
     unsigned long long profile_count, profile_capacity;
+    char (*model_names)[YVEX_MODEL_LIBRARY_NAME_CAP];
+    unsigned long long model_name_count;
     int working_set;
 } library_model;
 
@@ -950,6 +952,26 @@ static int library_profile_add(library_model *model,
     return YVEX_OK;
 }
 
+static int library_model_name_add(library_model *model, const char *name,
+                                   yvex_error *err)
+{
+    char (*names)[YVEX_MODEL_LIBRARY_NAME_CAP];
+    unsigned long long index;
+
+    if (!name || !name[0] || !strcmp(name, model->summary.model)) return YVEX_OK;
+    for (index = 0u; index < model->model_name_count; ++index)
+        if (!strcmp(model->model_names[index], name)) return YVEX_OK;
+    if (strlen(name) >= YVEX_MODEL_LIBRARY_NAME_CAP ||
+        model->model_name_count >= LOCAL_CATALOG_ENTRY_CAP)
+        return library_refuse(err, YVEX_ERR_BOUNDS, "retained model name limit exceeded");
+    names = realloc(model->model_names, (model->model_name_count + 1u) * sizeof(*names));
+    if (!names)
+        return library_refuse(err, YVEX_ERR_NOMEM, "model name allocation failed");
+    model->model_names = names;
+    local_copy(names[model->model_name_count++], sizeof(*names), name);
+    return YVEX_OK;
+}
+
 static int library_registry_add(yvex_model_library *library,
                                 const yvex_model_registry_entry *entry,
                                 yvex_error *err)
@@ -967,6 +989,12 @@ static int library_registry_add(yvex_model_library *library,
         if (rc != YVEX_OK) return rc;
         model = &library->models[library->count++];
         model->summary = identity;
+    }
+    /* Aggregation may rename the logical summary, not erase admitted entry names.
+     * Composite rows never used their incidental artifact model as a selector. */
+    if (strcmp(library_text(entry->runtime_profile), "composite")) {
+        rc = library_model_name_add(model, entry->model, err);
+        if (rc != YVEX_OK) return rc;
     }
     memset(&provenance, 0, sizeof(provenance));
     local_package_provenance(&provenance, entry);
@@ -1194,6 +1222,7 @@ void yvex_model_library_close(yvex_model_library *library)
         free(library->models[index].sources);
         free(library->models[index].artifacts);
         free(library->models[index].profiles);
+        free(library->models[index].model_names);
     }
     free(library->models);
     free(library);
@@ -1215,6 +1244,25 @@ const yvex_model_library_entry *yvex_model_library_at(
     const yvex_model_library *library, unsigned long long index)
 {
     return library && index < library->count ? &library->models[index].summary : NULL;
+}
+
+int yvex_model_library_matches(const yvex_model_library *library,
+                               unsigned long long model_index, const char *selector)
+{
+    const library_model *model;
+    const yvex_model_library_entry *summary;
+    unsigned long long index;
+
+    if (!library || model_index >= library->count || !selector || !selector[0]) return 0;
+    model = &library->models[model_index];
+    summary = &model->summary;
+    if (!strcmp(summary->identity, selector) || !strcmp(summary->display_name, selector) ||
+        !strcmp(summary->model, selector) || !strcmp(summary->runtime_target, selector)) return 1;
+    for (index = 0u; index < model->model_name_count; ++index)
+        if (!strcmp(model->model_names[index], selector)) return 1;
+    for (index = 0u; index < model->source_count; ++index)
+        if (!strcmp(model->sources[index].name, selector)) return 1;
+    return 0;
 }
 
 unsigned long long yvex_model_library_artifact_count(
