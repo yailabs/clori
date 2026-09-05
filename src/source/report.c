@@ -1431,20 +1431,20 @@ int yvex_source_report_build(const yvex_source_report_request *request,
         yvex_core_text_copy(report->source_path_source,
                             sizeof(report->source_path_source), "explicit-source");
     } else {
-        if (deepseek) {
+        const yvex_source_target_identity *identity =
+            yvex_source_target_identity_find(options->target);
+        if (identity) {
             n = yvex_source_target_path(report->source_path,
                                         sizeof(report->source_path),
                                         operator_paths.models_root,
-                                        yvex_source_release_identity())
+                                        identity)
                     ? 0
                     : -1;
         } else {
-            n = snprintf(report->source_path,
-                         sizeof(report->source_path),
-                         "%s/hf/%s/%s",
-                         operator_paths.models_root,
-                         options->profile->family_key,
-                         options->target);
+            /* Unqualified names do not imply a source location. The caller
+             * must select an acquired catalog record or supply a local path. */
+            report->source_path[0] = '\0';
+            n = 0;
         }
         if (n < 0 || (!deepseek && (size_t)n >= sizeof(report->source_path))) {
             yvex_error_set(err, YVEX_ERR_BOUNDS, "source_report_build", "source path is too long");

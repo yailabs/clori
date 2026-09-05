@@ -1,5 +1,6 @@
 #include "src/cli/input/private.h"
 #include <yvex/internal/source.h>
+#include <yvex/internal/source_catalog.h>
 #include "src/cli/io/private.h"
 #include <yvex/core.h>
 #include <errno.h>
@@ -13,7 +14,8 @@
 static const char *const literal_lines_0[] = { "       yvex inspect paths [--project DIR] --run [--create]",
     "       yvex inspect paths [--project DIR] configure --models-root DIR [--create]",
     "       yvex inspect paths [--project DIR] configure --reset",
-    "       yvex inspect paths [--project DIR] resolve --family deepseek|glm|qwen|gemma --kind source|gguf|reports|"
+    "       yvex inspect paths [--project DIR] resolve --family deepseek|glm|qwen|gemma|minimax-h3|mamba2 "
+    "--kind source|gguf|reports|"
         "reference|registry\n",
     "Path configuration records operator-local storage only; it does not download models, create artifacts,"
         " register aliases, or claim runtime support."
@@ -67,33 +69,38 @@ int yvex_operator_paths_resolve_target(const yvex_operator_paths *operator_paths
         return YVEX_ERR_INVALID_ARG;
     }
     if (strcmp(family, "deepseek") != 0 && strcmp(family, "glm") != 0 &&
-        strcmp(family, "qwen") != 0 && strcmp(family, "gemma") != 0) {
+        strcmp(family, "qwen") != 0 && strcmp(family, "gemma") != 0 &&
+        strcmp(family, "minimax-h3") != 0 && strcmp(family, "mamba2") != 0) {
         yvex_error_setf(err, YVEX_ERR_INVALID_ARG, "operator_paths",
                         "unknown family: %s", family);
         return YVEX_ERR_INVALID_ARG;
     }
-    if (strcmp(kind, "source") == 0 && strcmp(family, "deepseek") == 0) {
+    if (strcmp(kind, "source") == 0) {
+        const char *target = !strcmp(family, "deepseek") ? YVEX_SOURCE_RELEASE_TARGET_ID :
+                             !strcmp(family, "qwen") ? YVEX_SOURCE_QWEN3_8_27B_TARGET_ID :
+                             !strcmp(family, "minimax-h3") ? YVEX_SOURCE_MINIMAX_H3_TARGET_ID :
+                             !strcmp(family, "mamba2") ? "mamba-codestral-7b-v0.1" : NULL;
+        if (!target) {
+            yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "operator_paths",
+                           "no qualified default source; select a model catalog record or local path");
+            return YVEX_ERR_UNSUPPORTED;
+        }
         if (!yvex_source_target_path(out, cap, operator_paths->models_root,
-                                     yvex_source_release_identity())) {
+                                     yvex_source_target_identity_find(target))) {
             yvex_error_set(err, YVEX_ERR_BOUNDS, "operator_paths",
-                           "DeepSeek source path exceeds output capacity");
+                           "source path exceeds output capacity");
             return YVEX_ERR_BOUNDS;
         }
         rc = YVEX_OK;
-    } else if (strcmp(kind, "source") == 0) {
-        const char *name = strcmp(family, "glm") == 0 ? "GLM-5.2" :
-                           strcmp(family, "qwen") == 0 ? "qwen3-8b" : "gemma-4-12b-it";
-        rc = target_path_format(out, cap, err, "%s/hf/%s/%s",
-                                operator_paths->models_root, family, name);
     } else if (strcmp(kind, "gguf") == 0) {
-        rc = target_path_format(out, cap, err, "%s/gguf/%s",
-                                operator_paths->models_root, family);
+        rc = target_path_format(out, cap, err, "%s/%s",
+                                operator_paths->gguf_root, family);
     } else if (strcmp(kind, "reports") == 0) {
-        rc = target_path_format(out, cap, err, "%s/reports/%s",
-                                operator_paths->models_root, family);
+        rc = target_path_format(out, cap, err, "%s/%s",
+                                operator_paths->reports_root, family);
     } else if (strcmp(kind, "reference") == 0) {
-        rc = target_path_format(out, cap, err, "%s/reference/%s",
-                                operator_paths->models_root, family);
+        rc = target_path_format(out, cap, err, "%s/%s",
+                                operator_paths->reference_root, family);
     } else if (strcmp(kind, "registry") == 0) {
         rc = target_path_format(out, cap, err, "%s", operator_paths->registry_root);
     } else {

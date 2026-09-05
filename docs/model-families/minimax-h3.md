@@ -70,7 +70,7 @@ continue without weakening the bounded end-to-end claim.
 | Evidence stage | exact source and all four weighted artifacts verified; architecture, tensor roles, and Transformation IR admitted; independent bounded text, multimodal Qwen, Visual VAE encoder/decoder, Audio VAE decoder, T2VA Omni, and conditioned Omni conformance established; all four FL2VA request forms execute through the normal product path and synchronized AVI publication on GB10 |
 
 The external evidence directory used during the intake was
-`/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
+`<models-root>/representations/minimax-h3/<FULL_REVISION>/`. That path is an
 operator location, not semantic identity. Reproduction accepts any output root
 and derives the same identities from repository, revision, subtree, selected
 metadata, and safetensors headers.

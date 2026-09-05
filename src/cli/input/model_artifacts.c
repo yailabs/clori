@@ -6,6 +6,7 @@
  */
 #include "src/cli/input/private.h"
 #include "src/cli/model_artifacts/private.h"
+#include <yvex/internal/source_catalog.h>
 
 #include <ctype.h>
 #include <signal.h>
@@ -585,7 +586,7 @@ int parse_models_download_options_from(int arg_count, char **args, int start_ind
         return 2;
     memset(options, 0, sizeof(*options));
     options->source = "hf";
-    options->revision = "main";
+    options->revision = NULL;
     options->max_workers = 8ull;
     options->auth_mode = YVEX_MODEL_DOWNLOAD_AUTH_AUTO;
     options->output_mode = YVEX_MODELS_OUTPUT_NORMAL;
@@ -966,6 +967,7 @@ int model_download_read_identity_file(const char *path, const char *target, cons
     if (!parsed_repo[0]) {
         yvex_json_probe_string_field(buf, "repo", parsed_repo, sizeof(parsed_repo));
     }
+    if (!parsed_repo[0]) return 0;
     yvex_json_probe_string_field(buf, "provider", parsed_provider, sizeof(parsed_provider));
     yvex_json_probe_string_field(buf, "revision", parsed_revision, sizeof(parsed_revision));
     yvex_json_probe_string_field(buf, "local_source_dir", parsed_source, sizeof(parsed_source));
@@ -993,7 +995,10 @@ int model_download_resolve_downloaded_target(const char *target,
                                              const yvex_operator_paths *operator_paths,
                                              yvex_model_download_resolved_target *out,
                                              yvex_error *err) {
-    static const char *families[] = {"qwen", "gemma", "deepseek", "glm", "github"};
+    static const char *families[] = {
+        "qwen", "qwen3_5", "gemma", "deepseek", "deepseek4", "glm",
+        "minimax-h3", "mamba2", "unknown", "github"
+    };
     char hinted_family[32];
     unsigned long pass;
 
@@ -1008,7 +1013,6 @@ int model_download_resolve_downloaded_target(const char *target,
         unsigned long i;
         for (i = 0; i < sizeof(families) / sizeof(families[0]); ++i) {
             const char *family = families[i];
-            char hf_family_dir[YVEX_PATH_CAP];
             yvex_model_download_resolved_target candidate;
 
             if (pass == 0) {
@@ -1029,12 +1033,10 @@ int model_download_resolve_downloaded_target(const char *target,
                                                   &candidate) ||
                 model_download_read_identity_file(candidate.manifest_path, target, family,
                                                   &candidate)) {
-                if (!candidate.local_source_dir[0] && strcmp(candidate.provider, "github") != 0 &&
-                    path_join2(hf_family_dir, sizeof(hf_family_dir), operator_paths->hf_root,
-                               family, err, "models_download_identity") == YVEX_OK) {
-                    (void)path_join2(candidate.local_source_dir, sizeof(candidate.local_source_dir),
-                                     hf_family_dir, target, err, "models_download_identity");
-                }
+                if (!candidate.local_source_dir[0] && strcmp(candidate.provider, "github") != 0)
+                    (void)yvex_source_provider_path(candidate.local_source_dir,
+                        sizeof(candidate.local_source_dir), operator_paths->models_root,
+                        candidate.repo_id, candidate.revision);
                 if (!candidate.target_id[0]) {
                     snprintf(candidate.target_id, sizeof(candidate.target_id), "%s", target);
                 }

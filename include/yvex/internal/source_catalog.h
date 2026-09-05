@@ -112,6 +112,10 @@ const yvex_source_acquisition_target *yvex_source_acquisition_target_find(
 int yvex_source_is_release_target(const char *target_id);
 int yvex_source_target_path(char *out, size_t cap, const char *models_root,
                             const yvex_source_target_identity *identity);
+/* Managed provider bytes are addressed by repository and immutable revision,
+ * independently of family classification or the user's display alias. */
+int yvex_source_provider_path(char *out, size_t cap, const char *models_root,
+                              const char *repository, const char *revision);
 
 #ifdef __cplusplus
 }

@@ -102,7 +102,7 @@ set -e
 test "$strict_rc" -eq 5 || fail "strict verification returned $strict_rc instead of 5"
 
 VERIFIED_MODELS="$OUT_DIR/verified-models"
-VERIFIED_SOURCE="$VERIFIED_MODELS/hf/deepseek/DeepSeek-V4-Flash-DSpark"
+VERIFIED_SOURCE="$VERIFIED_MODELS/source/hf/deepseek-ai/DeepSeek-V4-Flash-DSpark/62af8fffb2f7030cac4de2f0169f5b8d1101b646"
 python3 - "$VERIFIED_SOURCE" <<'PY'
 import hashlib
 import json

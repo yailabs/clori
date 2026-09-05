@@ -669,6 +669,47 @@ void yvex_local_catalog_close(yvex_local_catalog *catalog)
     free(catalog);
 }
 
+int yvex_local_catalog_source_resolve(const char *models_root, const char *name,
+                                      yvex_local_source_record *out, yvex_error *err)
+{
+    yvex_paths paths = {0};
+    yvex_operator_paths operators;
+    yvex_local_catalog *catalog;
+    char selected_path[YVEX_PATH_CAP] = "";
+    unsigned long long index;
+    int rc, found = 0;
+
+    if (!models_root || !name || !name[0] || !out)
+        return local_refuse(err, YVEX_ERR_INVALID_ARG, "source root, name and output required");
+    memset(out, 0, sizeof(*out));
+    if (strchr(name, '/')) (void)realpath(name, selected_path);
+    rc = yvex_operator_paths_resolve(&paths, models_root, &operators, err);
+    if (rc != YVEX_OK) return rc;
+    catalog = calloc(1u, sizeof(*catalog));
+    if (!catalog) return local_refuse(err, YVEX_ERR_NOMEM, "source catalog allocation failed");
+    rc = local_scan_acquisitions(catalog, operators.registry_root, 0u, 0, err);
+    if (rc == YVEX_OK)
+        rc = local_scan_acquisitions(catalog, operators.hf_root, 0u, 1, err);
+    for (index = 0u; rc == YVEX_OK && index < catalog->source_count; ++index) {
+        const yvex_local_source_record *source = &catalog->sources[index];
+        if (!source->path[0] || (strcmp(source->name, name) &&
+            (!selected_path[0] || strcmp(source->path, selected_path)))) continue;
+        if (found && (strcmp(out->path, source->path) ||
+                      strcmp(out->repository, source->repository) ||
+                      strcmp(out->revision, source->revision))) {
+            rc = local_refuse(err, YVEX_ERR_INVALID_ARG, "source name has multiple local locations");
+            break;
+        }
+        *out = *source;
+        found = 1;
+    }
+    yvex_local_catalog_close(catalog);
+    if (rc == YVEX_OK && !found)
+        rc = local_refuse(err, YVEX_ERR_UNSUPPORTED, "no acquired source for this name");
+    if (rc != YVEX_OK) memset(out, 0, sizeof(*out));
+    return rc;
+}
+
 unsigned long long yvex_local_catalog_source_count(const yvex_local_catalog *catalog)
 {
     return catalog ? catalog->source_count : 0u;
@@ -699,6 +740,7 @@ typedef struct {
     unsigned long long artifact_count, artifact_capacity;
     yvex_model_runtime_profile_fact *profiles;
     unsigned long long profile_count, profile_capacity;
+    int working_set;
 } library_model;
 
 struct yvex_model_library {
@@ -760,7 +802,12 @@ static int library_identity_registry(const yvex_model_registry_entry *entry,
     int written;
 
     memset(summary, 0, sizeof(*summary));
-    if (family[0] && model[0] && target[0]) {
+    if ((!strcmp(family, "deepseek4") || !strcmp(family, "deepseek")) &&
+        (!strcmp(model, "v4-flash") || !strcmp(model, "v4-flash-dspark"))) {
+        written = snprintf(summary->identity, sizeof(summary->identity),
+                           "family:deepseek4/model:v4-flash");
+        summary->identity_kind = YVEX_MODEL_IDENTITY_FAMILY_MODEL;
+    } else if (family[0] && model[0] && target[0]) {
         written = snprintf(summary->identity, sizeof(summary->identity),
                            "family:%s/model:%s/target:%s", family, model, target);
         summary->identity_kind = YVEX_MODEL_IDENTITY_FAMILY_MODEL_TARGET;
@@ -783,6 +830,10 @@ static int library_identity_registry(const yvex_model_registry_entry *entry,
     local_copy(summary->runtime_target, sizeof(summary->runtime_target), target);
     local_copy(summary->display_name, sizeof(summary->display_name),
                target[0] ? target : model[0] ? model : alias);
+    if (!strcmp(summary->identity, "family:deepseek4/model:v4-flash")) {
+        local_copy(summary->model, sizeof(summary->model), "v4-flash");
+        local_copy(summary->display_name, sizeof(summary->display_name), "DeepSeek-V4-Flash");
+    }
     return YVEX_OK;
 }
 
@@ -833,7 +884,6 @@ static int library_profile_present(const yvex_model_registry_entry *entry)
     return library_text(entry->runtime_profile)[0] ||
            library_text(entry->runtime_installation)[0] ||
            library_text(entry->runtime_binding)[0] ||
-           library_text(entry->runtime_target)[0] ||
            library_text(entry->runtime_backend)[0] ||
            library_text(entry->runtime_engine_kind)[0] ||
            library_text(entry->runtime_execution_strategy)[0] ||
@@ -936,7 +986,25 @@ static int library_source_equal(const yvex_local_source_record *left,
 {
     return strcmp(left->provider, right->provider) == 0 &&
            strcmp(left->repository, right->repository) == 0 &&
-           strcmp(left->revision, right->revision) == 0;
+           strcmp(left->revision, right->revision) == 0 &&
+           (!strcmp(left->storage_kind, "remote") ||
+            !strcmp(right->storage_kind, "remote") ||
+            (!strcmp(left->storage_kind, right->storage_kind) &&
+             !strcmp(left->path, right->path) &&
+             !strcmp(left->digest, right->digest)));
+}
+
+static int library_flash_source(const yvex_local_source_record *source)
+{
+    /* The upstream DSpark card identifies the same Flash checkpoint plus a
+     * speculative module. This joins logical identity only: source revisions,
+     * tensors, quantization policies and executable targets remain distinct. */
+    return (!strcmp(source->provider, "huggingface") ||
+            !strcmp(source->provider, "hf")) &&
+           ((!strcmp(source->repository, YVEX_SOURCE_RELEASE_REPOSITORY) &&
+             !strcmp(source->revision, YVEX_SOURCE_RELEASE_REVISION)) ||
+            (!strcmp(source->repository, "deepseek-ai/DeepSeek-V4-Flash") &&
+             !strcmp(source->revision, "60d8d70770c6776ff598c94bb586a859a38244f1")));
 }
 
 static library_model *library_source_model(yvex_model_library *library,
@@ -948,6 +1016,9 @@ static library_model *library_source_model(yvex_model_library *library,
 
     for (index = 0u; index < library->count; ++index) {
         const yvex_model_library_entry *summary = &library->models[index].summary;
+        if (library_flash_source(source) &&
+            !strcmp(summary->identity, "family:deepseek4/model:v4-flash"))
+            return &library->models[index];
         if (source->repository[0] && source->revision[0] && summary->repository[0] &&
             strcmp(source->provider, summary->provider) == 0 &&
             strcmp(source->repository, summary->repository) == 0 &&
@@ -974,7 +1045,11 @@ static int library_source_add(yvex_model_library *library,
 
     if (!model) {
         memset(&identity, 0, sizeof(identity));
-        if (target && !strcmp(source->revision, target->upstream_revision)) {
+        if (library_flash_source(source)) {
+            written = snprintf(identity.identity, sizeof(identity.identity),
+                               "family:deepseek4/model:v4-flash");
+            identity.identity_kind = YVEX_MODEL_IDENTITY_FAMILY_MODEL;
+        } else if (target && !strcmp(source->revision, target->upstream_revision)) {
             written = snprintf(identity.identity, sizeof(identity.identity),
                                "target:%s", target->target_id);
             identity.identity_kind = YVEX_MODEL_IDENTITY_TARGET;
@@ -993,6 +1068,8 @@ static int library_source_add(yvex_model_library *library,
         if (written < 0 || (size_t)written >= sizeof(identity.identity))
             return library_refuse(err, YVEX_ERR_BOUNDS, "source identity is too long");
         local_copy(identity.display_name, sizeof(identity.display_name), source->name);
+        if (library_flash_source(source))
+            local_copy(identity.display_name, sizeof(identity.display_name), "DeepSeek-V4-Flash");
         local_copy(identity.family, sizeof(identity.family), source->family);
         local_copy(identity.provider, sizeof(identity.provider), source->provider);
         local_copy(identity.repository, sizeof(identity.repository), source->repository);
@@ -1005,8 +1082,23 @@ static int library_source_add(yvex_model_library *library,
             model->summary = identity;
         }
     }
-    for (index = 0u; index < model->source_count; ++index)
-        if (library_source_equal(&model->sources[index], source)) return YVEX_OK;
+    for (index = 0u; index < model->source_count; ++index) {
+        yvex_local_source_record *existing = &model->sources[index];
+        if (!library_source_equal(existing, source)) continue;
+        /* An immutable provider reference and its local acquisition are one
+         * source. Preserve remote availability while projecting local bytes;
+         * distinct local paths or content digests remain distinct facts. */
+        if (!strcmp(source->storage_kind, "remote"))
+            model->summary.remote_available = 1;
+        if (!strcmp(existing->storage_kind, "remote") &&
+            strcmp(source->storage_kind, "remote")) {
+            *existing = *source;
+            if (!strcmp(source->acquisition_state, "source-acquired") ||
+                !strcmp(source->acquisition_state, "source-external"))
+                model->summary.source_local = 1;
+        }
+        return YVEX_OK;
+    }
     if (model->source_count == model->source_capacity) {
         capacity = model->source_capacity ? model->source_capacity * 2u : 2u;
         sources = realloc(model->sources, (size_t)capacity * sizeof(*sources));
@@ -1017,6 +1109,10 @@ static int library_source_add(yvex_model_library *library,
     }
     model->sources[model->source_count++] = *source;
     model->summary.source_count = model->source_count;
+    if (!strcmp(source->acquisition_state, "source-remote")) {
+        model->summary.remote_count++;
+        model->summary.remote_available = 1;
+    }
     if (strcmp(source->acquisition_state, "source-acquired") == 0 ||
         strcmp(source->acquisition_state, "source-external") == 0)
         model->summary.source_local = 1;
@@ -1064,14 +1160,17 @@ int yvex_model_library_open(yvex_model_library **out,
         rc = library_registry_add(library, yvex_model_registry_at(registry, index), err);
         if (rc != YVEX_OK) goto fail;
     }
-    yvex_model_registry_close(registry);
-    registry = NULL;
     rc = yvex_local_catalog_open(&local, options, err);
     if (rc != YVEX_OK) goto fail;
     for (index = 0u; index < yvex_local_catalog_source_count(local); ++index) {
         rc = library_source_add(library, yvex_local_catalog_source_at(local, index), err);
         if (rc != YVEX_OK) goto fail;
     }
+    for (index = 0u; index < library->count; ++index)
+        library->models[index].working_set = yvex_model_registry_is_working_set(
+            registry, library->models[index].summary.identity);
+    yvex_model_registry_close(registry);
+    registry = NULL;
     yvex_local_catalog_close(local);
     if (library->count > 1u)
         qsort(library->models, (size_t)library->count, sizeof(*library->models),
@@ -1103,6 +1202,13 @@ void yvex_model_library_close(yvex_model_library *library)
 unsigned long long yvex_model_library_count(const yvex_model_library *library)
 {
     return library ? library->count : 0u;
+}
+
+int yvex_model_library_is_working_set(const yvex_model_library *library,
+                                      unsigned long long model_index)
+{
+    return library && model_index < library->count
+               ? library->models[model_index].working_set : 0;
 }
 
 const yvex_model_library_entry *yvex_model_library_at(

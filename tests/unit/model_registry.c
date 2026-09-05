@@ -293,8 +293,8 @@ static int test_registry_lifecycle(void)
 
     rc = yvex_model_registry_save(registry, registry_path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "save registry");
-    YVEX_TEST_ASSERT(file_contains(registry_path, "\"schema\": \"yvex.models.local.v6\""),
-                     "registry writer publishes schema v6");
+    YVEX_TEST_ASSERT(file_contains(registry_path, "\"schema\": \"yvex.models.local.v7\""),
+                     "registry writer publishes schema v7");
     YVEX_TEST_ASSERT(file_contains(registry_path, "\"runtime_backend\": \"cuda\""),
                      "registry writer persists runtime profile");
     YVEX_TEST_ASSERT(file_contains(registry_path,
@@ -532,14 +532,64 @@ static int test_logical_model_library(void)
                          strstr(profile->blocker, "malformed") != NULL,
                      "structurally present but malformed bindings remain historical only");
     YVEX_TEST_ASSERT(!strcmp(logical->family, "deepseek4") &&
-                         !strcmp(logical->model, "v4-flash-dspark") &&
-                         logical->identity_kind == YVEX_MODEL_IDENTITY_FAMILY_MODEL_TARGET,
-                     "logical identity uses exact family model and runtime target facts");
+                         !strcmp(logical->model, "v4-flash") &&
+                         logical->identity_kind == YVEX_MODEL_IDENTITY_FAMILY_MODEL,
+                     "Flash checkpoint identity retains subordinate DSpark target profiles");
     YVEX_TEST_ASSERT(yvex_model_library_profile_at(library, 0u, 7u) &&
                          !strcmp(yvex_model_library_profile_at(library, 0u, 7u)->alias,
                                  "deepseek4-v4-flash-profile-7"),
                      "subordinate profiles retain their canonical aliases");
     yvex_model_library_close(library);
+    return 0;
+}
+
+static int test_working_set_policy(void)
+{
+    const char *path = "build/tests/model-registry/policy.local.json";
+    const char *identity = "family:deepseek4/model:v4-flash";
+    yvex_model_registry_options options = {.registry_path = path};
+    yvex_local_catalog_options catalog_options = {
+        .registry_path = path, .models_root = "build/tests/model-library-root"
+    };
+    yvex_model_registry *registry = NULL;
+    yvex_model_library *library = NULL;
+    yvex_model_registry_entry entry;
+    yvex_error err;
+    char artifact[YVEX_PATH_CAP], binding[YVEX_PATH_CAP];
+
+    YVEX_TEST_ASSERT(write_file(path,
+        "{\"schema\":\"yvex.models.local.v7\","
+        "\"working_set\":[\"family:deepseek4/model:v4-flash\"],\"models\":[]}"),
+        "write explicit logical working-set policy");
+    YVEX_TEST_ASSERT(yvex_model_registry_open(&registry, &options, &err) == YVEX_OK &&
+        yvex_model_registry_is_working_set(registry, identity),
+        "remote or absent payload does not erase development policy");
+    YVEX_TEST_ASSERT(realpath("build/tests/model-registry/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf", artifact) &&
+        realpath("build/tests/model-registry/runtime.binding", binding), "policy fixture paths");
+    fill_entry(&entry, artifact, binding);
+    entry.runtime_profile = ""; entry.runtime_installation = "";
+    entry.runtime_binding = ""; entry.runtime_backend = "";
+    entry.runtime_engine_kind = ""; entry.runtime_execution_strategy = "";
+    entry.runtime_context = 0u; entry.execution_ready = 0;
+    YVEX_TEST_ASSERT(yvex_model_registry_add(registry, &entry, &err) == YVEX_OK &&
+        yvex_model_registry_save(registry, path, &err) == YVEX_OK,
+        "artifact-only adoption preserves policy without fabricating a deployment");
+    yvex_model_registry_close(registry);
+    YVEX_TEST_ASSERT(yvex_model_library_open(&library, &catalog_options, &err) == YVEX_OK,
+        "reopen catalog after normal registry mutation");
+    YVEX_TEST_ASSERT(yvex_model_library_count(library) == 1u &&
+        yvex_model_library_is_working_set(library, 0u) &&
+        yvex_model_library_artifact_count(library, 0u) == 1u &&
+        yvex_model_library_profile_count(library, 0u) == 0u,
+        "working set, artifact presence and runtime profile remain independent");
+    yvex_model_library_close(library);
+    YVEX_TEST_ASSERT(write_file(path,
+        "{\"schema\":\"yvex.models.local.v7\","
+        "\"working_set\":[\"duplicate\",\"duplicate\"],\"models\":[]}"),
+        "write malformed policy fixture");
+    registry = NULL;
+    YVEX_TEST_ASSERT(yvex_model_registry_open(&registry, &options, &err) == YVEX_ERR_FORMAT &&
+        registry == NULL, "ambiguous policy fails closed");
     return 0;
 }
 
@@ -551,6 +601,7 @@ int yvex_test_model_registry(void)
     if (test_composite_profile() != 0) return 1;
     if (test_legacy_startup_axes() != 0) return 1;
     if (test_logical_model_library() != 0) return 1;
+    if (test_working_set_policy() != 0) return 1;
     if (test_invalid_args() != 0) return 1;
     return 0;
 }

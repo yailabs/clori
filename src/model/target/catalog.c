@@ -65,25 +65,25 @@ static const yvex_model_target_record catalog_model_targets[] = {
      "official-source-huge-model", "official-safetensors-huge",
      "future-YVEX-produced-GGUF",
      "huge-source-tensor-intake-moe-storage-stream-planning", "none",
-     "hf/glm/GLM-5.2", "282 safetensors,1.5T-class",
+     "select-exact-source-from-catalog", "282 safetensors,1.5T-class",
      "source evidence only", "unsupported", "unsupported", "false"},
     {"qwen3-8b", "Qwen", "Qwen3-8B", "source-model-candidate",
      "official-source-tensors-planned", "future-YVEX-produced-GGUF",
      "backend-neutral-qwen-source-model-target", "pending-source-config",
-     "hf/qwen/qwen3-8b", "pending source/config verification",
+     "select-exact-source-from-catalog", "pending source/config verification",
      "target profile only; no source download/runtime/generation", "unsupported",
      "unsupported", "false"},
     {"gemma-4-12b-it", "Gemma", "Gemma-4-12B-it",
      "source-model-candidate", "official-source-tensors-planned",
      "future-YVEX-produced-GGUF", "backend-neutral-gemma-source-model-target",
-     "pending-source-config", "hf/gemma/gemma-4-12b-it",
+     "pending-source-config", "select-exact-source-from-catalog",
      "pending source/config verification",
      "target profile only; no source download/runtime/generation", "unsupported",
      "unsupported", "false"},
     {"minimax-h3-fl2va", "MiniMax-H3", "MiniMax-H3 Base FL2VA",
      "composite-source-model", "official-immutable-fl2va-source",
      "four-YVEX-component-GGUFs", "source-to-transformation-ir-and-hosted-media",
-     "four-weighted-components", "hf/minimax/MiniMax-H3/immutable-revision",
+     "four-weighted-components", "source/hf/MiniMaxAI/MiniMax-H3/immutable-revision",
      "144051204180 bytes", "bounded staged composite media execution; no quality, performance claim",
      "hosted-composite", "typed-media", "false"},
 };
@@ -228,21 +228,6 @@ static void catalog_absolute_path(char *out, size_t cap, const char *path)
     yvex_core_text_copy(out + used, cap - used, path);
 }
 
-static const char *catalog_source_leaf(const yvex_model_target_record *record)
-{
-    const char *slash;
-
-    if (!record) return "unknown";
-    if (yvex_source_is_release_target(record->target_id)) {
-        return yvex_source_release_identity()->source_dir_leaf;
-    }
-    if (record->local_path_class && strcmp(record->local_path_class, "none") != 0) {
-        slash = strrchr(record->local_path_class, '/');
-        return slash && slash[1] ? slash + 1 : record->local_path_class;
-    }
-    return record->model ? record->model : record->target_id;
-}
-
 static const char *catalog_registry_alias(const yvex_model_target_record *record)
 {
     if (!record) return "none";
@@ -278,15 +263,14 @@ static void catalog_path_report(const yvex_model_target_request *request,
     int artifact_unselected = yvex_source_is_release_target(record->target_id);
 
     catalog_absolute_path(root_abs, sizeof(root_abs), root);
-    if (artifact_unselected) {
+    if (yvex_source_target_identity_find(record->target_id)) {
         if (!yvex_source_target_path(
                 source_path, sizeof(source_path), root_abs,
-                yvex_source_release_identity())) {
+                yvex_source_target_identity_find(record->target_id))) {
             yvex_core_text_copy(source_path, sizeof(source_path), "path-overflow");
         }
     } else {
-        (void)snprintf(source_path, sizeof(source_path), "%s/hf/%s/%s",
-                       root_abs, family, catalog_source_leaf(record));
+        (void)snprintf(source_path, sizeof(source_path), "not-selected");
     }
     if (artifact_unselected) {
         (void)snprintf(artifact_path, sizeof(artifact_path), "not-selected");
@@ -294,14 +278,14 @@ static void catalog_path_report(const yvex_model_target_request *request,
         (void)snprintf(artifact_path, sizeof(artifact_path), "planned");
     } else if (strcmp(family, "deepseek") == 0) {
         (void)snprintf(artifact_path, sizeof(artifact_path),
-                       "%s/gguf/%s/%s-F16-noimatrix-yvex-v1.gguf",
+                       "%s/evidence/fixtures/%s/%s-F16-noimatrix-yvex-v1.gguf",
                        root_abs, family, record->target_id);
     } else {
-        (void)snprintf(artifact_path, sizeof(artifact_path), "%s/gguf/%s/%s",
+        (void)snprintf(artifact_path, sizeof(artifact_path), "%s/evidence/fixtures/%s/%s",
                        root_abs, family, record->target_id);
     }
-    (void)snprintf(report_dir, sizeof(report_dir), "%s/reports/%s", root_abs, family);
-    (void)snprintf(reference_dir, sizeof(reference_dir), "%s/reference/%s",
+    (void)snprintf(report_dir, sizeof(report_dir), "%s/evidence/build/%s", root_abs, family);
+    (void)snprintf(reference_dir, sizeof(reference_dir), "%s/evidence/fixtures/%s",
                    root_abs, family);
     (void)snprintf(registry_dir, sizeof(registry_dir), "%s/registry", root_abs);
 

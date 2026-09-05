@@ -139,14 +139,16 @@ artifact is still not a supported artifact.
 ## Model Registry And Startup Profiles
 
 `<yvex/registry.h>` owns the local model catalog and typed reference
-resolution. Registry schema `yvex.models.local.v6` binds a catalog entry to one
-typed startup profile. Every profile records engine kind independently from
+resolution. Registry schema `yvex.models.local.v7` preserves artifact entries and optional
+typed startup profiles. Its `working_set` array records canonical logical-model
+identities independently of local payload residency. Artifact-only entries do
+not create a startup profile merely by naming a runtime target. Every profile records engine kind independently from
 execution strategy. `single-artifact` text profiles carry the absolute
 artifact, exact runtime-binding path, runtime target, backend, semantic
 `target-only` or `speculative` strategy, and positive context capacity.
 `composite` media profiles carry an installed component root, target and
 backend with a `not-applicable` execution strategy; they do not manufacture a
-singular artifact or runtime binding. Older v1 through v5 catalogs remain
+singular artifact or runtime binding. Older v1 through v6 catalogs remain
 readable. The importer maps the former `target-only`, `dspark`, and `media`
 mode values onto the two current axes; current writers never emit the mixed
 legacy mode.

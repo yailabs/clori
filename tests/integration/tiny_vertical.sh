@@ -88,7 +88,7 @@ YVEX_HF_CLI="$fake_hf" YVEX_FAKE_HF_DOWNLOAD_SOURCE="$first/tiny.gguf" \
     --no-native-inventory --audit >"$root/provider.acquire.out"
 grep -F 'status: model-download-pass' "$root/provider.acquire.out" >/dev/null
 grep -F "revision: $provider_revision" "$root/provider.acquire.out" >/dev/null
-acquired="$models/hf/tiny-fixture/tiny-executable-source/model-Q4_K_M.gguf"
+acquired="$models/source/hf/$provider_repo/$provider_revision/model-Q4_K_M.gguf"
 cmp "$first/tiny.gguf" "$acquired"
 "$TINY_COMPILER" "$acquired" "$first/bindings" >"$first/compile.out"
 "$TINY_COMPILER" "$second/tiny.gguf" "$second/bindings" >"$second/compile.out"

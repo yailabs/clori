@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 
 static const yvex_source_target_identity source_target_identities[] = {
     {
@@ -140,12 +141,42 @@ int yvex_source_is_release_target(const char *target_id)
 int yvex_source_target_path(char *out, size_t cap, const char *models_root,
                             const yvex_source_target_identity *identity)
 {
-    int n;
+    return identity && yvex_source_provider_path(
+        out, cap, models_root, identity->upstream_repo_id,
+        identity->upstream_revision);
+}
 
-    if (!out || cap == 0u || !models_root || !models_root[0] || !identity ||
-        !identity->family_key || !identity->source_dir_leaf)
+int yvex_source_provider_path(char *out, size_t cap, const char *models_root,
+                              const char *repository, const char *revision)
+{
+    size_t index, slashes = 0u, segment = 0u, length;
+    int written;
+
+    if (!out || !cap) return 0;
+    out[0] = '\0';
+    if (!models_root || !models_root[0] || !repository || !revision) return 0;
+    length = strlen(revision);
+    if (length != 40u && length != 64u) return 0;
+    for (index = 0u; index < length; ++index)
+        if (!isxdigit((unsigned char)revision[index])) return 0;
+    for (index = 0u; repository[index]; ++index) {
+        unsigned char value = (unsigned char)repository[index];
+        if (value == '/') {
+            if (!segment || ++slashes > 1u) return 0;
+            segment = 0u;
+        } else {
+            if ((!segment && value == '.') ||
+                (!isalnum(value) && value != '-' && value != '_' && value != '.'))
+                return 0;
+            segment++;
+        }
+    }
+    if (slashes != 1u || !segment) return 0;
+    written = snprintf(out, cap, "%s/source/hf/%s/%s", models_root,
+                        repository, revision);
+    if (written < 0 || (size_t)written >= cap) {
+        out[0] = '\0';
         return 0;
-    n = snprintf(out, cap, "%s/hf/%s/%s", models_root, identity->family_key,
-                 identity->source_dir_leaf);
-    return n >= 0 && (size_t)n < cap;
+    }
+    return 1;
 }

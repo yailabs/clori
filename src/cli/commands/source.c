@@ -12,6 +12,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <yvex/source.h>
+#include <yvex/catalog.h>
+#include <yvex/internal/core.h>
 
 static const char *const literal_lines_0[] = {
     "       yvex compile source manifest report --family deepseek|qwen|gemma --release v0.1.0 [options]\n",
@@ -317,6 +319,18 @@ int yvex_source_manifest_report_command(int argc, char **argv) {
     }
 
     yvex_source_report_request_from_parsed(&request, &args);
+    if (!args.target && args.source && args.models_root) {
+        yvex_local_source_record source;
+        yvex_error ignored;
+        yvex_error_clear(&ignored);
+        if (yvex_local_catalog_source_resolve(args.models_root, args.source,
+                                               &source, &ignored) == YVEX_OK &&
+            !strcmp(source.family, args.family)) {
+            yvex_core_text_copy(request.resolved_target, sizeof(request.resolved_target),
+                               source.name);
+            request.target = request.resolved_target;
+        }
+    }
     rc = yvex_source_report_build(&request, &report, &err);
     if (rc != YVEX_OK) {
         int exit_code = exit_for_status(rc);

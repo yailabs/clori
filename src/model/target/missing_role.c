@@ -237,7 +237,7 @@ static void missing_role_sidecar_path(const yvex_model_target_request *request,
     }
     out[0] = '\0';
     if (request->models_root[0]) {
-        (void)snprintf(out, cap, "%s/reports/%s/%s.%s",
+        (void)snprintf(out, cap, "%s/evidence/build/%s/%s.%s",
                        request->models_root, family, request->target_id,
                        suffix);
     }

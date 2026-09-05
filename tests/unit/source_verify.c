@@ -934,8 +934,18 @@ int yvex_test_source_verify(void)
                    YVEX_SOURCE_RELEASE_INDEX_OID) == 0 &&
             yvex_source_target_path(path, sizeof(path), "/models",
                                     yvex_source_release_identity()) &&
-            strcmp(path, "/models/hf/deepseek/DeepSeek-V4-Flash-DSpark") == 0,
+            strcmp(path, "/models/source/hf/" YVEX_SOURCE_RELEASE_REPOSITORY
+                         "/" YVEX_SOURCE_RELEASE_REVISION) == 0,
         "source owner exposes the exact release identity and canonical path");
+    YVEX_TEST_ASSERT(
+        !yvex_source_provider_path(path, sizeof(path), "/models", "org/model", "main") &&
+        !yvex_source_provider_path(path, sizeof(path), "/models", "../model",
+                                    YVEX_SOURCE_RELEASE_REVISION) &&
+        !yvex_source_provider_path(path, sizeof(path), "/models", "org/model/extra",
+                                    YVEX_SOURCE_RELEASE_REVISION) &&
+        !yvex_source_provider_path(path, 8u, "/models", "org/model",
+                                    YVEX_SOURCE_RELEASE_REVISION) && !path[0],
+        "managed source addressing rejects mutable references, traversal and truncation");
     YVEX_TEST_ASSERT(
         yvex_source_target_identity_find_repository(
                 YVEX_SOURCE_RELEASE_REPOSITORY) ==

@@ -6,6 +6,7 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/io.h>
 #include <yvex/internal/source.h>
+#include <yvex/internal/source_catalog.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -481,22 +482,28 @@ static int publish_temporary(const char *temporary, const char *destination,
 }
 
 static int copy_representation(const yvex_source_representation_fact *source,
-                               const char *destination, yvex_error *err)
+                               const char *destination, const char *scratch,
+                               yvex_error *err)
 {
     char temporary[YVEX_PATH_CAP];
     yvex_source_manifest_file_list files;
     size_t index;
+    struct stat status;
     int rc;
 
     if (access(destination, F_OK) == 0)
         return distribution_refuse(err, YVEX_ERR_STATE,
                                    "source.distribution.copy",
                                    "destination already exists");
-    if (snprintf(temporary, sizeof(temporary), "%s.partial.%ld", destination,
+    if (snprintf(temporary, sizeof(temporary), "%s.partial.%ld", scratch ? scratch : destination,
                  (long)getpid()) >= (int)sizeof(temporary))
         return distribution_refuse(err, YVEX_ERR_BOUNDS, "source.distribution.copy",
                                    "temporary destination path is too long");
-    (void)remove_tree(temporary);
+    if (lstat(temporary, &status) == 0 || errno != ENOENT)
+        return distribution_refuse(err, YVEX_ERR_STATE, "source.distribution.copy",
+                                   "temporary copy path already exists");
+    rc = yvex_core_mkdir_parent(destination, "source.distribution.copy", err);
+    if (rc != YVEX_OK) return rc;
     if (!source->directory) {
         rc = copy_file_direct(source->path, temporary, err);
     } else {
@@ -592,6 +599,7 @@ int yvex_source_register_reference(const yvex_source_reference_options *options,
 {
     unsigned char identity_digest[YVEX_SHA256_DIGEST_BYTES];
     char identity_hex[65], name[YVEX_SOURCE_DISTRIBUTION_NAME_CAP];
+    char source_path[YVEX_PATH_CAP];
     char family[64], *json = NULL;
     size_t length = 0u;
     FILE *stream;
@@ -601,7 +609,9 @@ int yvex_source_register_reference(const yvex_source_reference_options *options,
 
     if (!options || !options->locator || !options->models_root || !out ||
         options->locator->kind != YVEX_SOURCE_LOCATOR_HUGGINGFACE ||
-        !options->resolved_revision || !options->resolved_revision[0])
+        !yvex_source_provider_path(source_path, sizeof(source_path),
+                                   options->models_root, options->locator->repository,
+                                   options->resolved_revision))
         return distribution_refuse(err, YVEX_ERR_INVALID_ARG,
                                    "source.distribution.reference",
                                    "an immutable Hugging Face reference is required");
@@ -689,7 +699,7 @@ int yvex_source_import_local(const yvex_source_import_options *options,
                              yvex_source_import_result *out, yvex_error *err)
 {
     char name[YVEX_SOURCE_DISTRIBUTION_NAME_CAP];
-    char family[64], leaf[YVEX_PATH_CAP];
+    char family[64], leaf[YVEX_PATH_CAP], scratch[YVEX_PATH_CAP];
     yvex_source_representation_fact verified;
     int rc;
 
@@ -721,17 +731,22 @@ int yvex_source_import_local(const yvex_source_import_options *options,
                                options->locator->path, err,
                                "source.distribution.import");
     } else {
-        const char *base = out->representation.directory ? "source"
-                                                          : path_basename(options->locator->path);
+        const char *base = out->representation.directory ? "source" :
+                          !strcmp(out->representation.format, "gguf") ? "model.gguf" :
+                          "model.safetensors";
         (void)distribution_copy(out->storage, sizeof(out->storage), "managed", err,
                                 "source.distribution.import");
-        if (snprintf(leaf, sizeof(leaf), "%s/imports/%s/%.16s/%s",
-                     options->models_root, name, out->representation.digest, base) >=
+        if (snprintf(leaf, sizeof(leaf), "%s/source/local/%s/%s",
+                     options->models_root, out->representation.digest, base) >=
             (int)sizeof(leaf))
             return distribution_refuse(err, YVEX_ERR_BOUNDS,
                                        "source.distribution.import",
                                        "managed source path is too long");
-        rc = copy_representation(&out->representation, leaf, err);
+        if (snprintf(scratch, sizeof(scratch), "%s/tmp/imports/%s",
+                     options->models_root, out->representation.digest) >= (int)sizeof(scratch))
+            return distribution_refuse(err, YVEX_ERR_BOUNDS, "source.distribution.import",
+                                       "import temporary path is too long");
+        rc = copy_representation(&out->representation, leaf, scratch, err);
         if (rc == YVEX_ERR_STATE) {
             yvex_source_locator existing_locator;
             yvex_error_clear(err);
@@ -828,7 +843,7 @@ int yvex_source_export_local(const yvex_source_export_options *options,
                                        "source.distribution.export",
                                        "destination member path is too long");
     }
-    rc = copy_representation(&source, destination, err);
+    rc = copy_representation(&source, destination, NULL, err);
     if (rc != YVEX_OK) return rc;
     memset(&destination_locator, 0, sizeof(destination_locator));
     destination_locator.kind = YVEX_SOURCE_LOCATOR_LOCAL_PATH;

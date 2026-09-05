@@ -203,7 +203,7 @@ static void output_head_write_sidecar(const yvex_model_target_request *request,
     char path[1024];
 
     if (!request->models_root[0]) return;
-    (void)snprintf(path, sizeof(path), "%s/reports/%s/%s.output-head-map.json",
+    (void)snprintf(path, sizeof(path), "%s/evidence/build/%s/%s.output-head-map.json",
                    request->models_root, family, request->target_id);
     (void)yvex_model_target_write_sidecar(YVEX_MODEL_TARGET_SIDECAR_OUTPUT_HEAD, path,
                                           request->target_id, family, status, NULL);

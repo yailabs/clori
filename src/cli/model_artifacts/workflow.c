@@ -855,6 +855,9 @@ static void product_json_model(const yvex_model_library *library,
     yvex_cli_out_json_string(stdout, fact.selector);
     yvex_cli_out_fputs(",\"identity\":", stdout);
     yvex_cli_out_json_string(stdout, fact.model->identity);
+    yvex_cli_out_writef(stdout, ",\"working_set\":%s",
+                        yvex_model_library_is_working_set(library, model_index)
+                            ? "true" : "false");
     yvex_cli_out_fputs(",\"name\":", stdout);
     yvex_cli_out_json_string(stdout, fact.model->display_name);
     yvex_cli_out_fputs(",\"family\":", stdout);
@@ -927,7 +930,16 @@ int yvex_cli_model_find(const yvex_model_library *library, const char *selector,
     unsigned long long index;
     int matches = 0;
     for (index = 0u; index < yvex_model_library_count(library); ++index) {
-        if (!product_match(yvex_model_library_at(library, index), selector)) continue;
+        unsigned long long source_index;
+        int matched = product_match(yvex_model_library_at(library, index), selector);
+        for (source_index = 0u; !matched &&
+             source_index < yvex_model_library_source_count(library, index);
+             ++source_index) {
+            const yvex_local_source_record *source =
+                yvex_model_library_source_at(library, index, source_index);
+            matched = source->name[0] && !strcmp(source->name, selector);
+        }
+        if (!matched) continue;
         *model_index = index;
         matches++;
     }
@@ -1189,7 +1201,7 @@ int yvex_model_catalog_list_command(int arg_count, char **args)
     if (rc) return rc;
     product_runtime_open(&runtime);
     if (cli.output_mode == YVEX_MODEL_CATALOG_OUTPUT_JSON) {
-        yvex_cli_out_fputs("{\"schema\":\"yvex.model.list.v2\",\"models\":[", stdout);
+        yvex_cli_out_fputs("{\"schema\":\"yvex.model.list.v3\",\"models\":[", stdout);
         for (index = 0u; index < yvex_model_library_count(library); ++index) {
             if (index) yvex_cli_out_char(stdout, ',');
             product_json_model(library, index, &runtime);
@@ -1273,7 +1285,7 @@ int yvex_model_catalog_show_command(int arg_count, char **args)
     }
     product_runtime_open(&runtime);
     if (cli.output_mode == YVEX_MODEL_CATALOG_OUTPUT_JSON) {
-        yvex_cli_out_fputs("{\"schema\":\"yvex.model.v2\",\"model\":", stdout);
+        yvex_cli_out_fputs("{\"schema\":\"yvex.model.v3\",\"model\":", stdout);
         product_json_model(library, model_index, &runtime);
         yvex_cli_out_fputs("}\n", stdout);
         yvex_model_library_close(library);

@@ -4057,7 +4057,7 @@
       ],
       "lane": "offline-engine",
       "operation_id": "model.list",
-      "result_schema": "yvex.model.list.v2",
+      "result_schema": "yvex.model.list.v3",
       "summary": "List the logical model catalog with origin, representation, state, and location.",
       "visibility": "product-default"
     },
@@ -4087,7 +4087,7 @@
       ],
       "lane": "offline-engine",
       "operation_id": "model.show",
-      "result_schema": "yvex.model.v2",
+      "result_schema": "yvex.model.v3",
       "summary": "Explain one model's exact origin, representations, and runtime lineage.",
       "visibility": "product-default"
     },

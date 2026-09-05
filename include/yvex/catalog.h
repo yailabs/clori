@@ -192,6 +192,9 @@ typedef struct {
 int yvex_local_catalog_open(yvex_local_catalog **out,
                             const yvex_local_catalog_options *options,
                             yvex_error *err);
+/* Resolve an existing acquisition by name or local path without opening runtime packages. */
+int yvex_local_catalog_source_resolve(const char *models_root, const char *name,
+                                      yvex_local_source_record *out, yvex_error *err);
 void yvex_local_catalog_close(yvex_local_catalog *catalog);
 unsigned long long yvex_local_catalog_source_count(const yvex_local_catalog *catalog);
 const yvex_local_source_record *yvex_local_catalog_source_at(
@@ -277,6 +280,8 @@ int yvex_model_library_open(yvex_model_library **out,
                             yvex_error *err);
 void yvex_model_library_close(yvex_model_library *library);
 unsigned long long yvex_model_library_count(const yvex_model_library *library);
+int yvex_model_library_is_working_set(const yvex_model_library *library,
+                                      unsigned long long model_index);
 const yvex_model_library_entry *yvex_model_library_at(
     const yvex_model_library *library, unsigned long long index);
 unsigned long long yvex_model_library_artifact_count(

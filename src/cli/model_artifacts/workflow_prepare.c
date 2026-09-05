@@ -350,6 +350,7 @@ static int prepare_plan_paths(const model_prepare_options *options,
 {
     yvex_paths paths = {0};
     char reports_family[YVEX_PATH_CAP], artifacts_family[YVEX_PATH_CAP];
+    char provenance_root[YVEX_PATH_CAP];
     char registry_family[YVEX_PATH_CAP], binding_leaf[YVEX_MODEL_LIBRARY_NAME_CAP + 16u];
     char file[YVEX_MODEL_LIBRARY_NAME_CAP + 32u];
     int rc;
@@ -357,26 +358,32 @@ static int prepare_plan_paths(const model_prepare_options *options,
     rc = yvex_operator_paths_resolve(&paths, options->models_root,
                                      &plan->operator_paths, err);
     if (rc == YVEX_OK)
-        rc = prepare_text_path(reports_family, plan->operator_paths.reports_root,
-                               plan->execution->operator_family_key,
-                               "model.prepare.paths", err);
-    if (rc == YVEX_OK)
         rc = prepare_text_path(artifacts_family, plan->operator_paths.gguf_root,
-                               plan->execution->operator_family_key,
+                               plan->execution->target_id,
                                "model.prepare.paths", err);
     if (rc == YVEX_OK)
         rc = prepare_text_path(registry_family, plan->operator_paths.registry_root,
                                plan->execution->operator_family_key,
                                "model.prepare.paths", err);
-    snprintf(file, sizeof(file), "%s.source-manifest.json", plan->source->name);
+    if (rc == YVEX_OK)
+        rc = prepare_text_path(provenance_root, plan->operator_paths.registry_root,
+                               "provenance", "model.prepare.paths", err);
+    if (rc == YVEX_OK)
+        rc = prepare_text_path(reports_family, provenance_root,
+                               plan->execution->operator_family_key,
+                               "model.prepare.paths", err);
+    snprintf(file, sizeof(file), "%s", plan->execution->source_manifest_filename);
     if (rc == YVEX_OK)
         rc = prepare_text_path(plan->manifest_path, reports_family, file,
                                "model.prepare.paths", err);
-    snprintf(file, sizeof(file), "%s.quant-plan", plan->preset);
+    if (rc == YVEX_OK)
+        rc = prepare_text_path(reports_family, plan->operator_paths.models_root,
+                               "tmp/prepare", "model.prepare.paths", err);
+    snprintf(file, sizeof(file), "%s-%ld.quant-plan", plan->preset, (long)getpid());
     if (rc == YVEX_OK)
         rc = prepare_text_path(plan->plan_path, reports_family, file,
                                "model.prepare.paths", err);
-    snprintf(file, sizeof(file), "%s.gguf", plan->preset);
+    snprintf(file, sizeof(file), "<physical-variant-identity>/model.gguf");
     if (rc == YVEX_OK)
         rc = prepare_text_path(plan->artifact_path, artifacts_family, file,
                                "model.prepare.paths", err);
@@ -403,7 +410,7 @@ static int prepare_rebind_source(const model_prepare_options *options,
                                  model_prepare_plan *plan, yvex_error *err)
 {
     yvex_paths paths = {0};
-    char family_root[YVEX_PATH_CAP];
+    char family_root[YVEX_PATH_CAP], provenance_root[YVEX_PATH_CAP];
     int rc;
 
     plan->source_identity = yvex_source_target_identity_find(
@@ -426,7 +433,10 @@ static int prepare_rebind_source(const model_prepare_options *options,
         rc = YVEX_ERR_BOUNDS;
     }
     if (rc == YVEX_OK)
-        rc = prepare_text_path(family_root, plan->operator_paths.gguf_root,
+        rc = prepare_text_path(provenance_root, plan->operator_paths.registry_root,
+                               "provenance", "model.prepare.rebind", err);
+    if (rc == YVEX_OK)
+        rc = prepare_text_path(family_root, provenance_root,
                                plan->execution->operator_family_key,
                                "model.prepare.rebind", err);
     if (rc == YVEX_OK)
@@ -691,7 +701,7 @@ static void prepare_render_plan(const model_prepare_options *options,
 
 static int prepare_parents(const model_prepare_plan *plan, yvex_error *err)
 {
-    const char *paths[] = {plan->manifest_path, plan->plan_path, plan->artifact_path,
+    const char *paths[] = {plan->manifest_path, plan->plan_path,
                            plan->registry_path};
     char binding_anchor[YVEX_PATH_CAP];
     size_t index;
@@ -763,7 +773,12 @@ static int prepare_quant_plan(const model_prepare_options *options,
     int argc = 0, rc;
 
     argv[argc++] = "yvex"; argv[argc++] = "quant";
-    argv[argc++] = access(plan->plan_path, F_OK) == 0 ? "summarize" : "plan";
+    if (access(plan->plan_path, F_OK) == 0) {
+        yvex_error_set(err, YVEX_ERR_STATE, "model.prepare",
+                       "temporary plan already exists; reconcile the interrupted operation");
+        return YVEX_ERR_STATE;
+    }
+    argv[argc++] = "plan";
     argv[argc++] = "--target"; argv[argc++] = (char *)plan->execution->target_id;
     argv[argc++] = "--source"; argv[argc++] = (char *)plan->source->path;
     argv[argc++] = "--models-root";
@@ -807,6 +822,59 @@ static int prepare_quant_emit(const model_prepare_options *options,
     rc = yvex_quant_command_execute(argc, argv, 0);
     if (rc) yvex_error_set(err, YVEX_ERR_STATE, "model.prepare", "artifact emission failed");
     return rc ? YVEX_ERR_STATE : YVEX_OK;
+}
+
+static int prepare_store_plan(model_prepare_plan *plan, yvex_error *err)
+{
+    yvex_quant_plan_file_summary sealed = {0};
+    char target_root[YVEX_PATH_CAP], representation[YVEX_PATH_CAP];
+    char stored_plan[YVEX_PATH_CAP];
+    int rc = yvex_quant_plan_file_probe(plan->plan_path, &sealed, err);
+
+    if (rc != YVEX_OK) return rc;
+    if (!sealed.complete || !yvex_sha256_hex_valid(sealed.payload_plan_identity) ||
+        !yvex_sha256_hex_valid(sealed.physical_variant_identity)) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "model.prepare.store",
+                       "complete immutable payload and physical variant identities are required");
+        return YVEX_ERR_FORMAT;
+    }
+    rc = prepare_text_path(target_root, plan->operator_paths.gguf_root,
+                           plan->execution->target_id, "model.prepare.store", err);
+    if (rc == YVEX_OK)
+        rc = prepare_text_path(representation, target_root, sealed.physical_variant_identity,
+                               "model.prepare.store", err);
+    if (rc == YVEX_OK)
+        rc = prepare_text_path(plan->artifact_path, representation, "model.gguf",
+                               "model.prepare.store", err);
+    if (rc == YVEX_OK)
+        rc = prepare_text_path(stored_plan, representation, "physical.plan",
+                               "model.prepare.store", err);
+    if (rc == YVEX_OK)
+        rc = yvex_core_mkdir_parent(stored_plan, "model.prepare.store", err);
+    if (rc != YVEX_OK) return rc;
+    if (access(stored_plan, F_OK) == 0) {
+        yvex_quant_plan_file_summary existing = {0};
+        rc = yvex_quant_plan_file_probe(stored_plan, &existing, err);
+        if (rc != YVEX_OK) return rc;
+        if (strcmp(existing.payload_plan_identity, sealed.payload_plan_identity) ||
+            strcmp(existing.required_payload_identity, sealed.required_payload_identity) ||
+            strcmp(existing.physical_variant_identity, sealed.physical_variant_identity)) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "model.prepare.store",
+                           "stored representation conflicts with the sealed plan");
+            return YVEX_ERR_FORMAT;
+        }
+    } else if (link(plan->plan_path, stored_plan) != 0) {
+        yvex_error_set(err, YVEX_ERR_IO, "model.prepare.store",
+                       "cannot publish immutable plan without replacement");
+        return YVEX_ERR_IO;
+    }
+    if (unlink(plan->plan_path) != 0) {
+        yvex_error_set(err, YVEX_ERR_IO, "model.prepare.store",
+                       "cannot retire temporary preparation plan");
+        return YVEX_ERR_IO;
+    }
+    snprintf(plan->plan_path, sizeof(plan->plan_path), "%s", stored_plan);
+    return YVEX_OK;
 }
 
 static int prepare_binding(model_prepare_plan *plan,
@@ -980,6 +1048,7 @@ int yvex_model_prepare_command(int arg_count, char **args)
         if (!options.json) yvex_cli_out_fputs("[plan] compiling physical representation\n", stdout);
         changed |= access(plan.plan_path, F_OK) != 0;
         rc = prepare_quant_plan(&options, &plan, &err);
+        if (rc == YVEX_OK) rc = prepare_store_plan(&plan, &err);
     }
     if (rc == YVEX_OK && !plan.rebind_existing_artifact) {
         if (!options.json) yvex_cli_out_fputs("[materialize] emitting admitted artifact\n", stdout);

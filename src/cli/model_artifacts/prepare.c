@@ -610,7 +610,7 @@ int yvex_models_prepare_surface_command(int arg_count, char **args)
             rc = expand_operator_path(options.out_dir, out_dir, sizeof(out_dir), &err, "models_prepare");
             if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
         } else {
-            rc = yvex_operator_paths_resolve_target(&operator_paths, "deepseek", "gguf",
+            rc = yvex_operator_paths_resolve_target(&operator_paths, "deepseek", "reference",
                                                     out_dir, sizeof(out_dir),
                                                     &artifact_exists, &err);
             if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
@@ -1108,7 +1108,7 @@ static int model_check_resolve_canonical_path(
     if (rc != YVEX_OK) {
         return rc;
     }
-    rc = yvex_operator_paths_resolve_target(&operator_paths, "deepseek", "gguf",
+    rc = yvex_operator_paths_resolve_target(&operator_paths, "deepseek", "reference",
                                             gguf_dir, sizeof(gguf_dir), &exists, err);
     if (rc != YVEX_OK) {
         return rc;

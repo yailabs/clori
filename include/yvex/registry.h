@@ -11,13 +11,18 @@ extern "C" {
 
 #define YVEX_MODEL_REGISTRY_SCHEMA_V5 "yvex.models.local.v5"
 #define YVEX_MODEL_REGISTRY_SCHEMA_V6 "yvex.models.local.v6"
-#define YVEX_MODEL_REGISTRY_SCHEMA_CURRENT YVEX_MODEL_REGISTRY_SCHEMA_V6
+#define YVEX_MODEL_REGISTRY_SCHEMA_V7 "yvex.models.local.v7"
+#define YVEX_MODEL_REGISTRY_SCHEMA_CURRENT YVEX_MODEL_REGISTRY_SCHEMA_V7
 #define YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_V1 1u
 #define YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT \
     YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_V1
 
 /* Model registry. */
 typedef struct yvex_model_registry yvex_model_registry;
+
+/* Explicit development policy, independent of payload location and residency. */
+int yvex_model_registry_is_working_set(const yvex_model_registry *registry,
+                                       const char *logical_identity);
 
 typedef struct {
     unsigned int schema_version;

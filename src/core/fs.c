@@ -65,10 +65,10 @@ static const path_projection project_path_fields[] = {
 
 static const path_projection operator_root_fields[] = {
     {offsetof(yvex_operator_paths, models_root), YVEX_PATH_CAP, ""},
-    {offsetof(yvex_operator_paths, hf_root), YVEX_PATH_CAP, "/hf"},
-    {offsetof(yvex_operator_paths, gguf_root), YVEX_PATH_CAP, "/gguf"},
-    {offsetof(yvex_operator_paths, reports_root), YVEX_PATH_CAP, "/reports"},
-    {offsetof(yvex_operator_paths, reference_root), YVEX_PATH_CAP, "/reference"},
+    {offsetof(yvex_operator_paths, hf_root), YVEX_PATH_CAP, "/source/hf"},
+    {offsetof(yvex_operator_paths, gguf_root), YVEX_PATH_CAP, "/representations"},
+    {offsetof(yvex_operator_paths, reports_root), YVEX_PATH_CAP, "/evidence/build"},
+    {offsetof(yvex_operator_paths, reference_root), YVEX_PATH_CAP, "/evidence/fixtures"},
     {offsetof(yvex_operator_paths, registry_root), YVEX_PATH_CAP, "/registry"},
 };
 
@@ -1049,34 +1049,26 @@ int yvex_operator_paths_reset(const yvex_paths *paths,
 
 int yvex_operator_paths_create(const yvex_operator_paths *operator_paths, yvex_error *err)
 {
-    const char *const family_names[] = {"deepseek", "glm", "qwen", "gemma"};
-    const char *roots[4];
-    const char *dirs[22];
-    char family_dirs[4][4][YVEX_PATH_CAP];
-    size_t root, family, dir_count = 0u;
+    const char *dirs[7];
+    char inbox[YVEX_PATH_CAP];
+    size_t root;
     int rc;
 
     if (!operator_paths || operator_paths->models_root[0] == '\0') {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "operator_paths", "operator paths are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    roots[0] = operator_paths->hf_root;
-    roots[1] = operator_paths->gguf_root;
-    roots[2] = operator_paths->reports_root;
-    roots[3] = operator_paths->reference_root;
-    dirs[dir_count++] = operator_paths->models_root;
-    for (root = 0u; root < 4u; ++root) {
-        dirs[dir_count++] = roots[root];
-        for (family = 0u; family < 4u; ++family) {
-            rc = path_format(family_dirs[root][family], YVEX_PATH_CAP, err,
-                             "operator_paths", "%s/%s", roots[root],
-                             family_names[family]);
-            if (rc != YVEX_OK) return rc;
-            dirs[dir_count++] = family_dirs[root][family];
-        }
-    }
-    dirs[dir_count++] = operator_paths->registry_root;
-    for (root = 0u; root < dir_count; ++root) {
+    rc = path_format(inbox, sizeof(inbox), err, "operator_paths", "%s/inbox",
+                     operator_paths->models_root);
+    if (rc != YVEX_OK) return rc;
+    dirs[0] = operator_paths->models_root;
+    dirs[1] = operator_paths->hf_root;
+    dirs[2] = operator_paths->gguf_root;
+    dirs[3] = operator_paths->reports_root;
+    dirs[4] = operator_paths->reference_root;
+    dirs[5] = operator_paths->registry_root;
+    dirs[6] = inbox;
+    for (root = 0u; root < sizeof(dirs) / sizeof(dirs[0]); ++root) {
         rc = mkdir_p(dirs[root], "yvex_run_dir_create", err);
         if (rc != YVEX_OK) return rc;
     }

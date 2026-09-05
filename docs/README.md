@@ -30,6 +30,7 @@ contracts, operation, and evidence.
 | DeepSeek vertical | [DeepSeek-V4-Flash](model-families/deepseek-v4-flash.md) |
 | MiniMax composite vertical | [MiniMax-H3](model-families/minimax-h3.md) |
 | Mamba2 source/state boundary (not executable) | [Mamba2](model-families/mamba2.md) |
+| Managed model storage and location | [Model storage](contracts/model-storage.md) |
 | Artifact admission | [Artifact contract](contracts/artifacts.md) |
 | Runtime behavior and failure | [Runtime contract](contracts/runtime.md) |
 | Local transport | [Local protocol v20](contracts/local-protocol.md) |

@@ -118,7 +118,8 @@ static int path_has_suffix(const char *path, const char *suffix)
 static int deepseek_models_root(
     const yvex_model_target_request *request, char *out, size_t cap)
 {
-    static const char suffix[] = "/hf/deepseek/DeepSeek-V4-Flash-DSpark";
+    static const char suffix[] = "/source/hf/" YVEX_SOURCE_RELEASE_REPOSITORY
+                                 "/" YVEX_SOURCE_RELEASE_REVISION;
     const char *environment;
     size_t source_length;
     size_t suffix_length = sizeof(suffix) - 1u;

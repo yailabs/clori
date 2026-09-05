@@ -75,6 +75,8 @@ struct yvex_model_registry {
     yvex_model_registry_owned_entry *entries;
     unsigned long long count;
     unsigned long long cap;
+    char working_set[256][448];
+    unsigned int working_set_count;
 };
 
 #ifdef __cplusplus

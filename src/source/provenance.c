@@ -643,7 +643,7 @@ static int source_manifest_path(const yvex_source_verify_options *options, char 
     if (options->promote_manifest && options->models_root) {
         n = snprintf(out,
                      cap,
-                     "%s/gguf/%s/%s",
+                     "%s/registry/provenance/%s/%s",
                      options->models_root,
                      options->identity->family_key,
                      YVEX_SOURCE_RELEASE_MANIFEST_LEAF);
@@ -663,7 +663,7 @@ static int source_manifest_path(const yvex_source_verify_options *options, char 
     }
     n = options->models_root ? snprintf(out,
                                         cap,
-                                        "%s/gguf/%s/%s",
+                                        "%s/registry/provenance/%s/%s",
                                         options->models_root,
                                         options->identity->family_key,
                                         YVEX_SOURCE_RELEASE_MANIFEST_LEAF)

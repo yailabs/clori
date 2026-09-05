@@ -351,7 +351,8 @@ int model_download_name_starts_with(const char *name, const char *prefix);
 int model_download_name_contains(const char *name, const char *needle);
 int model_download_scan_source(const char *root,
                                yvex_model_download_source_scan *scan,
-                               yvex_error *err);
+                                      yvex_error *err);
+int model_download_cache_link_owned(const char *source_root);
 int model_download_check_safetensors_source(
     const char *root,
     yvex_model_download_safetensors_check *check,

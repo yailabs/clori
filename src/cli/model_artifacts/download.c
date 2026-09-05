@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 #include <yvex/core.h>
+#include <yvex/internal/core.h>
 
 static volatile sig_atomic_t model_download_provider_signal_seen;
 
@@ -374,6 +375,25 @@ static int model_download_walk_tree(const char *root,
     return rc;
 }
 
+int model_download_cache_link_owned(const char *source_root)
+{
+    const char *suffix = source_root ? strstr(source_root, "/source/hf/") : NULL;
+    char expected[YVEX_PATH_CAP], link_path[YVEX_PATH_CAP], target[YVEX_PATH_CAP];
+    int written;
+    ssize_t length;
+
+    if (!suffix) return 0;
+    written = snprintf(expected, sizeof(expected), "%.*s/cache/hf/%s",
+                       (int)(suffix - source_root), source_root, suffix + 11u);
+    if (written < 0 || (size_t)written >= sizeof(expected)) return 0;
+    written = snprintf(link_path, sizeof(link_path), "%s/.cache", source_root);
+    if (written < 0 || (size_t)written >= sizeof(link_path)) return 0;
+    length = readlink(link_path, target, sizeof(target) - 1u);
+    if (length < 0) return 0;
+    target[length] = '\0';
+    return !strcmp(target, expected);
+}
+
 int model_download_scan_source(const char *root,
                                       yvex_model_download_source_scan *scan,
                                       yvex_error *err)
@@ -385,7 +405,12 @@ int model_download_scan_source(const char *root,
         return YVEX_ERR_INVALID_ARG;
     }
     memset(scan, 0, sizeof(*scan));
-    return model_download_walk_tree(root, "", &walk, err);
+    {
+        int rc = model_download_walk_tree(root, "", &walk, err);
+        if (rc == YVEX_OK && model_download_cache_link_owned(root))
+            rc = model_download_walk_tree(root, ".cache", &walk, err);
+        return rc;
+    }
 }
 
 static int model_download_read_u64_le(FILE *fp, unsigned long long *out)
@@ -848,6 +873,43 @@ static int provider_process_run_streaming(const char *const *args,
     return 1;
 }
 
+static int model_download_prepare_cache(const yvex_model_download_report *report,
+                                         yvex_error *err)
+{
+    char cache[YVEX_PATH_CAP], link_path[YVEX_PATH_CAP];
+    char anchor[YVEX_PATH_CAP], existing[YVEX_PATH_CAP];
+    struct stat status;
+    ssize_t length;
+    int rc;
+
+    if (snprintf(cache, sizeof(cache), "%s/cache/hf/%s/%s",
+                 report->models_root, report->repo_id, report->revision) >= (int)sizeof(cache) ||
+        snprintf(link_path, sizeof(link_path), "%s/.cache", report->local_source_dir) >=
+            (int)sizeof(link_path) ||
+        snprintf(anchor, sizeof(anchor), "%s/.anchor", cache) >= (int)sizeof(anchor)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "models_download_cache", "cache path is too long");
+        return YVEX_ERR_BOUNDS;
+    }
+    rc = yvex_core_mkdir_parent(anchor, "models_download_cache", err);
+    if (rc == YVEX_OK) rc = yvex_core_mkdir_parent(link_path, "models_download_cache", err);
+    if (rc != YVEX_OK) return rc;
+    if (lstat(link_path, &status) == 0) {
+        length = S_ISLNK(status.st_mode) ? readlink(link_path, existing, sizeof(existing) - 1u) : -1;
+        if (length >= 0) {
+            existing[length] = '\0';
+            if (!strcmp(existing, cache)) return YVEX_OK;
+        }
+        yvex_error_set(err, YVEX_ERR_STATE, "models_download_cache",
+                       "existing provider cache requires explicit storage migration");
+        return YVEX_ERR_STATE;
+    }
+    if (errno != ENOENT || symlink(cache, link_path) != 0) {
+        yvex_error_set(err, YVEX_ERR_IO, "models_download_cache", "cannot bind provider cache");
+        return YVEX_ERR_IO;
+    }
+    return YVEX_OK;
+}
+
 int model_download_run_hf(const yvex_cli_models_download_options *options,
                                  yvex_model_download_report *report,
                                  const char *token_value,
@@ -864,6 +926,8 @@ int model_download_run_hf(const yvex_cli_models_download_options *options,
                        "download options and report are required");
         return -1;
     }
+    if (!options->dry_run && model_download_prepare_cache(report, err) != YVEX_OK)
+        return -1;
     snprintf(max_workers_buf, sizeof(max_workers_buf), "%llu", options->max_workers);
     args[n++] = report->provider_cli_path;
     args[n++] = "download";

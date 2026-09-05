@@ -145,6 +145,13 @@ item = json.load(open(sys.argv[1], encoding="utf-8"))
 assert item["storage"] == "managed"
 assert item["model"] == "tiny-managed"
 assert item["format"] == "gguf"
+from pathlib import Path
+location = Path(item["location"])
+assert location.name == "model.gguf"
+assert len(location.parent.name) == 64
+assert all(c in "0123456789abcdef" for c in location.parent.name)
+assert location.parent.parent.name == "local"
+assert location.parent.parent.parent.name == "source"
 print(item["location"])
 PY
 )
@@ -376,7 +383,11 @@ assert len(item["local_content_digest"]) == 64
 assert item["upstream_identity_verified"] is True
 assert item["payload_hash_verified"] is False
 PY
-test -f "$MODELS_ROOT/hf/minimax-h3/pulled-h3/.cache/huggingface/download/config.json.metadata"
+pulled_revision=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$ROOT/hf-pull.json")
+pulled_source="$MODELS_ROOT/source/hf/MiniMaxAI/MiniMax-H3/$pulled_revision"
+test -L "$pulled_source/.cache"
+test "$(readlink "$pulled_source/.cache")" = "$MODELS_ROOT/cache/hf/MiniMaxAI/MiniMax-H3/$pulled_revision"
+test -f "$pulled_source/.cache/huggingface/download/config.json.metadata"
 "$YVEX_BIN" model status pulled-h3 --models-root "$MODELS_ROOT" \
     --json >"$ROOT/hf-status.json"
 python3 - "$ROOT/hf-status.json" <<'PY'
@@ -445,11 +456,11 @@ contains "$ROOT/deepseek-pull-dry-run.out" 'stage: download planned (dry-run)'
 ! grep 'model-download: start' "$ROOT/deepseek-pull-dry-run.out" >/dev/null
 ! grep 'stage: download running' "$ROOT/deepseek-pull-dry-run.out" >/dev/null
 ! grep 'tick: elapsed=' "$ROOT/deepseek-pull-dry-run.out" >/dev/null
-test ! -e "$MODELS_ROOT/hf/deepseek/dry-run-dspark"
-test ! -e "$MODELS_ROOT/reports/deepseek/dry-run-dspark.download.receipt"
-test ! -e "$MODELS_ROOT/reports/deepseek/dry-run-dspark.download.active.json"
-test ! -e "$MODELS_ROOT/logs/dry-run-dspark.download.stdout.log"
-test ! -e "$MODELS_ROOT/logs/dry-run-dspark.download.stderr.log"
+test ! -e "$MODELS_ROOT/source/hf/deepseek-ai/DeepSeek-V4-Flash-DSpark/62af8fffb2f7030cac4de2f0169f5b8d1101b646"
+test ! -e "$MODELS_ROOT/evidence/build/deepseek/dry-run-dspark.download.receipt"
+test ! -e "$MODELS_ROOT/evidence/build/deepseek/dry-run-dspark.download.active.json"
+test ! -e "$MODELS_ROOT/evidence/build/acquisition/dry-run-dspark.download.stdout.log"
+test ! -e "$MODELS_ROOT/evidence/build/acquisition/dry-run-dspark.download.stderr.log"
 YVEX_FAKE_HF_AUTH=1 \
 YVEX_FAKE_HF_RESOLVED_SHA=62af8fffb2f7030cac4de2f0169f5b8d1101b646 \
     "$YVEX_BIN" model pull hf://deepseek-ai/DeepSeek-V4-Flash-DSpark \
@@ -468,13 +479,14 @@ python3 - "$ROOT/deepseek-prepare-plan.json" "$MODELS_ROOT" <<'PY'
 import json, os, sys
 item = json.load(open(sys.argv[1], encoding="utf-8"))
 assert item["schema"] == "yvex.model.prepare.v1"
-assert item["model"] == "deepseek-dspark"
+assert item["model"] == "DeepSeek-V4-Flash"
 assert item["state"] == "PLANNED" and not item["changed"]
 assert item["revision"] == "62af8fffb2f7030cac4de2f0169f5b8d1101b646"
 assert item["target"] == "deepseek4-v4-flash-dspark"
 assert item["quant"] == "deepseek-v4-flash-dspark-q8_0-q2_k-v1"
 assert item["backend"] == "cuda"
-assert item["artifact"].startswith(sys.argv[2] + "/gguf/deepseek/")
+assert item["artifact"] == (sys.argv[2] + "/representations/deepseek4-v4-flash-dspark/"
+                            "<physical-variant-identity>/model.gguf")
 assert not os.path.exists(item["artifact"])
 PY
 

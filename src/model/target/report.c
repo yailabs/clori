@@ -9,6 +9,9 @@
 #include <yvex/internal/model_target.h>
 
 #include <yvex/internal/source.h>
+#include <yvex/internal/source_catalog.h>
+#include <yvex/catalog.h>
+#include <yvex/internal/core.h>
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -299,11 +302,20 @@ int yvex_model_target_probe_source_path(
                      ? snprintf(out, cap, "%s/%s", request->source_path, leaf)
                      : snprintf(out, cap, "%s", request->source_path);
     } else if (request->models_root[0]) {
+        char source[YVEX_PATH_CAP];
+        const yvex_source_target_identity *identity =
+            yvex_source_target_identity_find(request->target_id);
+        if (!yvex_source_target_path(source, sizeof(source), request->models_root, identity)) {
+            yvex_local_source_record acquired;
+            yvex_error ignored;
+            yvex_error_clear(&ignored);
+            if (yvex_local_catalog_source_resolve(request->models_root, request->target_id,
+                                                   &acquired, &ignored) != YVEX_OK) return 0;
+            yvex_core_text_copy(source, sizeof(source), acquired.path);
+        }
         length = leaf && leaf[0]
-                     ? snprintf(out, cap, "%s/hf/%s/%s/%s", request->models_root,
-                                family, request->target_id, leaf)
-                     : snprintf(out, cap, "%s/hf/%s/%s", request->models_root,
-                                family, request->target_id);
+                     ? snprintf(out, cap, "%s/%s", source, leaf)
+                     : snprintf(out, cap, "%s", source);
     } else {
         return 0;
     }
@@ -426,8 +438,8 @@ void yvex_model_target_probe_source_profile(
     if (!request || !family) return;
     (void)yvex_model_target_probe_source_path(
         request, family, NULL, directory, sizeof(directory));
-    profile->source_requested = directory[0] != '\0';
-    if (!profile->source_requested) return;
+    profile->source_requested = request->source_path[0] || request->models_root[0];
+    if (!profile->source_requested || !directory[0]) return;
     profile->source_directory_present =
         yvex_model_target_probe_directory(directory);
     (void)snprintf(path, sizeof(path), "%s/model.safetensors", directory);

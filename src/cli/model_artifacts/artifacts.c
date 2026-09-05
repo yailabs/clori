@@ -273,7 +273,7 @@ static void artifacts_classify_dynamic_row(const yvex_operator_paths *operator_p
     if (!operator_paths || !row) return;
     n = snprintf(row->expected_path, sizeof(row->expected_path),
                  "%s/%s/%s.gguf",
-                 operator_paths->gguf_root,
+                 operator_paths->reference_root,
                  row->family,
                  row->target_id);
     if (n < 0 || (size_t)n >= sizeof(row->expected_path)) row->expected_path[0] = '\0';
@@ -395,7 +395,7 @@ static void artifacts_add_dynamic_target(
 
 static void artifacts_scan_gguf_family(const yvex_operator_paths *operator_paths,
                                        yvex_models_artifact_rows *rows,
-                                       const char *family)
+                                       const char *family, const char *root)
 {
     DIR *dir;
     struct dirent *ent;
@@ -404,7 +404,7 @@ static void artifacts_scan_gguf_family(const yvex_operator_paths *operator_paths
 
     yvex_error_clear(&err);
     if (!operator_paths || !rows || !family) return;
-    if (path_join2(family_dir, sizeof(family_dir), operator_paths->gguf_root,
+    if (path_join2(family_dir, sizeof(family_dir), root,
                    family, &err, "models_artifacts") != YVEX_OK) {
         return;
     }
@@ -511,7 +511,8 @@ static int artifacts_collect(const yvex_cli_models_artifacts_options *options,
         const char *family = families[i];
 
         if (!artifacts_family_allowed(options, family)) continue;
-        artifacts_scan_gguf_family(operator_paths, rows, family);
+        artifacts_scan_gguf_family(operator_paths, rows, family, operator_paths->gguf_root);
+        artifacts_scan_gguf_family(operator_paths, rows, family, operator_paths->reference_root);
         if (path_join2(registry_family_dir, sizeof(registry_family_dir),
                        operator_paths->registry_root, family, err,
                        "models_artifacts") == YVEX_OK) {

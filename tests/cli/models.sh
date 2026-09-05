@@ -381,7 +381,7 @@ export YVEX_FAKE_HF_LOG="$FAKE_HF_LOG"
 
 RECON_ROOT="$ROOT/catalog-reconcile"
 RECON_REV=b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08
-RECON_SOURCE="$RECON_ROOT/hf/minimax/MiniMax-H3/$RECON_REV"
+RECON_SOURCE="$RECON_ROOT/source/hf/MiniMaxAI/MiniMax-H3/$RECON_REV"
 mkdir -p "$RECON_SOURCE"
 cat > "$RECON_SOURCE/yvex-source-acquisition.json" <<JSON
 {"schema":"yvex.source-acquisition.v1","repository":"MiniMaxAI/MiniMax-H3",\
@@ -682,7 +682,7 @@ grep 'component does not match the current family execution contract' \
 "$YVEX_BIN" model list --models-root "$CATALOG_ROOT" --registry "$REG" \
   > "$ROOT/library-friendly.out"
 grep '^MODELS$' "$ROOT/library-friendly.out"
-grep 'v4-flash-dspark.*BLOCKED.*not current' "$ROOT/library-friendly.out"
+grep 'v4-flash.*BLOCKED.*not current' "$ROOT/library-friendly.out"
 grep 'minimax-h3-fl2va.*BLOCKED.*not current' "$ROOT/library-friendly.out"
 ! grep 'provider:huggingface' "$ROOT/library-friendly.out"
 "$YVEX_BIN" source list --models-root "$RECON_ROOT" --registry "$REG" \
@@ -709,7 +709,7 @@ models = json.load(open(sys.argv[1], encoding="utf-8"))["models"]
 artifacts = json.load(open(sys.argv[2], encoding="utf-8"))["artifacts"]
 profiles = json.load(open(sys.argv[3], encoding="utf-8"))["profiles"]
 assert {model["name"] for model in models} == {
-    "deepseek4-v4-flash-dspark",
+    "DeepSeek-V4-Flash",
     "minimax-h3-fl2va",
 }
 assert all(artifact["profile_count"] == 1 for artifact in artifacts)
@@ -852,11 +852,11 @@ grep 'payload_loaded: false' "$ROOT/download-dry-run.out"
 grep 'gguf_created: false' "$ROOT/download-dry-run.out"
 grep 'generation: unsupported' "$ROOT/download-dry-run.out"
 ! grep 'tick: elapsed=' "$ROOT/download-dry-run.out"
-test ! -e "$DOWNLOAD_ROOT/hf/gemma/gemma-4-12b-it"
-test ! -e "$DOWNLOAD_ROOT/reports/gemma/gemma-4-12b-it.download.receipt"
-test ! -e "$DOWNLOAD_ROOT/reports/gemma/gemma-4-12b-it.download.active.json"
-test ! -e "$DOWNLOAD_ROOT/logs/gemma-4-12b-it.download.stdout.log"
-test ! -e "$DOWNLOAD_ROOT/logs/gemma-4-12b-it.download.stderr.log"
+test ! -e "$DOWNLOAD_ROOT/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08"
+test ! -e "$DOWNLOAD_ROOT/evidence/build/gemma/gemma-4-12b-it.download.receipt"
+test ! -e "$DOWNLOAD_ROOT/evidence/build/gemma/gemma-4-12b-it.download.active.json"
+test ! -e "$DOWNLOAD_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stdout.log"
+test ! -e "$DOWNLOAD_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stderr.log"
 
 YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire gemma-4-12b-it --models-root "$DOWNLOAD_ROOT" --auth auto --audit > "$ROOT/download-gemma.out"
 grep 'status: model-download-pass' "$ROOT/download-gemma.out"
@@ -866,15 +866,15 @@ grep 'stage: provider-cli pass' "$ROOT/download-gemma.out"
 grep 'stage: source-manifest pass' "$ROOT/download-gemma.out"
 grep 'stage: native-inventory pass' "$ROOT/download-gemma.out"
 grep 'stage: progress-stream pass' "$ROOT/download-gemma.out"
-grep 'hf/gemma/gemma-4-12b-it' "$ROOT/download-gemma.out"
+grep 'source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08' "$ROOT/download-gemma.out"
 grep 'gguf_created: false' "$ROOT/download-gemma.out"
 grep 'payload_loaded: false' "$ROOT/download-gemma.out"
 grep 'generation: unsupported' "$ROOT/download-gemma.out"
 grep 'benchmark_status: not-measured' "$ROOT/download-gemma.out"
-test -f "$DOWNLOAD_ROOT/reports/gemma/gemma-4-12b-it.source-manifest.json"
-grep '"status": "in-progress"' "$DOWNLOAD_ROOT/reports/gemma/gemma-4-12b-it.source-manifest.json"
-test -f "$DOWNLOAD_ROOT/reports/gemma/gemma-4-12b-it.native-inventory.json"
-test -f "$DOWNLOAD_ROOT/reports/gemma/gemma-4-12b-it.download-report.json"
+test -f "$DOWNLOAD_ROOT/evidence/build/gemma/gemma-4-12b-it.source-manifest.json"
+grep '"status": "in-progress"' "$DOWNLOAD_ROOT/evidence/build/gemma/gemma-4-12b-it.source-manifest.json"
+test -f "$DOWNLOAD_ROOT/evidence/build/gemma/gemma-4-12b-it.native-inventory.json"
+test -f "$DOWNLOAD_ROOT/evidence/build/gemma/gemma-4-12b-it.download-report.json"
 test -f "$DOWNLOAD_ROOT/registry/gemma/gemma-4-12b-it.download.json"
 ! find "$DOWNLOAD_ROOT/gguf" -type f -name '*.gguf' 2>/dev/null | grep .
 
@@ -888,8 +888,8 @@ catalog = json.load(open(sys.argv[1], encoding="utf-8"))
 source = next(item for item in catalog["sources"] if item["name"] == "gemma-4-12b-it")
 assert source["representation"] == "safetensors-source"
 assert source["acquisition_state"] == "source-acquired"
-assert source["verification_state"] == "moving-reference"
-assert source["blocker"] == "resolve an immutable provider revision before package preparation"
+assert source["verification_state"] == "revision-verified"
+assert source["blocker"] == ""
 PY
 
 YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire \
@@ -935,10 +935,10 @@ grep 'tick_seconds: 1' "$ROOT/download-live.out"
 grep 'stdout_streamed: true' "$ROOT/download-live.out"
 grep 'stderr_streamed: true' "$ROOT/download-live.out"
 grep 'provider_exit_code: 0' "$ROOT/download-live.out"
-test -f "$LIVE_ROOT/logs/gemma-4-12b-it.download.stdout.log"
-test -f "$LIVE_ROOT/logs/gemma-4-12b-it.download.stderr.log"
-grep 'fake-hf: resolving repo' "$LIVE_ROOT/logs/gemma-4-12b-it.download.stdout.log"
-grep 'fake-hf: stderr resolving repo' "$LIVE_ROOT/logs/gemma-4-12b-it.download.stderr.log"
+test -f "$LIVE_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stdout.log"
+test -f "$LIVE_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stderr.log"
+grep 'fake-hf: resolving repo' "$LIVE_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stdout.log"
+grep 'fake-hf: stderr resolving repo' "$LIVE_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stderr.log"
 
 LIVE_FAIL_ROOT="$ROOT/download-live-fail"
 YVEX_FAKE_HF_AUTH=1 YVEX_FAKE_HF_FAIL_AT_STEP=2 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire gemma-4-12b-it --models-root "$LIVE_FAIL_ROOT" --progress plain --tick-seconds 1 --audit > "$ROOT/download-live-fail.out" 2>&1 && exit 1 || true
@@ -947,10 +947,10 @@ grep 'provider_exit_code: 43' "$ROOT/download-live-fail.out"
 grep 'stdout_log:' "$ROOT/download-live-fail.out"
 grep 'stderr_log:' "$ROOT/download-live-fail.out"
 grep 'top_blocker: provider-download-failed' "$ROOT/download-live-fail.out"
-test -f "$LIVE_FAIL_ROOT/logs/gemma-4-12b-it.download.stdout.log"
-test -f "$LIVE_FAIL_ROOT/logs/gemma-4-12b-it.download.stderr.log"
-grep 'fake-hf: downloading shard 1' "$LIVE_FAIL_ROOT/logs/gemma-4-12b-it.download.stdout.log"
-grep 'fake-hf: failing at step 2' "$LIVE_FAIL_ROOT/logs/gemma-4-12b-it.download.stderr.log"
+test -f "$LIVE_FAIL_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stdout.log"
+test -f "$LIVE_FAIL_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stderr.log"
+grep 'fake-hf: downloading shard 1' "$LIVE_FAIL_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stdout.log"
+grep 'fake-hf: failing at step 2' "$LIVE_FAIL_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stderr.log"
 
 SIGNAL_ROOT="$ROOT/download-signal"
 YVEX_FAKE_HF_AUTH=1 YVEX_FAKE_HF_STEP_DELAY=5 YVEX_FAKE_HF_STEPS=8 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire gemma-4-12b-it --models-root "$SIGNAL_ROOT" --progress plain --tick-seconds 1 --audit > "$ROOT/download-signal.out" 2>&1 &
@@ -980,21 +980,21 @@ test -n "$PROVIDER_PID"
 test -n "$PROVIDER_PGID"
 ! kill -0 "$PROVIDER_PID" 2>/dev/null
 ! ps -o pid= -g "$PROVIDER_PGID" | grep .
-test -f "$SIGNAL_ROOT/logs/gemma-4-12b-it.download.stdout.log"
-test -f "$SIGNAL_ROOT/logs/gemma-4-12b-it.download.stderr.log"
-test -f "$SIGNAL_ROOT/hf/gemma/gemma-4-12b-it/config.json"
-grep 'fake-hf: resolving repo' "$SIGNAL_ROOT/logs/gemma-4-12b-it.download.stdout.log"
-grep 'fake-hf: stderr resolving repo' "$SIGNAL_ROOT/logs/gemma-4-12b-it.download.stderr.log"
+test -f "$SIGNAL_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stdout.log"
+test -f "$SIGNAL_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stderr.log"
+test -f "$SIGNAL_ROOT/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/config.json"
+grep 'fake-hf: resolving repo' "$SIGNAL_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stdout.log"
+grep 'fake-hf: stderr resolving repo' "$SIGNAL_ROOT/evidence/build/acquisition/gemma-4-12b-it.download.stderr.log"
 
 CONTROL_ROOT="$ROOT/download-control"
 YVEX_FAKE_HF_AUTH=1 YVEX_FAKE_HF_STEP_DELAY=5 YVEX_FAKE_HF_STEPS=8 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire gemma-4-12b-it --models-root "$CONTROL_ROOT" --auth required --progress log --tick-seconds 1 --audit > "$ROOT/download-control-run.out" 2>&1 &
 CONTROL_PID=$!
 i=0
-while [ ! -f "$CONTROL_ROOT/reports/gemma/gemma-4-12b-it.download.active.json" ] && [ "$i" -lt 10 ]; do
+while [ ! -f "$CONTROL_ROOT/evidence/build/gemma/gemma-4-12b-it.download.active.json" ] && [ "$i" -lt 10 ]; do
   sleep 1
   i=$((i + 1))
 done
-test -f "$CONTROL_ROOT/reports/gemma/gemma-4-12b-it.download.active.json"
+test -f "$CONTROL_ROOT/evidence/build/gemma/gemma-4-12b-it.download.active.json"
 
 "$YVEX_BIN" source status gemma-4-12b-it --models-root "$CONTROL_ROOT" --audit > "$ROOT/download-control-status-running.out"
 grep 'status: model-download-status' "$ROOT/download-control-status-running.out"
@@ -1012,7 +1012,7 @@ wait "$CONTROL_PID"
 CONTROL_RC=$?
 set -e
 test "$CONTROL_RC" -ne 0
-test -f "$CONTROL_ROOT/hf/gemma/gemma-4-12b-it/config.json"
+test -f "$CONTROL_ROOT/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/config.json"
 
 "$YVEX_BIN" source status gemma-4-12b-it --models-root "$CONTROL_ROOT" --audit > "$ROOT/download-control-status-stopped.out"
 grep 'provider_process_alive: false' "$ROOT/download-control-status-stopped.out"
@@ -1022,52 +1022,53 @@ grep 'resume_available: true' "$ROOT/download-control-status-stopped.out"
 YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source resume gemma-4-12b-it --models-root "$CONTROL_ROOT" --auth required --progress log --tick-seconds 1 --audit > "$ROOT/download-control-resume.out" 2>&1
 grep 'status: model-download-resume-pass' "$ROOT/download-control-resume.out"
 grep 'stage: download pass' "$ROOT/download-control-resume.out"
-test -f "$CONTROL_ROOT/reports/gemma/gemma-4-12b-it.download.last.json"
+test -f "$CONTROL_ROOT/evidence/build/gemma/gemma-4-12b-it.download.last.json"
 "$YVEX_BIN" source status gemma-4-12b-it --models-root "$CONTROL_ROOT" --audit > "$ROOT/download-control-status-resumed.out"
 grep 'last_receipt_status: pass' "$ROOT/download-control-status-resumed.out"
 
 STALE_ROOT="$ROOT/download-control-stale"
-mkdir -p "$STALE_ROOT/reports/gemma" "$STALE_ROOT/hf/gemma/gemma-4-12b-it"
-cat > "$STALE_ROOT/reports/gemma/gemma-4-12b-it.download.active.json" <<EOF
+mkdir -p "$STALE_ROOT/evidence/build/gemma" "$STALE_ROOT/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08"
+cat > "$STALE_ROOT/evidence/build/gemma/gemma-4-12b-it.download.active.json" <<EOF
 {
   "schema": "yvex.model_download.active.v1",
   "target_id": "gemma-4-12b-it",
   "family": "gemma",
   "provider": "huggingface",
   "repo_id": "google/gemma-4-12B-it",
-  "revision": "main",
-  "local_source_dir": "$STALE_ROOT/hf/gemma/gemma-4-12b-it",
+  "revision": "b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08",
+  "local_source_dir": "$STALE_ROOT/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08",
   "provider_pid": 99999999,
   "provider_pgid": 99999999,
   "status": "running"
 }
 EOF
-"$YVEX_BIN" source status gemma-4-12b-it --models-root "$STALE_ROOT" --audit > "$ROOT/download-control-stale-status.out"
+"$YVEX_BIN" source status gemma-4-12b-it --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 --models-root "$STALE_ROOT" --audit > "$ROOT/download-control-stale-status.out"
 grep 'receipt_status: stale-active-receipt' "$ROOT/download-control-stale-status.out"
 
-mkdir -p "$STALE_ROOT/hf/gemma/gemma-4-12b-it/.cache/huggingface/download"
-printf 'lock\n' > "$STALE_ROOT/hf/gemma/gemma-4-12b-it/.cache/huggingface/download/model.safetensors.lock"
-YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source resume gemma-4-12b-it --models-root "$STALE_ROOT" --auth required --audit > "$ROOT/download-control-lock-blocked.out" 2>&1 && exit 1 || true
+mkdir -p "$STALE_ROOT/cache/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/huggingface/download"
+ln -s "$PWD/$STALE_ROOT/cache/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08" "$STALE_ROOT/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/.cache"
+printf 'lock\n' > "$STALE_ROOT/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/.cache/huggingface/download/model.safetensors.lock"
+YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source resume gemma-4-12b-it --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 --models-root "$STALE_ROOT" --auth required --audit > "$ROOT/download-control-lock-blocked.out" 2>&1 && exit 1 || true
 grep 'status: model-download-resume-blocked' "$ROOT/download-control-lock-blocked.out"
 grep 'top_blocker: stale-lock-candidates' "$ROOT/download-control-lock-blocked.out"
 
-"$YVEX_BIN" source cleanup gemma-4-12b-it --models-root "$STALE_ROOT" --stale-locks --dry-run --audit > "$ROOT/download-control-cleanup-dry-run.out"
+"$YVEX_BIN" source cleanup gemma-4-12b-it --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 --models-root "$STALE_ROOT" --stale-locks --dry-run --audit > "$ROOT/download-control-cleanup-dry-run.out"
 grep 'status: model-download-cleanup-dry-run' "$ROOT/download-control-cleanup-dry-run.out"
 grep 'stale_locks: 1' "$ROOT/download-control-cleanup-dry-run.out"
-test -f "$STALE_ROOT/hf/gemma/gemma-4-12b-it/.cache/huggingface/download/model.safetensors.lock"
+test -f "$STALE_ROOT/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/.cache/huggingface/download/model.safetensors.lock"
 
-"$YVEX_BIN" source cleanup gemma-4-12b-it --models-root "$STALE_ROOT" --stale-locks --yes --audit > "$ROOT/download-control-cleanup.out"
+"$YVEX_BIN" source cleanup gemma-4-12b-it --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 --models-root "$STALE_ROOT" --stale-locks --yes --audit > "$ROOT/download-control-cleanup.out"
 grep 'status: model-download-cleanup' "$ROOT/download-control-cleanup.out"
 grep 'deleted: 1' "$ROOT/download-control-cleanup.out"
-test ! -f "$STALE_ROOT/hf/gemma/gemma-4-12b-it/.cache/huggingface/download/model.safetensors.lock"
+test ! -f "$STALE_ROOT/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/.cache/huggingface/download/model.safetensors.lock"
 
-printf 'lock\n' > "$STALE_ROOT/hf/gemma/gemma-4-12b-it/.cache/huggingface/download/model.safetensors.lock"
-YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source resume gemma-4-12b-it --models-root "$STALE_ROOT" --auth required --clear-stale-locks --audit > "$ROOT/download-control-lock-clear-resume.out" 2>&1
+printf 'lock\n' > "$STALE_ROOT/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/.cache/huggingface/download/model.safetensors.lock"
+YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source resume gemma-4-12b-it --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 --models-root "$STALE_ROOT" --auth required --clear-stale-locks --audit > "$ROOT/download-control-lock-clear-resume.out" 2>&1
 grep 'status: model-download-resume-pass' "$ROOT/download-control-lock-clear-resume.out"
-test ! -f "$STALE_ROOT/hf/gemma/gemma-4-12b-it/.cache/huggingface/download/model.safetensors.lock"
+test ! -f "$STALE_ROOT/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/.cache/huggingface/download/model.safetensors.lock"
 
 SAFE_ROOT="$ROOT/download-control-safe"
-SAFE_SRC="$SAFE_ROOT/hf/gemma/gemma-4-12b-it"
+SAFE_SRC="$SAFE_ROOT/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08"
 mkdir -p "$SAFE_SRC"
 python3 - "$SAFE_SRC/model-ok.safetensors" "$SAFE_SRC/model-truncated.safetensors" <<'PY'
 import json
@@ -1092,11 +1093,11 @@ def write(path, payload_len, actual_len):
 write(sys.argv[1], 16, 16)
 write(sys.argv[2], 32, 8)
 PY
-"$YVEX_BIN" source status gemma-4-12b-it --models-root "$SAFE_ROOT" --audit > "$ROOT/download-control-safe-truncated.out"
+"$YVEX_BIN" source status gemma-4-12b-it --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 --models-root "$SAFE_ROOT" --audit > "$ROOT/download-control-safe-truncated.out"
 grep 'safetensors_header_checked: true' "$ROOT/download-control-safe-truncated.out"
 grep 'safetensors_size_status: truncated' "$ROOT/download-control-safe-truncated.out"
 rm -f "$SAFE_SRC/model-truncated.safetensors"
-"$YVEX_BIN" source status gemma-4-12b-it --models-root "$SAFE_ROOT" --audit > "$ROOT/download-control-safe-ok.out"
+"$YVEX_BIN" source status gemma-4-12b-it --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 --models-root "$SAFE_ROOT" --audit > "$ROOT/download-control-safe-ok.out"
 grep 'safetensors_size_status: ok' "$ROOT/download-control-safe-ok.out"
 
 YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire gemma-4-e2b --models-root "$ROOT/download-off" --no-progress --audit > "$ROOT/download-off.out" 2>&1
@@ -1110,8 +1111,8 @@ YVEX_FAKE_HF_AUTH=1 YVEX_FAKE_HF_STEP_DELAY=1 YVEX_FAKE_HF_STEPS=3 YVEX_HF_CLI="
 grep 'tick: elapsed=' "$ROOT/download-log-progress.out"
 ! grep 'fake-hf: resolving repo' "$ROOT/download-log-progress.out"
 grep 'progress_mode: log' "$ROOT/download-log-progress.out"
-test -f "$LOG_PROGRESS_ROOT/logs/gemma-4-e2b-it.download.stdout.log"
-grep 'fake-hf: resolving repo' "$LOG_PROGRESS_ROOT/logs/gemma-4-e2b-it.download.stdout.log"
+test -f "$LOG_PROGRESS_ROOT/evidence/build/acquisition/gemma-4-e2b-it.download.stdout.log"
+grep 'fake-hf: resolving repo' "$LOG_PROGRESS_ROOT/evidence/build/acquisition/gemma-4-e2b-it.download.stdout.log"
 
 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire gemma-4-e2b --models-root "$DOWNLOAD_ROOT/noauth" --auth never --audit > "$ROOT/download-auth-never.out"
 grep 'stage: account-provider skipped' "$ROOT/download-auth-never.out"
@@ -1119,21 +1120,21 @@ grep 'status: model-download-pass' "$ROOT/download-auth-never.out"
 
 YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire qwen3-8b --models-root "$DOWNLOAD_ROOT" --auth auto --audit > "$ROOT/download-qwen.out"
 grep 'family: qwen' "$ROOT/download-qwen.out"
-grep 'hf/qwen/qwen3-8b' "$ROOT/download-qwen.out"
+grep 'source/hf/Qwen/Qwen3-8B/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08' "$ROOT/download-qwen.out"
 grep 'status: model-download-pass' "$ROOT/download-qwen.out"
 
 DYNAMIC_ROOT="$ROOT/download-dynamic-targets"
-mkdir -p "$DYNAMIC_ROOT/gguf/deepseek" "$DYNAMIC_ROOT/gguf/qwen" "$DYNAMIC_ROOT/gguf/gemma"
-printf 'selected deepseek fixture\n' > "$DYNAMIC_ROOT/gguf/deepseek/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
-printf 'selected deepseek rmsnorm fixture\n' > "$DYNAMIC_ROOT/gguf/deepseek/deepseek4-v4-flash-dspark-selected-embed-rmsnorm-F16-noimatrix-yvex-v1.gguf"
-printf 'selected qwen fixture\n' > "$DYNAMIC_ROOT/gguf/qwen/qwen3-8b-selected-embed-F16-noimatrix-yvex-v1.gguf"
+mkdir -p "$DYNAMIC_ROOT/evidence/fixtures/deepseek" "$DYNAMIC_ROOT/evidence/fixtures/qwen" "$DYNAMIC_ROOT/evidence/fixtures/gemma"
+printf 'selected deepseek fixture\n' > "$DYNAMIC_ROOT/evidence/fixtures/deepseek/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
+printf 'selected deepseek rmsnorm fixture\n' > "$DYNAMIC_ROOT/evidence/fixtures/deepseek/deepseek4-v4-flash-dspark-selected-embed-rmsnorm-F16-noimatrix-yvex-v1.gguf"
+printf 'selected qwen fixture\n' > "$DYNAMIC_ROOT/evidence/fixtures/qwen/qwen3-8b-selected-embed-F16-noimatrix-yvex-v1.gguf"
 YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire --repo Qwen/Qwen3.6-35B-A3B --family qwen --name qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" --auth auto --progress off --audit > "$ROOT/download-dynamic-qwen.out"
 grep 'target_id: qwen3-6-35b-a3b' "$ROOT/download-dynamic-qwen.out"
 grep 'repo_id: Qwen/Qwen3.6-35B-A3B' "$ROOT/download-dynamic-qwen.out"
 test -f "$DYNAMIC_ROOT/registry/qwen/qwen3-6-35b-a3b.download.json"
-test -f "$DYNAMIC_ROOT/reports/qwen/qwen3-6-35b-a3b.download-report.json"
-test -f "$DYNAMIC_ROOT/reports/qwen/qwen3-6-35b-a3b.source-manifest.json"
-test -f "$DYNAMIC_ROOT/reports/qwen/qwen3-6-35b-a3b.native-inventory.json"
+test -f "$DYNAMIC_ROOT/evidence/build/qwen/qwen3-6-35b-a3b.download-report.json"
+test -f "$DYNAMIC_ROOT/evidence/build/qwen/qwen3-6-35b-a3b.source-manifest.json"
+test -f "$DYNAMIC_ROOT/evidence/build/qwen/qwen3-6-35b-a3b.native-inventory.json"
 "$YVEX_BIN" source status qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/download-dynamic-qwen-status.out"
 grep 'target_id: qwen3-6-35b-a3b' "$ROOT/download-dynamic-qwen-status.out"
 grep 'family: qwen' "$ROOT/download-dynamic-qwen-status.out"
@@ -1144,8 +1145,8 @@ grep 'status: model-download-status' "$ROOT/download-dynamic-qwen-status.out"
 "$YVEX_BIN" source cleanup qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" --stale-locks --dry-run --audit > "$ROOT/download-dynamic-qwen-cleanup.out"
 grep 'model-download-cleanup: target=qwen3-6-35b-a3b' "$ROOT/download-dynamic-qwen-cleanup.out"
 grep 'status: model-download-cleanup-dry-run' "$ROOT/download-dynamic-qwen-cleanup.out"
-rm -f "$DYNAMIC_ROOT/hf/qwen/qwen3-6-35b-a3b/"*.safetensors
-write_fake_transformer_safetensors "$DYNAMIC_ROOT/hf/qwen/qwen3-6-35b-a3b/model.safetensors" qwen-coverage BF16
+rm -f "$DYNAMIC_ROOT/source/hf/Qwen/Qwen3.6-35B-A3B/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/"*.safetensors
+write_fake_transformer_safetensors "$DYNAMIC_ROOT/source/hf/Qwen/Qwen3.6-35B-A3B/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/model.safetensors" qwen-coverage BF16
 "$YVEX_BIN" inspect target tensor-map qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/tensor-map-dynamic-qwen-audit.out"
 grep 'tensor_map_status: naming-map-candidate' "$ROOT/tensor-map-dynamic-qwen-audit.out"
 grep 'tensor_map_family: qwen' "$ROOT/tensor-map-dynamic-qwen-audit.out"
@@ -1163,9 +1164,9 @@ grep 'tensor_map_moe_shared_count: [1-9]' "$ROOT/tensor-map-dynamic-qwen-audit.o
 grep 'tensor_map_required_role_coverage_status: required-groups-present' "$ROOT/tensor-map-dynamic-qwen-audit.out"
 grep 'runtime_claim: unsupported' "$ROOT/tensor-map-dynamic-qwen-audit.out"
 grep 'generation: unsupported-full-model' "$ROOT/tensor-map-dynamic-qwen-audit.out"
-test -f "$DYNAMIC_ROOT/reports/qwen/qwen3-6-35b-a3b.tensor-map.json"
-grep '"row": "MODELS.SOURCE.MAP.HANDOFF.0"' "$DYNAMIC_ROOT/reports/qwen/qwen3-6-35b-a3b.tensor-map.json"
-grep '"required_role_coverage_status": "required-groups-present"' "$DYNAMIC_ROOT/reports/qwen/qwen3-6-35b-a3b.tensor-map.json"
+test -f "$DYNAMIC_ROOT/evidence/build/qwen/qwen3-6-35b-a3b.tensor-map.json"
+grep '"row": "MODELS.SOURCE.MAP.HANDOFF.0"' "$DYNAMIC_ROOT/evidence/build/qwen/qwen3-6-35b-a3b.tensor-map.json"
+grep '"required_role_coverage_status": "required-groups-present"' "$DYNAMIC_ROOT/evidence/build/qwen/qwen3-6-35b-a3b.tensor-map.json"
 "$YVEX_BIN" inspect target tensor-map qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" --output table > "$ROOT/tensor-map-dynamic-qwen-table.out"
 grep 'TENSOR NAMING MAP' "$ROOT/tensor-map-dynamic-qwen-table.out"
 grep -F 'FAMILY  TARGET                STATUS                      TOTAL   EMBED    ATTN     MLP    NORM    HEAD     MOE   UNKNOWN   LAYERS  NEXT' "$ROOT/tensor-map-dynamic-qwen-table.out"
@@ -1177,13 +1178,13 @@ grep 'output_head_map_target_id: qwen3-6-35b-a3b' "$ROOT/output-head-dynamic-qwe
 grep 'output_head_native_name: lm_head.weight' "$ROOT/output-head-dynamic-qwen-audit.out"
 grep 'runtime_claim: unsupported' "$ROOT/output-head-dynamic-qwen-audit.out"
 grep 'generation: unsupported-full-model' "$ROOT/output-head-dynamic-qwen-audit.out"
-test -f "$DYNAMIC_ROOT/reports/qwen/qwen3-6-35b-a3b.output-head-map.json"
-grep '"row": "MODELS.SOURCE.MAP.HANDOFF.0"' "$DYNAMIC_ROOT/reports/qwen/qwen3-6-35b-a3b.output-head-map.json"
+test -f "$DYNAMIC_ROOT/evidence/build/qwen/qwen3-6-35b-a3b.output-head-map.json"
+grep '"row": "MODELS.SOURCE.MAP.HANDOFF.0"' "$DYNAMIC_ROOT/evidence/build/qwen/qwen3-6-35b-a3b.output-head-map.json"
 "$YVEX_BIN" inspect target tensor-map qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" --role output-head --output table > "$ROOT/output-head-dynamic-qwen-table.out"
 grep 'OUTPUT HEAD TENSOR MAP' "$ROOT/output-head-dynamic-qwen-table.out"
 grep -F 'FAMILY  TARGET                STATUS                           HEAD  FINAL_NORM  EMBED  TIE_POLICY                          SHAPE_RELATION            NEXT' "$ROOT/output-head-dynamic-qwen-table.out"
 grep -F 'qwen    qwen3-6-35b-a3b       output-head-profiled             yes' "$ROOT/output-head-dynamic-qwen-table.out"
-write_fake_tokenizer_sidecars "$DYNAMIC_ROOT/hf/qwen/qwen3-6-35b-a3b" qwen
+write_fake_tokenizer_sidecars "$DYNAMIC_ROOT/source/hf/Qwen/Qwen3.6-35B-A3B/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08" qwen
 "$YVEX_BIN" inspect target tokenizer-map qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" > "$ROOT/tokenizer-map-dynamic-qwen.out"
 grep 'tokenizer-map: qwen3-6-35b-a3b' "$ROOT/tokenizer-map-dynamic-qwen.out"
 grep 'family: qwen' "$ROOT/tokenizer-map-dynamic-qwen.out"
@@ -1219,12 +1220,12 @@ grep 'next_required_rows: V010.QUANT.1' "$ROOT/tokenizer-map-dynamic-qwen-audit.
 grep '"status":"present-report-only"' "$ROOT/tokenizer-map-dynamic-qwen-json.out"
 grep '"target_id":"qwen3-6-35b-a3b"' "$ROOT/tokenizer-map-dynamic-qwen-json.out"
 grep '"next":"V010.QUANT.1"' "$ROOT/tokenizer-map-dynamic-qwen-json.out"
-test -f "$DYNAMIC_ROOT/reports/qwen/qwen3-6-35b-a3b.tokenizer-map.json"
-grep '"schema_version": "yvex.source.tokenizer_map.v1"' "$DYNAMIC_ROOT/reports/qwen/qwen3-6-35b-a3b.tokenizer-map.json"
-grep '"tokenizer_map_status": "present-report-only"' "$DYNAMIC_ROOT/reports/qwen/qwen3-6-35b-a3b.tokenizer-map.json"
+test -f "$DYNAMIC_ROOT/evidence/build/qwen/qwen3-6-35b-a3b.tokenizer-map.json"
+grep '"schema_version": "yvex.source.tokenizer_map.v1"' "$DYNAMIC_ROOT/evidence/build/qwen/qwen3-6-35b-a3b.tokenizer-map.json"
+grep '"tokenizer_map_status": "present-report-only"' "$DYNAMIC_ROOT/evidence/build/qwen/qwen3-6-35b-a3b.tokenizer-map.json"
 "$YVEX_BIN" inspect target tensor-map qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" --role tokenizer --audit > "$ROOT/tokenizer-map-dynamic-qwen-compat-audit.out"
 grep 'tokenizer_map_status: present-report-only' "$ROOT/tokenizer-map-dynamic-qwen-compat-audit.out"
-"$YVEX_BIN" compile source manifest report --family qwen --release v0.1.0 --source "$DYNAMIC_ROOT/hf/qwen/qwen3-6-35b-a3b" --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/source-dynamic-qwen-audit.out"
+"$YVEX_BIN" compile source manifest report --family qwen --release v0.1.0 --source "$DYNAMIC_ROOT/source/hf/Qwen/Qwen3.6-35B-A3B/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08" --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/source-dynamic-qwen-audit.out"
 grep 'target_id: qwen3-6-35b-a3b' "$ROOT/source-dynamic-qwen-audit.out"
 grep 'model: Qwen3.6-35B-A3B' "$ROOT/source-dynamic-qwen-audit.out"
 ! grep 'target_id: qwen3-8b' "$ROOT/source-dynamic-qwen-audit.out"
@@ -1307,8 +1308,8 @@ grep 'generation: unsupported-full-model' "$ROOT/qtype-role-support-dynamic-qwen
 grep 'benchmark_status: not-measured' "$ROOT/qtype-role-support-dynamic-qwen-audit.out"
 expect_rc 2 "$YVEX_BIN" inspect target quant-policy qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" --role-support --output json > "$ROOT/qtype-role-support-json.out" 2> "$ROOT/qtype-role-support-json.err"
 grep 'JSON output is unsupported' "$ROOT/qtype-role-support-json.err"
-rm -f "$DYNAMIC_ROOT/reports/qwen/qwen3-6-35b-a3b.tokenizer-map.json"
-write_fake_transformer_safetensors "$DYNAMIC_ROOT/hf/qwen/qwen3-6-35b-a3b/model.safetensors" qwen-incomplete
+rm -f "$DYNAMIC_ROOT/evidence/build/qwen/qwen3-6-35b-a3b.tokenizer-map.json"
+write_fake_transformer_safetensors "$DYNAMIC_ROOT/source/hf/Qwen/Qwen3.6-35B-A3B/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/model.safetensors" qwen-incomplete
 "$YVEX_BIN" inspect target tensor-map qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/tensor-map-dynamic-qwen-incomplete-audit.out"
 grep 'tensor_map_status: naming-map-incomplete' "$ROOT/tensor-map-dynamic-qwen-incomplete-audit.out"
 grep 'tensor_map_target_id: qwen3-6-35b-a3b' "$ROOT/tensor-map-dynamic-qwen-incomplete-audit.out"
@@ -1395,14 +1396,14 @@ YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire --repo goo
 grep 'target_id: gemma-4-31b-it' "$ROOT/download-dynamic-gemma.out"
 grep 'repo_id: google/Gemma-4-31B-it' "$ROOT/download-dynamic-gemma.out"
 test -f "$DYNAMIC_ROOT/registry/gemma/gemma-4-31b-it.download.json"
-test -f "$DYNAMIC_ROOT/reports/gemma/gemma-4-31b-it.source-manifest.json"
+test -f "$DYNAMIC_ROOT/evidence/build/gemma/gemma-4-31b-it.source-manifest.json"
 "$YVEX_BIN" source status gemma-4-31b-it --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/download-dynamic-gemma-status.out"
 grep 'target_id: gemma-4-31b-it' "$ROOT/download-dynamic-gemma-status.out"
 grep 'family: gemma' "$ROOT/download-dynamic-gemma-status.out"
 grep 'repo_id: google/Gemma-4-31B-it' "$ROOT/download-dynamic-gemma-status.out"
 grep 'safetensors_size_status: ok' "$ROOT/download-dynamic-gemma-status.out"
-rm -f "$DYNAMIC_ROOT/hf/gemma/gemma-4-31b-it/"*.safetensors
-write_fake_transformer_safetensors "$DYNAMIC_ROOT/hf/gemma/gemma-4-31b-it/model.safetensors" gemma-language-head BF16
+rm -f "$DYNAMIC_ROOT/source/hf/google/Gemma-4-31B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/"*.safetensors
+write_fake_transformer_safetensors "$DYNAMIC_ROOT/source/hf/google/Gemma-4-31B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/model.safetensors" gemma-language-head BF16
 "$YVEX_BIN" inspect target tensor-map gemma-4-31b-it --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/tensor-map-dynamic-gemma-audit.out"
 grep 'tensor_map_status: naming-map-profiled' "$ROOT/tensor-map-dynamic-gemma-audit.out"
 grep 'tensor_map_family: gemma' "$ROOT/tensor-map-dynamic-gemma-audit.out"
@@ -1412,8 +1413,8 @@ grep 'tensor_map.entry.[0-9][0-9]*.mapping: model.language_model.layers.0.self_a
 grep 'tensor_map.entry.[0-9][0-9]*.mapping: model.language_model.layers.0.layer_scalar -> model.layers.0.layer_scalar' "$ROOT/tensor-map-dynamic-gemma-audit.out"
 grep 'runtime_claim: unsupported' "$ROOT/tensor-map-dynamic-gemma-audit.out"
 grep 'generation: unsupported-full-model' "$ROOT/tensor-map-dynamic-gemma-audit.out"
-test -f "$DYNAMIC_ROOT/reports/gemma/gemma-4-31b-it.tensor-map.json"
-grep '"row": "MODELS.SOURCE.MAP.HANDOFF.0"' "$DYNAMIC_ROOT/reports/gemma/gemma-4-31b-it.tensor-map.json"
+test -f "$DYNAMIC_ROOT/evidence/build/gemma/gemma-4-31b-it.tensor-map.json"
+grep '"row": "MODELS.SOURCE.MAP.HANDOFF.0"' "$DYNAMIC_ROOT/evidence/build/gemma/gemma-4-31b-it.tensor-map.json"
 "$YVEX_BIN" inspect target tensor-map gemma-4-31b-it --models-root "$DYNAMIC_ROOT" --output table > "$ROOT/tensor-map-dynamic-gemma-table.out"
 grep 'TENSOR NAMING MAP' "$ROOT/tensor-map-dynamic-gemma-table.out"
 grep -F 'FAMILY  TARGET                STATUS                      TOTAL   EMBED    ATTN     MLP    NORM    HEAD     MOE   UNKNOWN   LAYERS  NEXT' "$ROOT/tensor-map-dynamic-gemma-table.out"
@@ -1426,13 +1427,13 @@ grep 'output_head_native_name: model.language_model.lm_head.weight' "$ROOT/outpu
 grep 'tie_policy_status: separate-output-head-candidate' "$ROOT/output-head-dynamic-gemma-audit.out"
 grep 'runtime_claim: unsupported' "$ROOT/output-head-dynamic-gemma-audit.out"
 grep 'generation: unsupported-full-model' "$ROOT/output-head-dynamic-gemma-audit.out"
-test -f "$DYNAMIC_ROOT/reports/gemma/gemma-4-31b-it.output-head-map.json"
-grep '"row": "MODELS.SOURCE.MAP.HANDOFF.0"' "$DYNAMIC_ROOT/reports/gemma/gemma-4-31b-it.output-head-map.json"
+test -f "$DYNAMIC_ROOT/evidence/build/gemma/gemma-4-31b-it.output-head-map.json"
+grep '"row": "MODELS.SOURCE.MAP.HANDOFF.0"' "$DYNAMIC_ROOT/evidence/build/gemma/gemma-4-31b-it.output-head-map.json"
 "$YVEX_BIN" inspect target tensor-map gemma-4-31b-it --models-root "$DYNAMIC_ROOT" --role output-head --output table > "$ROOT/output-head-dynamic-gemma-table.out"
 grep 'OUTPUT HEAD TENSOR MAP' "$ROOT/output-head-dynamic-gemma-table.out"
 grep -F 'FAMILY  TARGET                STATUS                           HEAD  FINAL_NORM  EMBED  TIE_POLICY                          SHAPE_RELATION            NEXT' "$ROOT/output-head-dynamic-gemma-table.out"
 grep -F 'gemma   gemma-4-31b-it        output-head-profiled             yes' "$ROOT/output-head-dynamic-gemma-table.out"
-write_fake_tokenizer_sidecars "$DYNAMIC_ROOT/hf/gemma/gemma-4-31b-it" gemma
+write_fake_tokenizer_sidecars "$DYNAMIC_ROOT/source/hf/google/Gemma-4-31B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08" gemma
 "$YVEX_BIN" inspect target tokenizer-map gemma-4-31b-it --models-root "$DYNAMIC_ROOT" > "$ROOT/tokenizer-map-dynamic-gemma.out"
 grep 'tokenizer-map: gemma-4-31b-it' "$ROOT/tokenizer-map-dynamic-gemma.out"
 grep 'family: gemma' "$ROOT/tokenizer-map-dynamic-gemma.out"
@@ -1459,9 +1460,9 @@ grep 'next_required_rows: V010.QUANT.1' "$ROOT/tokenizer-map-dynamic-gemma-audit
 grep '"target_id":"gemma-4-31b-it"' "$ROOT/tokenizer-map-dynamic-gemma-json.out"
 grep '"vocab_status":"embedded-or-tokenizer-json"' "$ROOT/tokenizer-map-dynamic-gemma-json.out"
 grep '"next":"V010.QUANT.1"' "$ROOT/tokenizer-map-dynamic-gemma-json.out"
-test -f "$DYNAMIC_ROOT/reports/gemma/gemma-4-31b-it.tokenizer-map.json"
-grep '"tokenizer_map_status": "present-report-only"' "$DYNAMIC_ROOT/reports/gemma/gemma-4-31b-it.tokenizer-map.json"
-"$YVEX_BIN" compile source manifest report --family gemma --release v0.1.0 --source "$DYNAMIC_ROOT/hf/gemma/gemma-4-31b-it" --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/source-dynamic-gemma-audit.out"
+test -f "$DYNAMIC_ROOT/evidence/build/gemma/gemma-4-31b-it.tokenizer-map.json"
+grep '"tokenizer_map_status": "present-report-only"' "$DYNAMIC_ROOT/evidence/build/gemma/gemma-4-31b-it.tokenizer-map.json"
+"$YVEX_BIN" compile source manifest report --family gemma --release v0.1.0 --source "$DYNAMIC_ROOT/source/hf/google/Gemma-4-31B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08" --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/source-dynamic-gemma-audit.out"
 grep 'target_id: gemma-4-31b-it' "$ROOT/source-dynamic-gemma-audit.out"
 grep 'model: Gemma-4-31B-it' "$ROOT/source-dynamic-gemma-audit.out"
 ! grep 'target_id: gemma-4-12b-it' "$ROOT/source-dynamic-gemma-audit.out"
@@ -1511,8 +1512,8 @@ grep 'role\.[0-9][0-9]*\.role_name: tokenizer_metadata' "$ROOT/qtype-role-suppor
 grep 'role\.[0-9][0-9]*\.compute_support_status: cpu-cuda-available' "$ROOT/qtype-role-support-dynamic-gemma-audit.out"
 grep 'runtime_claim: unsupported' "$ROOT/qtype-role-support-dynamic-gemma-audit.out"
 grep 'generation: unsupported-full-model' "$ROOT/qtype-role-support-dynamic-gemma-audit.out"
-write_fake_transformer_safetensors "$DYNAMIC_ROOT/hf/qwen/qwen3-6-35b-a3b/model.safetensors" qwen-coverage BF16
-write_fake_tokenizer_sidecars "$DYNAMIC_ROOT/hf/qwen/qwen3-6-35b-a3b" qwen
+write_fake_transformer_safetensors "$DYNAMIC_ROOT/source/hf/Qwen/Qwen3.6-35B-A3B/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/model.safetensors" qwen-coverage BF16
+write_fake_tokenizer_sidecars "$DYNAMIC_ROOT/source/hf/Qwen/Qwen3.6-35B-A3B/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08" qwen
 "$YVEX_BIN" inspect target tensor-map qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/tensor-map-dynamic-qwen-restored-audit.out"
 "$YVEX_BIN" inspect target tokenizer-map qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" > "$ROOT/tokenizer-map-dynamic-qwen-restored.out"
 "$YVEX_BIN" inspect target quant-policy --gate v0.1.0 --models-root "$DYNAMIC_ROOT" --output table > "$ROOT/qtype-role-support-gate-table.out"
@@ -1527,8 +1528,8 @@ grep 'family.1.top_blocker: family-quantization-plan-unimplemented' "$ROOT/qtype
 grep 'runtime_claim: unsupported' "$ROOT/qtype-role-support-gate-audit.out"
 grep 'generation: unsupported-full-model' "$ROOT/qtype-role-support-gate-audit.out"
 
-write_fake_transformer_safetensors "$DYNAMIC_ROOT/hf/gemma/gemma-4-31b-it/model.safetensors" gemma-language-tied
-printf '{"tie_word_embeddings":true,"vocab_size":2,"bos_token_id":1,"eos_token_id":1,"pad_token_id":0,"unk_token_id":0}\n' > "$DYNAMIC_ROOT/hf/gemma/gemma-4-31b-it/config.json"
+write_fake_transformer_safetensors "$DYNAMIC_ROOT/source/hf/google/Gemma-4-31B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/model.safetensors" gemma-language-tied
+printf '{"tie_word_embeddings":true,"vocab_size":2,"bos_token_id":1,"eos_token_id":1,"pad_token_id":0,"unk_token_id":0}\n' > "$DYNAMIC_ROOT/source/hf/google/Gemma-4-31B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/config.json"
 "$YVEX_BIN" inspect target tensor-map gemma-4-31b-it --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/tensor-map-dynamic-gemma-tied-audit.out"
 grep 'tensor_map_status: naming-map-profiled' "$ROOT/tensor-map-dynamic-gemma-tied-audit.out"
 grep 'tensor_map_required_role_coverage_status: required-groups-present' "$ROOT/tensor-map-dynamic-gemma-tied-audit.out"
@@ -1557,8 +1558,8 @@ grep 'output_head_map_status: present-report-only' "$ROOT/prepare-dynamic-gemma-
 grep 'tokenizer_map_status: present-report-only' "$ROOT/prepare-dynamic-gemma-tied.out"
 grep 'top_blocker: family-quantization-plan-unimplemented' "$ROOT/prepare-dynamic-gemma-tied.out"
 
-write_fake_transformer_safetensors "$DYNAMIC_ROOT/hf/gemma/gemma-4-31b-it/model.safetensors" gemma-language-no-head
-printf '{"tie_word_embeddings":false}\n' > "$DYNAMIC_ROOT/hf/gemma/gemma-4-31b-it/config.json"
+write_fake_transformer_safetensors "$DYNAMIC_ROOT/source/hf/google/Gemma-4-31B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/model.safetensors" gemma-language-no-head
+printf '{"tie_word_embeddings":false}\n' > "$DYNAMIC_ROOT/source/hf/google/Gemma-4-31B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/config.json"
 "$YVEX_BIN" inspect target tensor-map gemma-4-31b-it --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/tensor-map-dynamic-gemma-incomplete-audit.out"
 grep 'tensor_map_status: naming-map-candidate' "$ROOT/tensor-map-dynamic-gemma-incomplete-audit.out"
 grep 'tensor_map_target_id: gemma-4-31b-it' "$ROOT/tensor-map-dynamic-gemma-incomplete-audit.out"
@@ -1595,7 +1596,7 @@ grep 'artifact_status: missing' "$ROOT/missing-roles-dynamic-gemma-audit.out"
 grep 'expected_artifact_path: .*gemma-4-31b-it.gguf' "$ROOT/missing-roles-dynamic-gemma-audit.out"
 grep 'top_blocker: missing-output-head-map' "$ROOT/missing-roles-dynamic-gemma-audit.out"
 grep 'next: V010.MAP.8' "$ROOT/missing-roles-dynamic-gemma-audit.out"
-"$YVEX_BIN" compile source manifest report --family gemma --release v0.1.0 --source "$DYNAMIC_ROOT/hf/gemma/gemma-4-31b-it" --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/source-dynamic-gemma-incomplete-map.out"
+"$YVEX_BIN" compile source manifest report --family gemma --release v0.1.0 --source "$DYNAMIC_ROOT/source/hf/google/Gemma-4-31B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08" --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/source-dynamic-gemma-incomplete-map.out"
 grep 'tensor_map_status: available-report-only' "$ROOT/source-dynamic-gemma-incomplete-map.out"
 grep 'tensor_role_map_status: available-report-only' "$ROOT/source-dynamic-gemma-incomplete-map.out"
 grep 'output_head_map_status: missing-in-report' "$ROOT/source-dynamic-gemma-incomplete-map.out"
@@ -1674,51 +1675,51 @@ grep 'hash_performed: false' "$ROOT/artifacts-status-gemma-audit.out"
 grep 'status: artifacts-status' "$ROOT/artifacts-status-gemma-audit.out"
 
 QWEN32_STATUS_ROOT="$ROOT/download-qwen32-status"
-"$YVEX_BIN" source status qwen3-32b --models-root "$QWEN32_STATUS_ROOT" --audit > "$ROOT/download-qwen32-status.out"
+"$YVEX_BIN" source status qwen3-32b --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 --models-root "$QWEN32_STATUS_ROOT" --audit > "$ROOT/download-qwen32-status.out"
 grep 'target_id: qwen3-32b' "$ROOT/download-qwen32-status.out"
 grep 'family: qwen' "$ROOT/download-qwen32-status.out"
 grep 'repo_id: Qwen/Qwen3-32B' "$ROOT/download-qwen32-status.out"
-grep 'hf/qwen/qwen3-32b' "$ROOT/download-qwen32-status.out"
+grep 'source/hf/Qwen/Qwen3-32B/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08' "$ROOT/download-qwen32-status.out"
 grep 'status: model-download-status' "$ROOT/download-qwen32-status.out"
 
 QWEN32_CLEANUP_ROOT="$ROOT/download-qwen32-cleanup"
-QWEN32_CLEANUP_SRC="$QWEN32_CLEANUP_ROOT/hf/qwen/qwen3-32b"
+QWEN32_CLEANUP_SRC="$QWEN32_CLEANUP_ROOT/source/hf/Qwen/Qwen3-32B/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08"
 mkdir -p "$QWEN32_CLEANUP_SRC/.cache/huggingface/download"
 printf 'partial\n' > "$QWEN32_CLEANUP_SRC/.cache/huggingface/download/model.safetensors.incomplete"
 for path in \
-  "$QWEN32_CLEANUP_ROOT/reports/qwen/qwen3-32b.download.receipt" \
-  "$QWEN32_CLEANUP_ROOT/reports/qwen/qwen3-32b.download.active.json" \
-  "$QWEN32_CLEANUP_ROOT/reports/qwen/qwen3-32b.download.last.json" \
-  "$QWEN32_CLEANUP_ROOT/reports/qwen/qwen3-32b.download-report.json" \
-  "$QWEN32_CLEANUP_ROOT/reports/qwen/qwen3-32b.source-manifest.json" \
-  "$QWEN32_CLEANUP_ROOT/reports/qwen/qwen3-32b.native-inventory.json" \
+  "$QWEN32_CLEANUP_ROOT/evidence/build/qwen/qwen3-32b.download.receipt" \
+  "$QWEN32_CLEANUP_ROOT/evidence/build/qwen/qwen3-32b.download.active.json" \
+  "$QWEN32_CLEANUP_ROOT/evidence/build/qwen/qwen3-32b.download.last.json" \
+  "$QWEN32_CLEANUP_ROOT/evidence/build/qwen/qwen3-32b.download-report.json" \
+  "$QWEN32_CLEANUP_ROOT/evidence/build/qwen/qwen3-32b.source-manifest.json" \
+  "$QWEN32_CLEANUP_ROOT/evidence/build/qwen/qwen3-32b.native-inventory.json" \
   "$QWEN32_CLEANUP_ROOT/registry/qwen/qwen3-32b.download.json" \
-  "$QWEN32_CLEANUP_ROOT/logs/qwen3-32b.download.stdout.log" \
-  "$QWEN32_CLEANUP_ROOT/logs/qwen3-32b.download.stderr.log"
+  "$QWEN32_CLEANUP_ROOT/evidence/build/acquisition/qwen3-32b.download.stdout.log" \
+  "$QWEN32_CLEANUP_ROOT/evidence/build/acquisition/qwen3-32b.download.stderr.log"
 do
   mkdir -p "$(dirname "$path")"
   printf 'sidecar\n' > "$path"
 done
-"$YVEX_BIN" source cleanup qwen3-32b --models-root "$QWEN32_CLEANUP_ROOT" --failed-partials --dry-run --audit > "$ROOT/download-qwen32-cleanup-dry-run.out"
+"$YVEX_BIN" source cleanup qwen3-32b --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 --models-root "$QWEN32_CLEANUP_ROOT" --failed-partials --dry-run --audit > "$ROOT/download-qwen32-cleanup-dry-run.out"
 grep 'cleanup_failed_partials: true' "$ROOT/download-qwen32-cleanup-dry-run.out"
 grep 'cleanup_sidecars: true' "$ROOT/download-qwen32-cleanup-dry-run.out"
 grep 'cleanup_logs: true' "$ROOT/download-qwen32-cleanup-dry-run.out"
 grep 'status: model-download-cleanup-dry-run' "$ROOT/download-qwen32-cleanup-dry-run.out"
 test -d "$QWEN32_CLEANUP_SRC"
-test -f "$QWEN32_CLEANUP_ROOT/logs/qwen3-32b.download.stderr.log"
-"$YVEX_BIN" source cleanup qwen3-32b --models-root "$QWEN32_CLEANUP_ROOT" --failed-partials --yes --audit > "$ROOT/download-qwen32-cleanup.out"
+test -f "$QWEN32_CLEANUP_ROOT/evidence/build/acquisition/qwen3-32b.download.stderr.log"
+"$YVEX_BIN" source cleanup qwen3-32b --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 --models-root "$QWEN32_CLEANUP_ROOT" --failed-partials --yes --audit > "$ROOT/download-qwen32-cleanup.out"
 grep 'cleanup_failed_partials: true' "$ROOT/download-qwen32-cleanup.out"
 grep 'deleted_source_entries: ' "$ROOT/download-qwen32-cleanup.out"
 grep 'deleted_sidecars: 7' "$ROOT/download-qwen32-cleanup.out"
 grep 'deleted_logs: 2' "$ROOT/download-qwen32-cleanup.out"
 grep 'status: model-download-cleanup' "$ROOT/download-qwen32-cleanup.out"
 test ! -e "$QWEN32_CLEANUP_SRC"
-test ! -e "$QWEN32_CLEANUP_ROOT/reports/qwen/qwen3-32b.download-report.json"
-test ! -e "$QWEN32_CLEANUP_ROOT/reports/qwen/qwen3-32b.source-manifest.json"
-test ! -e "$QWEN32_CLEANUP_ROOT/reports/qwen/qwen3-32b.native-inventory.json"
+test ! -e "$QWEN32_CLEANUP_ROOT/evidence/build/qwen/qwen3-32b.download-report.json"
+test ! -e "$QWEN32_CLEANUP_ROOT/evidence/build/qwen/qwen3-32b.source-manifest.json"
+test ! -e "$QWEN32_CLEANUP_ROOT/evidence/build/qwen/qwen3-32b.native-inventory.json"
 test ! -e "$QWEN32_CLEANUP_ROOT/registry/qwen/qwen3-32b.download.json"
-test ! -e "$QWEN32_CLEANUP_ROOT/logs/qwen3-32b.download.stdout.log"
-test ! -e "$QWEN32_CLEANUP_ROOT/logs/qwen3-32b.download.stderr.log"
+test ! -e "$QWEN32_CLEANUP_ROOT/evidence/build/acquisition/qwen3-32b.download.stdout.log"
+test ! -e "$QWEN32_CLEANUP_ROOT/evidence/build/acquisition/qwen3-32b.download.stderr.log"
 
 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire gemma-4-12b-it --models-root "$DOWNLOAD_ROOT/required" --auth required --audit > "$ROOT/download-auth-required.out" 2> "$ROOT/download-auth-required.err" && exit 1 || true
 grep 'stage: account-provider blocked' "$ROOT/download-auth-required.out"
@@ -1729,13 +1730,13 @@ grep 'status: model-download-blocked' "$ROOT/download-missing-hf.out"
 grep 'top_blocker: missing-huggingface-cli' "$ROOT/download-missing-hf.out"
 grep 'stage: account-provider blocked' "$ROOT/download-missing-hf.out"
 
-YVEX_FAKE_HF_AUTH=1 YVEX_FAKE_HF_FAIL=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire gemma-4-12b-it --models-root "$DOWNLOAD_ROOT/fail" --auth auto --audit > "$ROOT/download-fail.out" 2> "$ROOT/download-fail.err" && exit 1 || true
+YVEX_FAKE_HF_AUTH=1 YVEX_FAKE_HF_FAIL=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire gemma-4-12b-it --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 --models-root "$DOWNLOAD_ROOT/fail" --auth auto --audit > "$ROOT/download-fail.out" 2> "$ROOT/download-fail.err" && exit 1 || true
 grep 'status: model-download-fail' "$ROOT/download-fail.out"
-test -f "$DOWNLOAD_ROOT/fail/logs/gemma-4-12b-it.download.stderr.log"
+test -f "$DOWNLOAD_ROOT/fail/evidence/build/acquisition/gemma-4-12b-it.download.stderr.log"
 
 YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire --repo test-org/test-model --family gemma --name test-model --models-root "$DOWNLOAD_ROOT/direct" --auth auto --audit > "$ROOT/download-direct.out"
 grep 'repo_id: test-org/test-model' "$ROOT/download-direct.out"
-grep 'hf/gemma/test-model' "$ROOT/download-direct.out"
+grep 'source/hf/test-org/test-model/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08' "$ROOT/download-direct.out"
 grep 'status: model-download-pass' "$ROOT/download-direct.out"
 
 YVEX_FAKE_GH_AUTH=1 YVEX_GH_CLI="$FAKE_GH" "$YVEX_BIN" source acquire --provider github --repo test-org/test-model --release v1 --asset '*.gguf' --models-root "$DOWNLOAD_ROOT/github" --auth auto --audit > "$ROOT/download-github.out"
@@ -1745,7 +1746,7 @@ grep 'stage: download pass' "$ROOT/download-github.out"
 grep 'github/test-org/test-model/v1' "$ROOT/download-github.out"
 grep 'gguf_created: false' "$ROOT/download-github.out"
 grep 'generation: unsupported' "$ROOT/download-github.out"
-test -f "$DOWNLOAD_ROOT/github/github/test-org/test-model/v1/fake-model.gguf"
+test -f "$DOWNLOAD_ROOT/github/source/github/test-org/test-model/v1/fake-model.gguf"
 
 "$YVEX_BIN" source acquire --models-root "$DOWNLOAD_ROOT/parser" > "$ROOT/download-missing-target.out" 2> "$ROOT/download-missing-target.err" && exit 1 || true
 grep 'requires TARGET or --repo' "$ROOT/download-missing-target.err"
@@ -1781,9 +1782,9 @@ grep 'token_value_redacted: true' "$ROOT/download-token.out"
 ! git ls-files '*.safetensors' '*.bin' '*.dat' | grep .
 
 PREP="$ROOT/prepare"
-PREP_SOURCE="$PREP/hf/deepseek/DeepSeek-V4-Flash-DSpark"
+PREP_SOURCE="$PREP/source/hf/deepseek-ai/DeepSeek-V4-Flash-DSpark/62af8fffb2f7030cac4de2f0169f5b8d1101b646"
 PREP_REG="$PREP/registry/models.local.json"
-PREP_GGUF="$PREP/gguf/deepseek/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
+PREP_GGUF="$PREP/evidence/fixtures/deepseek/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
 mkdir -p "$PREP_SOURCE"
 
 python3 - "$PREP_SOURCE/model-00001.safetensors" <<'PY'
@@ -1855,16 +1856,16 @@ grep 'unsupported output mode: nope' "$ROOT/verify-bad-output.err"
 grep 'stage: convert-emit refused' "$ROOT/prepare-overwrite-refused.out"
 grep 'status: model-prepare-refused' "$ROOT/prepare-overwrite-refused.out"
 
-"$YVEX_BIN" compile deepseek4-v4-flash-dspark-selected-embed --out "$PREP_GGUF" --out-dir "$PREP/gguf/deepseek" > "$ROOT/prepare-invalid.out" 2> "$ROOT/prepare-invalid.err" && exit 1 || true
+"$YVEX_BIN" compile deepseek4-v4-flash-dspark-selected-embed --out "$PREP_GGUF" --out-dir "$PREP/evidence/fixtures/deepseek" > "$ROOT/prepare-invalid.out" 2> "$ROOT/prepare-invalid.err" && exit 1 || true
 grep 'conflicts with --out-dir' "$ROOT/prepare-invalid.err"
 
 CHECK="build/tests/model-check"
 CHECK_REG="$CHECK/registry/models.local.json"
 CHECK_GGUF="$CHECK/models/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
 CHECK_ROOT="$CHECK/root"
-CHECK_ROOT_GGUF="$CHECK_ROOT/gguf/deepseek/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
+CHECK_ROOT_GGUF="$CHECK_ROOT/evidence/fixtures/deepseek/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
 yvex_test_cleanup "$CHECK"
-mkdir -p "$CHECK/models" "$CHECK/registry" "$CHECK_ROOT/gguf/deepseek"
+mkdir -p "$CHECK/models" "$CHECK/registry" "$CHECK_ROOT/evidence/fixtures/deepseek"
 
 "$YVEX_BIN" compile artifact emit --out "$CHECK_GGUF" --model-name model-check-test --arch llama --overwrite >/dev/null
 "$YVEX_BIN" compile artifact emit --out "$CHECK_ROOT_GGUF" --model-name model-check-target-root-test --arch llama --overwrite >/dev/null
@@ -1894,7 +1895,7 @@ grep 'status: model-check-pass' "$ROOT/check-quick.out"
 
 "$YVEX_BIN" artifact status deepseek4-v4-flash-dspark-selected-embed --level quick --models-root "$CHECK_ROOT" --audit > "$ROOT/check-models-root.out"
 grep 'model_input_kind: target' "$ROOT/check-models-root.out"
-grep 'build/tests/model-check/root/gguf/deepseek/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf' "$ROOT/check-models-root.out"
+grep 'build/tests/model-check/root/evidence/fixtures/deepseek/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf' "$ROOT/check-models-root.out"
 grep 'stage: registry-identity unregistered' "$ROOT/check-models-root.out"
 grep 'stage: integrity-check pass' "$ROOT/check-models-root.out"
 grep 'status: model-check-pass' "$ROOT/check-models-root.out"
@@ -2322,11 +2323,11 @@ grep 'release_ready: false' "$ROOT/model-class-qwen-audit.out"
 grep 'next_required_rows: V010.MAP.8' "$ROOT/model-class-qwen-audit.out"
 
 QWEN_CLASS_MODELS_ROOT="$ROOT/qwen-class-models-root"
-mkdir -p "$QWEN_CLASS_MODELS_ROOT/hf/qwen"
-cp -R "$QWEN_CLASS_SOURCE" "$QWEN_CLASS_MODELS_ROOT/hf/qwen/qwen3-8b"
+YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire qwen3-8b --models-root "$QWEN_CLASS_MODELS_ROOT" --auth auto --progress off > "$ROOT/qwen-class-acquire.out"
+cp -R "$QWEN_CLASS_SOURCE/." "$QWEN_CLASS_MODELS_ROOT/source/hf/Qwen/Qwen3-8B/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/"
 "$YVEX_BIN" inspect target class-profile qwen3-8b --models-root "$QWEN_CLASS_MODELS_ROOT" --audit > "$ROOT/model-class-qwen-models-root-audit.out"
 grep 'model_class_profile_status: metadata-profiled' "$ROOT/model-class-qwen-models-root-audit.out"
-matches "$ROOT/model-class-qwen-models-root-audit.out" 'source_path: .*/qwen-class-models-root/hf/qwen/qwen3-8b$'
+matches "$ROOT/model-class-qwen-models-root-audit.out" 'source_path: .*/qwen-class-models-root/source/hf/Qwen/Qwen3-8B/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08$'
 grep 'model_class_source_metadata_status: header-only' "$ROOT/model-class-qwen-models-root-audit.out"
 
 QWEN_COLLECTION_SOURCE="${TMPDIR:-/tmp}/yvex-qwen-tensor-collection-test-$$"
@@ -3357,11 +3358,11 @@ grep 'release_ready: false' "$ROOT/model-class-gemma-audit.out"
 grep 'next_required_rows: V010.MAP.8' "$ROOT/model-class-gemma-audit.out"
 
 GEMMA_CLASS_MODELS_ROOT="$ROOT/gemma-class-models-root"
-mkdir -p "$GEMMA_CLASS_MODELS_ROOT/hf/gemma"
-cp -R "$GEMMA_CLASS_SOURCE" "$GEMMA_CLASS_MODELS_ROOT/hf/gemma/gemma-4-12b-it"
+YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" source acquire gemma-4-12b-it --models-root "$GEMMA_CLASS_MODELS_ROOT" --auth auto --progress off > "$ROOT/gemma-class-acquire.out"
+cp -R "$GEMMA_CLASS_SOURCE/." "$GEMMA_CLASS_MODELS_ROOT/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08/"
 "$YVEX_BIN" inspect target class-profile gemma-4-12b-it --models-root "$GEMMA_CLASS_MODELS_ROOT" --audit > "$ROOT/model-class-gemma-models-root-audit.out"
 grep 'model_class_profile_status: metadata-profiled' "$ROOT/model-class-gemma-models-root-audit.out"
-matches "$ROOT/model-class-gemma-models-root-audit.out" 'source_path: .*/gemma-class-models-root/hf/gemma/gemma-4-12b-it$'
+matches "$ROOT/model-class-gemma-models-root-audit.out" 'source_path: .*/gemma-class-models-root/source/hf/google/gemma-4-12B-it/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08$'
 grep 'model_class_source_metadata_status: header-only' "$ROOT/model-class-gemma-models-root-audit.out"
 
 "$YVEX_BIN" inspect target tensor-collection gemma-4-12b-it --source "$GEMMA_CLASS_SOURCE" > "$ROOT/tensor-collection-gemma.out"

@@ -7,6 +7,7 @@
  */
 #include <yvex/registry.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/io.h>
 #include <yvex/internal/model_artifact.h>
 
 #include <ctype.h>
@@ -645,6 +646,16 @@ void yvex_model_registry_close(yvex_model_registry *registry)
     free(registry);
 }
 
+int yvex_model_registry_is_working_set(const yvex_model_registry *registry,
+                                       const char *logical_identity)
+{
+    unsigned int index;
+    if (!registry || !logical_identity) return 0;
+    for (index = 0u; index < registry->working_set_count; ++index)
+        if (!strcmp(registry->working_set[index], logical_identity)) return 1;
+    return 0;
+}
+
 unsigned long long yvex_model_registry_count(const yvex_model_registry *registry)
 {
     return registry ? registry->count : 0u;
@@ -708,7 +719,6 @@ int yvex_model_registry_add(yvex_model_registry *registry,
     if ((entry->runtime_profile && entry->runtime_profile[0]) ||
         (entry->runtime_installation && entry->runtime_installation[0]) ||
         (entry->runtime_binding && entry->runtime_binding[0]) ||
-        (entry->runtime_target && entry->runtime_target[0]) ||
         (entry->runtime_backend && entry->runtime_backend[0]) ||
         (entry->runtime_engine_kind && entry->runtime_engine_kind[0]) ||
         (entry->runtime_execution_strategy &&
@@ -826,6 +836,12 @@ static int registry_write_json_file(const yvex_model_registry *registry,
     }
     fprintf(fp, "{\n");
     write_field(fp, "  ", "schema", YVEX_MODEL_REGISTRY_SCHEMA_CURRENT, 1);
+    fprintf(fp, "  \"working_set\": [");
+    for (i = 0u; i < registry->working_set_count; ++i) {
+        if (i) fputs(", ", fp);
+        yvex_file_json_write_string(fp, registry->working_set[i]);
+    }
+    fprintf(fp, "],\n");
     fprintf(fp, "  \"models\": [\n");
     for (i = 0; i < registry->count; ++i) {
         const yvex_model_registry_owned_entry *e = &registry->entries[i];
@@ -1298,6 +1314,38 @@ static const char *find_matching_object_end(const char *start)
     return NULL;
 }
 
+static int registry_parse_working_set(const char *text, yvex_model_registry *registry)
+{
+    yvex_json json;
+    yvex_json_iter object, array;
+    yvex_json_item member, item;
+    char key[256], identity[448];
+    int seen = 0;
+
+    yvex_json_init(&json, text, strlen(text));
+    if (!yvex_json_iter_begin(&json, &object, YVEX_JSON_COLLECTION_OBJECT)) return 0;
+    while ((member = yvex_json_object_member(&object, key, sizeof(key))) ==
+           YVEX_JSON_ITEM_READY) {
+        if (strcmp(key, "working_set")) {
+            if (!yvex_json_skip_value(&json)) return 0;
+            continue;
+        }
+        if (seen++ || !yvex_json_iter_begin(&json, &array, YVEX_JSON_COLLECTION_ARRAY))
+            return 0;
+        while ((item = yvex_json_array_value(&array)) == YVEX_JSON_ITEM_READY) {
+            if (registry->working_set_count == 256u ||
+                !yvex_json_string(&json, identity, sizeof(identity)) || !identity[0] ||
+                yvex_model_registry_is_working_set(registry, identity)) return 0;
+            snprintf(registry->working_set[registry->working_set_count++],
+                     sizeof(registry->working_set[0]), "%s", identity);
+        }
+        if (item != YVEX_JSON_ITEM_END || array.trailing_separator) return 0;
+    }
+    yvex_json_space(&json);
+    return member == YVEX_JSON_ITEM_END && !object.trailing_separator &&
+           json.cursor == json.end;
+}
+
 static int registry_parse_json(const char *path,
                                         yvex_model_registry *registry,
                                         yvex_error *err)
@@ -1329,6 +1377,7 @@ static int registry_parse_json(const char *path,
          strcmp(schema, "yvex.models.local.v4") == 0 ||
          strcmp(schema, YVEX_MODEL_REGISTRY_SCHEMA_V5) == 0);
     if (!schema || (!import_legacy_startup_axes &&
+                    strcmp(schema, YVEX_MODEL_REGISTRY_SCHEMA_V6) != 0 &&
                     strcmp(schema, YVEX_MODEL_REGISTRY_SCHEMA_CURRENT) != 0)) {
         free(schema);
         free(json);
@@ -1336,6 +1385,12 @@ static int registry_parse_json(const char *path,
         return YVEX_ERR_FORMAT;
     }
     free(schema);
+    if (!registry_parse_working_set(json, registry)) {
+        free(json);
+        yvex_error_set(err, YVEX_ERR_FORMAT, "model_registry_json",
+                       "working set must contain bounded unique logical identities");
+        return YVEX_ERR_FORMAT;
+    }
     p = strchr(models, '[');
     if (!p) {
         free(json);
