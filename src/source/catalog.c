@@ -50,6 +50,23 @@ static const yvex_source_target_identity source_target_identities[] = {
         .config_validation = YVEX_SOURCE_CONFIG_VALIDATION_FAMILY_SEMANTIC,
         .required_sidecars = YVEX_SOURCE_SIDECARS_TEXT,
     },
+    {
+        .target_id = "mamba-codestral-7b-v0.1",
+        .family_key = "mamba2",
+        .family_display = "Mamba2",
+        .model_name = "Mamba-Codestral-7B-v0.1",
+        .upstream_repo_id = "mistralai/Mamba-Codestral-7B-v0.1",
+        .source_dir_leaf = "mamba-codestral-7b-v0.1",
+        .upstream_revision = "4f086c08c1e0f07bdc50ca25125dbbf7475d21da",
+        .upstream_index_path = "model.safetensors.index.json",
+        .upstream_index_oid = "102c8ea69509aa0d5cba284b16517f8d64c6df14",
+        .upstream_index_size = 45172u,
+        .upstream_inventory_authority = "upstream-index",
+        .config_model_type = "mamba2",
+        .config_architecture = "Mamba2ForCausalLM",
+        .config_validation = YVEX_SOURCE_CONFIG_VALIDATION_FAMILY_SEMANTIC,
+        .required_sidecars = YVEX_SOURCE_SIDECARS_TEXT,
+    },
 };
 
 static const yvex_source_acquisition_target source_acquisition_targets[] = {

@@ -8,6 +8,13 @@
   },
   "change_classes": [
     {
+      "id": "selective-ssm-source-and-state",
+      "patterns": ["src/model/families/mamba2.c", "src/graph/families/mamba2.c", "include/yvex/internal/families/mamba2.h", "src/model/semantic_decoder.c", "include/yvex/internal/semantic_decoder.h", "src/graph/state_space.c", "include/yvex/internal/state_space.h", "tests/unit/state_space.c", "tests/unit/mamba2.c", "tests/reference/selective_ssd.py"],
+      "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],
+      "tests": ["unit.selective_ssd", "unit.mamba2_source", "unit.sequence_state", "unit.sequence_state_session", "unit.sequence_mixer", "cuda.sequence_mixer", "integration.tiny-vertical"],
+      "reason": "source-only SSM admission and common state geometry require independent component numerics, negative promotion and existing stateful consumer regressions; they do not qualify a hosted model"
+    },
+    {
       "id": "core-common",
       "patterns": ["src/core/**", "include/yvex/core.h", "include/yvex/status.h"],
       "lanes": ["fast", "structural", "runtime", "sanitizer"],

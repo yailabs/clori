@@ -1316,8 +1316,8 @@ static int decoder_gated_delta(
     decoder_layer_resources *resources, yvex_error *err)
 {
     const yvex_gated_delta_plan *delta = &plan->gated_delta;
-    yvex_gated_delta_device_state_view committed = {0};
-    yvex_gated_delta_device_state_output candidate = {0};
+    yvex_sequence_device_state_view committed = {0};
+    yvex_sequence_device_state_output candidate = {0};
     yvex_gated_delta_device_request request = {0};
     yvex_gated_delta_device_result result = {0};
     yvex_backend_operation_facts facts = {0};

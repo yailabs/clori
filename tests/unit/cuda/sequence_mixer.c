@@ -222,8 +222,8 @@ static int gated_delta_device_state_lifecycle(
     yvex_sequence_state_plan plan;
     yvex_sequence_state *state = NULL, *forked = NULL;
     yvex_sequence_state_summary summary;
-    yvex_gated_delta_device_state_view committed;
-    yvex_gated_delta_device_state_output candidate;
+    yvex_sequence_device_state_view committed;
+    yvex_sequence_device_state_output candidate;
     yvex_runtime_transaction_participant participant;
     float *convolution = NULL, *recurrent = NULL, *observed = NULL;
     unsigned long long convolution_values, recurrent_values, index;
@@ -231,7 +231,10 @@ static int gated_delta_device_state_lifecycle(
 
     if (yvex_gated_delta_plan_seal(&mixer, requirement, &err) != YVEX_OK)
         return 1;
-    binding = (yvex_sequence_state_binding){.layer_index = 3ull, .plan = mixer};
+    YVEX_TEST_ASSERT(yvex_sequence_state_binding_seal(
+        &binding, 3ull, mixer.convolution_state_values,
+        mixer.recurrent_state_values, mixer.identity, &err) == YVEX_OK,
+        "seal device state geometry");
     plan = (yvex_sequence_state_plan){
         .schema_version = YVEX_SEQUENCE_STATE_SCHEMA_V1,
         .bindings = &binding,

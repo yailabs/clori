@@ -529,6 +529,20 @@ static int source_verify_json_iteration(void)
     yvex_json_init(&json, "{\"key\":1,}", 10u);
     YVEX_TEST_ASSERT(!yvex_json_skip_value(&json),
                      "canonical recursive JSON objects still reject trailing commas");
+    yvex_json_init(&json, "[0,Infinity]", 12u);
+    YVEX_TEST_ASSERT(!yvex_json_skip_value(&json),
+                     "wire/default JSON rejects nonstandard Infinity");
+    yvex_json_init(&json, "[0,Infinity]", 12u);
+    json.extensions = YVEX_JSON_EXTENSION_POSITIVE_INFINITY;
+    YVEX_TEST_ASSERT(yvex_json_skip_value(&json) && yvex_json_complete(&json),
+                     "explicit source metadata policy can preserve an unbounded limit");
+    yvex_json_init(&json, "Infinity", 8u);
+    json.extensions = YVEX_JSON_EXTENSION_POSITIVE_INFINITY;
+    YVEX_TEST_ASSERT(!yvex_json_u64(&json, &value),
+                     "metadata extension never turns Infinity into a numeric value");
+    yvex_json_init(&json, "[NaN]", 5u);
+    json.extensions = YVEX_JSON_EXTENSION_POSITIVE_INFINITY;
+    YVEX_TEST_ASSERT(!yvex_json_skip_value(&json), "NaN remains inadmissible");
     return 0;
 }
 

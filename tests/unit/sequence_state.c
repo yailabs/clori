@@ -35,8 +35,8 @@ static int sequence_state_write_layer(
     yvex_sequence_state *state, unsigned long long layer, float value,
     yvex_error *err)
 {
-    yvex_gated_delta_state_view committed;
-    yvex_gated_delta_state_output candidate;
+    yvex_sequence_state_view committed;
+    yvex_sequence_state_output candidate;
     unsigned long long index;
 
     if (yvex_sequence_state_layer(
@@ -66,16 +66,19 @@ int yvex_test_sequence_state(void)
     yvex_sequence_state_plan plan;
     yvex_sequence_state *state = NULL, *forked = NULL;
     yvex_sequence_state_summary summary;
-    yvex_gated_delta_state_view committed;
+    yvex_sequence_state_view committed;
     yvex_error err;
 
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(sequence_state_plan(&mixer, &err) == YVEX_OK,
                      "seal tiny recurrent plan");
-    bindings[0] = (yvex_sequence_state_binding){
-        .layer_index = 1ull, .plan = mixer};
-    bindings[1] = (yvex_sequence_state_binding){
-        .layer_index = 3ull, .plan = mixer};
+    YVEX_TEST_ASSERT(yvex_sequence_state_binding_seal(
+        &bindings[0], 1ull, mixer.convolution_state_values,
+        mixer.recurrent_state_values, mixer.identity, &err) == YVEX_OK &&
+        yvex_sequence_state_binding_seal(
+        &bindings[1], 3ull, mixer.convolution_state_values,
+        mixer.recurrent_state_values, mixer.identity, &err) == YVEX_OK,
+        "seal independent state geometry");
     plan = (yvex_sequence_state_plan){
         .schema_version = YVEX_SEQUENCE_STATE_SCHEMA_V1,
         .bindings = bindings,

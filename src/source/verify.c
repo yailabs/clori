@@ -900,6 +900,10 @@ static int source_parse_config_json(const char *data,
     yvex_json_init(&json, data, length);
     if (identity->config_validation ==
         YVEX_SOURCE_CONFIG_VALIDATION_FAMILY_SEMANTIC) {
+        /* Some Python-exported model configs contain positive Infinity bounds.
+         * This identity-only pass does not admit their numerical semantics: the family
+         * must validate each used bound before producing a compiled execution contract. */
+        json.extensions = YVEX_JSON_EXTENSION_POSITIVE_INFINITY;
         if (!source_json_object_parse(
                 &json, source_identity_config_fields,
                 sizeof(source_identity_config_fields) /

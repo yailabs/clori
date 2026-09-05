@@ -26,8 +26,12 @@ typedef struct {
 } yvex_gated_delta_plan;
 
 typedef struct {
+    unsigned int schema_version;
     unsigned long long layer_index;
-    yvex_gated_delta_plan plan;
+    unsigned long long convolution_state_values, recurrent_state_values;
+    yvex_dtype state_dtype;
+    char transition_identity[YVEX_SEQUENCE_MIXER_IDENTITY_CAP];
+    char identity[YVEX_SEQUENCE_MIXER_IDENTITY_CAP];
 } yvex_sequence_state_binding;
 
 typedef struct {
@@ -39,24 +43,24 @@ typedef struct {
 typedef struct {
     const float *convolution;
     const float *recurrent;
-} yvex_gated_delta_state_view;
+} yvex_sequence_state_view;
 
 typedef struct {
     float *convolution;
     unsigned long long convolution_capacity;
     float *recurrent;
     unsigned long long recurrent_capacity;
-} yvex_gated_delta_state_output;
+} yvex_sequence_state_output;
 
 typedef struct {
     const yvex_device_tensor *convolution;
     const yvex_device_tensor *recurrent;
-} yvex_gated_delta_device_state_view;
+} yvex_sequence_device_state_view;
 
 typedef struct {
     yvex_device_tensor *convolution;
     yvex_device_tensor *recurrent;
-} yvex_gated_delta_device_state_output;
+} yvex_sequence_device_state_output;
 
 typedef struct {
     unsigned long long token_count;
@@ -76,8 +80,8 @@ typedef struct {
     unsigned long long time_bias_capacity;
     const float *normalization_weight;
     unsigned long long normalization_weight_capacity;
-    yvex_gated_delta_state_view state;
-    yvex_gated_delta_state_output next_state;
+    yvex_sequence_state_view state;
+    yvex_sequence_state_output next_state;
     float *output;
     unsigned long long output_capacity;
     int (*cancel_requested)(void *context);
@@ -126,6 +130,13 @@ int yvex_gated_delta_plan_seal(
     yvex_error *err);
 int yvex_gated_delta_plan_validate(
     const yvex_gated_delta_plan *plan, yvex_error *err);
+/* Allocation authority owns geometry, not the transition algorithm. v1 admits F32 banks. */
+int yvex_sequence_state_binding_seal(
+    yvex_sequence_state_binding *binding, unsigned long long layer_index,
+    unsigned long long convolution_values, unsigned long long recurrent_values,
+    const char *transition_identity, yvex_error *err);
+int yvex_sequence_state_binding_validate(
+    const yvex_sequence_state_binding *binding, yvex_error *err);
 int yvex_gated_delta_execute_cpu(
     const yvex_gated_delta_plan *plan, const yvex_gated_delta_cpu_request *request,
     yvex_gated_delta_cpu_result *result, yvex_error *err);

@@ -11,6 +11,62 @@ static int mixer_refuse(yvex_error *err, yvex_status status, const char *reason)
     return status;
 }
 
+int yvex_sequence_state_binding_seal(
+    yvex_sequence_state_binding *binding, unsigned long long layer_index,
+    unsigned long long convolution_values, unsigned long long recurrent_values,
+    const char *transition_identity, yvex_error *err)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long values, bytes;
+    char transition[YVEX_SEQUENCE_MIXER_IDENTITY_CAP];
+
+    if (!binding || !yvex_sha256_hex_valid(transition_identity) ||
+        !recurrent_values ||
+        !yvex_core_u64_add(convolution_values, recurrent_values, &values) ||
+        !yvex_core_u64_mul(values, sizeof(float), &bytes))
+        return mixer_refuse(err, YVEX_ERR_INVALID_ARG,
+                            "bounded F32 state geometry and transition identity are required");
+    yvex_core_text_copy(transition, sizeof(transition), transition_identity);
+    transition_identity = transition;
+    memset(binding, 0, sizeof(*binding));
+    binding->schema_version = YVEX_SEQUENCE_STATE_SCHEMA_V1;
+    binding->layer_index = layer_index;
+    binding->state_dtype = YVEX_DTYPE_F32;
+    binding->convolution_state_values = convolution_values;
+    binding->recurrent_state_values = recurrent_values;
+    yvex_core_text_copy(binding->transition_identity,
+                        sizeof(binding->transition_identity), transition_identity);
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.sequence-state.f32-layout.v1") ||
+        !yvex_sha256_update_text(&hash, transition_identity) ||
+        !yvex_sha256_update_u64(&hash, layer_index) ||
+        !yvex_sha256_update_u64(&hash, convolution_values) ||
+        !yvex_sha256_update_u64(&hash, recurrent_values) ||
+        !yvex_sha256_final(&hash, digest))
+        return mixer_refuse(err, YVEX_ERR_STATE, "state geometry identity failed");
+    yvex_sha256_hex(digest, binding->identity);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_sequence_state_binding_validate(
+    const yvex_sequence_state_binding *binding, yvex_error *err)
+{
+    yvex_sequence_state_binding copy;
+
+    if (!binding || binding->schema_version != YVEX_SEQUENCE_STATE_SCHEMA_V1 ||
+        binding->state_dtype != YVEX_DTYPE_F32 ||
+        !yvex_sha256_hex_valid(binding->identity) ||
+        yvex_sequence_state_binding_seal(
+            &copy, binding->layer_index, binding->convolution_state_values,
+            binding->recurrent_state_values, binding->transition_identity, err) != YVEX_OK ||
+        strcmp(copy.identity, binding->identity))
+        return mixer_refuse(err, YVEX_ERR_FORMAT, "state geometry is malformed or stale");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int mixer_geometry(yvex_gated_delta_plan *plan)
 {
     const yvex_gated_delta_requirement *r = &plan->requirement;

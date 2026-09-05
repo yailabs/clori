@@ -50,7 +50,7 @@ static int sequence_state_identity(yvex_sequence_state *state)
     for (index = 0ull; index < state->binding_count; ++index)
         if (!yvex_sha256_update_u64(&hash, state->layers[index].binding.layer_index) ||
             !yvex_sha256_update_text(
-                &hash, state->layers[index].binding.plan.identity))
+                &hash, state->layers[index].binding.identity))
             return 0;
     if (!yvex_sha256_final(&hash, digest)) return 0;
     yvex_sha256_hex(digest, state->plan_identity);
@@ -67,7 +67,7 @@ static int sequence_state_layout(
         const yvex_sequence_state_binding *binding = &plan->bindings[index];
         sequence_state_layer *layer = &state->layers[index];
 
-        if (yvex_gated_delta_plan_validate(&binding->plan, err) != YVEX_OK)
+        if (yvex_sequence_state_binding_validate(binding, err) != YVEX_OK)
             return sequence_state_refuse(
                 err, YVEX_ERR_FORMAT, "one recurrent layer plan is not sealed");
         if (index && binding->layer_index <=
@@ -79,10 +79,10 @@ static int sequence_state_layout(
         layer->convolution_offset = convolution;
         layer->recurrent_offset = recurrent;
         if (!yvex_core_u64_add(
-                convolution, binding->plan.convolution_state_values,
+                convolution, binding->convolution_state_values,
                 &convolution) ||
             !yvex_core_u64_add(
-                recurrent, binding->plan.recurrent_state_values, &recurrent))
+                recurrent, binding->recurrent_state_values, &recurrent))
             return sequence_state_refuse(
                 err, YVEX_ERR_BOUNDS, "recurrent state geometry overflowed");
     }
@@ -187,12 +187,12 @@ static int sequence_state_device_views(
         for (bank = 0u; bank < 2u; ++bank)
             if (!yvex_backend_tensor_f32_subview(
                     state->device_banks[bank], layer->convolution_offset,
-                    layer->binding.plan.convolution_state_values,
+                    layer->binding.convolution_state_values,
                     &layer->device_convolution[bank]) ||
                 !yvex_backend_tensor_f32_subview(
                     state->device_banks[bank],
                     state->convolution_values + layer->recurrent_offset,
-                    layer->binding.plan.recurrent_state_values,
+                    layer->binding.recurrent_state_values,
                     &layer->device_recurrent[bank]))
                 return sequence_state_refuse(
                     err, YVEX_ERR_BOUNDS,
@@ -268,7 +268,7 @@ static sequence_state_layer *sequence_state_find(
 
 static void sequence_state_view(
     const yvex_sequence_state *state, const sequence_state_layer *layer,
-    unsigned int bank, yvex_gated_delta_state_view *view)
+    unsigned int bank, yvex_sequence_state_view *view)
 {
     const float *base = state->banks[bank];
 
@@ -302,8 +302,8 @@ int yvex_sequence_state_begin(
 
 int yvex_sequence_state_layer(
     yvex_sequence_state *state, unsigned long long layer_index,
-    yvex_gated_delta_state_view *committed,
-    yvex_gated_delta_state_output *candidate, yvex_error *err)
+    yvex_sequence_state_view *committed,
+    yvex_sequence_state_output *candidate, yvex_error *err)
 {
     sequence_state_layer *layer;
     unsigned long long ordinal;
@@ -326,18 +326,18 @@ int yvex_sequence_state_layer(
     candidate->convolution = state->banks[candidate_bank] +
                              layer->convolution_offset;
     candidate->convolution_capacity =
-        layer->binding.plan.convolution_state_values;
+        layer->binding.convolution_state_values;
     candidate->recurrent = state->banks[candidate_bank] +
         state->convolution_values + layer->recurrent_offset;
-    candidate->recurrent_capacity = layer->binding.plan.recurrent_state_values;
+    candidate->recurrent_capacity = layer->binding.recurrent_state_values;
     yvex_error_clear(err);
     return YVEX_OK;
 }
 
 int yvex_sequence_state_device_layer(
     yvex_sequence_state *state, unsigned long long layer_index,
-    yvex_gated_delta_device_state_view *committed,
-    yvex_gated_delta_device_state_output *candidate, yvex_error *err)
+    yvex_sequence_device_state_view *committed,
+    yvex_sequence_device_state_output *candidate, yvex_error *err)
 {
     sequence_state_layer *layer;
     unsigned long long ordinal;
@@ -399,7 +399,7 @@ int yvex_sequence_state_stage(
 
 int yvex_sequence_state_committed(
     const yvex_sequence_state *state, unsigned long long layer_index,
-    yvex_gated_delta_state_view *committed, yvex_error *err)
+    yvex_sequence_state_view *committed, yvex_error *err)
 {
     sequence_state_layer *layer;
 

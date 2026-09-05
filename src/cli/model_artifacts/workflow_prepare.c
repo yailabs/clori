@@ -8,6 +8,7 @@
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/compiler.h>
 #include <yvex/internal/deployment.h>
+#include <yvex/internal/family_catalog.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/source_catalog.h>
@@ -582,6 +583,26 @@ static int prepare_plan_build(const model_prepare_options *options,
     plan->execution = target ? yvex_graph_execution_find(0u, 0u, target) : NULL;
     plan->deployment = plan->execution ? plan->execution->deployment_defaults : NULL;
     if (!plan->execution || !plan->execution->compiler || !plan->deployment) {
+        if (target && plan->source && !options->dry_run) {
+            yvex_family_source_products products = {0};
+            yvex_compilation_runtime_binding_request request = {0};
+            yvex_paths paths = {0};
+            yvex_operator_paths operator_paths;
+            char directory[YVEX_PATH_CAP], leaf[YVEX_REMOTE_NAME_CAP + 32u];
+            rc = yvex_operator_paths_resolve(&paths, options->models_root, &operator_paths, err);
+            if (rc == YVEX_OK) rc = prepare_text_path(directory, operator_paths.reports_root,
+                plan->source->family, "model.prepare.source-inspection", err);
+            snprintf(leaf, sizeof(leaf), "%s.source-manifest.json", plan->source->name);
+            if (rc == YVEX_OK) rc = prepare_text_path(plan->manifest_path, directory, leaf,
+                "model.prepare.source-inspection", err);
+            if (rc != YVEX_OK) return rc;
+            request.source_path = plan->source->path;
+            request.models_root = operator_paths.models_root;
+            request.source_manifest_path = plan->manifest_path;
+            rc = yvex_family_source_compile(target, &request, &products, err);
+            yvex_family_source_products_release(&products);
+            if (rc != YVEX_OK) return rc;
+        }
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "model.prepare",
                        "model has no exact acquired source-to-ready compiler binding");
         return YVEX_ERR_UNSUPPORTED;

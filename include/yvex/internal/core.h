@@ -22,7 +22,11 @@ typedef struct {
     const char *cursor;
     const char *end;
     unsigned int depth;
+    unsigned int extensions;
 } yvex_json;
+/* Source configuration only. Ordinary JSON/wire readers remain strict by default.
+ * This admits the Python positive-Infinity token syntactically, never as a finite number. */
+#define YVEX_JSON_EXTENSION_POSITIVE_INFINITY 1u
 typedef enum {
     YVEX_JSON_ITEM_ERROR = -1,
     YVEX_JSON_ITEM_END = 0,

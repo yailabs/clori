@@ -35,8 +35,8 @@ static int session_state_stage(
     yvex_sequence_state *state, unsigned long long start, float value,
     yvex_error *err)
 {
-    yvex_gated_delta_state_view committed;
-    yvex_gated_delta_state_output candidate;
+    yvex_sequence_state_view committed;
+    yvex_sequence_state_output candidate;
     unsigned long long index;
 
     if (yvex_sequence_state_begin(state, start, 1ull, err) != YVEX_OK ||
@@ -72,8 +72,10 @@ int yvex_test_sequence_state_session(void)
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(session_state_plan(&mixer, &err) == YVEX_OK,
                      "seal session recurrent plan");
-    binding = (yvex_sequence_state_binding){
-        .layer_index = 2ull, .plan = mixer};
+    YVEX_TEST_ASSERT(yvex_sequence_state_binding_seal(
+        &binding, 2ull, mixer.convolution_state_values,
+        mixer.recurrent_state_values, mixer.identity, &err) == YVEX_OK,
+        "seal independent session state geometry");
     plan = (yvex_sequence_state_plan){
         .schema_version = YVEX_SEQUENCE_STATE_SCHEMA_V1,
         .bindings = &binding, .binding_count = 1ull};

@@ -225,8 +225,12 @@ static int decoder_layers_project(
             if (yvex_gated_delta_plan_seal(
                     &layer->gated_delta, &source->gated_delta, err) != YVEX_OK)
                 return yvex_error_code(err);
-            binding->layer_index = source->layer_index;
-            binding->plan = layer->gated_delta;
+            if (yvex_sequence_state_binding_seal(
+                    binding, source->layer_index,
+                    layer->gated_delta.convolution_state_values,
+                    layer->gated_delta.recurrent_state_values,
+                    layer->gated_delta.identity, err) != YVEX_OK)
+                return yvex_error_code(err);
             if (!yvex_core_u64_add(
                     convolution_bytes, layer->gated_delta.convolution_state_bytes,
                     &convolution_bytes) ||
@@ -304,7 +308,10 @@ static int decoder_plan_validate(yvex_decoder_plan *plan, yvex_error *err)
             if (copy.attention_ordinal != YVEX_DECODER_NO_ATTENTION ||
                 yvex_gated_delta_plan_validate(&copy.gated_delta, err) != YVEX_OK ||
                 binding->layer_index != index ||
-                strcmp(binding->plan.identity, copy.gated_delta.identity) != 0 ||
+                yvex_sequence_state_binding_validate(binding, err) != YVEX_OK ||
+                strcmp(binding->transition_identity, copy.gated_delta.identity) != 0 ||
+                binding->convolution_state_values != copy.gated_delta.convolution_state_values ||
+                binding->recurrent_state_values != copy.gated_delta.recurrent_state_values ||
                 !yvex_core_u64_add(
                     convolution, copy.gated_delta.convolution_state_bytes,
                     &convolution) ||
@@ -626,8 +633,14 @@ int yvex_decoder_plan_import(
     for (index = 0ull; index < summary->layer_count; ++index) {
         if (plan->layers[index].mixer !=
             YVEX_SEMANTIC_DECODER_MIXER_GATED_DELTA) continue;
-        plan->recurrent[recurrent].layer_index = plan->layers[index].layer_index;
-        plan->recurrent[recurrent].plan = plan->layers[index].gated_delta;
+        if (yvex_sequence_state_binding_seal(
+                &plan->recurrent[recurrent], plan->layers[index].layer_index,
+                plan->layers[index].gated_delta.convolution_state_values,
+                plan->layers[index].gated_delta.recurrent_state_values,
+                plan->layers[index].gated_delta.identity, err) != YVEX_OK) {
+            yvex_decoder_plan_close(&plan);
+            return yvex_error_code(err);
+        }
         recurrent++;
     }
     rc = recurrent == summary->recurrent_layer_count

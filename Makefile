@@ -700,6 +700,7 @@ test-runtime: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_profile $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_state $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_benchmark $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.sequence_state,unit.sequence_state_session,unit.sequence_mixer,unit.selective_ssd,unit.mamba2_source $(TEST_RUNNER)
 	@! YVEX_TEST_FILTER=__unknown_runtime_test__ $(TEST_RUNNER) >/dev/null 2>&1
 	@! YVEX_TEST_FILTER=runtime_benchmark,runtime_benchmark \
 		$(TEST_RUNNER) >/dev/null 2>&1

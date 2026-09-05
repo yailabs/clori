@@ -201,14 +201,14 @@ static int source_cli_verify_payload(int argc, char **argv) {
                             "yvex: --source, --models-root, and --source-manifest are required\n");
         return 2;
     }
-    if (!yvex_source_is_release_target(target)) {
+    if (!yvex_source_target_identity_find(target)) {
         yvex_cli_out_writef(stderr, "yvex: unsupported target: %s; use %s\n", target,
                             YVEX_SOURCE_RELEASE_TARGET_ID);
         return 2;
     }
 
     memset(&verification_options, 0, sizeof(verification_options));
-    verification_options.identity = yvex_source_release_identity();
+    verification_options.identity = yvex_source_target_identity_find(target);
     verification_options.source_path = source;
     verification_options.models_root = models_root;
     verification_options.manifest_path = manifest;

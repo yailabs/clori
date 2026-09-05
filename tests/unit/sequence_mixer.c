@@ -90,7 +90,7 @@ static void mixer_fixture(float qkv[24], float gate[12], float beta[6],
 static int mixer_run(const yvex_gated_delta_plan *plan,
                      const float *qkv, const float *gate, const float *beta,
                      const float *decay, const float *conv,
-                     unsigned long long tokens, yvex_gated_delta_state_view state,
+                     unsigned long long tokens, yvex_sequence_state_view state,
                      float *next_conv, float *next_recurrent, float *output)
 {
     const float decay_log[2] = {-0.8f, -0.35f};
@@ -147,14 +147,14 @@ static int mixer_test_prefill_decode(void)
                      "tiny gated-delta plan seals");
     mixer_fixture(qkv, gate, beta, decay, conv);
     if (mixer_run(&plan, qkv, gate, beta, decay, conv, 3ull,
-                  (yvex_gated_delta_state_view){0}, prefill_conv,
+                  (yvex_sequence_state_view){0}, prefill_conv,
                   prefill_recurrent, prefill_output) != 0)
         return 1;
     for (token = 0ull; token < 3ull; ++token) {
-        yvex_gated_delta_state_view state = token
-            ? (yvex_gated_delta_state_view){decode_conv[current],
+        yvex_sequence_state_view state = token
+            ? (yvex_sequence_state_view){decode_conv[current],
                                             decode_recurrent[current]}
-            : (yvex_gated_delta_state_view){0};
+            : (yvex_sequence_state_view){0};
         if (mixer_run(&plan, qkv + token * plan.qkv_width,
                       gate + token * plan.value_width,
                       beta + token * requirement.value_heads,
@@ -198,10 +198,10 @@ static int mixer_test_normalization_convention(void)
         "normalization convention participates in gated-delta identity");
     mixer_fixture(qkv, gate, beta, decay, conv);
     if (mixer_run(&direct, qkv, gate, beta, decay, conv, 1ull,
-                  (yvex_gated_delta_state_view){0}, direct_conv,
+                  (yvex_sequence_state_view){0}, direct_conv,
                   direct_recurrent, direct_output) != 0 ||
         mixer_run(&one_plus, qkv, gate, beta, decay, conv, 1ull,
-                  (yvex_gated_delta_state_view){0}, one_plus_conv,
+                  (yvex_sequence_state_view){0}, one_plus_conv,
                   one_plus_recurrent, one_plus_output) != 0)
         return 1;
     YVEX_TEST_ASSERT(

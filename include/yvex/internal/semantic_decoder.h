@@ -49,6 +49,31 @@ int yvex_semantic_gated_delta_requirement_identity(
     const yvex_gated_delta_requirement *requirement,
     char identity[YVEX_SEMANTIC_DECODER_IDENTITY_CAP]);
 
+/* Scalar-transition selective SSM semantics, independent of physical scan lowering.
+ * Geometry describes F32 recurrent/causal-history values, never a KV cache. */
+#define YVEX_SELECTIVE_SSD_SCHEMA_V1 1u
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long heads, head_dimension, state_dimension, groups;
+    unsigned long long convolution_kernel, normalization_groups;
+    double normalization_epsilon, time_step_minimum, time_step_maximum;
+    int time_step_unbounded, norm_before_gate;
+} yvex_selective_ssd_requirement;
+
+typedef struct {
+    unsigned int schema_version;
+    yvex_selective_ssd_requirement requirement;
+    unsigned long long width, convolution_width, projection_width;
+    unsigned long long convolution_state_values, recurrent_state_values;
+    char identity[YVEX_SEMANTIC_DECODER_IDENTITY_CAP];
+} yvex_selective_ssd_geometry;
+
+int yvex_selective_ssd_geometry_seal(
+    yvex_selective_ssd_geometry *geometry, const yvex_selective_ssd_requirement *requirement,
+    yvex_error *err);
+int yvex_selective_ssd_geometry_validate(
+    const yvex_selective_ssd_geometry *geometry, yvex_error *err);
+
 typedef struct {
     unsigned long long ordinal, layer_index;
     yvex_tensor_scope tensor_scope;

@@ -40,18 +40,18 @@ int yvex_sequence_state_begin(
     unsigned long long token_count, yvex_error *err);
 int yvex_sequence_state_layer(
     yvex_sequence_state *state, unsigned long long layer_index,
-    yvex_gated_delta_state_view *committed,
-    yvex_gated_delta_state_output *candidate, yvex_error *err);
+    yvex_sequence_state_view *committed,
+    yvex_sequence_state_output *candidate, yvex_error *err);
 int yvex_sequence_state_device_layer(
     yvex_sequence_state *state, unsigned long long layer_index,
-    yvex_gated_delta_device_state_view *committed,
-    yvex_gated_delta_device_state_output *candidate, yvex_error *err);
+    yvex_sequence_device_state_view *committed,
+    yvex_sequence_device_state_output *candidate, yvex_error *err);
 int yvex_sequence_state_stage(
     yvex_sequence_state *state, unsigned long long layer_index,
     yvex_error *err);
 int yvex_sequence_state_committed(
     const yvex_sequence_state *state, unsigned long long layer_index,
-    yvex_gated_delta_state_view *committed, yvex_error *err);
+    yvex_sequence_state_view *committed, yvex_error *err);
 int yvex_sequence_state_participant(
     yvex_sequence_state *state,
     yvex_runtime_transaction_participant *participant, yvex_error *err);

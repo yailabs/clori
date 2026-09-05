@@ -785,7 +785,7 @@ static int responses_input(yvex_json *json, yvex_provider_request *request,
                 }
                 if (!yvex_json_skip_value(&probe)) return YVEX_ERR_FORMAT;
             }
-            *json = (yvex_json){start, json->end, json->depth};
+            *json = (yvex_json){.cursor = start, .end = json->end, .depth = json->depth};
             if (typed && strcmp(type, "function_call_output") == 0) {
                 yvex_provider_message *message = &messages[message_index];
                 seen_keys seen = {0};
