@@ -20,6 +20,7 @@ to current information owners; it does not duplicate their status.
 | Subject | Owner |
 | --- | --- |
 | System boundaries and lifetimes | [System](architecture/system.md) |
+| Classical REPL mapping and the REPLAI-backed chat lifecycle | [Interactive terminal path](architecture/system.md#interactive-terminal-path) |
 | Source-to-package lowering and binding | [Compilation](architecture/compilation.md) |
 | Engine execution, sessions, state, and resources | [Runtime architecture](architecture/runtime.md) |
 | Command grammar and generated projections | [Commands](architecture/commands.md) |
