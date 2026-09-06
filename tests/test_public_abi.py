@@ -30,6 +30,9 @@ RECORDS = {
     "yvex_model_registry_entry": (
         "include/yvex/registry.h", "YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT", 1, 304,
         "5e137d2540df9dfcfb8d6ec7402cf0a0480b8aa00495f2b93869fc7fa869263f"),
+    "yvex_model_publication": (
+        "include/yvex/registry.h", "YVEX_MODEL_PUBLICATION_SCHEMA_V1", 1, 1520,
+        "0da24ab185b7948c1edda1a36d50614ec3be73c0f8f866520bd8d396a0ff587e"),
     "yvex_provider_request": (
         "include/yvex/provider.h", "YVEX_PROVIDER_SCHEMA_V4", 4, 584,
         "d3e3c5bf3bc93bfac00b5cac56f317b1106ca4b216cd8c10b3577b639ffda0e5"),

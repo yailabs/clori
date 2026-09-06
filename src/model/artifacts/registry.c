@@ -643,7 +643,109 @@ void yvex_model_registry_close(yvex_model_registry *registry)
         registry_owned_entry_clear(&registry->entries[i]);
     }
     free(registry->entries);
+    free(registry->publications);
     free(registry);
+}
+
+static int publication_path_valid(const char *text)
+{
+    const char *part = text, *p;
+    if (!text[0] || text[0] == '/') return 0;
+    for (p = text; ; ++p) {
+        if (*p == '/' || !*p) {
+            if (p == part || (p - part == 1 && part[0] == '.') ||
+                (p - part == 2 && part[0] == '.' && part[1] == '.')) return 0;
+            if (!*p) break;
+            part = p + 1;
+        } else if (!isalnum((unsigned char)*p) && *p != '-' && *p != '_' && *p != '.')
+            return 0;
+    }
+    return 1;
+}
+
+static int publication_valid(const yvex_model_publication *value)
+{
+    size_t i;
+    if (!value || value->schema_version != YVEX_MODEL_PUBLICATION_SCHEMA_V1)
+        return 0;
+    if (!memchr(value->logical_identity, 0, sizeof(value->logical_identity)) ||
+        !memchr(value->provider, 0, sizeof(value->provider)) ||
+        !memchr(value->repository, 0, sizeof(value->repository)) ||
+        !memchr(value->filename, 0, sizeof(value->filename)) ||
+        !memchr(value->manifest_filename, 0, sizeof(value->manifest_filename)) ||
+        !memchr(value->revision, 0, sizeof(value->revision)) ||
+        !memchr(value->artifact_identity, 0, sizeof(value->artifact_identity)) ||
+        !memchr(value->remote_sha256, 0, sizeof(value->remote_sha256)) ||
+        !memchr(value->manifest_sha256, 0, sizeof(value->manifest_sha256))) return 0;
+    if (!value->logical_identity[0] || strcmp(value->provider, "huggingface") ||
+        !publication_path_valid(value->repository) ||
+        !strchr(value->repository, '/') ||
+        strchr(strchr(value->repository, '/') + 1, '/') ||
+        !publication_path_valid(value->filename) ||
+        !publication_path_valid(value->manifest_filename) || !value->size_bytes ||
+        strlen(value->revision) != 40u ||
+        !yvex_sha256_hex_valid(value->artifact_identity) ||
+        !yvex_sha256_hex_valid(value->remote_sha256) ||
+        !yvex_sha256_hex_valid(value->manifest_sha256) ||
+        strcmp(value->artifact_identity, value->remote_sha256)) return 0;
+    for (i = 0u; i < 40u; ++i)
+        if (!((value->revision[i] >= '0' && value->revision[i] <= '9') ||
+              (value->revision[i] >= 'a' && value->revision[i] <= 'f'))) return 0;
+    return 1;
+}
+
+unsigned long long yvex_model_registry_publication_count(
+    const yvex_model_registry *registry)
+{
+    return registry ? registry->publication_count : 0u;
+}
+
+const yvex_model_publication *yvex_model_registry_publication_at(
+    const yvex_model_registry *registry, unsigned long long index)
+{
+    return registry && index < registry->publication_count
+               ? &registry->publications[index] : NULL;
+}
+
+int yvex_model_registry_publication_add(yvex_model_registry *registry,
+                                        const yvex_model_publication *publication,
+                                        yvex_error *err)
+{
+    yvex_model_publication *items;
+    unsigned long long i;
+    int matched = 0;
+    if (!registry || !publication_valid(publication)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model.publication",
+                       "exact publication schema, paths and matching SHA-256 are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    for (i = 0u; i < registry->count; ++i)
+        if (!strcmp(registry->entries[i].sha256, publication->artifact_identity) &&
+            registry->entries[i].file_size == publication->size_bytes) matched = 1;
+    if (!matched || registry->publication_count >= 4096u) {
+        yvex_error_set(err, YVEX_ERR_STATE, "model.publication",
+                       "publication requires an existing exact artifact and bounded location count");
+        return YVEX_ERR_STATE;
+    }
+    for (i = 0u; i < registry->publication_count; ++i) {
+        const yvex_model_publication *old = &registry->publications[i];
+        if (!strcmp(old->repository, publication->repository) &&
+            !strcmp(old->revision, publication->revision) &&
+            !strcmp(old->filename, publication->filename)) {
+            yvex_error_set(err, YVEX_ERR_STATE, "model.publication",
+                           "duplicate or conflicting immutable remote location");
+            return YVEX_ERR_STATE;
+        }
+    }
+    items = realloc(registry->publications,
+                    (size_t)(registry->publication_count + 1u) * sizeof(*items));
+    if (!items) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "model.publication", "location allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    registry->publications = items;
+    items[registry->publication_count++] = *publication;
+    return YVEX_OK;
 }
 
 int yvex_model_registry_is_working_set(const yvex_model_registry *registry,
@@ -808,6 +910,110 @@ static void write_u64_field(FILE *fp,
     fprintf(fp, "\"%s\": %llu%s\n", key, value, comma ? "," : "");
 }
 
+static const struct {
+    const char *key;
+    size_t offset, capacity;
+} publication_fields[] = {
+    {"logical_identity", offsetof(yvex_model_publication, logical_identity), 448u},
+    {"artifact_identity", offsetof(yvex_model_publication, artifact_identity), 65u},
+    {"provider", offsetof(yvex_model_publication, provider), 32u},
+    {"repository", offsetof(yvex_model_publication, repository), 256u},
+    {"revision", offsetof(yvex_model_publication, revision), 65u},
+    {"filename", offsetof(yvex_model_publication, filename), 256u},
+    {"remote_sha256", offsetof(yvex_model_publication, remote_sha256), 65u},
+    {"manifest_filename", offsetof(yvex_model_publication, manifest_filename), 256u},
+    {"manifest_sha256", offsetof(yvex_model_publication, manifest_sha256), 65u}
+};
+
+static void registry_write_publications(FILE *fp, const yvex_model_registry *registry)
+{
+    unsigned long long i;
+    size_t field;
+    fputs("  \"publications\": [\n", fp);
+    for (i = 0u; i < registry->publication_count; ++i) {
+        const yvex_model_publication *value = &registry->publications[i];
+        fputs("    {\n", fp);
+        write_u64_field(fp, "      ", "schema_version", value->schema_version, 1);
+        write_field(fp, "      ", "status", "PUBLISHED", 1);
+        for (field = 0u; field < sizeof(publication_fields) / sizeof(publication_fields[0]); ++field)
+            write_field(fp, "      ", publication_fields[field].key,
+                        (const char *)value + publication_fields[field].offset, 1);
+        write_u64_field(fp, "      ", "size_bytes", value->size_bytes, 0);
+        fprintf(fp, "    }%s\n", i + 1u < registry->publication_count ? "," : "");
+    }
+    fputs("  ],\n", fp);
+}
+
+static int registry_read_publication(yvex_json *json, yvex_model_publication *value)
+{
+    yvex_json_iter object;
+    yvex_json_item item;
+    char key[64], status[32];
+    unsigned int seen = 0u, bit;
+    unsigned long long version;
+    size_t field;
+    memset(value, 0, sizeof(*value));
+    if (!yvex_json_iter_begin(json, &object, YVEX_JSON_COLLECTION_OBJECT)) return 0;
+    while ((item = yvex_json_object_member(&object, key, sizeof(key))) == YVEX_JSON_ITEM_READY) {
+        for (field = 0u; field < sizeof(publication_fields) / sizeof(publication_fields[0]); ++field)
+            if (!strcmp(key, publication_fields[field].key)) break;
+        if (field < sizeof(publication_fields) / sizeof(publication_fields[0])) {
+            bit = 1u << field;
+            if (!yvex_json_string(json, (char *)value + publication_fields[field].offset,
+                                  publication_fields[field].capacity)) return 0;
+        } else if (!strcmp(key, "size_bytes")) {
+            bit = 1u << 9u;
+            if (!yvex_json_u64(json, &value->size_bytes)) return 0;
+        } else if (!strcmp(key, "schema_version")) {
+            bit = 1u << 10u;
+            if (!yvex_json_u64(json, &version) || version != YVEX_MODEL_PUBLICATION_SCHEMA_V1)
+                return 0;
+            value->schema_version = (unsigned int)version;
+        } else if (!strcmp(key, "status")) {
+            bit = 1u << 11u;
+            if (!yvex_json_string(json, status, sizeof(status)) || strcmp(status, "PUBLISHED"))
+                return 0;
+        } else return 0;
+        if (seen & bit) return 0;
+        seen |= bit;
+    }
+    return item == YVEX_JSON_ITEM_END && !object.trailing_separator && seen == 4095u;
+}
+
+static int registry_parse_publications(const char *text, yvex_model_registry *registry,
+                                        int allow_publications, yvex_error *err)
+{
+    yvex_json json;
+    yvex_json_iter object, array;
+    yvex_json_item member, item;
+    char key[256];
+    int seen = 0, rc;
+    yvex_model_publication value;
+    yvex_json_init(&json, text, strlen(text));
+    if (!yvex_json_iter_begin(&json, &object, YVEX_JSON_COLLECTION_OBJECT)) goto malformed;
+    while ((member = yvex_json_object_member(&object, key, sizeof(key))) == YVEX_JSON_ITEM_READY) {
+        if (strcmp(key, "publications")) {
+            if (!yvex_json_skip_value(&json)) goto malformed;
+            continue;
+        }
+        if (seen++ || !yvex_json_iter_begin(&json, &array, YVEX_JSON_COLLECTION_ARRAY))
+            goto malformed;
+        while ((item = yvex_json_array_value(&array)) == YVEX_JSON_ITEM_READY) {
+            if (!allow_publications || !registry_read_publication(&json, &value)) goto malformed;
+            rc = yvex_model_registry_publication_add(registry, &value, err);
+            if (rc != YVEX_OK) goto malformed;
+        }
+        if (item != YVEX_JSON_ITEM_END || array.trailing_separator) goto malformed;
+    }
+    yvex_json_space(&json);
+    if (member == YVEX_JSON_ITEM_END && !object.trailing_separator && json.cursor == json.end)
+        return YVEX_OK;
+malformed:
+    yvex_error_set(err, YVEX_ERR_FORMAT, "model.publication",
+                   "malformed, duplicate or conflicting publication evidence");
+    return YVEX_ERR_FORMAT;
+}
+
 static int registry_write_json_file(const yvex_model_registry *registry,
                                         const char *path,
                                         yvex_error *err)
@@ -842,6 +1048,7 @@ static int registry_write_json_file(const yvex_model_registry *registry,
         yvex_file_json_write_string(fp, registry->working_set[i]);
     }
     fprintf(fp, "],\n");
+    registry_write_publications(fp, registry);
     fprintf(fp, "  \"models\": [\n");
     for (i = 0; i < registry->count; ++i) {
         const yvex_model_registry_owned_entry *e = &registry->entries[i];
@@ -920,6 +1127,21 @@ int yvex_model_registry_save(const yvex_model_registry *registry,
         int rc = yvex_model_registry_default_path(default_path, sizeof(default_path), err);
         if (rc != YVEX_OK) return rc;
         path = default_path;
+    }
+    {
+        unsigned long long i, j;
+        for (i = 0u; i < registry->publication_count; ++i) {
+            const yvex_model_publication *publication = &registry->publications[i];
+            int matched = 0;
+            for (j = 0u; j < registry->count; ++j)
+                if (!strcmp(registry->entries[j].sha256, publication->artifact_identity) &&
+                    registry->entries[j].file_size == publication->size_bytes) matched = 1;
+            if (!matched) {
+                yvex_error_set(err, YVEX_ERR_STATE, "model.publication",
+                               "cannot orphan a published artifact identity");
+                return YVEX_ERR_STATE;
+            }
+        }
     }
     return registry_write_json_file(registry, path, err);
 }
@@ -1354,7 +1576,7 @@ static int registry_parse_json(const char *path,
     char *schema = NULL;
     const char *models;
     const char *p;
-    int import_legacy_startup_axes;
+    int import_legacy_startup_axes, allow_publications;
     int rc;
 
     if (!path || !registry) {
@@ -1378,12 +1600,14 @@ static int registry_parse_json(const char *path,
          strcmp(schema, YVEX_MODEL_REGISTRY_SCHEMA_V5) == 0);
     if (!schema || (!import_legacy_startup_axes &&
                     strcmp(schema, YVEX_MODEL_REGISTRY_SCHEMA_V6) != 0 &&
+                    strcmp(schema, YVEX_MODEL_REGISTRY_SCHEMA_V7) != 0 &&
                     strcmp(schema, YVEX_MODEL_REGISTRY_SCHEMA_CURRENT) != 0)) {
         free(schema);
         free(json);
         yvex_error_set(err, YVEX_ERR_FORMAT, "model_registry_json", "registry schema missing or unsupported");
         return YVEX_ERR_FORMAT;
     }
+    allow_publications = !strcmp(schema, YVEX_MODEL_REGISTRY_SCHEMA_V8);
     free(schema);
     if (!registry_parse_working_set(json, registry)) {
         free(json);
@@ -1459,8 +1683,9 @@ static int registry_parse_json(const char *path,
         }
         p = obj_end;
     }
+    rc = registry_parse_publications(json, registry, allow_publications, err);
     free(json);
-    return YVEX_OK;
+    return rc;
 }
 
 static int append_scan_entry(yvex_model_registry_entry **entries,

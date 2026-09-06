@@ -743,6 +743,8 @@ typedef struct {
     char (*model_names)[YVEX_MODEL_LIBRARY_NAME_CAP];
     unsigned long long model_name_count;
     int working_set;
+    yvex_model_publication *publications;
+    unsigned long long publication_count;
 } library_model;
 
 struct yvex_model_library {
@@ -848,7 +850,7 @@ static int library_artifact_add(library_model *model,
     const char *path = library_text(entry->path);
     unsigned long long index, capacity;
 
-    if (!path[0]) return YVEX_OK;
+    if (!path[0] && !identity[0]) return YVEX_OK;
     for (index = 0u; index < model->artifact_count; ++index) {
         fact = &model->artifacts[index];
         if ((identity[0] && strcmp(fact->identity, identity) == 0) ||
@@ -1157,6 +1159,31 @@ static int library_model_compare(const void *left, const void *right)
     return strcmp(a->summary.display_name, b->summary.display_name);
 }
 
+static int library_publication_add(yvex_model_library *library,
+                                    const yvex_model_publication *publication,
+                                    yvex_error *err)
+{
+    library_model *model = library_find(library, publication->logical_identity);
+    yvex_model_publication *items;
+    unsigned long long index;
+    int matched = 0;
+    if (model)
+        for (index = 0u; index < model->artifact_count; ++index)
+            if (!strcmp(model->artifacts[index].identity, publication->artifact_identity) &&
+                model->artifacts[index].file_size == publication->size_bytes) matched = 1;
+    if (!matched)
+        return library_refuse(err, YVEX_ERR_FORMAT,
+                              "publication does not belong to the exact logical artifact");
+    items = realloc(model->publications,
+                    (size_t)(model->publication_count + 1u) * sizeof(*items));
+    if (!items) return library_refuse(err, YVEX_ERR_NOMEM, "publication allocation failed");
+    model->publications = items;
+    items[model->publication_count++] = *publication;
+    model->summary.remote_available = 1;
+    model->summary.remote_count++;
+    return YVEX_OK;
+}
+
 int yvex_model_library_open(yvex_model_library **out,
                             const yvex_local_catalog_options *options,
                             yvex_error *err)
@@ -1186,6 +1213,11 @@ int yvex_model_library_open(yvex_model_library **out,
     if (rc != YVEX_OK) yvex_error_clear(err);
     for (index = 0u; registry && index < yvex_model_registry_count(registry); ++index) {
         rc = library_registry_add(library, yvex_model_registry_at(registry, index), err);
+        if (rc != YVEX_OK) goto fail;
+    }
+    for (index = 0u; index < yvex_model_registry_publication_count(registry); ++index) {
+        rc = library_publication_add(library,
+            yvex_model_registry_publication_at(registry, index), err);
         if (rc != YVEX_OK) goto fail;
     }
     rc = yvex_local_catalog_open(&local, options, err);
@@ -1223,6 +1255,7 @@ void yvex_model_library_close(yvex_model_library *library)
         free(library->models[index].artifacts);
         free(library->models[index].profiles);
         free(library->models[index].model_names);
+        free(library->models[index].publications);
     }
     free(library->models);
     free(library);
@@ -1320,7 +1353,8 @@ int yvex_model_library_remote_match(const yvex_model_library *library,
                                     const yvex_remote_model *remote,
                                     unsigned long long *model_index)
 {
-    unsigned long long index;
+    unsigned long long index, publication_index, found = 0u;
+    int matched = 0;
     const char *revision;
 
     if (model_index) *model_index = 0u;
@@ -1330,12 +1364,50 @@ int yvex_model_library_remote_match(const yvex_model_library *library,
     if (!revision[0]) return 0;
     for (index = 0u; index < library->count; ++index) {
         const yvex_model_library_entry *summary = &library->models[index].summary;
-        if (strcmp(summary->provider, remote->provider) == 0 &&
+        int belongs = strcmp(summary->provider, remote->provider) == 0 &&
             strcmp(summary->repository, remote->repository) == 0 &&
-            strcmp(summary->revision, revision) == 0) {
-            if (model_index) *model_index = index;
-            return 1;
+            strcmp(summary->revision, revision) == 0;
+        for (publication_index = 0u;
+             publication_index < library->models[index].publication_count; ++publication_index) {
+            const yvex_model_publication *publication =
+                &library->models[index].publications[publication_index];
+            if (!strcmp(publication->provider, remote->provider) &&
+                !strcmp(publication->repository, remote->repository) &&
+                !strcmp(publication->revision, revision)) belongs = 1;
+        }
+        if (belongs) {
+            if (matched) return 0;
+            found = index;
+            matched = 1;
         }
     }
-    return 0;
+    if (matched && model_index) *model_index = found;
+    return matched;
+}
+
+unsigned long long yvex_model_library_publication_count(
+    const yvex_model_library *library, unsigned long long model_index)
+{
+    return library && model_index < library->count
+               ? library->models[model_index].publication_count : 0u;
+}
+
+const yvex_model_publication *yvex_model_library_publication_at(
+    const yvex_model_library *library, unsigned long long model_index,
+    unsigned long long publication_index)
+{
+    return library && model_index < library->count &&
+           publication_index < library->models[model_index].publication_count
+               ? &library->models[model_index].publications[publication_index] : NULL;
+}
+
+int yvex_model_library_artifact_is_local(const yvex_model_library *library,
+                                         unsigned long long model_index,
+                                         unsigned long long artifact_index)
+{
+    const yvex_model_artifact_fact *artifact =
+        yvex_model_library_artifact_at(library, model_index, artifact_index);
+    struct stat st;
+    return artifact && artifact->path[0] && stat(artifact->path, &st) == 0 &&
+           S_ISREG(st.st_mode) && (unsigned long long)st.st_size == artifact->file_size;
 }

@@ -293,7 +293,7 @@ static int test_registry_lifecycle(void)
 
     rc = yvex_model_registry_save(registry, registry_path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "save registry");
-    YVEX_TEST_ASSERT(file_contains(registry_path, "\"schema\": \"yvex.models.local.v7\""),
+    YVEX_TEST_ASSERT(file_contains(registry_path, "\"schema\": \"yvex.models.local.v8\""),
                      "registry writer publishes schema v7");
     YVEX_TEST_ASSERT(file_contains(registry_path, "\"runtime_backend\": \"cuda\""),
                      "registry writer persists runtime profile");
@@ -605,6 +605,115 @@ static int test_working_set_policy(void)
     return 0;
 }
 
+static int test_publication_identity(void)
+{
+    const char *path = "build/tests/model-registry/publication.local.json";
+    const char *artifact = "build/tests/model-registry/publication.gguf";
+    yvex_model_registry_options options = {.registry_path = path};
+    yvex_local_catalog_options catalog_options = {
+        .registry_path = path, .models_root = "build/tests/model-library-root"
+    };
+    yvex_model_registry *registry = NULL;
+    yvex_model_library *library = NULL;
+    yvex_model_registry_entry entry = {0};
+    yvex_model_publication publication = {0}, invalid;
+    yvex_remote_model remote = {0};
+    unsigned long long matched_model = 0u;
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(write_file(artifact, "artifact") && write_file(path,
+        "{\"schema\":\"yvex.models.local.v7\",\"models\":[]}"), "publication fixture");
+    YVEX_TEST_ASSERT(yvex_model_registry_open(&registry, &options, &err) == YVEX_OK,
+                     "legacy registry opens with no published locations");
+    entry.schema_version = YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT;
+    entry.alias = "deepseek4-v4-flash-publication-fixture"; entry.family = "deepseek4";
+    entry.model = "v4-flash"; entry.path = artifact;
+    entry.sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    entry.file_size = 8u; entry.format = "gguf";
+    YVEX_TEST_ASSERT(yvex_model_registry_add(registry, &entry, &err) == YVEX_OK,
+                     "local artifact first owns its content identity");
+    publication.schema_version = YVEX_MODEL_PUBLICATION_SCHEMA_V1;
+    snprintf(publication.logical_identity, sizeof(publication.logical_identity),
+             "%s", "family:deepseek4/model:v4-flash");
+    snprintf(publication.artifact_identity, sizeof(publication.artifact_identity), "%s", entry.sha256);
+    snprintf(publication.remote_sha256, sizeof(publication.remote_sha256), "%s", entry.sha256);
+    snprintf(publication.provider, sizeof(publication.provider), "%s", "huggingface");
+    snprintf(publication.repository, sizeof(publication.repository), "%s", "owner/release");
+    snprintf(publication.revision, sizeof(publication.revision),
+             "%s", "1111111111111111111111111111111111111111");
+    snprintf(publication.filename, sizeof(publication.filename), "%s", "model.gguf");
+    snprintf(publication.manifest_filename, sizeof(publication.manifest_filename), "%s", "release.json");
+    snprintf(publication.manifest_sha256, sizeof(publication.manifest_sha256), "%s", entry.sha256);
+    publication.size_bytes = entry.file_size;
+    invalid = publication; invalid.schema_version = 0u;
+    YVEX_TEST_ASSERT(yvex_model_registry_publication_add(registry, &invalid, &err) ==
+        YVEX_ERR_INVALID_ARG, "stale publication ABI rejected before reading new fields");
+    invalid = publication; invalid.remote_sha256[0] = 'b';
+    YVEX_TEST_ASSERT(yvex_model_registry_publication_add(registry, &invalid, &err) ==
+        YVEX_ERR_INVALID_ARG, "remote digest cannot replace local artifact identity");
+    invalid = publication; memset(invalid.repository, 'x', sizeof(invalid.repository));
+    YVEX_TEST_ASSERT(yvex_model_registry_publication_add(registry, &invalid, &err) ==
+        YVEX_ERR_INVALID_ARG, "unterminated public record rejected within its bounds");
+    invalid = publication; snprintf(invalid.revision, sizeof(invalid.revision), "%s", "main");
+    YVEX_TEST_ASSERT(yvex_model_registry_publication_add(registry, &invalid, &err) ==
+        YVEX_ERR_INVALID_ARG, "floating revision refused");
+    invalid = publication; snprintf(invalid.filename, sizeof(invalid.filename), "%s", "../model.gguf");
+    YVEX_TEST_ASSERT(yvex_model_registry_publication_add(registry, &invalid, &err) ==
+        YVEX_ERR_INVALID_ARG, "unsafe remote filename refused");
+    invalid = publication; invalid.size_bytes++;
+    YVEX_TEST_ASSERT(yvex_model_registry_publication_add(registry, &invalid, &err) ==
+        YVEX_ERR_STATE, "wrong extent does not join existing bytes");
+    YVEX_TEST_ASSERT(yvex_model_registry_publication_add(registry, &publication, &err) == YVEX_OK &&
+        yvex_model_registry_publication_add(registry, &publication, &err) == YVEX_ERR_STATE &&
+        yvex_model_registry_save(registry, path, &err) == YVEX_OK,
+        "one immutable remote location persists without duplicate registration");
+    yvex_model_registry_close(registry); registry = NULL;
+    YVEX_TEST_ASSERT(yvex_model_registry_open(&registry, &options, &err) == YVEX_OK &&
+        yvex_model_registry_publication_count(registry) == 1u &&
+        !strcmp(yvex_model_registry_publication_at(registry, 0u)->revision, publication.revision),
+        "canonical writer and reader preserve exact publication revision");
+    YVEX_TEST_ASSERT(yvex_model_library_open(&library, &catalog_options, &err) == YVEX_OK &&
+        yvex_model_library_count(library) == 1u &&
+        yvex_model_library_publication_count(library, 0u) == 1u &&
+        yvex_model_library_artifact_is_local(library, 0u, 0u) &&
+        yvex_model_library_at(library, 0u)->remote_available &&
+        !strcmp(yvex_model_library_at(library, 0u)->identity, publication.logical_identity),
+        "LOCAL plus REMOTE preserves one logical model and exact artifact");
+    snprintf(remote.provider, sizeof(remote.provider), "%s", publication.provider);
+    snprintf(remote.repository, sizeof(remote.repository), "%s", publication.repository);
+    snprintf(remote.resolved_revision, sizeof(remote.resolved_revision), "%s", publication.revision);
+    YVEX_TEST_ASSERT(yvex_model_library_remote_match(library, &remote, &matched_model) &&
+        matched_model == 0u, "published provider identity resolves to the existing logical model");
+    remote.resolved_revision[0] = '2';
+    YVEX_TEST_ASSERT(!yvex_model_library_remote_match(library, &remote, &matched_model),
+        "another remote revision cannot inherit the publication binding");
+    yvex_model_library_close(library); library = NULL;
+    invalid = publication;
+    snprintf(invalid.logical_identity, sizeof(invalid.logical_identity), "%s", "family:wrong/model:wrong");
+    snprintf(invalid.filename, sizeof(invalid.filename), "%s", "wrong.gguf");
+    catalog_options.registry_path = "build/tests/model-registry/wrong-publication.json";
+    YVEX_TEST_ASSERT(yvex_model_registry_publication_add(registry, &invalid, &err) == YVEX_OK &&
+        yvex_model_registry_save(registry, catalog_options.registry_path, &err) == YVEX_OK &&
+        yvex_model_library_open(&library, &catalog_options, &err) == YVEX_ERR_FORMAT &&
+        library == NULL, "catalog rejects a remote artifact attached to another logical model");
+    yvex_model_registry_close(registry); registry = NULL;
+    catalog_options.registry_path = path;
+    YVEX_TEST_ASSERT(yvex_model_registry_open(&registry, &options, &err) == YVEX_OK,
+        "original valid publication remains unchanged");
+    YVEX_TEST_ASSERT(unlink(artifact) == 0 &&
+        yvex_model_library_open(&library, &catalog_options, &err) == YVEX_OK &&
+        !yvex_model_library_artifact_is_local(library, 0u, 0u) &&
+        yvex_model_library_publication_count(library, 0u) == 1u &&
+        !strcmp(yvex_model_library_artifact_at(library, 0u, 0u)->identity, entry.sha256),
+        "loss of local fixture bytes cannot erase remote content identity");
+    yvex_model_library_close(library);
+    YVEX_TEST_ASSERT(yvex_model_registry_remove(registry, entry.alias, &err) == YVEX_OK &&
+        yvex_model_registry_save(registry, path, &err) == YVEX_ERR_STATE,
+        "registry save refuses an orphaned publication rather than dropping it");
+    yvex_model_registry_close(registry);
+    return 0;
+}
+
 int yvex_test_model_registry(void)
 {
     if (test_alias_validation() != 0) return 1;
@@ -614,6 +723,7 @@ int yvex_test_model_registry(void)
     if (test_legacy_startup_axes() != 0) return 1;
     if (test_logical_model_library() != 0) return 1;
     if (test_working_set_policy() != 0) return 1;
+    if (test_publication_identity() != 0) return 1;
     if (test_invalid_args() != 0) return 1;
     return 0;
 }

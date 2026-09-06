@@ -14,8 +14,36 @@ transformation evidence, license obligations, exact runtime qualification,
 preparation observability and proposed distribution location. The artifact-set
 identity hashes a canonical list of component, shard order, size and content
 digest. Local paths, proposed repository names, hardware and timestamps do not
-participate in that identity. Publication locations remain empty until a later
+participate in that identity. Publication locations remain empty until an
 authorized publication verifies the exact remote bytes.
+
+Verified publication belongs to the existing artifact registry. Disk schema
+`yvex.models.local.v8` adds publication records joining logical identity and an
+existing artifact SHA-256/size to provider, repository, immutable Hub commit,
+remote filename/digest and public manifest filename/digest. The installed
+`yvex_model_publication` record has its own schema version 1; existing registry
+entry and catalog summary layouts are unchanged. Readers still accept older
+registry schemas. Older writers reject v8 instead of silently discarding remote
+locations. Removing the final artifact reference cannot save an orphaned
+publication. A catalog join with a different logical identity fails closed.
+
+The CLI projects these facts through `yvex.model.list.v4` and `yvex.model.v4`.
+Each representation exposes `local_available` and `remote_locations`; publication
+does not change source origin, runtime admission, working-set membership or
+artifact identity. Local availability checks a regular file and its recorded
+size; it is not a fresh integrity or runtime qualification claim. Remote facts
+survive absent local payloads. Eviction and rehydration are separate operations.
+
+`tools/model_release.py --publication RECEIPT.json` requires a qualified release,
+a fresh v4 catalog containing matching remote locations, and a checksummed
+`yvex.hub.publication.receipt.v1` evidence record. The receipt binds an exact
+repository commit, authoritative remote file sizes/SHA-256, public manifest
+identities, complete file set, license, card metadata/rendering and independently
+verified public visibility. It projects `PUBLISHED` without changing artifact-set
+identity. The tool still accepts v3 catalogs for historical qualification; it
+does not perform uploads or independently authenticate receipt authors. Hub
+operations and public inspection produce the receipt; the projection rejects
+disagreement with the canonical catalog or changed evidence files.
 
 The assessment schema is `yvex.model.release.assessment.v1`. Required fields are
 `logical_identity`, `upstream`, `scope`, `files`, `license`, `lineage`,

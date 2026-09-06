@@ -182,7 +182,7 @@ class ReleaseProjection(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "snapshot binding mismatch"):
             self.project()
 
-    def test_ready_requires_all_exact_gates(self):
+    def qualify_fixture(self):
         for name in ("license", "lineage", "validation"):
             self.assessment[name].update(status="PASS", artifact_sha256=[self.receipts[0]["sha256"]],
                                          upstream=self.source)
@@ -196,10 +196,76 @@ class ReleaseProjection(unittest.TestCase):
             source_stable=True, machine="fixture", hardware="CPU", environment={"OS": "fixture"},
             backend="cpu", configuration={"tokens": 1}, lifecycle=["open", "generate", "close"],
             date="2026-09-05T00:00:00Z")
+    def test_ready_requires_all_exact_gates(self):
+        self.qualify_fixture()
         self.assertEqual(self.project()["publication"]["status"], "READY_TO_PUBLISH")
         self.assessment["validation"]["source_stable"] = False
         with self.assertRaisesRegex(ValueError, "source changed"):
             self.project()
+
+    def publication_fixture(self):
+        self.qualify_fixture()
+        self.catalog["schema"] = "yvex.model.list.v4"
+        qualified = self.project()
+        artifact = qualified["files"][0]
+        remote = {"filename": artifact["filename"], "size_bytes": artifact["size_bytes"],
+                  "sha256": artifact["sha256"], "lfs_sha256": artifact["sha256"],
+                  "manifest_filename": "release.json", "manifest_sha256": "e" * 64}
+        receipt = {"schema": "yvex.hub.publication.receipt.v1", "status": "PASS",
+            "private": False, "public_verified": True, "complete_file_set": True,
+            "card_rendered": True, "card_metadata_valid": True, "license_present": True,
+            "all_file_identities_verified": True, "repository": "yailabs/test-GGUF",
+            "revision": "f" * 40, "artifacts": [remote],
+            "evidence": copy.deepcopy(self.assessment["license"]["evidence"])}
+        location = {"provider": "huggingface", "repository": receipt["repository"],
+                    "revision": receipt["revision"], "state": "PUBLISHED",
+                    **{k: v for k, v in remote.items() if k != "lfs_sha256"}}
+        self.catalog["models"][0]["representations"][0]["remote_locations"] = [location]
+        return qualified, receipt
+
+    def test_publication_preserves_identity_and_local_location(self):
+        qualified, receipt = self.publication_fixture()
+        published = release.bind_publication(qualified, self.catalog, receipt)
+        self.assertEqual(published["publication"]["status"], "PUBLISHED")
+        self.assertEqual(published["artifact_set_identity"], qualified["artifact_set_identity"])
+        self.assertEqual(published["files"][0]["locations"][:-1], qualified["files"][0]["locations"])
+        self.assertEqual(qualified["publication"]["status"], "READY_TO_PUBLISH")
+
+    def test_publication_rejects_missing_repository_gates(self):
+        qualified, receipt = self.publication_fixture()
+        for field in ("public_verified", "complete_file_set", "card_rendered",
+                      "card_metadata_valid", "license_present", "all_file_identities_verified"):
+            invalid = copy.deepcopy(receipt)
+            invalid[field] = False
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                release.bind_publication(qualified, self.catalog, invalid)
+        receipt["private"] = True
+        with self.assertRaises(ValueError):
+            release.bind_publication(qualified, self.catalog, receipt)
+
+    def test_publication_rejects_wrong_bytes_revision_and_catalog(self):
+        qualified, receipt = self.publication_fixture()
+        invalid = copy.deepcopy(receipt)
+        invalid["artifacts"][0]["lfs_sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "remote bytes"):
+            release.bind_publication(qualified, self.catalog, invalid)
+        invalid = copy.deepcopy(receipt)
+        invalid["revision"] = "main"
+        with self.assertRaisesRegex(ValueError, "mutable Hub revision"):
+            release.bind_publication(qualified, self.catalog, invalid)
+        self.catalog["models"][0]["representations"][0]["remote_locations"] = []
+        with self.assertRaisesRegex(ValueError, "catalog does not bind"):
+            release.bind_publication(qualified, self.catalog, receipt)
+
+    def test_publication_rejects_changed_evidence_and_blocked_release(self):
+        qualified, receipt = self.publication_fixture()
+        qualified["publication"]["status"] = "BLOCKED_LICENSE"
+        with self.assertRaisesRegex(ValueError, "fully qualified"):
+            release.bind_publication(qualified, self.catalog, receipt)
+        qualified["publication"]["status"] = "READY_TO_PUBLISH"
+        self.evidence.write_text("changed evidence")
+        with self.assertRaises(ValueError):
+            release.bind_publication(qualified, self.catalog, receipt)
 
 
 build_spec = importlib.util.spec_from_file_location("model_release_build", Path(__file__).parents[1] / "tools/model_release_build.py")

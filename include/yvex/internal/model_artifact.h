@@ -77,6 +77,8 @@ struct yvex_model_registry {
     unsigned long long cap;
     char working_set[256][448];
     unsigned int working_set_count;
+    yvex_model_publication *publications;
+    unsigned long long publication_count;
 };
 
 #ifdef __cplusplus

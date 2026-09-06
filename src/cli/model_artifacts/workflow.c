@@ -776,8 +776,33 @@ static void product_json_source(const yvex_local_source_record *source)
                         source->size_bytes, source->size_known ? "true" : "false");
 }
 
-static void product_json_artifact(const yvex_model_artifact_fact *artifact)
+static void product_json_publication(const yvex_model_publication *publication)
 {
+    yvex_cli_out_fputs("{\"provider\":", stdout);
+    yvex_cli_out_json_string(stdout, publication->provider);
+    yvex_cli_out_fputs(",\"repository\":", stdout);
+    yvex_cli_out_json_string(stdout, publication->repository);
+    yvex_cli_out_fputs(",\"revision\":", stdout);
+    yvex_cli_out_json_string(stdout, publication->revision);
+    yvex_cli_out_fputs(",\"filename\":", stdout);
+    yvex_cli_out_json_string(stdout, publication->filename);
+    yvex_cli_out_fputs(",\"sha256\":", stdout);
+    yvex_cli_out_json_string(stdout, publication->remote_sha256);
+    yvex_cli_out_fputs(",\"manifest_filename\":", stdout);
+    yvex_cli_out_json_string(stdout, publication->manifest_filename);
+    yvex_cli_out_fputs(",\"manifest_sha256\":", stdout);
+    yvex_cli_out_json_string(stdout, publication->manifest_sha256);
+    yvex_cli_out_writef(stdout, ",\"size_bytes\":%llu,\"state\":\"PUBLISHED\"}",
+                        publication->size_bytes);
+}
+
+static void product_json_artifact(const yvex_model_library *library,
+                                  unsigned long long model_index,
+                                  unsigned long long artifact_index)
+{
+    const yvex_model_artifact_fact *artifact =
+        yvex_model_library_artifact_at(library, model_index, artifact_index);
+    unsigned long long index, emitted = 0u;
     yvex_cli_out_fputs("{\"identity\":", stdout);
     yvex_cli_out_json_string(stdout, artifact->identity);
     yvex_cli_out_fputs(",\"path\":", stdout);
@@ -787,8 +812,19 @@ static void product_json_artifact(const yvex_model_artifact_fact *artifact)
     yvex_cli_out_fputs(",\"quant_precision\":", stdout);
     yvex_cli_out_json_string(stdout, artifact->physical_variant[0]
                                      ? artifact->physical_variant : artifact->artifact_class);
-    yvex_cli_out_writef(stdout, ",\"size_bytes\":%llu,\"tensor_count\":%llu}",
-                        artifact->file_size, artifact->tensor_count);
+    yvex_cli_out_writef(stdout, ",\"size_bytes\":%llu,\"tensor_count\":%llu,\"local_available\":%s",
+                        artifact->file_size, artifact->tensor_count,
+                        yvex_model_library_artifact_is_local(library, model_index, artifact_index)
+                            ? "true" : "false");
+    yvex_cli_out_fputs(",\"remote_locations\":[", stdout);
+    for (index = 0u; index < yvex_model_library_publication_count(library, model_index); ++index) {
+        const yvex_model_publication *publication =
+            yvex_model_library_publication_at(library, model_index, index);
+        if (strcmp(publication->artifact_identity, artifact->identity)) continue;
+        if (emitted++) yvex_cli_out_char(stdout, ',');
+        product_json_publication(publication);
+    }
+    yvex_cli_out_fputs("]}", stdout);
 }
 
 static void product_json_components(
@@ -888,7 +924,7 @@ static void product_json_model(const yvex_model_library *library,
     yvex_cli_out_fputs("],\"representations\":[", stdout);
     for (index = 0u; index < yvex_model_library_artifact_count(library, model_index); ++index) {
         if (index) yvex_cli_out_char(stdout, ',');
-        product_json_artifact(yvex_model_library_artifact_at(library, model_index, index));
+        product_json_artifact(library, model_index, index);
     }
     yvex_cli_out_fputs("],\"profiles\":[", stdout);
     for (index = 0u; index < yvex_model_library_profile_count(library, model_index); ++index) {
@@ -1184,7 +1220,7 @@ int yvex_model_catalog_list_command(int arg_count, char **args)
     if (rc) return rc;
     product_runtime_open(&runtime);
     if (cli.output_mode == YVEX_MODEL_CATALOG_OUTPUT_JSON) {
-        yvex_cli_out_fputs("{\"schema\":\"yvex.model.list.v3\",\"models\":[", stdout);
+        yvex_cli_out_fputs("{\"schema\":\"yvex.model.list.v4\",\"models\":[", stdout);
         for (index = 0u; index < yvex_model_library_count(library); ++index) {
             if (index) yvex_cli_out_char(stdout, ',');
             product_json_model(library, index, &runtime);
@@ -1268,7 +1304,7 @@ int yvex_model_catalog_show_command(int arg_count, char **args)
     }
     product_runtime_open(&runtime);
     if (cli.output_mode == YVEX_MODEL_CATALOG_OUTPUT_JSON) {
-        yvex_cli_out_fputs("{\"schema\":\"yvex.model.v3\",\"model\":", stdout);
+        yvex_cli_out_fputs("{\"schema\":\"yvex.model.v4\",\"model\":", stdout);
         product_json_model(library, model_index, &runtime);
         yvex_cli_out_fputs("}\n", stdout);
         yvex_model_library_close(library);

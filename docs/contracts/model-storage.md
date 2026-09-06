@@ -46,11 +46,12 @@ a similarly named repository or a moving branch is insufficient. Downloading
 again is not necessary to retain a remote catalog fact. HF authentication and
 availability remain operational prerequisites when rehydration is requested.
 
-Registry schema `yvex.models.local.v7` records working-set membership as logical
+Registry schema `yvex.models.local.v8` records working-set membership as logical
 model IDs. It survives normal registry writes and does not manufacture a local
 source, artifact, startup profile or runtime capability. Older registries remain
-readable. CLI JSON schemas `yvex.model.list.v3` and `yvex.model.v3` expose
-working-set membership; the persistent wire protocol is unchanged.
+readable. CLI JSON schemas `yvex.model.list.v4` and `yvex.model.v4` expose
+working-set membership, local artifact availability and checksum-bound published
+locations; the persistent wire protocol is unchanged.
 `model list --json` projects membership alongside existing location
 and readiness facts. DeepSeek Flash and its DSpark source variant share one
 logical model, while their revisions, representations and profiles remain

@@ -12,13 +12,40 @@ extern "C" {
 #define YVEX_MODEL_REGISTRY_SCHEMA_V5 "yvex.models.local.v5"
 #define YVEX_MODEL_REGISTRY_SCHEMA_V6 "yvex.models.local.v6"
 #define YVEX_MODEL_REGISTRY_SCHEMA_V7 "yvex.models.local.v7"
-#define YVEX_MODEL_REGISTRY_SCHEMA_CURRENT YVEX_MODEL_REGISTRY_SCHEMA_V7
+#define YVEX_MODEL_REGISTRY_SCHEMA_V8 "yvex.models.local.v8"
+#define YVEX_MODEL_REGISTRY_SCHEMA_CURRENT YVEX_MODEL_REGISTRY_SCHEMA_V8
 #define YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_V1 1u
 #define YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT \
     YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_V1
 
 /* Model registry. */
 typedef struct yvex_model_registry yvex_model_registry;
+
+#define YVEX_MODEL_PUBLICATION_SCHEMA_V1 1u
+/* Verified distribution of an existing artifact. Upstream origin, local bytes and
+ * runtime qualification remain independently owned facts. The caller supplies
+ * an independently verified public Hub receipt; this API performs no upload. */
+typedef struct {
+    unsigned int schema_version;
+    char logical_identity[448];
+    char artifact_identity[65];
+    char provider[32];
+    char repository[256];
+    char revision[65];
+    char filename[256];
+    char remote_sha256[65];
+    char manifest_filename[256];
+    char manifest_sha256[65];
+    unsigned long long size_bytes;
+} yvex_model_publication;
+
+unsigned long long yvex_model_registry_publication_count(
+    const yvex_model_registry *registry);
+const yvex_model_publication *yvex_model_registry_publication_at(
+    const yvex_model_registry *registry, unsigned long long index);
+int yvex_model_registry_publication_add(yvex_model_registry *registry,
+                                        const yvex_model_publication *publication,
+                                        yvex_error *err);
 
 /* Explicit development policy, independent of payload location and residency. */
 int yvex_model_registry_is_working_set(const yvex_model_registry *registry,

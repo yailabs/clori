@@ -8,6 +8,7 @@ Integrity receipts come from explicit full-file verification, never catalog READ
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -55,7 +56,7 @@ def evidence_files(records):
 
 
 def select_model(catalog, assessment):
-    require(catalog.get("schema") == "yvex.model.list.v3", "unsupported catalog schema")
+    require(catalog.get("schema") in ("yvex.model.list.v3", "yvex.model.list.v4"), "unsupported catalog schema")
     matches = [m for m in catalog["models"] if m["identity"] == assessment["logical_identity"]]
     require(len(matches) == 1, "logical identity missing or ambiguous in catalog")
     model = matches[0]
@@ -250,15 +251,70 @@ def project(catalog, assessment, receipts):
     }
 
 
+def bind_publication(release, catalog, receipt):
+    """Join a verified public Hub snapshot to the canonical catalog, without upload."""
+    require(release["publication"]["status"] == "READY_TO_PUBLISH",
+            "only fully qualified artifacts can be published")
+    require(catalog.get("schema") == "yvex.model.list.v4", "publication requires catalog v4")
+    require(receipt.get("schema") == "yvex.hub.publication.receipt.v1"
+            and receipt.get("status") == "PASS" and receipt.get("private") is False
+            and receipt.get("public_verified") is True,
+            "publication requires verified public visibility")
+    for gate in ("complete_file_set", "card_rendered", "card_metadata_valid",
+                 "license_present", "all_file_identities_verified"):
+        require(receipt.get(gate) is True, f"publication gate missing: {gate}")
+    evidence_files(receipt["evidence"])
+    repository = release["publication"]["proposed_repository"]
+    revision = receipt.get("revision", "")
+    require(receipt.get("repository") == repository and
+            re.fullmatch(r"[0-9a-f]{40}", revision), "wrong repository or mutable Hub revision")
+    models = [m for m in catalog["models"] if
+              m["identity"] == release["logical_model"]["identity"]]
+    require(len(models) == 1, "publication logical model missing or ambiguous")
+    result = copy.deepcopy(release)
+    locations = []
+    for file in result["files"]:
+        matches = [f for f in receipt["artifacts"] if f["filename"] == file["filename"]]
+        require(len(matches) == 1, "published artifact missing or ambiguous")
+        remote = matches[0]
+        require(remote["sha256"] == file["sha256"] == remote["lfs_sha256"]
+                and remote["size_bytes"] == file["size_bytes"],
+                "remote bytes disagree with qualified artifact")
+        require(HEX256.fullmatch(remote["manifest_sha256"]), "invalid public manifest digest")
+        release_path(remote["manifest_filename"])
+        location = {"provider": "huggingface", "repository": repository,
+                    "revision": revision, **{k: remote[k] for k in
+                    ("filename", "sha256", "size_bytes", "manifest_filename", "manifest_sha256")}}
+        representations = [f for f in models[0]["representations"] if
+                           f["identity"] == file["sha256"] and f["size_bytes"] == file["size_bytes"]]
+        require(len(representations) == 1, "canonical artifact identity is ambiguous")
+        registered = representations[0].get("remote_locations", [])
+        require(any(all(x.get(k) == v for k, v in location.items()) and
+                    x.get("state") == "PUBLISHED" for x in registered),
+                "canonical catalog does not bind the verified remote identity")
+        file["locations"].append({"kind": "remote", **location})
+        locations.append(location)
+    result["publication"].update(status="PUBLISHED", remote_locations=locations,
+                                  receipt_sha256=digest(receipt), evidence=receipt["evidence"])
+    result["projection"]["catalog_sha256"] = digest(catalog)
+    require(result["artifact_set_identity"] == release["artifact_set_identity"],
+            "publication changed artifact identity")
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog", required=True, help="fresh model list --json projection")
     parser.add_argument("--assessment", required=True, help="reviewed evidence with exact subject identities")
     parser.add_argument("--integrity", required=True, help="explicit full-file verification receipts")
     parser.add_argument("--output", required=True, help="new immutable JSON report; must not exist")
+    parser.add_argument("--publication", help="verified public Hub receipt; requires catalog locations")
     args = parser.parse_args()
     try:
-        result = project(read_json(args.catalog), read_json(args.assessment), read_json(args.integrity))
+        catalog = read_json(args.catalog)
+        result = project(catalog, read_json(args.assessment), read_json(args.integrity))
+        if args.publication:
+            result = bind_publication(result, catalog, read_json(args.publication))
         with Path(args.output).open("x") as stream:
             json.dump(result, stream, indent=2, ensure_ascii=False)
             stream.write("\n")

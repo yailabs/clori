@@ -6,6 +6,7 @@
 #include <yvex/content.h>
 #include <yvex/core.h>
 #include <yvex/source.h>
+#include <yvex/registry.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -307,6 +308,15 @@ const yvex_local_source_record *yvex_model_library_source_at(
 int yvex_model_library_remote_match(const yvex_model_library *library,
                                     const yvex_remote_model *remote,
                                     unsigned long long *model_index);
+
+unsigned long long yvex_model_library_publication_count(
+    const yvex_model_library *library, unsigned long long model_index);
+const yvex_model_publication *yvex_model_library_publication_at(
+    const yvex_model_library *library, unsigned long long model_index,
+    unsigned long long publication_index);
+int yvex_model_library_artifact_is_local(const yvex_model_library *library,
+                                         unsigned long long model_index,
+                                         unsigned long long artifact_index);
 
 #ifdef __cplusplus
 }
