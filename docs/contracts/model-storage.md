@@ -6,7 +6,39 @@ library joins those facts into logical models; filesystem proximity never
 establishes lineage. These owners remain authoritative for remote-only records,
 managed local material and explicit external references.
 
-The configured model root remains configurable. Its durable projections are:
+## What users choose and YVEX manages
+
+Users choose a model or an external path and, optionally, a model-storage root.
+YVEX creates the required internal paths during acquisition and preparation.
+Users do not need to build the hierarchy below, choose a tensor-plan directory,
+or move downloaded files into an internal representation directory themselves.
+The root is configurable; `--models-root /srv/yvex/models` overrides it for an
+operation. Use the same root for subsequent operations or configure the default.
+
+The standard top-level layout is:
+
+```text
+<model-root>/
+├── source/
+├── representations/
+├── registry/
+├── evidence/
+├── cache/
+├── tmp/
+├── inbox/
+└── quarantine/
+```
+
+This is an ownership layout, not a requirement to pre-create every directory.
+`model pull` places managed acquisitions and their provider cache/records;
+`model prepare` selects derived output, plan and binding locations. Evidence
+comes from the operation that produces it. Retained historical evidence and
+quarantine are explicit operator dispositions, not automatic cleanup jobs.
+Working-set membership belongs to the catalog, not an `active/` directory.
+
+## Path ownership
+
+The configured root has these durable projections:
 
 | Location relative to the model root | Owner and meaning |
 | --- | --- |
@@ -30,6 +62,22 @@ sealing the physical plan. The adjacent `physical.plan` preserves that plan.
 An existing conflicting plan is rejected. A representation is not executable
 until the artifact and deployment owners admit its exact binding.
 
+The physical-variant directory identifies the sealed plan; its name is not the
+full-file GGUF SHA-256. Exact output-byte identity is recorded separately.
+An existing machine may also contain migrated paths such as
+`representations/deepseek/candidates/`, older family-level GGUF files or
+`*-bootstrap-*` files. These are cataloged historical material, not templates
+for new preparation and not proof of another logical model. In particular,
+historical `deepseek`/`deepseek4` or `qwen`/`qwen3_5` directory spellings do not
+create independent model identities. Later cleanup requires an explicit
+consumer and provenance review; normal downloads do not rearrange that history.
+
+`registry/` under the model root contains acquisition, provenance and binding
+material. The configured artifact registry remains the catalog authority;
+directory scans do not create a second registry or establish lineage.
+
+## Importing material obtained elsewhere
+
 `model pull` remains the acquisition boundary for provider IDs and local paths.
 Local material can be adopted as a managed copy or retained as an explicit
 external reference. Users do not need to construct internal directories.
@@ -38,6 +86,16 @@ publication; a conflicting temporary path is refused. Directory and file
 imports keep their existing representation inspection and hashing semantics.
 Adapters remain subject to their owning model or project catalog; their mere
 presence under a model root does not adopt them into YVEX.
+
+For example, `yvex model pull /downloads/model.gguf --managed` verifies and
+adopts a copy; `yvex model pull /downloads/model.gguf --reference` verifies and
+records the external path while leaving the bytes there. Directories use the
+same operation. `inbox/` is optional: placing a file there does not trigger a
+watcher, import, preparation or automatic catalog admission. Invoke `model pull`
+on that path explicitly. Complete commands belong to the
+[operator runbook](../operator-runbook.md#discover-acquire-and-prepare-a-model).
+
+## Location, working set and runtime state
 
 Provider origin is independent of current location. An acquisition record can
 remain remote-only after payload removal. Exact provider repository, immutable

@@ -94,7 +94,7 @@ variants produce a line-oriented TTY selector. Non-TTY callers must pass
 required in the normal workflow. Credentials come from the existing provider
 account owner and tokens are never printed.
 
-`--dry-run` is the safe metadata-only acquisition check: it resolves the
+For remote providers, `--dry-run` is the metadata-only acquisition check: it resolves the
 immutable provider revision and representation inventory, but downloads no
 payload and creates no YVEX source, catalog, receipt, or transfer-log state.
 The human default is a bounded repository/revision/representation summary;
@@ -114,6 +114,17 @@ the path disappears the model becomes BLOCKED. In a TTY, omitting both asks
 which storage policy to use. Automation must choose explicitly. Unsupported
 locators such as `ssh://` fail as unavailable transports and are never passed
 to `scp` or a shell.
+
+Choose the model and, optionally, a root with `--models-root PATH`; YVEX owns
+the internal directories created by `pull` and `prepare`. The
+[storage layout and responsibility split](contracts/model-storage.md#what-users-choose-and-yvex-manages)
+explains `source/`, `representations/`, records, evidence, caches and temporary
+state, including the difference between new managed output and retained
+historical directories. You do not need to reproduce those subdirectories to
+import a model. An optional `inbox/` is an explicit intake path, not a watched
+folder: run `model pull` on its contents. Local intake verifies full content
+digests, including during a dry-run; inspecting a large local model can therefore
+take substantially longer than resolving remote metadata.
 
 Prepare the acquired model through the high-level owner:
 
