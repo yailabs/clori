@@ -825,13 +825,14 @@ static int library_identity_registry(const yvex_model_registry_entry *entry,
                             ? "" : library_text(entry->model);
     const char *target = library_text(entry->runtime_target);
     const char *alias = library_text(entry->alias);
+    const yvex_source_logical_model *relation =
+        yvex_source_logical_model_for_registry(family, model);
     int written;
 
     memset(summary, 0, sizeof(*summary));
-    if ((!strcmp(family, "deepseek4") || !strcmp(family, "deepseek")) &&
-        (!strcmp(model, "v4-flash") || !strcmp(model, "v4-flash-dspark"))) {
+    if (relation) {
         written = snprintf(summary->identity, sizeof(summary->identity),
-                           "family:deepseek4/model:v4-flash");
+                           "%s", relation->identity);
         summary->identity_kind = YVEX_MODEL_IDENTITY_FAMILY_MODEL;
     } else if (family[0] && model[0] && target[0]) {
         written = snprintf(summary->identity, sizeof(summary->identity),
@@ -856,9 +857,10 @@ static int library_identity_registry(const yvex_model_registry_entry *entry,
     local_copy(summary->runtime_target, sizeof(summary->runtime_target), target);
     local_copy(summary->display_name, sizeof(summary->display_name),
                target[0] ? target : model[0] ? model : alias);
-    if (!strcmp(summary->identity, "family:deepseek4/model:v4-flash")) {
-        local_copy(summary->model, sizeof(summary->model), "v4-flash");
-        local_copy(summary->display_name, sizeof(summary->display_name), "DeepSeek-V4-Flash");
+    if (relation) {
+        local_copy(summary->family, sizeof(summary->family), relation->family);
+        local_copy(summary->model, sizeof(summary->model), relation->model);
+        local_copy(summary->display_name, sizeof(summary->display_name), relation->display_name);
     }
     return YVEX_OK;
 }
@@ -1046,24 +1048,23 @@ static int library_source_equal(const yvex_local_source_record *left,
              !strcmp(left->digest, right->digest)));
 }
 
-static int library_flash_source(const yvex_local_source_record *source)
+static const yvex_source_target_identity *library_source_target(
+    const yvex_local_source_record *source)
 {
-    /* The upstream DSpark card identifies the same Flash checkpoint plus a
-     * speculative module. This joins logical identity only: source revisions,
-     * tensors, quantization policies and executable targets remain distinct. */
-    return (!strcmp(source->provider, "huggingface") ||
-            !strcmp(source->provider, "hf")) &&
-           ((!strcmp(source->repository, YVEX_SOURCE_RELEASE_REPOSITORY) &&
-             !strcmp(source->revision, YVEX_SOURCE_RELEASE_REVISION)) ||
-            (!strcmp(source->repository, "deepseek-ai/DeepSeek-V4-Flash") &&
-             !strcmp(source->revision, "60d8d70770c6776ff598c94bb586a859a38244f1")));
+    const yvex_source_target_identity *target;
+    if (strcmp(source->provider, "hf") && strcmp(source->provider, "huggingface"))
+        return NULL;
+    target = yvex_source_target_identity_find_repository(source->repository);
+    return target && !strcmp(source->revision, target->upstream_revision) ? target : NULL;
 }
 
 static library_model *library_source_model(yvex_model_library *library,
                                            const yvex_local_source_record *source)
 {
     const yvex_source_target_identity *target =
-        yvex_source_target_identity_find_repository(source->repository);
+        library_source_target(source);
+    const yvex_source_logical_model *relation = yvex_source_logical_model_for_revision(
+        source->provider, source->repository, source->revision);
     unsigned long long index;
     library_model *content_owner = NULL;
     int ambiguous = 0;
@@ -1087,15 +1088,14 @@ static library_model *library_source_model(yvex_model_library *library,
     if (content_owner && !ambiguous) return content_owner;
     for (index = 0u; index < library->count; ++index) {
         const yvex_model_library_entry *summary = &library->models[index].summary;
-        if (library_flash_source(source) &&
-            !strcmp(summary->identity, "family:deepseek4/model:v4-flash"))
+        if (relation && !strcmp(summary->identity, relation->identity))
             return &library->models[index];
         if (source->repository[0] && source->revision[0] && summary->repository[0] &&
             strcmp(source->provider, summary->provider) == 0 &&
             strcmp(source->repository, summary->repository) == 0 &&
             strcmp(source->revision, summary->revision) == 0)
             return &library->models[index];
-        if (target && !strcmp(source->revision, target->upstream_revision) &&
+        if (target &&
             !strcmp(summary->runtime_target, target->target_id))
             return &library->models[index];
     }
@@ -1109,18 +1109,20 @@ static int library_source_add(yvex_model_library *library,
     yvex_local_source_record *sources;
     yvex_model_library_entry identity;
     const yvex_source_target_identity *target =
-        yvex_source_target_identity_find_repository(source->repository);
+        library_source_target(source);
     library_model *model = library_source_model(library, source);
+    const yvex_source_logical_model *relation = yvex_source_logical_model_for_revision(
+        source->provider, source->repository, source->revision);
     unsigned long long index, capacity;
     int written, rc;
 
     if (!model) {
         memset(&identity, 0, sizeof(identity));
-        if (library_flash_source(source)) {
+        if (relation) {
             written = snprintf(identity.identity, sizeof(identity.identity),
-                               "family:deepseek4/model:v4-flash");
+                               "%s", relation->identity);
             identity.identity_kind = YVEX_MODEL_IDENTITY_FAMILY_MODEL;
-        } else if (target && !strcmp(source->revision, target->upstream_revision)) {
+        } else if (target) {
             written = snprintf(identity.identity, sizeof(identity.identity),
                                "target:%s", target->target_id);
             identity.identity_kind = YVEX_MODEL_IDENTITY_TARGET;
@@ -1141,8 +1143,8 @@ static int library_source_add(yvex_model_library *library,
         if (written < 0 || (size_t)written >= sizeof(identity.identity))
             return library_refuse(err, YVEX_ERR_BOUNDS, "source identity is too long");
         local_copy(identity.display_name, sizeof(identity.display_name), source->name);
-        if (library_flash_source(source))
-            local_copy(identity.display_name, sizeof(identity.display_name), "DeepSeek-V4-Flash");
+        if (relation)
+            local_copy(identity.display_name, sizeof(identity.display_name), relation->display_name);
         local_copy(identity.family, sizeof(identity.family), source->family);
         local_copy(identity.provider, sizeof(identity.provider), source->provider);
         local_copy(identity.repository, sizeof(identity.repository), source->repository);

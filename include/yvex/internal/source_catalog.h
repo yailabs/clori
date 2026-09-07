@@ -27,6 +27,14 @@ enum {
                                         YVEX_SOURCE_SIDECAR_INFERENCE_CONFIG
 };
 
+/* A source-qualified logical relation does not grant execution capability.
+ * Legacy selectors are exact tuples, never prefixes or filesystem guesses. */
+typedef struct {
+    const char *identity, *family, *model, *display_name;
+    const char *family_aliases[2], *model_aliases[2];
+    const char *related_repository, *related_revision;
+} yvex_source_logical_model;
+
 typedef struct {
     const char *target_id;
     const char *family_key;
@@ -43,6 +51,7 @@ typedef struct {
     const char *config_architecture;
     yvex_source_config_validation config_validation;
     unsigned int required_sidecars;
+    const yvex_source_logical_model *logical_model;
 } yvex_source_target_identity;
 
 /*
@@ -109,6 +118,10 @@ const yvex_source_target_identity *yvex_source_target_identity_find_repository(
     const char *repository);
 const yvex_source_acquisition_target *yvex_source_acquisition_target_find(
     const char *target_id);
+const yvex_source_logical_model *yvex_source_logical_model_for_registry(
+    const char *family, const char *model);
+const yvex_source_logical_model *yvex_source_logical_model_for_revision(
+    const char *provider, const char *repository, const char *revision);
 int yvex_source_is_release_target(const char *target_id);
 int yvex_source_target_path(char *out, size_t cap, const char *models_root,
                             const yvex_source_target_identity *identity);

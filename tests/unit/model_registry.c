@@ -8,6 +8,7 @@
 #include <yvex/internal/model_lifecycle.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/source_distribution.h>
+#include <yvex/internal/source_catalog.h>
 
 #include "tests/test.h"
 
@@ -510,6 +511,8 @@ static int test_logical_model_library(void)
                      "open logical-library registry");
     for (index = 0u; index < 8u; ++index) {
         fill_entry(&entry, absolute_model, absolute_binding);
+        entry.family = index % 2u ? "deepseek" : "deepseek4";
+        entry.model = index % 3u ? "v4-flash" : "v4-flash-dspark";
         (void)snprintf(aliases[index], sizeof(aliases[index]),
                        "deepseek4-v4-flash-profile-%zu", index);
         entry.alias = aliases[index];
@@ -555,6 +558,44 @@ static int test_logical_model_library(void)
                                  "deepseek4-v4-flash-profile-7"),
                      "subordinate profiles retain their canonical aliases");
     yvex_model_library_close(library);
+    return 0;
+}
+
+static int test_source_logical_relationship(void)
+{
+    const char *path = "build/tests/model-library-root/registry/relation.source.json";
+    const yvex_source_target_identity *target = yvex_source_release_identity();
+    const yvex_source_logical_model *relation = target->logical_model;
+    yvex_local_catalog_options options = {
+        .models_root = "build/tests/model-library-root",
+        .registry_path = "build/tests/model-registry/library.local.json"
+    };
+    yvex_model_library *library = NULL;
+    yvex_error err;
+    size_t index;
+    char text[4096];
+    YVEX_TEST_ASSERT(system("mkdir -p build/tests/model-library-root/registry") == 0,
+                     "isolated source relationship records");
+    for (index = 0u; index < 4u; ++index) {
+        const char *provider = index == 2u ? "other-provider" : "huggingface";
+        const char *repository = index == 0u ? relation->related_repository : target->upstream_repo_id;
+        const char *revision = index == 0u ? relation->related_revision : index == 3u
+            ? "0000000000000000000000000000000000000000" : target->upstream_revision;
+        (void)snprintf(text, sizeof(text),
+            "{\"schema\":\"yvex.model-source.registry.v1\",\"name\":\"source-fixture\","
+            "\"family\":\"deepseek4\",\"provider\":\"%s\",\"repository\":\"%s\","
+            "\"revision\":\"%s\",\"origin_uri\":\"\",\"source_path\":\"\","
+            "\"storage\":\"remote\",\"format\":\"safetensors\",\"digest\":\"\"}",
+            provider, repository, revision);
+        YVEX_TEST_ASSERT(write_file(path, text), "write provider-qualified relation fixture");
+        YVEX_TEST_ASSERT(yvex_model_library_open(&library, &options, &err) == YVEX_OK,
+                         "open source and deployment view");
+        YVEX_TEST_ASSERT(yvex_model_library_count(library) == (index < 2u ? 1u : 2u),
+                         "only pinned same-provider sources inherit the logical relationship");
+        yvex_model_library_close(library);
+        library = NULL;
+    }
+    YVEX_TEST_ASSERT(unlink(path) == 0, "remove owned relationship fixture");
     return 0;
 }
 
@@ -815,6 +856,7 @@ int yvex_test_model_registry(void)
     if (test_composite_profile() != 0) return 1;
     if (test_legacy_startup_axes() != 0) return 1;
     if (test_logical_model_library() != 0) return 1;
+    if (test_source_logical_relationship() != 0) return 1;
     if (test_working_set_policy() != 0) return 1;
     if (test_publication_identity() != 0) return 1;
     if (test_local_eviction() != 0) return 1;

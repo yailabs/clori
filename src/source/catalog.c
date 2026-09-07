@@ -5,6 +5,18 @@
 #include <string.h>
 #include <ctype.h>
 
+/* The pinned source relationship joins a base checkpoint and its proposal
+ * module at the logical layer only. Payloads, targets and deployments differ. */
+static const yvex_source_logical_model release_logical_model = {
+    .identity = "family:deepseek4/model:v4-flash",
+    .family = "deepseek4", .model = "v4-flash",
+    .display_name = "DeepSeek-V4-Flash",
+    .family_aliases = {"deepseek4", "deepseek"},
+    .model_aliases = {"v4-flash", "v4-flash-dspark"},
+    .related_repository = "deepseek-ai/DeepSeek-V4-Flash",
+    .related_revision = "60d8d70770c6776ff598c94bb586a859a38244f1"
+};
+
 static const yvex_source_target_identity source_target_identities[] = {
     {
         .target_id = YVEX_SOURCE_RELEASE_TARGET_ID,
@@ -22,6 +34,7 @@ static const yvex_source_target_identity source_target_identities[] = {
         .config_architecture = YVEX_SOURCE_RELEASE_CONFIG_ARCHITECTURE,
         .config_validation = YVEX_SOURCE_CONFIG_VALIDATION_DEEPSEEK_V4,
         .required_sidecars = YVEX_SOURCE_SIDECARS_DEEPSEEK_V4,
+        .logical_model = &release_logical_model,
     },
     {
         .target_id = YVEX_SOURCE_MINIMAX_H3_TARGET_ID,
@@ -69,6 +82,50 @@ static const yvex_source_target_identity source_target_identities[] = {
         .required_sidecars = YVEX_SOURCE_SIDECARS_TEXT,
     },
 };
+
+const yvex_source_logical_model *yvex_source_logical_model_for_registry(
+    const char *family, const char *model)
+{
+    const yvex_source_logical_model *selected = NULL;
+    size_t index, family_index, model_index;
+    if (!family || !model || !family[0] || !model[0]) return NULL;
+    for (index = 0u; index < sizeof(source_target_identities) /
+                                  sizeof(source_target_identities[0]); ++index) {
+        const yvex_source_logical_model *relation = source_target_identities[index].logical_model;
+        if (!relation) continue;
+        for (family_index = 0u; family_index < 2u; ++family_index)
+            for (model_index = 0u; model_index < 2u; ++model_index)
+                if (relation->family_aliases[family_index] && relation->model_aliases[model_index] &&
+                    !strcmp(family, relation->family_aliases[family_index]) &&
+                    !strcmp(model, relation->model_aliases[model_index])) {
+                    if (selected && selected != relation) return NULL;
+                    selected = relation;
+                }
+    }
+    return selected;
+}
+
+const yvex_source_logical_model *yvex_source_logical_model_for_revision(
+    const char *provider, const char *repository, const char *revision)
+{
+    const yvex_source_logical_model *selected = NULL;
+    size_t index;
+    if (!provider || (strcmp(provider, "hf") && strcmp(provider, "huggingface")) ||
+        !repository || !revision || !repository[0] || !revision[0]) return NULL;
+    for (index = 0u; index < sizeof(source_target_identities) /
+                                  sizeof(source_target_identities[0]); ++index) {
+        const yvex_source_target_identity *target = &source_target_identities[index];
+        const yvex_source_logical_model *relation = target->logical_model;
+        if (!relation) continue;
+        if ((!strcmp(repository, target->upstream_repo_id) && !strcmp(revision, target->upstream_revision)) ||
+            (relation->related_repository && relation->related_revision &&
+             !strcmp(repository, relation->related_repository) && !strcmp(revision, relation->related_revision))) {
+            if (selected && selected != relation) return NULL;
+            selected = relation;
+        }
+    }
+    return selected;
+}
 
 static const yvex_source_acquisition_target source_acquisition_targets[] = {
     {"gemma-4-e2b", "gemma", "hf", "google/gemma-4-E2B", "gemma-4-e2b", "main"},

@@ -2,7 +2,7 @@
   "schema":1,"number":6,"title":"Storage, working set and residency are independent facts",
   "description":"Remote provider availability, retained source and artifact bytes, logical working-set membership, current READY deployment and loaded engine resources are separate facts. Explicit commands cross boundaries. Managed copies and external references do not change provenance; cache does not prove identity. UMA device-addressability does not establish physical page residency.",
   "size":[1200,1000],"owner":"docs/contracts/model-storage.md",
-  "authority":["src/model/catalog.c","docs/contracts/model-storage.md","docs/contracts/runtime.md","tests/unit/model_registry.c","tests/integration/tiny_vertical.sh"],
+  "authority":["src/source/catalog.c","src/model/catalog.c","docs/contracts/model-storage.md","docs/contracts/runtime.md","tests/unit/model_registry.c","tests/integration/tiny_vertical.sh"],
   "panels":[
     {"box":[24,82,556,670],"title":"a  Durable source and representation facts"},
     {"box":[616,82,560,670],"title":"b  Deployment and live runtime facts"},

@@ -128,6 +128,13 @@ logical model, while their revisions, representations and profiles remain
 distinct. Hardware identity belongs to build and validation evidence unless
 the admitted representation itself proves a hardware-specific requirement.
 
+The source target catalog declares that logical relationship as immutable
+metadata: canonical model identity, exact registry aliases, and pinned provider
+revisions. The generic library consumes it without a family-specific branch.
+Another provider or revision cannot inherit it through a matching repository
+name or runtime target. Exact accepted model selectors remain names of the
+aggregate; artifact and deployment identities remain subordinate and distinct.
+
 Cache and temporary state are mutable and never prove model identity. Source
 bytes at a pinned revision and published representations must not be silently
 replaced. Existing provider cache links are accepted only when they point at

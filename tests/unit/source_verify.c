@@ -973,6 +973,30 @@ int yvex_test_source_verify(void)
             !yvex_source_target_identity_find_repository("unknown/model"),
         "one source catalog owns qualified target repository and revision truth");
     {
+        const yvex_source_logical_model *relation =
+            yvex_source_logical_model_for_registry("deepseek4", "v4-flash");
+        YVEX_TEST_ASSERT(relation &&
+            !strcmp(relation->identity, "family:deepseek4/model:v4-flash") &&
+            yvex_source_logical_model_for_registry("deepseek", "v4-flash-dspark") == relation &&
+            yvex_source_logical_model_for_revision("huggingface", YVEX_SOURCE_RELEASE_REPOSITORY,
+                                                   YVEX_SOURCE_RELEASE_REVISION) == relation &&
+            yvex_source_logical_model_for_revision("hf", relation->related_repository,
+                                                   relation->related_revision) == relation,
+            "one pinned source relation supplies registry aliases and both source revisions");
+        YVEX_TEST_ASSERT(
+            !yvex_source_logical_model_for_registry("other", "v4-flash") &&
+            !yvex_source_logical_model_for_registry("deepseek4", "V4-FLASH") &&
+            !yvex_source_logical_model_for_registry("deepseek4", "v4-flash-extra") &&
+            !yvex_source_logical_model_for_registry(NULL, "v4-flash") &&
+            !yvex_source_logical_model_for_revision("local", YVEX_SOURCE_RELEASE_REPOSITORY,
+                                                    YVEX_SOURCE_RELEASE_REVISION) &&
+            !yvex_source_logical_model_for_revision("hf", YVEX_SOURCE_RELEASE_REPOSITORY, "main") &&
+            !yvex_source_logical_model_for_revision("hf", relation->related_repository,
+                                                    YVEX_SOURCE_RELEASE_REVISION) &&
+            !yvex_source_logical_model_for_revision("hf", "other/model", relation->related_revision),
+            "identity relations refuse wrong provider, revision drift, crossed revisions and fuzzy names");
+    }
+    {
         const yvex_source_acquisition_target *qwen =
             yvex_source_acquisition_target_find("qwen3-8b");
         const yvex_source_acquisition_target *gemma =
