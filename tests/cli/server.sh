@@ -41,7 +41,7 @@ chmod 0700 "$SOCKET_ROOT"
 # Link the actual renderer; section GC excludes unrelated porcelain consumers.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -D_POSIX_C_SOURCE=200809L -I. -Iinclude \
     -Ibuild/generated -ffunction-sections -fdata-sections \
-    tests/cli/logs.c src/cli/io/out.c src/core/status.c \
+    tests/integration/cli_logs.c src/cli/io/out.c src/core/status.c \
     -Wl,--gc-sections -o "$OUT_DIR/log-renderer"
 NO_COLOR=1 "$OUT_DIR/log-renderer" >"$OUT_DIR/log-renderer.out"
 env -u NO_COLOR TERM=xterm script -q -e -c "$OUT_DIR/log-renderer" \

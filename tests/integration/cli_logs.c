@@ -1,4 +1,4 @@
-/* Exercise the real human renderer with bounded typed events, without a model. */
+/* Standalone CLI integration fixture: exercise the real renderer without a model. */
 #include "src/cli/io/private.h"
 #include <stdio.h>
 #include <stdlib.h>
