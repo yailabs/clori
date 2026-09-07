@@ -56,3 +56,43 @@ Family records do not replace either with another runtime description.
 Routine worklogs and retired implementation plans are recoverable from Git.
 Documentation admission and history policy belong to the engineering method,
 not a separate documentation registry.
+
+## Canonical technical figures
+
+| Figure / engineering question | Information owner |
+| --- | --- |
+| 1. Where are the system and process boundaries? | [System](architecture/system.md#system-boundary) |
+| 2. How does source become executable reality? | [Compilation](architecture/compilation.md#pipeline) |
+| 3. Who owns state, resources and execution lifetimes? | [Runtime](architecture/runtime.md#authority-map) |
+| 4. Where do family semantics end and common mechanisms begin? | [Family integration](model-families/integration.md#promotion-path) |
+| 5. What belongs to REPLAI versus YVEX? | [Interactive client](architecture/system.md#interactive-terminal-path) |
+| 6. How do storage, working set and residency differ? | [Model storage](contracts/model-storage.md) |
+| 7. Which evidence supports which claim? | [Engineering method](development/agentic-engineering.md#classify-evidence) |
+
+Each owner links an editable JSON figure and embeds its generated SVG. The
+bounded fixed-layout format gives panels, lifetimes and orthogonal routes exact
+publication geometry; Mermaid auto-layout and the previously independent SVG
+sketches are retired together. [The renderer](../tools/render_diagrams.py) uses
+Python standard library only, without a browser, font download or build service:
+
+```sh
+python3 tools/render_diagrams.py
+python3 tools/render_diagrams.py --check
+```
+
+JSON owns labels, coordinates, semantic classes, owner and source-authority
+pointers; the renderer owns typography, geometry and edge styles. Edit JSON,
+then regenerate, never maintain SVG independently. `--check` writes nothing and
+rejects stale output. The ordinary documentation guard also tests the renderer,
+pairs, references and orphan absence. Authority pointers aid review; they do not
+automatically prove the figure's claims against code.
+
+The monochrome palette uses the canonical mark's `#161616`, `#525252` and light
+grays on an explicit white canvas. Lettered node classes remain meaningful in
+grayscale; containment expresses scope, not a dependency arrow. Solid filled
+arrows carry data/results, dashed open arrows control, dotted arrows observation,
+dash-dot lines identity binding, and solid open arrows lifecycle/promotion.
+Concepts use sans-serif text; exact identifiers can use monospace. SVGs contain
+accessible titles/descriptions and no external resources or embedded HTML.
+Use these same vectors for GitHub and print; temporary PNG/PDF previews are not
+canonical assets. Review fonts, routes and scale after every material edit.

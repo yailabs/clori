@@ -1,0 +1,42 @@
+{
+  "schema":1,"number":7,"title":"Evidence bounds every promotion claim",
+  "description":"The evidence ladder separates source and architecture facts, component numerics, admitted artifacts and deployments, runtime lifecycle, whole-model execution, quality evaluation, benchmark and release. Each stronger claim needs its own evidence; lower-level success does not imply any later stage. This is a qualification discipline, not a statement that every gate is complete.",
+  "size":[1200,1100],"owner":"docs/development/agentic-engineering.md",
+  "authority":["docs/releases/doctrine.md","docs/releases/v0.1.md","docs/model-families/integration.md","docs/development/qa.md","ROADMAP.md"],
+  "panels":[
+    {"box":[24,82,584,902],"title":"a  Increasing claim strength — not a build schedule"},
+    {"box":[640,82,536,902],"title":"b  A successful lower gate never fills a later gap"}
+  ],
+  "nodes":[
+    {"id":"source","box":[40,136,552,78],"kind":"evidence","title":"01  Source evidence","lines":["immutable provenance · inventory · authenticated bytes"]},
+    {"id":"architecture","box":[40,230,552,78],"kind":"evidence","title":"02  Architecture evidence","lines":["roles · topology · state · tokenizer / output authority"]},
+    {"id":"component","box":[40,324,552,78],"kind":"evidence","title":"03  Component numerical evidence","lines":["bounded independent oracle · declared tolerances"]},
+    {"id":"artifact","box":[40,418,552,78],"kind":"evidence","title":"04  Artifact / deployment evidence","lines":["complete package · binding · admitted specialization"]},
+    {"id":"lifecycle","box":[40,512,552,78],"kind":"evidence","title":"05  Runtime lifecycle evidence","lines":["isolation · cancellation · rollback · cleanup"]},
+    {"id":"whole","box":[40,606,552,78],"kind":"evidence","title":"06  Whole-model execution","lines":["real input → retained state → typed terminal output"]},
+    {"id":"quality","box":[40,700,552,78],"kind":"evidence","title":"07  Behavior / quality evaluation","lines":["declared cases and scorer on the admitted product path"]},
+    {"id":"benchmark","box":[40,794,552,78],"kind":"evidence","title":"08  Full-model benchmark","lines":["controlled identities · repeated workload measurements"]},
+    {"id":"release","box":[40,888,552,78],"kind":"evidence","title":"09  Release qualification","lines":["all required gates + package, claims and reproducibility"]},
+    {"id":"not-inventory","box":[660,136,496,104],"kind":"evidence","title":"Inventory ≠ executable model","lines":["finding every tensor does not create","an admitted execution plan"]},
+    {"id":"not-component","box":[660,260,496,104],"kind":"evidence","title":"Component ≠ whole model","lines":["an oracle at one operator or layer cannot","establish all-layer output correctness"]},
+    {"id":"not-load","box":[660,384,496,104],"kind":"evidence","title":"Load ≠ generation","lines":["allocated resources do not prove prefill,","state continuity, logits or terminal output"]},
+    {"id":"not-quality","box":[660,508,496,104],"kind":"evidence","title":"Generation ≠ quality","lines":["plausible output and execution success","do not substitute for declared evaluation"]},
+    {"id":"not-benchmark","box":[660,632,496,104],"kind":"evidence","title":"Characterization ≠ benchmark","lines":["one timing, an estimate or component gain","cannot establish release performance"]},
+    {"id":"not-release","box":[660,756,496,104],"kind":"evidence","title":"Benchmark ≠ release","lines":["missing semantic, numerical or operational","evidence still blocks qualification"]}
+  ],
+  "edges":[
+    {"kind":"lifecycle","points":[[316,214],[316,230]]},
+    {"kind":"lifecycle","points":[[316,308],[316,324]]},
+    {"kind":"lifecycle","points":[[316,402],[316,418]]},
+    {"kind":"lifecycle","points":[[316,496],[316,512]]},
+    {"kind":"lifecycle","points":[[316,590],[316,606]]},
+    {"kind":"lifecycle","points":[[316,684],[316,700]]},
+    {"kind":"lifecycle","points":[[316,778],[316,794]]},
+    {"kind":"lifecycle","points":[[316,872],[316,888]]}
+  ],
+  "labels":[
+    {"at":[676,906],"text":"Missing proof → retain the lower truthful stage.","style":"note"},
+    {"at":[676,935],"text":"Identity drift → requalify dependent claims.","style":"note"},
+    {"at":[676,964],"text":"Green software QA alone does not close a model.","style":"note"}
+  ]
+}

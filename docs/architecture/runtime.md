@@ -10,28 +10,13 @@ resource, and scheduling boundaries. Normative behavior belongs to the
 
 ## Authority map
 
-YVEX separates package truth from facts whose lifetime begins only after a
-package is opened:
+![Engine generations and their dependent sessions and leases live inside a persistent host; selected execution work reaches admitted CPU/CUDA operations without owning session state.](../diagrams/runtime_lifetimes.svg)
 
-```text
-admitted package
-  artifact + runtime binding + PEIR package decisions
-        |
-        v
-deployment specialization
-  backend/device + admitted implementation classes
-        |
-        v
-model-engine generation
-  mappings + residency + prepared resources + executable caches + scheduler
-        |
-        v
-execution session
-  sequence state + workspace + tokenizer/decoder/RNG state
-        |
-        v
-ready sequence work -> executable batch -> backend
-```
+*Figure 3 — Runtime lifetimes and physical work. Panels distinguish containment,
+generation binding and execution flow; timeline widths are schematic, not
+measurements. Sessions own mutable state, and sessions/leases prevent premature
+unload. Runnable concurrency is not physical width or continuous batching.*
+[Editable source](../diagrams/runtime_lifetimes.json).
 
 Full identities authenticate cold package and transactional boundaries. An
 engine generation is a process-local stale-reference guard and is never

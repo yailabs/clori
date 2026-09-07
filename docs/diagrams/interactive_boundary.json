@@ -1,0 +1,37 @@
+{
+  "schema":1,"number":5,"title":"Interactive editing is not runtime ownership",
+  "description":"REPLAI is a pinned, statically linked editor inside yvex chat. It returns submitted UTF-8 and generic input events, restores terminal state before dispatch, and owns no product request semantics. YVEX owns history admission, command completion decisions, attachments, generation-bound requests, cancellation and result rendering. No editable prompt coexists with generation.",
+  "size":[1200,1060],"owner":"docs/architecture/system.md",
+  "authority":["config/replai.json","docs/decisions/0007-external-terminal-editor.md","src/cli/io/client.c","src/cli/io/stream.c","tests/replai_consumer.py"],
+  "panels":[
+    {"box":[398,82,358,280],"title":"a  REPLAI inside chat"},
+    {"box":[24,394,732,526],"title":"b  Client"},
+    {"box":[796,394,380,526],"title":"c  Persistent yvex serve"}
+  ],
+  "nodes":[
+    {"id":"terminal","box":[48,142,290,108],"kind":"external","title":"Terminal / user","lines":["input and displayed results","not a wire representation"]},
+    {"id":"editor","box":[422,142,310,194],"kind":"external","title":"REPLAI · C ABI 1","lines":["editing / cursor / paste","history navigation mechanics","resize / redraw / restoration","pinned library inside chat","no command or model policy"]},
+    {"id":"client","box":[422,446,310,150],"kind":"interface","title":"YVEX client adapter","lines":["grammar / history admission","attachments → ordered parts","model / session / generation","request / cancel semantics"]},
+    {"id":"protocol","box":[422,684,310,108],"kind":"interface","title":"Typed local protocol","lines":["bounded UDS requests","identity + content provenance"]},
+    {"id":"runtime","box":[822,446,330,148],"kind":"runtime","title":"Hosted execution","lines":["engine admission / routing","session-owned transactions","generation / component work","authoritative cancellation"]},
+    {"id":"events","box":[822,684,330,108],"kind":"evidence","title":"Typed results / events","lines":["committed channels / progress","completion and failure facts"]},
+    {"id":"render","box":[48,662,290,130],"kind":"interface","title":"YVEX rendering","lines":["semantic result formatting","reasoning / final / status","canonical bytes unchanged"]}
+  ],
+  "edges":[
+    {"kind":"flow","points":[[338,196],[422,196]]},
+    {"kind":"flow","points":[[577,336],[577,446]]},
+    {"kind":"control","points":[[422,500],[380,500],[380,276],[422,276]]},
+    {"kind":"flow","points":[[577,596],[577,684]]},
+    {"kind":"control","points":[[732,738],[772,738],[772,510],[822,510]]},
+    {"kind":"flow","points":[[987,594],[987,684]]},
+    {"kind":"flow","points":[[987,792],[987,852],[193,852],[193,792]]},
+    {"kind":"flow","points":[[422,552],[310,552],[310,662]]},
+    {"kind":"flow","points":[[193,662],[193,250]]}
+  ],
+  "labels":[
+    {"at":[440,372],"text":"Submitted UTF-8; editing closes"},{"at":[440,395],"text":"before semantic dispatch"},
+    {"at":[214,537],"text":"Local result"},
+    {"at":[442,645],"text":"Typed content is formed here"},
+    {"at":[48,891],"text":"Next turn reopens editing. During generation, YVEX owns Ctrl-C and terminal quiet-output scope.","style":"note"}
+  ]
+}

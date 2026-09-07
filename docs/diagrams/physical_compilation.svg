@@ -1,80 +1,140 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1040" viewBox="0 0 1600 1040" role="img" aria-labelledby="title desc">
-  <title id="title">Physical model compilation</title>
-  <desc id="desc">Eight stages transform a verified source snapshot into an admitted identity-bound GGUF. A detailed terminal decision combines tensor role, scope, physical constraints, policy rules, imatrix evidence, and the qtype capability registry into encoded bytes and a versioned decision identity.</desc>
-  <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0 0L0 6L9 3z" class="arrow-fill"/></marker>
-    <style>
-      :root{color-scheme:light dark}.frame{fill:#f8fafc;stroke:#1d4ed8;stroke-width:2}.dashed{fill:#f8fafc;stroke:#2563eb;stroke-width:2;stroke-dasharray:8 7}.box{fill:#fff;stroke:#2563eb;stroke-width:1.8}.result{fill:#eff6ff;stroke:#1d4ed8;stroke-width:2.2}.head{fill:#0f172a;font-family:sans-serif;font-size:38px;font-weight:700;text-anchor:middle}.subhead{fill:#334155;font-family:sans-serif;font-size:20px;font-style:italic;text-anchor:middle}.section{fill:#1d4ed8;font-family:sans-serif;font-size:20px;font-weight:700}.text{fill:#0f172a;font-family:sans-serif;font-size:14px;font-weight:600;text-anchor:middle}.small{fill:#334155;font-family:sans-serif;font-size:12.5px;text-anchor:middle}.blue{fill:#1d4ed8;font-family:sans-serif;font-size:13px;font-weight:700;text-anchor:middle}.num{fill:#1d4ed8}.num-text{fill:#fff;font-family:sans-serif;font-size:12px;font-weight:700;text-anchor:middle}.line{fill:none;stroke:#1f2937;stroke-width:2;marker-end:url(#arrow)}.evidence{fill:none;stroke:#475569;stroke-width:1.8;stroke-dasharray:7 6;marker-end:url(#arrow)}.assoc{fill:none;stroke:#475569;stroke-width:1.7;stroke-dasharray:3 4}.arrow-fill{fill:#1f2937}
-      @media (prefers-color-scheme: dark){.frame,.dashed{fill:#0f172a}.box{fill:#111827;stroke:#60a5fa}.result{fill:#172554;stroke:#93c5fd}.head,.text{fill:#f8fafc}.subhead,.small{fill:#cbd5e1}.section,.blue{fill:#93c5fd}.line,.evidence,.assoc{stroke:#e2e8f0}.arrow-fill{fill:#e2e8f0}.num{fill:#2563eb}}
-    </style>
-  </defs>
-  <text class="head" x="800" y="48">Physical Model Compilation</text>
-  <text class="subhead" x="800" y="80">From verified logical source to an identity-bound physical variant</text>
-
-  <rect class="frame" x="20" y="115" width="1560" height="365" rx="14"/>
-  <text class="section" x="50" y="150">A. Global flow</text>
-
-  <g transform="translate(45 180)">
-    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">1</text>
-    <text class="text" x="85" y="62"><tspan x="85">Source snapshot</tspan><tspan x="85" dy="20">and inventory</tspan></text>
-    <text class="small" x="85" y="125">verified snapshot</text><text class="small" x="85" y="151">family metadata</text><text class="small" x="85" y="177">terminal inventory</text>
-  </g>
-  <g transform="translate(235 180)">
-    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">2</text>
-    <text class="text" x="85" y="62"><tspan x="85">Family semantics</tspan><tspan x="85" dy="20">and logical model</tspan></text>
-    <text class="small" x="85" y="125">architecture facts</text><text class="small" x="85" y="151">interfaces</text><text class="small" x="85" y="177">semantic contracts</text>
-  </g>
-  <g transform="translate(425 180)">
-    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">3</text>
-    <text class="text" x="85" y="72">Transformation IR</text>
-    <text class="small" x="85" y="125">typed operations</text><text class="small" x="85" y="151">canonical lowering</text><text class="small" x="85" y="177">versioned identity</text>
-  </g>
-  <g transform="translate(615 180)">
-    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">4</text>
-    <text class="text" x="85" y="72">Policy resolution</text>
-    <text class="small" x="85" y="125">typed matchers</text><text class="small" x="85" y="151">priority + conflicts</text><text class="small" x="85" y="177">fail-closed coverage</text>
-  </g>
-  <g transform="translate(805 180)">
-    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">5</text>
-    <text class="text" x="85" y="62"><tspan x="85">Physical-variant</tspan><tspan x="85" dy="20">plan</tspan></text>
-    <text class="small" x="85" y="125">terminal decisions</text><text class="small" x="85" y="151">exact byte plan</text><text class="small" x="85" y="177">backend requirements</text>
-  </g>
-  <g transform="translate(995 180)">
-    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">6</text>
-    <text class="text" x="85" y="72">GGUF construction</text>
-    <text class="small" x="85" y="125">quantization</text><text class="small" x="85" y="151">packing + layout</text><text class="small" x="85" y="177">integrity metadata</text>
-  </g>
-  <g transform="translate(1185 180)">
-    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">7</text>
-    <text class="text" x="85" y="72">Artifact admission</text>
-    <text class="small" x="85" y="125">validation</text><text class="small" x="85" y="151">attestation</text><text class="small" x="85" y="177">provenance</text>
-  </g>
-  <g transform="translate(1375 180)">
-    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">8</text>
-    <text class="text" x="85" y="62"><tspan x="85">Identity-bound</tspan><tspan x="85" dy="20">GGUF</tspan></text>
-    <text class="small" x="85" y="125">content-addressed</text><text class="small" x="85" y="151">immutable</text><text class="small" x="85" y="177">runtime-admissible</text>
-  </g>
-  <path class="line" d="M215 302H228"/><path class="line" d="M405 302H418"/><path class="line" d="M595 302H608"/><path class="line" d="M785 302H798"/><path class="line" d="M975 302H988"/><path class="line" d="M1165 302H1178"/><path class="line" d="M1355 302H1368"/>
-  <path class="evidence" d="M1460 425V452H130V432"/>
-  <text class="small" x="800" y="466">every stage remains bound to source, policy, capability, and evidence identities</text>
-
-  <rect class="dashed" x="20" y="505" width="1560" height="405" rx="14"/>
-  <text class="section" x="50" y="540">B. Zoom: one terminal decision</text>
-  <g transform="translate(95 575)"><rect class="box" width="200" height="120" rx="10"/><text class="blue" x="100" y="31">Tensor role</text><text class="small" x="100" y="65">weights / exact facts</text><text class="small" x="100" y="89">attention / FFN / MoE</text></g>
-  <g transform="translate(335 575)"><rect class="box" width="200" height="120" rx="10"/><text class="blue" x="100" y="31">Layer / scope</text><text class="small" x="100" y="65">layer + collection</text><text class="small" x="100" y="89">main / MTP / global</text></g>
-  <g transform="translate(575 575)"><rect class="box" width="200" height="120" rx="10"/><text class="blue" x="100" y="31">Physical constraints</text><text class="small" x="100" y="65">geometry + exactness</text><text class="small" x="100" y="89">CPU / CUDA requirement</text></g>
-  <g transform="translate(815 575)"><rect class="box" width="200" height="120" rx="10"/><text class="blue" x="100" y="31">Matching policy rules</text><text class="small" x="100" y="65">conjunctive match</text><text class="small" x="100" y="89">priority + refusal</text></g>
-  <g transform="translate(1055 575)"><rect class="box" width="200" height="120" rx="10"/><text class="blue" x="100" y="31">Imatrix evidence</text><text class="small" x="100" y="65">coverage + sensitivity</text><text class="small" x="100" y="89">identity-bound weights</text></g>
-  <g transform="translate(1295 575)"><rect class="box" width="200" height="120" rx="10"/><text class="blue" x="100" y="31">Capability registry</text><text class="small" x="100" y="65">codec + compute truth</text><text class="small" x="100" y="89">materialization admission</text></g>
-  <path class="assoc" d="M195 695V725H800"/><path class="assoc" d="M435 695V725"/><path class="assoc" d="M675 695V725"/><path class="assoc" d="M915 695V725"/><path class="assoc" d="M1155 695V725"/><path class="assoc" d="M1395 695V725H800"/>
-  <path class="line" d="M800 725V747"/>
-  <rect class="result" x="590" y="755" width="420" height="62" rx="10"/>
-  <text class="text" x="800" y="781">Selected qtype + action</text><text class="small" x="800" y="803">matched rule · calibration · geometry · backend contract</text>
-  <path class="line" d="M800 817V836"/>
-  <rect class="result" x="565" y="843" width="470" height="50" rx="10"/>
-  <text class="text" x="800" y="866">Encoded bytes + versioned decision identity</text><text class="small" x="800" y="886">traceable · reproducible · independently admissible</text>
-
-  <rect class="frame" x="20" y="935" width="1560" height="55" rx="10"/>
-  <text class="text" x="800" y="969">Determinism  ·  Policy  ·  Capability  ·  Identity  ·  Evidence</text>
-  <text class="small" x="800" y="1020">Solid arrows: decisions and data   ·   dashed arrows: identity and evidence   ·   dotted lines: ownership inputs</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1040" viewBox="0 0 1200 1040" role="img" aria-labelledby="title desc">
+<title id="title">From provider source to an active engine</title>
+<desc id="desc">Three separate authorities establish source meaning, physical package and current deployment compatibility. Passing preparation does not load an engine. Load revalidates admission and resources, specializes for a real backend/device and publishes an exact engine generation. A failed gate never advances to the next state.</desc>
+<!-- Generated by tools/render_diagrams.py; source SHA-256 ba08bdf228eb99a18e336e8503dd21f4ad79030adf3e7469d940073feca1ee2a -->
+<defs><style>text{fill:#161616}
+.title{font-size:26px;font-weight:700}.panel-title{font-size:19px;font-weight:700}
+.node-title{font-size:20px;font-weight:700}.body{font-size:18px}
+.note,.legend{font-size:16px}.code{font-size:16px}
+.tag{font-size:15px;font-weight:700;text-anchor:middle}
+.label{font-size:16px}
+.panel{fill:#f7f7f7;stroke:#a3a3a3;stroke-width:1}
+.node{fill:#fff;stroke:#525252;stroke-width:1.5}
+.external{stroke-dasharray:6 4}.runtime{stroke-width:2.5}.mutable{stroke-width:2}
+.edge{fill:none;stroke:#292929;stroke-width:1.7;stroke-linejoin:round}</style>
+<marker id="solid" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L8 4L0 8Z" fill="#292929"/></marker>
+<marker id="open" markerWidth="9" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1L8 5L1 9" fill="none" stroke="#292929" stroke-width="1.5"/></marker></defs>
+<rect width="1200" height="1040" fill="#fff"/>
+<text x="32" y="41" class="title" font-family="Liberation Sans, Arial, sans-serif">02  From provider source to an active engine</text>
+<path d="M32 57H1168" stroke="#161616" stroke-width="2"/>
+<rect class="panel" x="24" y="82" width="1152" height="192"/>
+<text x="38" y="109" class="panel-title" font-family="Liberation Sans, Arial, sans-serif">a  Source meaning — discovery is KNOWN, not executable support</text>
+<rect class="panel" x="24" y="302" width="1152" height="192"/>
+<text x="38" y="329" class="panel-title" font-family="Liberation Sans, Arial, sans-serif">b  Physical package — source-derived representation</text>
+<rect class="panel" x="24" y="522" width="1152" height="192"/>
+<text x="38" y="549" class="panel-title" font-family="Liberation Sans, Arial, sans-serif">c  Admission</text>
+<rect class="panel" x="24" y="742" width="1152" height="178"/>
+<text x="38" y="769" class="panel-title" font-family="Liberation Sans, Arial, sans-serif">d  Engine load</text>
+<polyline class="edge" points="360,192 440,192" stroke-dasharray="none" marker-end="url(#solid)"/>
+<polyline class="edge" points="760,192 840,192" stroke-dasharray="none" marker-end="url(#solid)"/>
+<polyline class="edge" points="1000,252 1000,352" stroke-dasharray="none" marker-end="url(#solid)"/>
+<polyline class="edge" points="840,412 760,412" stroke-dasharray="none" marker-end="url(#solid)"/>
+<polyline class="edge" points="440,412 360,412" stroke-dasharray="none" marker-end="url(#solid)"/>
+<polyline class="edge" points="200,472 200,572" stroke-dasharray="none" marker-end="url(#open)"/>
+<polyline class="edge" points="360,632 440,632" stroke-dasharray="none" marker-end="url(#open)"/>
+<polyline class="edge" points="760,632 840,632" stroke-dasharray="none" marker-end="url(#open)"/>
+<polyline class="edge" points="1000,692 1000,728 600,728 600,792" stroke-dasharray="9 5" marker-end="url(#open)"/>
+<polyline class="edge" points="440,844 360,844" stroke-dasharray="none" marker-end="url(#open)"/>
+<g id="snapshot"><rect class="node semantic" x="40" y="132" width="320" height="120"/>
+<rect x="52" y="146" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="63.5" y="163" class="tag" font-family="Liberation Sans, Arial, sans-serif">S</text>
+<text x="84" y="164" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Immutable snapshot</text>
+<text x="56" y="190" class="body" font-family="Liberation Sans, Arial, sans-serif">product acquisition</text>
+<text x="56" y="215" class="body" font-family="Liberation Sans, Arial, sans-serif">revision + payload trust</text>
+<text x="56" y="240" class="body" font-family="Liberation Sans, Arial, sans-serif">weights and sidecars</text>
+</g>
+<g id="inventory"><rect class="node semantic" x="440" y="132" width="320" height="120"/>
+<rect x="452" y="146" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="463.5" y="163" class="tag" font-family="Liberation Sans, Arial, sans-serif">S</text>
+<text x="484" y="164" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Inventory / signature</text>
+<text x="456" y="190" class="body" font-family="Liberation Sans, Arial, sans-serif">tensor geometry and dtypes</text>
+<text x="456" y="215" class="body" font-family="Liberation Sans, Arial, sans-serif">architecture + tokenizer facts</text>
+<text x="456" y="240" class="body" font-family="Liberation Sans, Arial, sans-serif">contradictions stay explicit</text>
+</g>
+<g id="family"><rect class="node semantic" x="840" y="132" width="320" height="120"/>
+<rect x="852" y="146" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="863.5" y="163" class="tag" font-family="Liberation Sans, Arial, sans-serif">S</text>
+<text x="884" y="164" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Family interpretation</text>
+<text x="856" y="190" class="body" font-family="Liberation Sans, Arial, sans-serif">validated roles and topology</text>
+<text x="856" y="215" class="body" font-family="Liberation Sans, Arial, sans-serif">semantic model / operations</text>
+<text x="856" y="240" class="body" font-family="Liberation Sans, Arial, sans-serif">state and numerical policy</text>
+</g>
+<g id="transform"><rect class="node semantic" x="840" y="352" width="320" height="120"/>
+<rect x="852" y="366" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="863.5" y="383" class="tag" font-family="Liberation Sans, Arial, sans-serif">S</text>
+<text x="884" y="384" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Transformation IR</text>
+<text x="856" y="410" class="body" font-family="Liberation Sans, Arial, sans-serif">sealed source contributions</text>
+<text x="856" y="435" class="body" font-family="Liberation Sans, Arial, sans-serif">typed operations per output</text>
+<text x="856" y="460" class="body" font-family="Liberation Sans, Arial, sans-serif">planning reads no payload</text>
+</g>
+<g id="physical"><rect class="node semantic" x="440" y="352" width="320" height="120"/>
+<rect x="452" y="366" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="463.5" y="383" class="tag" font-family="Liberation Sans, Arial, sans-serif">S</text>
+<text x="484" y="384" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Physical variant plan</text>
+<text x="456" y="410" class="body" font-family="Liberation Sans, Arial, sans-serif">qtype · layout · row geometry</text>
+<text x="456" y="435" class="body" font-family="Liberation Sans, Arial, sans-serif">every terminal tensor resolved</text>
+<text x="456" y="460" class="body" font-family="Liberation Sans, Arial, sans-serif">policy identity is explicit</text>
+</g>
+<g id="artifact"><rect class="node semantic" x="40" y="352" width="320" height="120"/>
+<rect x="52" y="366" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="63.5" y="383" class="tag" font-family="Liberation Sans, Arial, sans-serif">S</text>
+<text x="84" y="384" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Artifact construction</text>
+<text x="56" y="410" class="body" font-family="Liberation Sans, Arial, sans-serif">execute the sealed plan</text>
+<text x="56" y="435" class="body" font-family="Liberation Sans, Arial, sans-serif">deterministic package bytes</text>
+<text x="56" y="460" class="body" font-family="Liberation Sans, Arial, sans-serif">transactional publication</text>
+</g>
+<g id="admission"><rect class="node semantic" x="40" y="572" width="320" height="120"/>
+<rect x="52" y="586" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="63.5" y="603" class="tag" font-family="Liberation Sans, Arial, sans-serif">S</text>
+<text x="84" y="604" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Artifact admission</text>
+<text x="56" y="630" class="body" font-family="Liberation Sans, Arial, sans-serif">integrity + complete roles</text>
+<text x="56" y="655" class="body" font-family="Liberation Sans, Arial, sans-serif">valid container ≠ valid model</text>
+<text x="56" y="680" class="body" font-family="Liberation Sans, Arial, sans-serif">refuse missing semantics</text>
+</g>
+<g id="binding"><rect class="node semantic" x="440" y="572" width="320" height="120"/>
+<rect x="452" y="586" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="463.5" y="603" class="tag" font-family="Liberation Sans, Arial, sans-serif">S</text>
+<text x="484" y="604" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Runtime binding</text>
+<text x="456" y="630" class="body" font-family="Liberation Sans, Arial, sans-serif">operator plans + package PEIR</text>
+<text x="456" y="655" class="body" font-family="Liberation Sans, Arial, sans-serif">tokenizer and component plans</text>
+<text x="456" y="680" class="body" font-family="Liberation Sans, Arial, sans-serif">content-addressed contract</text>
+</g>
+<g id="ready"><rect class="node semantic" x="840" y="572" width="320" height="120"/>
+<rect x="852" y="586" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="863.5" y="603" class="tag" font-family="Liberation Sans, Arial, sans-serif">S</text>
+<text x="884" y="604" class="node-title" font-family="Liberation Sans, Arial, sans-serif">READY deployment</text>
+<text x="856" y="630" class="body" font-family="Liberation Sans, Arial, sans-serif">current binding compatibility</text>
+<text x="856" y="655" class="body" font-family="Liberation Sans, Arial, sans-serif">selected profile is launchable</text>
+<text x="856" y="680" class="body" font-family="Liberation Sans, Arial, sans-serif">not an allocation guarantee</text>
+</g>
+<g id="load"><rect class="node runtime" x="440" y="792" width="320" height="104"/>
+<rect x="452" y="806" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="463.5" y="823" class="tag" font-family="Liberation Sans, Arial, sans-serif">R</text>
+<text x="484" y="824" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Specialize / admit</text>
+<text x="456" y="850" class="body" font-family="Liberation Sans, Arial, sans-serif">backend / device / resources</text>
+<text x="456" y="875" class="body" font-family="Liberation Sans, Arial, sans-serif">load rechecks exact identities</text>
+</g>
+<g id="active"><rect class="node runtime" x="40" y="792" width="320" height="104"/>
+<rect x="52" y="806" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="63.5" y="823" class="tag" font-family="Liberation Sans, Arial, sans-serif">R</text>
+<text x="84" y="824" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Engine generation</text>
+<text x="56" y="850" class="body" font-family="Liberation Sans, Arial, sans-serif">loaded / routable ≠ busy</text>
+<text x="56" y="875" class="code" font-family="DejaVu Sans Mono, monospace">yvex model active</text>
+</g>
+<g id="gate"><rect class="node evidence" x="840" y="792" width="320" height="104"/>
+<rect x="852" y="806" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="863.5" y="823" class="tag" font-family="Liberation Sans, Arial, sans-serif">E</text>
+<text x="884" y="824" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Missing requirement</text>
+<text x="856" y="850" class="body" font-family="Liberation Sans, Arial, sans-serif">STOP at the owning boundary</text>
+<text x="856" y="875" class="body" font-family="Liberation Sans, Arial, sans-serif">no inferred READY or ACTIVE</text>
+</g>
+<rect x="639" y="708" width="173.68" height="21" fill="#fff"/><text x="642" y="724" class="label" font-family="Liberation Sans, Arial, sans-serif">load / ensure-active</text>
+<path d="M32 945H1168" stroke="#a3a3a3"/>
+<text x="32" y="971" class="legend" font-family="Liberation Sans, Arial, sans-serif">X external · I interface · S semantic · R runtime · M mutable · P physical · E evidence</text>
+<path class="edge" d="M32 1002h36" stroke-dasharray="none" marker-end="url(#solid)"/>
+<text x="78" y="1007" class="legend" font-family="Liberation Sans, Arial, sans-serif">data / result</text>
+<path class="edge" d="M260 1002h36" stroke-dasharray="none" marker-end="url(#open)"/>
+<text x="306" y="1007" class="legend" font-family="Liberation Sans, Arial, sans-serif">lifecycle / gate</text>
+<path class="edge" d="M488 1002h36" stroke-dasharray="9 5" marker-end="url(#open)"/>
+<text x="534" y="1007" class="legend" font-family="Liberation Sans, Arial, sans-serif">control / request</text>
 </svg>

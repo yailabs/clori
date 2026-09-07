@@ -5,8 +5,13 @@ from __future__ import annotations
 
 import re
 import hashlib
+import copy
+import importlib.util
+import json
 import subprocess
 import sys
+import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -150,11 +155,11 @@ def check_assets(destinations: set[Path]) -> None:
     for path in sorted(assets):
         if path not in destinations:
             fail(f"unconsumed documentation asset: {path.relative_to(ROOT)}")
-        if path.suffix == ".mmd" and path.with_suffix(".svg") not in assets:
+        if path.suffix == ".json" and path.with_suffix(".svg") not in assets:
             fail(f"diagram lacks SVG projection: {path.name}")
         if path.suffix != ".svg":
             continue
-        if path.parent.name == "diagrams" and path.with_suffix(".mmd") not in assets:
+        if path.parent.name == "diagrams" and path.with_suffix(".json") not in assets:
             fail(f"diagram lacks editable source: {path.name}")
         text = path.read_text(encoding="utf-8")
         for marker in ('<svg ', '<title ', '<desc ', 'role="img"'):
@@ -164,6 +169,69 @@ def check_assets(destinations: set[Path]) -> None:
         if digest in digests:
             fail(f"duplicate visual assets: {digests[digest].name}, {path.name}")
         digests[digest] = path
+
+
+def check_figure_generation() -> None:
+    """Exercise the real renderer, plus adversarial layout and stale-output seams."""
+    spec = importlib.util.spec_from_file_location("render_diagrams", ROOT / "tools/render_diagrams.py")
+    renderer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(renderer)
+    numbers = set()
+    for path in sorted((ROOT / "docs/diagrams").glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data["number"] in numbers:
+            fail("duplicate canonical figure number")
+        numbers.add(data["number"])
+        svg = renderer.render(data)
+        if svg != renderer.render(copy.deepcopy(data)):
+            fail(f"non-deterministic figure: {path.name}")
+        ET.fromstring(svg)
+        owner = (ROOT / data["owner"]).read_text(encoding="utf-8")
+        if path.name not in owner or path.with_suffix(".svg").name not in owner:
+            fail(f"figure has no consuming owner: {path.name}")
+        for mutation in ("overflow", "overlap", "diagonal", "crossing", "authority", "class", "unknown"):
+            bad = copy.deepcopy(data)
+            if mutation == "overflow":
+                bad["nodes"][0]["lines"][0] = "overflow " * 100
+            elif mutation == "overlap":
+                bad["nodes"][1]["box"] = list(bad["nodes"][0]["box"])
+            elif mutation == "diagonal":
+                bad["edges"][0]["points"] = [[40, 100], [60, 120]]
+            elif mutation == "crossing":
+                x, y, w, h = bad["nodes"][0]["box"]
+                bad["edges"][0]["points"] = [[x, y+h/2], [x+w, y+h/2]]
+            elif mutation == "authority":
+                bad["authority"] = ["/outside-repository"]
+            elif mutation == "class":
+                bad["nodes"][0]["kind"] = "invented"
+            else:
+                bad["unsupported"] = True
+            try:
+                renderer.render(bad)
+            except ValueError:
+                continue
+            fail(f"figure renderer accepted {mutation}: {path.name}")
+        with tempfile.TemporaryDirectory(prefix="yvex-figure-check-") as temporary:
+            output = Path(temporary) / "fixture.svg"
+            output.write_text(svg, encoding="utf-8")
+            renderer.check_output(output, svg)
+            output.write_text(svg + "stale", encoding="utf-8")
+            try:
+                renderer.check_output(output, svg)
+            except ValueError:
+                if output.read_text(encoding="utf-8") != svg + "stale":
+                    fail("stale-output check mutated the projection")
+            else:
+                fail("stale SVG was accepted")
+    if len(numbers) != 7:
+        fail(f"unexpected canonical figure set: {len(numbers)}")
+    result = subprocess.run([sys.executable, str(ROOT / "tools/render_diagrams.py"), "--check"],
+                            cwd=ROOT, check=False)
+    if result.returncode:
+        fail("figure source and SVG are not synchronized")
+    for path in (ROOT / "README.md", ROOT / "docs/architecture/system.md"):
+        if "```mermaid" in path.read_text(encoding="utf-8"):
+            fail(f"duplicate inline architecture figure: {path.name}")
 
 
 def check_current_truth(paths: set[str]) -> None:
@@ -240,6 +308,7 @@ def main() -> int:
     paths = markdown_paths()
     check_current_truth(paths)
     check_assets(check_links(paths))
+    check_figure_generation()
     print(f"documentation architecture: ok (markdown={len(paths)})")
     return 0
 

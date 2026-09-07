@@ -1,0 +1,33 @@
+{
+  "schema":1,"number":6,"title":"Storage, working set and residency are independent facts",
+  "description":"Remote provider availability, retained source and artifact bytes, logical working-set membership, current READY deployment and loaded engine resources are separate facts. Explicit commands cross boundaries. Managed copies and external references do not change provenance; cache does not prove identity. UMA device-addressability does not establish physical page residency.",
+  "size":[1200,1000],"owner":"docs/contracts/model-storage.md",
+  "authority":["src/model/catalog.c","docs/contracts/model-storage.md","docs/contracts/runtime.md","tests/unit/model_registry.c","tests/integration/tiny_vertical.sh"],
+  "panels":[
+    {"box":[24,82,556,670],"title":"a  Durable source and representation facts"},
+    {"box":[616,82,560,670],"title":"b  Deployment and live runtime facts"},
+    {"box":[24,778,1152,104],"title":"c  Orthogonal location classes — not promotion stages"}
+  ],
+  "nodes":[
+    {"id":"remote","box":[40,142,238,120],"kind":"external","title":"Remote record","lines":["provider + revision","availability / identity","no local bytes implied"]},
+    {"id":"source","box":[322,142,238,120],"kind":"semantic","title":"Retained source","lines":["immutable bytes","product acquisition","not a deployment"]},
+    {"id":"artifact","box":[40,356,520,108],"kind":"semantic","title":"Representation / artifact","lines":["source-derived bytes + authenticated derivation","local file presence alone is insufficient"]},
+    {"id":"library","box":[40,558,520,166],"kind":"interface","title":"Logical model library","lines":["joins source, artifact and deployment facts","working-set membership is a logical ID set","membership creates neither bytes nor engines","remote-only records can retain provenance"]},
+    {"id":"ready","box":[640,142,520,120],"kind":"semantic","title":"READY deployment","lines":["artifact + binding + current compatibility","a catalog fact, not memory residency","admission may still refuse resource pressure"]},
+    {"id":"engine","box":[640,356,520,108],"kind":"runtime","title":"Loaded engine generation","lines":["mappings / prepared resources / backend placement","model active includes idle loaded engines"]},
+    {"id":"work","box":[640,558,520,166],"kind":"mutable","title":"Active execution work","lines":["explicit request on an admitted generation","session state and transient work are distinct","leases pin engines; release is not unload","no automatic intent routing or eviction"]}
+  ],
+  "edges":[
+    {"kind":"control","points":[[278,202],[322,202]]},
+    {"kind":"flow","points":[[441,262],[441,312],[300,312],[300,356]]},
+    {"kind":"lifecycle","points":[[560,410],[598,410],[598,202],[640,202]]},
+    {"kind":"control","points":[[900,262],[900,356]]},
+    {"kind":"control","points":[[900,464],[900,558]]}
+  ],
+  "labels":[
+    {"at":[281,187],"text":"pull"},{"at":[48,301],"text":"prepare / explicit local adoption"},
+    {"at":[915,314],"text":"load / ensure-active"},{"at":[915,516],"text":"request"},
+    {"at":[48,846],"text":"Managed copy       |       External reference       |       Cache / temporary state","style":"note"},
+    {"at":[48,872],"text":"UMA: device-addressable bytes ≠ known GPU page residency. No guessed zero working set.","style":"note"}
+  ]
+}

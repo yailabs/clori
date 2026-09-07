@@ -8,30 +8,13 @@ artifact requirements are in the [Artifact and Admission Contract](../contracts/
 
 ## Pipeline
 
-```text
-verified source snapshot
-  -> logical model and canonical tensor roles
-  -> sealed Semantic Model IR and model-execution descriptor
-  -> immutable transformation plan
-  -> policy-selected physical variant
-  -> deterministic transformation execution
-  -> complete GGUF artifact
-  -> artifact admission
-  -> canonical Operator Graph IR
-  -> canonicalization and validation
-  -> Physical Execution IR package decisions and materialization
-  -> content-addressed runtime binding
+![Source facts become sealed transformation and physical plans, an admitted artifact and binding, a READY deployment and finally a generation-scoped loaded engine.](../diagrams/physical_compilation.svg)
 
-deployment:
-  runtime binding + admitted backend/device
-  -> engine specialization
-  -> model-engine generation
-```
-
-![Physical model compilation resolves each terminal tensor through sealed policy and capability authorities before artifact construction.](../diagrams/physical_compilation.svg)
-
-The editable source is
-[`physical_compilation.mmd`](../diagrams/physical_compilation.mmd).
+*Figure 2 — Source-to-engine promotion. Source, artifact, binding, deployment
+and engine are distinct identities/lifetimes. READY is current compatibility;
+load revalidates resources and seals specialization for a real device. Missing
+semantics or resources refuse at their owner, never imply the next stage.*
+[Editable source](../diagrams/physical_compilation.json).
 
 ## Source intake and trust
 

@@ -1,0 +1,38 @@
+{
+  "schema":1,"number":3,"title":"Runtime lifetimes, state and physical work",
+  "description":"The persistent host retains generation-scoped engines and session registries. Sessions and model leases pin a generation. Executable batches describe selected work rather than owning session state. A schematic lifetime panel shows host survival before load and after unload, and session/lease lifetimes contained within one engine generation.",
+  "size":[1200,1100],"owner":"docs/architecture/runtime.md",
+  "authority":["src/server/engine.c","src/runtime/scheduler.c","src/runtime/sequence_state.c","docs/contracts/runtime.md","tests/integration/tiny_vertical.sh"],
+  "panels":[
+    {"box":[24,82,1152,414],"title":"a  Persistent host — listeners, engine manager and routing"},
+    {"box":[48,130,690,340],"title":"Engine generation g — one admitted deployment"},
+    {"box":[24,522,1152,198],"title":"b  Execution quantum — real work, not another state owner"},
+    {"box":[24,748,1152,236],"title":"c  Schematic lifetimes — horizontal extent is not measured time"}
+  ],
+  "nodes":[
+    {"id":"resources","box":[72,188,310,104],"kind":"runtime","title":"Executable resources","lines":["mappings · plans · caches","immutable / reusable owners"]},
+    {"id":"scheduler","box":[405,188,310,104],"kind":"runtime","title":"Engine scheduler","lines":["independent runnable work","cooperative safe points"]},
+    {"id":"backend","box":[72,328,310,120],"kind":"physical","title":"Backend resources","lines":["admitted implementation class","buffers · submission · kernels","no model topology ownership"]},
+    {"id":"leases","box":[405,328,310,120],"kind":"runtime","title":"Model leases","lines":["explicit acquire / release","pin exact generation g","live lease prevents unload"]},
+    {"id":"session-a","box":[782,152,370,150],"kind":"mutable","title":"Session A → g","lines":["conversation / token ledger","typed component candidate state","decoder · RNG · workspace","atomic commit or abort"]},
+    {"id":"session-b","box":[782,316,370,150],"kind":"mutable","title":"Session B → g","lines":["independent state and workspace","no aliasing with session A","live session prevents unload","reset clears its continuity"]},
+    {"id":"ready-work","box":[40,578,245,120],"kind":"runtime","title":"Ready work","lines":["session-bound quantum","safe cancel points","runnable count ≠ width"]},
+    {"id":"batch","box":[324,578,245,120],"kind":"runtime","title":"Execution batch","lines":["real selected rows","phase + provenance","expert worklist if used"]},
+    {"id":"graph","box":[608,578,245,120],"kind":"semantic","title":"Admitted graph","lines":["operations / ordering","work and state handles","no source rediscovery"]},
+    {"id":"execute","box":[892,578,268,120],"kind":"physical","title":"CPU / CUDA","lines":["physical width is admitted","equivalent kernel choices","writes candidate state"]}
+  ],
+  "edges":[
+    {"kind":"bind","points":[[738,228],[782,228]]},
+    {"kind":"bind","points":[[738,392],[782,392]]},
+    {"kind":"control","points":[[285,638],[324,638]]},
+    {"kind":"flow","points":[[569,638],[608,638]]},
+    {"kind":"flow","points":[[853,638],[892,638]]}
+  ],
+  "bands":[
+    {"box":[250,806,886,32],"text":"host: zero engines → loaded generations → zero engines"},
+    {"box":[390,858,622,32],"text":"generation g: load / specialize → usable → unload"},
+    {"box":[470,910,280,32],"text":"session: open → close"},
+    {"box":[776,910,190,32],"text":"lease held"}
+  ],
+  "labels":[{"at":[48,829],"text":"Host lifetime","style":"note"},{"at":[48,881],"text":"Engine lifetime","style":"note"},{"at":[48,933],"text":"Dependent lifetimes","style":"note"},{"at":[48,971],"text":"After all dependents close: drain active work, retire g; reloading creates a new generation.","style":"note"}]
+}

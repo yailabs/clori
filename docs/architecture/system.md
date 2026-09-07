@@ -18,11 +18,13 @@ yvex  foreground model server, protocol clients, and finite offline operations
 tokenizer, and generation owners. It is not a process or a separate public
 command surface.
 
-![Verified sources become an identity-bound artifact served by one long-lived runtime host to isolated sessions, CPU or CUDA execution, and local clients.](../diagrams/system_overview.svg)
+![Source/compiler owners and local product consumers converge on one persistent host, with generation-bound engines and session state above CPU/CUDA execution.](../diagrams/system_overview.svg)
 
-The editable source is
-[`system_overview.mmd`](../diagrams/system_overview.mmd). The diagram is a
-curated explanation, not runtime evidence.
+*Figure 1 — System context and ownership. The loopback HTTP adapter belongs to
+the persistent host, while CLI and external applications remain clients.
+Observation is downstream of execution; no remote-service, continuous-batching
+or release-readiness claim follows from this topology.*
+[Editable source](../diagrams/system_overview.json).
 
 ## Product processes
 
@@ -130,66 +132,29 @@ REPL slash schemas consume that one authority.
 
 ## Interactive terminal path
 
-The classical Read–Eval–Print Loop is a useful teaching decomposition for
-`yvex chat`. SICP's [evaluator driver](https://sicp.sourceacademy.org/chapters/4.1.4.html)
-keeps reading, evaluation and printing distinct. The
-[REPLAI guide](https://github.com/mothx9/replai/blob/master/docs/repl.md) explains
-that cycle and its historical sources; here the application semantics are
-YVEX commands and runtime operations, rather than a Lisp evaluator.
+![REPLAI edits inside the chat client; YVEX builds typed requests, binds sessions, controls generation and renders server-authored results.](../diagrams/interactive_boundary.svg)
 
-```mermaid
-sequenceDiagram
-    participant User as User / terminal
-    participant Editor as REPLAI (inside chat)
-    participant Client as YVEX chat adapter
-    participant Runtime as Persistent yvex serve
-    Client->>Editor: Open with product prompt
-    User->>Editor: Type, navigate, complete or paste
-    opt Completion request
-        Editor-->>Client: Draft and cursor available
-        Client->>Editor: Registry-selected replacement
-    end
-    User->>Editor: Submit
-    Editor->>User: Disable paste and restore termios
-    Editor-->>Client: Complete submitted text
-    alt Local slash command
-        Client->>User: Render local command result
-    else Runtime command or input turn
-        Client->>Runtime: Typed request with bound identity
-        Runtime-->>Client: Typed result / streamed events
-        Client->>User: Render product output
-    end
-    Client->>Editor: Open next interaction
-```
+*Figure 5 — Interactive ownership. Submission returns UTF-8 after editor
+restoration; the YVEX adapter constructs typed content and request semantics.
+Panels (a) and (b) live in the same chat process: REPLAI is a statically linked
+dependency, not another process or model runtime.
+The figure shows the continuing path, not a concurrent editor during generation.*
+[Editable source](../diagrams/interactive_boundary.json).
 
-The diagram shows the normal continuing path. Exit commands, EOF and transport
-errors take their documented close/recovery paths. REPLAI is statically linked
-through C ABI 1 into the client; it is not another process or runtime service.
-The exact dependency remains governed by
-[the external-editor decision](../decisions/0007-external-terminal-editor.md)
-and [`config/replai.json`](../../config/replai.json). Explanatory documentation
-on the library's default branch does not advance that pin.
+[ADR 0007](../decisions/0007-external-terminal-editor.md) owns the editor split
+and [`config/replai.json`](../../config/replai.json) owns its exact pin. YVEX
+retains prompt values, history admission, slash-completion decisions, reconnect,
+attachments and semantic rendering. Ctrl-C while editing is a generic REPLAI
+event; during generation it enters YVEX cancellation and quiet-output handling.
+EOF, exit and transport failure follow their distinct close/recovery paths.
+Historical `repl_` helper names do not establish another editor.
 
-| Responsibility | Implemented owner |
-| --- | --- |
-| Editing, Unicode cursor, paste framing, history navigation, resize/redraw and input terminal restoration | External REPLAI library |
-| Polling events, prompt values, history admission, slash completion and dispatch | `src/cli/io/client.c`, using `config/operator/registry.json` |
-| Session binding, requests, reconnect and generation cancellation meaning | YVEX client and typed local protocol |
-| Model execution and transactional session state | Persistent runtime host |
-| Reply formatting and runtime/status presentation | YVEX CLI render/I/O owners, including `src/cli/io/stream.c` |
-
-Submission ends editing before product output begins. The current chat path
-does not provide a concurrently editable prompt during generation. Its quiet
-output scope suppresses input echo, and the next interaction reopens the editor.
-Ctrl-C while editing is a REPLAI interrupt event; during generation it is handled
-by YVEX's cancellation path. Neither the command registry nor those application
-decisions enter the library.
-
-The distinction also applies to Print: REPLAI supplies generic prompt/style and
-safe notice mechanics, while YVEX chooses and formats semantic results. This
-sequence is qualified by [real chat PTY tests](../../tests/repl_pty.sh), their
+[Real chat PTY tests](../../tests/repl_pty.sh), their
 [consumer assertions](../../tests/replai_consumer.py), and the
-[bounded runtime vertical](../../tests/integration/tiny_vertical.sh).
+[tiny runtime vertical](../../tests/integration/tiny_vertical.sh) qualify the
+composition. The classical REPL decomposition is explained in the
+[external guide](https://github.com/mothx9/replai/blob/master/docs/repl.md);
+its default branch does not change the pinned dependency.
 
 ## Current implementation scope
 

@@ -1,0 +1,39 @@
+{
+  "schema":1,"number":2,"title":"From provider source to an active engine",
+  "description":"Three separate authorities establish source meaning, physical package and current deployment compatibility. Passing preparation does not load an engine. Load revalidates admission and resources, specializes for a real backend/device and publishes an exact engine generation. A failed gate never advances to the next state.",
+  "size":[1200,1040],"owner":"docs/architecture/compilation.md",
+  "authority":["src/graph/source_compile.c","src/server/engine.c","src/graph/families/mamba2.c","docs/contracts/artifacts.md","docs/architecture/compilation.md"],
+  "panels":[
+    {"box":[24,82,1152,192],"title":"a  Source meaning — discovery is KNOWN, not executable support"},
+    {"box":[24,302,1152,192],"title":"b  Physical package — source-derived representation"},
+    {"box":[24,522,1152,192],"title":"c  Admission"},
+    {"box":[24,742,1152,178],"title":"d  Engine load"}
+  ],
+  "nodes":[
+    {"id":"snapshot","box":[40,132,320,120],"kind":"semantic","title":"Immutable snapshot","lines":["product acquisition","revision + payload trust","weights and sidecars"]},
+    {"id":"inventory","box":[440,132,320,120],"kind":"semantic","title":"Inventory / signature","lines":["tensor geometry and dtypes","architecture + tokenizer facts","contradictions stay explicit"]},
+    {"id":"family","box":[840,132,320,120],"kind":"semantic","title":"Family interpretation","lines":["validated roles and topology","semantic model / operations","state and numerical policy"]},
+    {"id":"transform","box":[840,352,320,120],"kind":"semantic","title":"Transformation IR","lines":["sealed source contributions","typed operations per output","planning reads no payload"]},
+    {"id":"physical","box":[440,352,320,120],"kind":"semantic","title":"Physical variant plan","lines":["qtype · layout · row geometry","every terminal tensor resolved","policy identity is explicit"]},
+    {"id":"artifact","box":[40,352,320,120],"kind":"semantic","title":"Artifact construction","lines":["execute the sealed plan","deterministic package bytes","transactional publication"]},
+    {"id":"admission","box":[40,572,320,120],"kind":"semantic","title":"Artifact admission","lines":["integrity + complete roles","valid container ≠ valid model","refuse missing semantics"]},
+    {"id":"binding","box":[440,572,320,120],"kind":"semantic","title":"Runtime binding","lines":["operator plans + package PEIR","tokenizer and component plans","content-addressed contract"]},
+    {"id":"ready","box":[840,572,320,120],"kind":"semantic","title":"READY deployment","lines":["current binding compatibility","selected profile is launchable","not an allocation guarantee"]},
+    {"id":"load","box":[440,792,320,104],"kind":"runtime","title":"Specialize / admit","lines":["backend / device / resources","load rechecks exact identities"]},
+    {"id":"active","box":[40,792,320,104],"kind":"runtime","title":"Engine generation","lines":["loaded / routable ≠ busy","yvex model active"],"code":[1]},
+    {"id":"gate","box":[840,792,320,104],"kind":"evidence","title":"Missing requirement","lines":["STOP at the owning boundary","no inferred READY or ACTIVE"]}
+  ],
+  "edges":[
+    {"kind":"flow","points":[[360,192],[440,192]]},
+    {"kind":"flow","points":[[760,192],[840,192]]},
+    {"kind":"flow","points":[[1000,252],[1000,352]]},
+    {"kind":"flow","points":[[840,412],[760,412]]},
+    {"kind":"flow","points":[[440,412],[360,412]]},
+    {"kind":"lifecycle","points":[[200,472],[200,572]]},
+    {"kind":"lifecycle","points":[[360,632],[440,632]]},
+    {"kind":"lifecycle","points":[[760,632],[840,632]]},
+    {"kind":"control","points":[[1000,692],[1000,728],[600,728],[600,792]]},
+    {"kind":"lifecycle","points":[[440,844],[360,844]]}
+  ],
+  "labels":[{"at":[642,724],"text":"load / ensure-active"}]
+}

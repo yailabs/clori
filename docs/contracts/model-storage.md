@@ -6,6 +6,14 @@ library joins those facts into logical models; filesystem proximity never
 establishes lineage. These owners remain authoritative for remote-only records,
 managed local material and explicit external references.
 
+![Durable source and artifact retention, logical working-set membership, READY deployments, loaded engines and active work occupy separate authority domains.](../diagrams/storage_residency.svg)
+
+*Figure 6 — Storage versus runtime truth. Working-set membership is orthogonal
+to retention and residency; explicit requests cross the boundaries. Cache is
+not provenance, a file is not a deployment, and device-addressability does not
+prove physical UMA page residency. No automatic eviction policy is implied.*
+[Editable source](../diagrams/storage_residency.json).
+
 ## What users choose and YVEX manages
 
 Users choose a model or an external path and, optionally, a model-storage root.

@@ -24,24 +24,17 @@ and media publication have different terminal semantics.
 
 ## Promotion path
 
-```text
-real product acquisition and immutable provider revision
-  -> source snapshot
-  -> source tensor inventory
-  -> family architecture signature
-  -> validated tensor collections
-  -> canonical role map
-  -> transformation and physical policy
-  -> complete artifact contract
-  -> Physical Execution IR, materialization and runtime binding
-  -> sealed runtime descriptor and compiled model plan
-  -> backend and graph admission
-  -> stateful execution through the admitted topology
-  -> typed terminal product (text, tensor, or media)
-  -> evaluation
-  -> benchmark
-  -> release qualification
-```
+![Family interpretation seals roles, topology, state and numerical meaning into admitted records consumed by the common execution owners; Mamba2 remains below the executable-plan boundary.](../diagrams/family_boundary.svg)
+
+*Figure 4 — Family integration boundary. Families supply irreducible semantics;
+common owners validate, seal and execute admitted plans without another family
+runtime. The lower panel identifies existing architectural pressure, not equal
+support: Mamba2 has no executable descriptor and MiniMax retains its full-scale
+numerical/quality gap.* [Editable source](../diagrams/family_boundary.json).
+
+The [compilation figure](../architecture/compilation.md#pipeline) owns the
+source-to-engine sequence; the [evidence ladder](../development/agentic-engineering.md#classify-evidence)
+separates terminal execution from evaluation, benchmark and release.
 
 No stage inherits a later claim from a name, report, fixture, external engine,
 or structurally valid container.

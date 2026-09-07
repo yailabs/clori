@@ -18,6 +18,12 @@ requested execution.
 The [system architecture](docs/architecture/system.md) explains these owners.
 Code and tests establish capability; documentation describes its limits.
 
+![YVEX system context: source compilation and local clients meet at a persistent host with generation-bound engines, isolated sessions and CPU/CUDA execution.](docs/diagrams/system_overview.svg)
+
+*Figure 1 — System context. Clients and the integrated compatibility adapter
+share one host; observation does not own execution. This topology does not
+imply general remote serving or equal qualification of every model family.*
+
 ## Available execution
 
 | Model boundary | Demonstrated path | Limit |
@@ -129,26 +135,9 @@ After closing dependent sessions and releasing leases:
 The runbook owns the complete [startup procedure](docs/operator-runbook.md#first-verified-startup),
 session recovery, media execution, inspection, and shutdown.
 
-## The interactive loop
-
-The classical **Read–Eval–Print Loop** separates input, evaluation and result
-presentation; [SICP §4.1.4](https://sicp.sourceacademy.org/chapters/4.1.4.html)
-is the teaching reference. In `yvex chat`, those responsibilities span an
-external terminal editor, a product client and the existing runtime host:
-
-```mermaid
-flowchart LR
-    input["REPLAI<br/>Prompt and editing"] -->|Submitted text| client["YVEX client<br/>Commands or turn request"]
-    client -->|Runtime operation| host["yvex serve<br/>Session and execution"]
-    host -->|Typed events| output["YVEX client<br/>Result rendering"]
-    client -->|Local command result| output
-    output -->|Next prompt| input
-```
-
-REPLAI owns terminal mechanics; YVEX owns the meaning of input and output.
-See the [system's interactive path](docs/architecture/system.md#interactive-terminal-path)
-and [REPLAI's classical REPL guide](https://github.com/mothx9/replai/blob/master/docs/repl.md)
-for the complete decomposition and historical references.
+REPLAI owns terminal mechanics; YVEX owns input semantics and result rendering.
+The [interactive boundary figure](docs/architecture/system.md#interactive-terminal-path)
+shows editing, dispatch, execution and the return to the next prompt.
 
 ## Product boundary
 

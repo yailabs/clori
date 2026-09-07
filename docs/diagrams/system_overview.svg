@@ -1,121 +1,151 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820" role="img" aria-labelledby="title desc">
-  <title id="title">YVEX system overview</title>
-  <desc id="desc">Verified sources pass through the YVEX compiler into an immutable model package and runtime binding. One persistent foreground YVEX host owns zero or more specialized engine generations, generation-bound sessions, private protocol, integrated loopback OpenAI adapter, and typed events. Per-engine schedulers form executable work for CPU or CUDA while YVEX clients and OpenAI-compatible applications use the same host authority.</desc>
-  <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0 0L0 6L9 3z" class="arrow-fill"/>
-    </marker>
-    <style>
-      :root{color-scheme:light dark}.panel{fill:#fff;stroke:#64748b;stroke-width:2}.compile-panel{fill:#eff6ff;stroke:#1d4ed8;stroke-width:2}.run-panel{fill:#f5f3ff;stroke:#6d28d9;stroke-width:2}.execute-panel{fill:#f0fdf4;stroke:#15803d;stroke-width:2}.interact-panel{fill:#fff7ed;stroke:#ea580c;stroke-width:2}.orange-box{fill:#fff;stroke:#ea580c;stroke-width:1.8}.box{fill:#fff;stroke:#475569;stroke-width:1.8}.state{fill:#faf5ff;stroke:#7e22ce;stroke-width:1.8}.head{fill:#0f172a;font-family:sans-serif;font-size:38px;font-weight:700;text-anchor:middle}.subhead{fill:#334155;font-family:sans-serif;font-size:20px;font-style:italic;text-anchor:middle}.section{font-family:sans-serif;font-size:20px;font-weight:700}.text{fill:#0f172a;font-family:sans-serif;font-size:15px;font-weight:600;text-anchor:middle}.small{fill:#334155;font-family:sans-serif;font-size:13px;text-anchor:middle}.foot{fill:#0f172a;font-family:sans-serif;font-size:17px;font-weight:600;text-anchor:middle}.line{fill:none;stroke:#1f2937;stroke-width:2.2;marker-end:url(#arrow)}.dash{fill:none;stroke:#475569;stroke-width:2;stroke-dasharray:8 7;marker-end:url(#arrow)}.assoc{fill:none;stroke:#6d28d9;stroke-width:2;stroke-dasharray:3 5}.arrow-fill{fill:#1f2937}
-      @media (prefers-color-scheme: dark){.panel,.box{fill:#111827}.compile-panel{fill:#172554;stroke:#60a5fa}.run-panel,.state{fill:#2e1065;stroke:#c4b5fd}.execute-panel{fill:#052e16;stroke:#86efac}.interact-panel{fill:#431407;stroke:#fdba74}.orange-box{fill:#111827;stroke:#fdba74}.head,.section,.text,.foot{fill:#f8fafc}.subhead,.small{fill:#cbd5e1}.box{stroke:#cbd5e1}.line,.dash{stroke:#e2e8f0}.arrow-fill{fill:#e2e8f0}.assoc{stroke:#c4b5fd}}
-    </style>
-  </defs>
-
-  <text class="head" x="800" y="48">YVEX System Overview</text>
-  <text class="subhead" x="800" y="80">From verified sources to hosted, session-aware inference</text>
-
-  <text class="section" x="45" y="126" fill="#1d4ed8">A. Compile</text>
-  <rect class="compile-panel" x="25" y="145" width="600" height="510" rx="15"/>
-  <rect class="box" x="55" y="235" width="145" height="300" rx="12"/>
-  <text class="text" x="127" y="272">Verified sources</text>
-  <text class="small" x="127" y="318">weights</text>
-  <text class="small" x="127" y="354">configuration</text>
-  <text class="small" x="127" y="390">tokenizer</text>
-  <text class="small" x="127" y="426">model metadata</text>
-  <text class="small" x="127" y="480">snapshot identity</text>
-
-  <rect class="box" x="245" y="205" width="175" height="360" rx="12"/>
-  <text class="text" x="332" y="244">YVEX compiler</text>
-  <text class="small" x="332" y="292">source trust</text>
-  <text class="small" x="332" y="330">family semantics</text>
-  <text class="small" x="332" y="368">Transformation IR</text>
-  <text class="small" x="332" y="406">physical policy</text>
-  <text class="small" x="332" y="444">GGUF construction</text>
-  <text class="small" x="332" y="482">artifact admission</text>
-
-  <rect class="compile-panel" x="465" y="250" width="130" height="270" rx="12"/>
-  <text class="text" x="530" y="292">Immutable package</text>
-  <text class="text" x="530" y="315">GGUF + binding</text>
-  <text class="small" x="530" y="375">content-addressed</text>
-  <text class="small" x="530" y="405">immutable</text>
-  <text class="small" x="530" y="435">portable</text>
-  <path class="line" d="M200 385H238"/>
-  <path class="line" d="M420 385H458"/>
-  <rect class="box" x="245" y="585" width="350" height="48" rx="9"/>
-  <text class="text" x="420" y="606">yvex · offline lane</text>
-  <text class="small" x="420" y="624">finite engineering operations</text>
-  <path class="dash" d="M330 585V572"/>
-  <path class="dash" d="M530 585V527"/>
-
-  <text class="section" x="655" y="126" fill="#6d28d9">B. Run</text>
-  <rect class="run-panel" x="645" y="145" width="445" height="510" rx="15"/>
-  <text class="text" x="867" y="181">yvex serve · persistent host</text>
-  <rect class="box" x="680" y="205" width="375" height="70" rx="10"/>
-  <text class="text" x="867" y="234">Server listeners</text>
-  <text class="small" x="867" y="257">private Unix protocol · loopback HTTP/SSE</text>
-
-  <rect class="state" x="680" y="300" width="175" height="105" rx="10"/>
-  <text class="text" x="767" y="331">Engine manager</text>
-  <text class="small" x="767" y="358">load · route · drain</text>
-  <text class="small" x="767" y="382">engine generations</text>
-  <rect class="state" x="880" y="300" width="175" height="105" rx="10"/>
-  <text class="text" x="967" y="331">Engine resources</text>
-  <text class="small" x="967" y="358">package + specialization</text>
-  <text class="small" x="967" y="382">prepared + session state</text>
-
-  <rect class="box" x="680" y="435" width="375" height="170" rx="10"/>
-  <text class="text" x="867" y="466">Per-engine scheduler</text>
-  <rect class="box" x="710" y="495" width="130" height="70" rx="8"/>
-  <text class="small" x="775" y="525">request queue</text>
-  <text class="small" x="775" y="547">one mutation</text>
-  <rect class="box" x="875" y="495" width="145" height="70" rx="8"/>
-  <text class="small" x="947" y="525">executable batches</text>
-  <text class="small" x="947" y="547">typed events</text>
-  <path class="line" d="M840 530H868"/>
-  <path class="assoc" d="M767 405V430H867"/>
-  <path class="assoc" d="M967 405V430H867"/>
-  <path class="line" d="M595 385H638"/>
-
-  <text class="section" x="1120" y="126" fill="#15803d">C. Execute</text>
-  <rect class="execute-panel" x="1110" y="145" width="225" height="510" rx="15"/>
-  <rect class="box" x="1140" y="205" width="165" height="85" rx="10"/>
-  <text class="text" x="1222" y="238">Runtime graph</text>
-  <text class="small" x="1222" y="264">admitted operators</text>
-  <rect class="box" x="1140" y="330" width="165" height="105" rx="10"/>
-  <text class="text" x="1222" y="364">CPU / CUDA</text>
-  <text class="small" x="1222" y="391">encoded compute</text>
-  <text class="small" x="1222" y="415">backend resources</text>
-  <rect class="box" x="1140" y="475" width="165" height="90" rx="10"/>
-  <text class="text" x="1222" y="508">Transactional state</text>
-  <text class="small" x="1222" y="535">commit or preserve</text>
-  <path class="line" d="M1222 290V323"/>
-  <path class="line" d="M1222 435V468"/>
-  <path class="line" d="M1055 520H1103"/>
-
-  <text class="section" x="1365" y="126" fill="#ea580c">D. Interact</text>
-  <rect class="interact-panel" x="1355" y="145" width="220" height="510" rx="15"/>
-  <rect class="orange-box" x="1380" y="180" width="170" height="65" rx="10"/>
-  <text class="text" x="1465" y="207">Raw trace</text>
-  <text class="small" x="1465" y="228">typed JSONL events</text>
-  <rect class="orange-box" x="1380" y="270" width="170" height="65" rx="10"/>
-  <text class="text" x="1465" y="297">Host logs</text>
-  <text class="small" x="1465" y="318">compact operations</text>
-  <rect class="orange-box" x="1380" y="360" width="170" height="65" rx="10"/>
-  <text class="text" x="1465" y="387">yvex chat</text>
-  <text class="small" x="1465" y="408">native interactive client</text>
-  <rect class="orange-box" x="1380" y="450" width="170" height="65" rx="10"/>
-  <text class="text" x="1465" y="477">host · model · session</text>
-  <text class="small" x="1465" y="498">native admin clients</text>
-  <rect class="orange-box" x="1380" y="540" width="170" height="75" rx="10"/>
-  <text class="text" x="1465" y="568">OpenAI clients</text>
-  <text class="small" x="1465" y="590">HTTP/SSE · SDKs/apps</text>
-  <path class="line" d="M1305 212H1373"/>
-  <path class="line" d="M1305 302H1373"/>
-  <path class="line" d="M1055 240C1270 110 1320 392 1373 392"/>
-  <path class="line" d="M1055 240C1280 150 1320 482 1373 482"/>
-  <path class="line" d="M1055 240C1280 190 1320 577 1373 577"/>
-
-  <rect class="panel" x="25" y="690" width="1550" height="65" rx="12" stroke="#64748b"/>
-  <text class="foot" x="800" y="730">Identity  ·  Admission  ·  Transactional state  ·  Typed events  ·  Scoped evidence</text>
-  <text class="small" x="800" y="790">Solid arrows: execution/data flow   ·   dotted lines: ownership association</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1000" viewBox="0 0 1200 1000" role="img" aria-labelledby="title desc">
+<title id="title">System context and execution ownership</title>
+<desc id="desc">Provider sources feed the offline acquisition and compiler owners. CLI and loopback HTTP consumers address one persistent host with generation-bound engines and independent sessions. Admitted graph operations reach CPU or CUDA; typed events observe execution without owning it.</desc>
+<!-- Generated by tools/render_diagrams.py; source SHA-256 c3fcdcd6dd44c69597647168f6e426e8bdcc1e6f73ffa7d87e3724ddd86cfe29 -->
+<defs><style>text{fill:#161616}
+.title{font-size:26px;font-weight:700}.panel-title{font-size:19px;font-weight:700}
+.node-title{font-size:20px;font-weight:700}.body{font-size:18px}
+.note,.legend{font-size:16px}.code{font-size:16px}
+.tag{font-size:15px;font-weight:700;text-anchor:middle}
+.label{font-size:16px}
+.panel{fill:#f7f7f7;stroke:#a3a3a3;stroke-width:1}
+.node{fill:#fff;stroke:#525252;stroke-width:1.5}
+.external{stroke-dasharray:6 4}.runtime{stroke-width:2.5}.mutable{stroke-width:2}
+.edge{fill:none;stroke:#292929;stroke-width:1.7;stroke-linejoin:round}</style>
+<marker id="solid" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L8 4L0 8Z" fill="#292929"/></marker>
+<marker id="open" markerWidth="9" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1L8 5L1 9" fill="none" stroke="#292929" stroke-width="1.5"/></marker></defs>
+<rect width="1200" height="1000" fill="#fff"/>
+<text x="32" y="41" class="title" font-family="Liberation Sans, Arial, sans-serif">01  System context and execution ownership</text>
+<path d="M32 57H1168" stroke="#161616" stroke-width="2"/>
+<rect class="panel" x="24" y="226" width="352" height="496"/>
+<text x="38" y="253" class="panel-title" font-family="Liberation Sans, Arial, sans-serif">a  Offline lane</text>
+<rect class="panel" x="408" y="226" width="768" height="496"/>
+<text x="422" y="253" class="panel-title" font-family="Liberation Sans, Arial, sans-serif">b  Persistent yvex serve</text>
+<rect class="panel" x="408" y="746" width="768" height="138"/>
+<text x="422" y="773" class="panel-title" font-family="Liberation Sans, Arial, sans-serif">c  Backend</text>
+<polyline class="edge" points="200,204 200,276" stroke-dasharray="none" marker-end="url(#solid)"/>
+<polyline class="edge" points="200,380 200,434" stroke-dasharray="none" marker-end="url(#solid)"/>
+<polyline class="edge" points="200,554 200,602" stroke-dasharray="none" marker-end="url(#solid)"/>
+<polyline class="edge" points="600,204 600,216 744,216 744,276" stroke-dasharray="9 5" marker-end="url(#open)"/>
+<polyline class="edge" points="996,204 996,276" stroke-dasharray="9 5" marker-end="url(#open)"/>
+<polyline class="edge" points="760,328 832,328" stroke-dasharray="9 5" marker-end="url(#open)"/>
+<polyline class="edge" points="996,380 996,426 792,426 792,514 760,514" stroke-dasharray="9 5" marker-end="url(#open)"/>
+<polyline class="edge" points="360,654 392,654 392,514 440,514" stroke-dasharray="none" marker-end="url(#solid)"/>
+<polyline class="edge" points="760,540 832,540" stroke-dasharray="9 4 2 4" marker-end="none"/>
+<polyline class="edge" points="600,566 600,602" stroke-dasharray="9 5" marker-end="url(#open)"/>
+<polyline class="edge" points="600,706 600,796" stroke-dasharray="none" marker-end="url(#solid)"/>
+<polyline class="edge" points="760,654 832,654" stroke-dasharray="2 5" marker-end="url(#open)"/>
+<polyline class="edge" points="996,706 996,736 200,736 200,780" stroke-dasharray="2 5" marker-end="url(#open)"/>
+<g id="providers"><rect class="node external" x="40" y="100" width="320" height="104"/>
+<rect x="52" y="114" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="63.5" y="131" class="tag" font-family="Liberation Sans, Arial, sans-serif">X</text>
+<text x="84" y="132" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Provider sources</text>
+<text x="56" y="158" class="body" font-family="Liberation Sans, Arial, sans-serif">weights · config · tokenizer</text>
+<text x="56" y="183" class="body" font-family="Liberation Sans, Arial, sans-serif">repository / revision / bytes</text>
+</g>
+<g id="applications"><rect class="node external" x="440" y="100" width="320" height="104"/>
+<rect x="452" y="114" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="463.5" y="131" class="tag" font-family="Liberation Sans, Arial, sans-serif">X</text>
+<text x="484" y="132" class="node-title" font-family="Liberation Sans, Arial, sans-serif">SDKs / applications</text>
+<text x="456" y="158" class="body" font-family="Liberation Sans, Arial, sans-serif">local compatibility clients</text>
+<text x="456" y="183" class="body" font-family="Liberation Sans, Arial, sans-serif">application policy stays here</text>
+</g>
+<g id="cli"><rect class="node interface" x="832" y="100" width="328" height="104"/>
+<rect x="844" y="114" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="855.5" y="131" class="tag" font-family="Liberation Sans, Arial, sans-serif">I</text>
+<text x="876" y="132" class="node-title" font-family="Liberation Sans, Arial, sans-serif">yvex CLI</text>
+<text x="848" y="158" class="code" font-family="DejaVu Sans Mono, monospace">chat + host / model / session</text>
+<text x="848" y="183" class="body" font-family="Liberation Sans, Arial, sans-serif">REPLAI edits; YVEX interprets</text>
+</g>
+<g id="source"><rect class="node semantic" x="40" y="276" width="320" height="104"/>
+<rect x="52" y="290" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="63.5" y="307" class="tag" font-family="Liberation Sans, Arial, sans-serif">S</text>
+<text x="84" y="308" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Source acquisition</text>
+<text x="56" y="334" class="body" font-family="Liberation Sans, Arial, sans-serif">inventory · provenance · trust</text>
+<text x="56" y="359" class="body" font-family="Liberation Sans, Arial, sans-serif">immutable snapshot identity</text>
+</g>
+<g id="http"><rect class="node interface" x="440" y="276" width="320" height="104"/>
+<rect x="452" y="290" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="463.5" y="307" class="tag" font-family="Liberation Sans, Arial, sans-serif">I</text>
+<text x="484" y="308" class="node-title" font-family="Liberation Sans, Arial, sans-serif">HTTP adapter</text>
+<text x="456" y="334" class="body" font-family="Liberation Sans, Arial, sans-serif">bounded OpenAI compatibility</text>
+<text x="456" y="359" class="body" font-family="Liberation Sans, Arial, sans-serif">loopback; same host authority</text>
+</g>
+<g id="protocol"><rect class="node interface" x="832" y="276" width="328" height="104"/>
+<rect x="844" y="290" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="855.5" y="307" class="tag" font-family="Liberation Sans, Arial, sans-serif">I</text>
+<text x="876" y="308" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Typed local protocol</text>
+<text x="848" y="334" class="body" font-family="Liberation Sans, Arial, sans-serif">native UDS · exact generation</text>
+<text x="848" y="359" class="body" font-family="Liberation Sans, Arial, sans-serif">multipart requests / results</text>
+</g>
+<g id="compiler"><rect class="node semantic" x="40" y="434" width="320" height="120"/>
+<rect x="52" y="448" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="63.5" y="465" class="tag" font-family="Liberation Sans, Arial, sans-serif">S</text>
+<text x="84" y="466" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Compiler / package</text>
+<text x="56" y="492" class="body" font-family="Liberation Sans, Arial, sans-serif">family lowering · physical plan</text>
+<text x="56" y="517" class="body" font-family="Liberation Sans, Arial, sans-serif">artifact + binding admission</text>
+<text x="56" y="542" class="body" font-family="Liberation Sans, Arial, sans-serif">current deployment checks</text>
+</g>
+<g id="engines"><rect class="node runtime" x="440" y="462" width="320" height="104"/>
+<rect x="452" y="476" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="463.5" y="493" class="tag" font-family="Liberation Sans, Arial, sans-serif">R</text>
+<text x="484" y="494" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Engine generations</text>
+<text x="456" y="520" class="body" font-family="Liberation Sans, Arial, sans-serif">admitted plans and resources</text>
+<text x="456" y="545" class="body" font-family="Liberation Sans, Arial, sans-serif">explicit load / unload / leases</text>
+</g>
+<g id="sessions"><rect class="node mutable" x="832" y="462" width="328" height="104"/>
+<path d="M837 467V561" stroke="#525252" stroke-width="1"/>
+<rect x="844" y="476" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="855.5" y="493" class="tag" font-family="Liberation Sans, Arial, sans-serif">M</text>
+<text x="876" y="494" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Sessions / state</text>
+<text x="848" y="520" class="body" font-family="Liberation Sans, Arial, sans-serif">generation-bound continuity</text>
+<text x="848" y="545" class="body" font-family="Liberation Sans, Arial, sans-serif">independent transactions</text>
+</g>
+<g id="package"><rect class="node semantic" x="40" y="602" width="320" height="104"/>
+<rect x="52" y="616" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="63.5" y="633" class="tag" font-family="Liberation Sans, Arial, sans-serif">S</text>
+<text x="84" y="634" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Artifact + binding</text>
+<text x="56" y="660" class="body" font-family="Liberation Sans, Arial, sans-serif">authenticated package facts</text>
+<text x="56" y="685" class="body" font-family="Liberation Sans, Arial, sans-serif">READY is current compatibility</text>
+</g>
+<g id="work"><rect class="node runtime" x="440" y="602" width="320" height="104"/>
+<rect x="452" y="616" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="463.5" y="633" class="tag" font-family="Liberation Sans, Arial, sans-serif">R</text>
+<text x="484" y="634" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Execution scheduling</text>
+<text x="456" y="660" class="body" font-family="Liberation Sans, Arial, sans-serif">ready work · real rows</text>
+<text x="456" y="685" class="body" font-family="Liberation Sans, Arial, sans-serif">admitted graph operations</text>
+</g>
+<g id="events"><rect class="node evidence" x="832" y="602" width="328" height="104"/>
+<rect x="844" y="616" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="855.5" y="633" class="tag" font-family="Liberation Sans, Arial, sans-serif">E</text>
+<text x="876" y="634" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Typed events</text>
+<text x="848" y="660" class="body" font-family="Liberation Sans, Arial, sans-serif">progress · results · resources</text>
+<text x="848" y="685" class="body" font-family="Liberation Sans, Arial, sans-serif">bounded shared event plane</text>
+</g>
+<g id="reports"><rect class="node evidence" x="40" y="780" width="320" height="104"/>
+<rect x="52" y="794" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="63.5" y="811" class="tag" font-family="Liberation Sans, Arial, sans-serif">E</text>
+<text x="84" y="812" class="node-title" font-family="Liberation Sans, Arial, sans-serif">Observation clients</text>
+<text x="56" y="838" class="body" font-family="Liberation Sans, Arial, sans-serif">host logs · status · evidence</text>
+<text x="56" y="863" class="body" font-family="Liberation Sans, Arial, sans-serif">no execution ownership</text>
+</g>
+<g id="backend"><rect class="node physical" x="440" y="796" width="720" height="72"/>
+<path d="M445 801V863" stroke="#525252" stroke-width="3"/>
+<rect x="452" y="810" width="23" height="23" fill="#f7f7f7" stroke="#525252"/>
+<text x="463.5" y="827" class="tag" font-family="Liberation Sans, Arial, sans-serif">P</text>
+<text x="484" y="828" class="node-title" font-family="Liberation Sans, Arial, sans-serif">CPU / CUDA backends</text>
+<text x="456" y="854" class="body" font-family="Liberation Sans, Arial, sans-serif">buffers · admitted kernels · submission · synchronization</text>
+</g>
+<rect x="45" y="66" width="70.96" height="21" fill="#fff"/><text x="48" y="82" class="label" font-family="Liberation Sans, Arial, sans-serif">Sources</text>
+<rect x="437" y="66" width="318" height="21" fill="#fff"/><text x="440" y="82" class="label" font-family="Liberation Sans, Arial, sans-serif">Consumers are outside model execution</text>
+<path d="M32 905H1168" stroke="#a3a3a3"/>
+<text x="32" y="931" class="legend" font-family="Liberation Sans, Arial, sans-serif">X external · I interface · S semantic · R runtime · M mutable · P physical · E evidence</text>
+<path class="edge" d="M32 962h36" stroke-dasharray="none" marker-end="url(#solid)"/>
+<text x="78" y="967" class="legend" font-family="Liberation Sans, Arial, sans-serif">data / result</text>
+<path class="edge" d="M260 962h36" stroke-dasharray="9 5" marker-end="url(#open)"/>
+<text x="306" y="967" class="legend" font-family="Liberation Sans, Arial, sans-serif">control / request</text>
+<path class="edge" d="M488 962h36" stroke-dasharray="9 4 2 4" marker-end="none"/>
+<text x="534" y="967" class="legend" font-family="Liberation Sans, Arial, sans-serif">identity binding</text>
+<path class="edge" d="M716 962h36" stroke-dasharray="2 5" marker-end="url(#open)"/>
+<text x="762" y="967" class="legend" font-family="Liberation Sans, Arial, sans-serif">observation</text>
 </svg>

@@ -1,0 +1,43 @@
+{
+  "schema": 1, "number": 1, "title": "System context and execution ownership",
+  "description": "Provider sources feed the offline acquisition and compiler owners. CLI and loopback HTTP consumers address one persistent host with generation-bound engines and independent sessions. Admitted graph operations reach CPU or CUDA; typed events observe execution without owning it.",
+  "size": [1200, 1000], "owner": "docs/architecture/system.md",
+  "authority": ["src/server/engine.c", "src/cli/io/client.c", "docs/contracts/local-protocol.md", "docs/architecture/compilation.md", "docs/architecture/runtime.md"],
+  "panels": [
+    {"box": [24, 226, 352, 496], "title": "a  Offline lane"},
+    {"box": [408, 226, 768, 496], "title": "b  Persistent yvex serve"},
+    {"box": [408, 746, 768, 138], "title": "c  Backend"}
+  ],
+  "nodes": [
+    {"id":"providers","box":[40,100,320,104],"kind":"external","title":"Provider sources","lines":["weights · config · tokenizer","repository / revision / bytes"]},
+    {"id":"applications","box":[440,100,320,104],"kind":"external","title":"SDKs / applications","lines":["local compatibility clients","application policy stays here"]},
+    {"id":"cli","box":[832,100,328,104],"kind":"interface","title":"yvex CLI","lines":["chat + host / model / session","REPLAI edits; YVEX interprets"],"code":[0]},
+    {"id":"source","box":[40,276,320,104],"kind":"semantic","title":"Source acquisition","lines":["inventory · provenance · trust","immutable snapshot identity"]},
+    {"id":"http","box":[440,276,320,104],"kind":"interface","title":"HTTP adapter","lines":["bounded OpenAI compatibility","loopback; same host authority"]},
+    {"id":"protocol","box":[832,276,328,104],"kind":"interface","title":"Typed local protocol","lines":["native UDS · exact generation","multipart requests / results"]},
+    {"id":"compiler","box":[40,434,320,120],"kind":"semantic","title":"Compiler / package","lines":["family lowering · physical plan","artifact + binding admission","current deployment checks"]},
+    {"id":"engines","box":[440,462,320,104],"kind":"runtime","title":"Engine generations","lines":["admitted plans and resources","explicit load / unload / leases"]},
+    {"id":"sessions","box":[832,462,328,104],"kind":"mutable","title":"Sessions / state","lines":["generation-bound continuity","independent transactions"]},
+    {"id":"package","box":[40,602,320,104],"kind":"semantic","title":"Artifact + binding","lines":["authenticated package facts","READY is current compatibility"]},
+    {"id":"work","box":[440,602,320,104],"kind":"runtime","title":"Execution scheduling","lines":["ready work · real rows","admitted graph operations"]},
+    {"id":"events","box":[832,602,328,104],"kind":"evidence","title":"Typed events","lines":["progress · results · resources","bounded shared event plane"]},
+    {"id":"reports","box":[40,780,320,104],"kind":"evidence","title":"Observation clients","lines":["host logs · status · evidence","no execution ownership"]},
+    {"id":"backend","box":[440,796,720,72],"kind":"physical","title":"CPU / CUDA backends","lines":["buffers · admitted kernels · submission · synchronization"]}
+  ],
+  "edges": [
+    {"kind":"flow","points":[[200,204],[200,276]]},
+    {"kind":"flow","points":[[200,380],[200,434]]},
+    {"kind":"flow","points":[[200,554],[200,602]]},
+    {"kind":"control","points":[[600,204],[600,216],[744,216],[744,276]]},
+    {"kind":"control","points":[[996,204],[996,276]]},
+    {"kind":"control","points":[[760,328],[832,328]]},
+    {"kind":"control","points":[[996,380],[996,426],[792,426],[792,514],[760,514]]},
+    {"kind":"flow","points":[[360,654],[392,654],[392,514],[440,514]]},
+    {"kind":"bind","points":[[760,540],[832,540]]},
+    {"kind":"control","points":[[600,566],[600,602]]},
+    {"kind":"flow","points":[[600,706],[600,796]]},
+    {"kind":"observe","points":[[760,654],[832,654]]},
+    {"kind":"observe","points":[[996,706],[996,736],[200,736],[200,780]]}
+  ],
+  "labels": [{"at":[48,82],"text":"Sources"},{"at":[440,82],"text":"Consumers are outside model execution"}]
+}

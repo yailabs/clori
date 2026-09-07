@@ -79,16 +79,13 @@ contention, repeated samples, and a declared acceptance policy.
 
 ## Classify evidence
 
-These boundaries are not interchangeable:
+![Evidence ladder from authenticated source to release, with explicit non-equivalences between inventory, component numerics, load, generation, quality and benchmark claims.](../diagrams/evidence_promotion.svg)
 
-| Evidence obtained | Does not establish |
-| --- | --- |
-| Source recognition | Architecture admission |
-| Architecture admission | Executable artifact |
-| Component numerical match | Whole-model conformance |
-| Successful load | Generation correctness |
-| Characterization | Benchmark qualification |
-| Green software QA | Complete semantic ownership or downstream safety |
+*Figure 7 — Claim strength and promotion barriers. Each stronger claim needs its
+own evidence; this is not a mandatory chronological test schedule. Independent
+component numerics do not establish whole-model conformance, and software QA
+cannot replace a missing semantic or release gate. No completed gate is implied.*
+[Editable source](../diagrams/evidence_promotion.json).
 
 Promote only to the lowest stage actually demonstrated. Preserve explicit
 refusals and gaps. Missing evidence cannot be converted to a pass by a renderer,
