@@ -5,6 +5,9 @@
 #include <unistd.h>
 
 #include <yvex/api.h>
+#include <yvex/internal/model_lifecycle.h>
+#include <yvex/internal/core.h>
+#include <yvex/internal/source_distribution.h>
 
 #include "tests/test.h"
 
@@ -714,6 +717,96 @@ static int test_publication_identity(void)
     return 0;
 }
 
+static int test_local_eviction(void)
+{
+    const char *root = "build/tests/model-registry/estate";
+    const char *path = "build/tests/model-registry/eviction.local.json";
+    const char *payload = "build/tests/model-registry/estate/representations/fixture/model.gguf";
+    const char *cache = "build/tests/model-registry/estate/cache/verification";
+    yvex_model_registry_options options = {.registry_path = path};
+    yvex_local_catalog_options catalog = {.registry_path = path, .models_root = root};
+    yvex_model_registry *registry = NULL;
+    yvex_model_library *library = NULL;
+    yvex_model_registry_entry entry = {0};
+    yvex_model_publication remote = {0};
+    yvex_artifact *pin = NULL;
+    yvex_artifact_options open = {payload, 1, 0};
+    yvex_artifact_file_identity identity;
+    yvex_artifact_reopen_lease receipt;
+    yvex_model_storage_result result;
+    yvex_error err;
+    YVEX_TEST_ASSERT(yvex_core_mkdir_parent(payload, "test", &err) == YVEX_OK &&
+        write_file(payload, "artifact") && write_file(path,
+        "{\"schema\":\"yvex.models.local.v8\",\"models\":[],\"publications\":[]}"), "eviction fixture");
+    YVEX_TEST_ASSERT(yvex_artifact_identity_read(payload, &identity, &err) == YVEX_OK &&
+        yvex_model_registry_open(&registry, &options, &err) == YVEX_OK, "establish actual fixture bytes");
+    entry.schema_version = YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT;
+    entry.alias = "deepseek4-v4-flash-eviction-fixture"; entry.family = "deepseek4"; entry.model = "v4-flash";
+    entry.path = payload; entry.sha256 = identity.sha256; entry.file_size = identity.file_size;
+    entry.format = "gguf";
+    YVEX_TEST_ASSERT(yvex_model_registry_add(registry, &entry, &err) == YVEX_OK &&
+        yvex_model_registry_save(registry, path, &err) == YVEX_OK &&
+        yvex_model_library_open(&library, &catalog, &err) == YVEX_OK, "open unique local fixture");
+    YVEX_TEST_ASSERT(yvex_model_local_evict(library, 0u, 0u, root, 0, &result, &err) == YVEX_ERR_STATE &&
+        access(payload, F_OK) == 0, "unpublished unique bytes cannot be evicted");
+    yvex_model_library_close(library); library = NULL;
+    remote.schema_version = YVEX_MODEL_PUBLICATION_SCHEMA_V1;
+    snprintf(remote.logical_identity, sizeof(remote.logical_identity), "%s", "family:deepseek4/model:v4-flash");
+    snprintf(remote.artifact_identity, sizeof(remote.artifact_identity), "%s", identity.sha256);
+    snprintf(remote.remote_sha256, sizeof(remote.remote_sha256), "%s", identity.sha256);
+    snprintf(remote.provider, sizeof(remote.provider), "%s", "huggingface");
+    snprintf(remote.repository, sizeof(remote.repository), "%s", "fixture/release");
+    snprintf(remote.revision, sizeof(remote.revision), "%s", "1111111111111111111111111111111111111111");
+    snprintf(remote.filename, sizeof(remote.filename), "%s", "model.gguf");
+    snprintf(remote.manifest_filename, sizeof(remote.manifest_filename), "%s", "release.json");
+    snprintf(remote.manifest_sha256, sizeof(remote.manifest_sha256), "%s", identity.sha256);
+    remote.size_bytes = identity.file_size;
+    YVEX_TEST_ASSERT(yvex_model_registry_publication_add(registry, &remote, &err) == YVEX_OK &&
+        yvex_model_registry_save(registry, path, &err) == YVEX_OK &&
+        yvex_model_library_open(&library, &catalog, &err) == YVEX_OK, "bind exact remote fixture identity");
+    YVEX_TEST_ASSERT(yvex_model_local_evict(library, 0u, 0u, root, 0, &result, &err) == YVEX_ERR_STATE,
+                     "size and recorded hash alone do not prove unchanged local bytes");
+    YVEX_TEST_ASSERT(yvex_artifact_open(&pin, &open, &err) == YVEX_OK &&
+        yvex_artifact_identity_read_open(pin, &identity, &err) == YVEX_OK &&
+        yvex_artifact_reopen_lease_publish(pin, identity.sha256, cache, &receipt, &err) == YVEX_OK,
+                     "pin the same artifact handle used by production runtime");
+    YVEX_TEST_ASSERT(yvex_model_local_evict(library, 0u, 0u, root, 0, &result, &err) == YVEX_ERR_STATE &&
+        access(payload, F_OK) == 0, "active artifact handle prevents destructive eviction");
+    yvex_artifact_close(pin); pin = NULL;
+    YVEX_TEST_ASSERT(yvex_model_local_evict(library, 0u, 0u, root, 1, &result, &err) == YVEX_OK &&
+        !result.changed && result.local && access(payload, F_OK) == 0, "eviction dry-run preserves bytes");
+    YVEX_TEST_ASSERT(write_file(payload, "mutation") &&
+        yvex_model_local_evict(library, 0u, 0u, root, 0, &result, &err) == YVEX_ERR_STATE,
+                     "same-size mutation invalidates verification before deletion");
+    YVEX_TEST_ASSERT(write_file(payload, "artifact") && yvex_artifact_open(&pin, &open, &err) == YVEX_OK &&
+        yvex_artifact_identity_read_open(pin, &identity, &err) == YVEX_OK &&
+        yvex_artifact_reopen_lease_publish(pin, identity.sha256, cache, &receipt, &err) == YVEX_OK,
+                     "reverify restored fixture bytes explicitly");
+    yvex_artifact_close(pin);
+    YVEX_TEST_ASSERT(yvex_model_local_evict(library, 0u, 0u, root, 0, &result, &err) == YVEX_OK &&
+        result.changed && !result.local && result.logical_bytes == 8u &&
+        yvex_model_local_evict(library, 0u, 0u, root, 0, &result, &err) == YVEX_OK && !result.changed,
+                     "eviction converges while keeping exact remote identity");
+    YVEX_TEST_ASSERT(yvex_model_library_publication_count(library, 0u) == 1u &&
+        !yvex_model_library_artifact_is_local(library, 0u, 0u), "catalog survives local eviction");
+    yvex_model_library_close(library);
+    yvex_model_registry_close(registry);
+    return 0;
+}
+
+static int test_staging_collision(void)
+{
+    const char *source = "build/tests/staging-source.gguf";
+    const char *destination = "build/tests/staging-existing.gguf";
+    yvex_error err;
+    YVEX_TEST_ASSERT(write_file(source, "source") && write_file(destination, "existing"), "staging fixtures");
+    YVEX_TEST_ASSERT(yvex_source_stage_file(source, destination, &err) != YVEX_OK &&
+        file_contains(destination, "existing"), "failed exclusive stage must preserve another owner's file");
+    (void)unlink(source);
+    (void)unlink(destination);
+    return 0;
+}
+
 int yvex_test_model_registry(void)
 {
     if (test_alias_validation() != 0) return 1;
@@ -724,6 +817,8 @@ int yvex_test_model_registry(void)
     if (test_logical_model_library() != 0) return 1;
     if (test_working_set_policy() != 0) return 1;
     if (test_publication_identity() != 0) return 1;
+    if (test_local_eviction() != 0) return 1;
+    if (test_staging_collision() != 0) return 1;
     if (test_invalid_args() != 0) return 1;
     return 0;
 }

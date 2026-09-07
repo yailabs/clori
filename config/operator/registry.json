@@ -898,6 +898,7 @@
         "value_type": "enum"
       },
       {"name": "--variant", "takes_value": true, "value_type": "text"},
+      {"name": "--refresh", "takes_value": false, "value_type": "boolean"},
       {"name": "--revision", "takes_value": true, "value_type": "text"},
       {"name": "--family", "takes_value": true, "value_type": "name"},
       {"name": "--name", "takes_value": true, "value_type": "name"},
@@ -981,6 +982,20 @@
         "takes_value": false,
         "value_type": "boolean"
       }
+    ],
+    "cli_model_storage": [
+      {"name": "--models-root", "takes_value": true, "value_type": "path"},
+      {"name": "--registry", "takes_value": true, "value_type": "path"},
+      {"name": "--include-caches", "takes_value": false, "value_type": "boolean"},
+      {"name": "--json", "takes_value": false, "value_type": "boolean"}
+    ],
+    "cli_model_evict": [
+      {"name": "--representation", "takes_value": true, "value_type": "text"},
+      {"name": "--variant", "takes_value": true, "value_type": "text"},
+      {"name": "--models-root", "takes_value": true, "value_type": "path"},
+      {"name": "--registry", "takes_value": true, "value_type": "path"},
+      {"name": "--dry-run", "takes_value": false, "value_type": "boolean"},
+      {"name": "--json", "takes_value": false, "value_type": "boolean"}
     ],
     "cli_model_push": [
       {
@@ -4089,6 +4104,33 @@
       "operation_id": "model.show",
       "result_schema": "yvex.model.v3",
       "summary": "Explain one model's exact origin, representations, and runtime lineage.",
+      "visibility": "product-default"
+    },
+    {
+      "adapter_argv": ["models", "storage"],
+      "adapter_id": "models",
+      "architectural_plane": "System",
+      "arguments": [{"completion_provider": "none", "multiplicity": "one", "name": "MODEL",
+                     "required": true, "validator": "syntax.delegated", "value_type": "text"}],
+      "command_path": ["model", "storage"],
+      "flag_sets": ["cli_model_storage"],
+      "lane": "offline-engine",
+      "operation_id": "model.storage",
+      "summary": "Inspect selected model disk allocation; optionally reconcile shared provider and runtime caches.",
+      "visibility": "product-default"
+    },
+    {
+      "adapter_argv": ["models", "evict"],
+      "adapter_id": "models",
+      "architectural_plane": "System",
+      "arguments": [{"completion_provider": "none", "multiplicity": "one", "name": "MODEL",
+                     "required": true, "validator": "syntax.delegated", "value_type": "text"}],
+      "command_path": ["model", "evict"],
+      "flag_sets": ["cli_model_evict"],
+      "lane": "offline-engine",
+      "operation_id": "model.evict",
+      "side_effects": "removes verified rehydratable managed bytes; retains catalog identity",
+      "summary": "Evict one unloaded managed representation with exact verified remote identity.",
       "visibility": "product-default"
     },
     {

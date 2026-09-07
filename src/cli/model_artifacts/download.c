@@ -6,6 +6,7 @@
  * facts do not make artifacts generation-capable.
  */
 #include "src/cli/model_artifacts/private.h"
+#include <yvex/internal/provider.h>
 
 #include <ctype.h>
 #include <dirent.h>
@@ -767,6 +768,7 @@ static int provider_stream_loop(provider_stream_state *state)
 }
 
 static int provider_process_run_streaming(const char *const *args,
+                                          const char *token_value,
                                           const char *stdout_log_path,
                                           const char *stderr_log_path,
                                           const yvex_cli_models_download_options *options,
@@ -834,6 +836,8 @@ static int provider_process_run_streaming(const char *const *args,
         close(state.stderr_pipe[1]);
         close(state.stdout_log_fd);
         close(state.stderr_log_fd);
+        if (yvex_provider_child_environment(options->auth_mode == YVEX_MODEL_DOWNLOAD_AUTH_NEVER,
+                                             token_value) != 0) _exit(127);
         execv(args[0], (char *const *)args);
         _exit(127);
     }
@@ -881,9 +885,11 @@ static int model_download_prepare_cache(const yvex_model_download_report *report
     struct stat status;
     ssize_t length;
     int rc;
+    const char *leaf = strrchr(report->local_source_dir, '/');
+    leaf = leaf ? leaf + 1 : report->revision;
 
     if (snprintf(cache, sizeof(cache), "%s/cache/hf/%s/%s",
-                 report->models_root, report->repo_id, report->revision) >= (int)sizeof(cache) ||
+                 report->models_root, report->repo_id, leaf) >= (int)sizeof(cache) ||
         snprintf(link_path, sizeof(link_path), "%s/.cache", report->local_source_dir) >=
             (int)sizeof(link_path) ||
         snprintf(anchor, sizeof(anchor), "%s/.anchor", cache) >= (int)sizeof(anchor)) {
@@ -951,16 +957,12 @@ int model_download_run_hf(const yvex_cli_models_download_options *options,
     if (options->dry_run) {
         args[n++] = "--dry-run";
     }
-    if (token_value && token_value[0]) {
-        args[n++] = "--token";
-        args[n++] = token_value;
-    }
     args[n] = NULL;
 
     effective_mode = model_download_effective_progress_mode(options->progress_mode);
     model_download_print_start_progress(report, effective_mode, options->dry_run);
     return provider_process_run_streaming(
-        args,
+        args, token_value,
         options->dry_run ? "/dev/null" : report->stdout_log_path,
         options->dry_run ? "/dev/null" : report->stderr_log_path,
         options, effective_mode, options->dry_run ? 0ull : options->tick_seconds,

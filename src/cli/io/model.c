@@ -207,13 +207,11 @@ static int engine_catalog_fetch(yvex_server_engine_summary *engines,
     return rc;
 }
 
-static int loaded_candidate_matches(const loaded_model_candidate *candidate,
+static int candidate_identity_matches(const loaded_model_candidate *candidate,
                                     const char *model, const char *variant,
                                     int text_only)
 {
-    if (candidate->engine.state != YVEX_SERVER_ENGINE_LOADED ||
-        !candidate->engine.execution_ready ||
-        (text_only && candidate->engine.engine_kind != YVEX_SERVER_ENGINE_TEXT)) return 0;
+    if (text_only && candidate->engine.engine_kind != YVEX_SERVER_ENGINE_TEXT) return 0;
     if (model && strcmp(candidate->model.model_selector, model) &&
         strcmp(candidate->model.model_name, model) &&
         strcmp(candidate->model.runtime_target, model) &&
@@ -225,6 +223,13 @@ static int loaded_candidate_matches(const loaded_model_candidate *candidate,
         strcmp(candidate->engine.alias, variant) &&
         strcmp(candidate->engine.artifact_identity, variant)) return 0;
     return 1;
+}
+
+static int loaded_candidate_matches(const loaded_model_candidate *candidate,
+                                      const char *model, const char *variant, int text_only)
+{
+    return candidate->engine.state == YVEX_SERVER_ENGINE_LOADED && candidate->engine.execution_ready &&
+           candidate_identity_matches(candidate, model, variant, text_only);
 }
 
 static unsigned long long loaded_candidates_build(
@@ -393,6 +398,37 @@ int yvex_cli_model_load_command(int argc, char **argv, size_t consumed)
     return 0;
 }
 
+static int model_unloaded_hit(const model_runtime_options *options,
+                               yvex_cli_model_profile_selection *model,
+                               yvex_server_engine_summary *engine, int *handled)
+{
+    yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
+    loaded_model_candidate selected = {0};
+    unsigned long long count = 0u, index, matches = 0u;
+    yvex_error err;
+    int rc;
+    *handled = 0;
+    if (!options->model) return 0;
+    rc = engine_catalog_fetch(engines, YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES, &count, &err);
+    if (rc != YVEX_OK) { *handled = 1; return model_runtime_error(&err); }
+    for (index = 0u; index < count; ++index) {
+        loaded_model_candidate candidate = {0};
+        candidate.engine = engines[index];
+        if (yvex_cli_model_profile_resolve_alias(candidate.engine.alias, &candidate.model))
+            model_selection_from_engine(&candidate.engine, &candidate.model);
+        if (!candidate_identity_matches(&candidate, options->model, options->variant, 0)) continue;
+        if (candidate.engine.state != YVEX_SERVER_ENGINE_UNLOADED) return 0;
+        selected = candidate;
+        matches++;
+    }
+    if (matches != 1u) return 0;
+    *handled = 1;
+    *model = selected.model;
+    rc = model_request(YVEX_CLIENT_OP_ENGINE_UNLOAD, selected.engine.alias,
+                       selected.engine.generation, engine, &err);
+    return rc == YVEX_OK ? 0 : model_runtime_error(&err);
+}
+
 int yvex_cli_model_unload_command(int argc, char **argv, size_t consumed)
 {
     model_runtime_options options;
@@ -400,8 +436,16 @@ int yvex_cli_model_unload_command(int argc, char **argv, size_t consumed)
     yvex_cli_engine_binding binding;
     yvex_server_engine_summary engine;
     yvex_error err;
+    int handled = 0;
     int rc = model_runtime_options_parse(argc, argv, consumed, &options);
     if (rc) return rc;
+    rc = model_unloaded_hit(&options, &model, &engine, &handled);
+    if (handled) {
+        if (rc) return rc;
+        if (options.json) model_runtime_json("unload", &model, &engine);
+        else model_runtime_human("UNLOADED", &model, &engine);
+        return 0;
+    }
     rc = yvex_cli_model_loaded_select(options.model, options.variant, 0, &binding,
                                       &model);
     if (rc) return rc;

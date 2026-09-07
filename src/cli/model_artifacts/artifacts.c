@@ -480,7 +480,7 @@ static void artifacts_scan_dynamic_sidecar_dir(
         }
         if (model_download_read_identity_file(path, target, family, &resolved) ||
             model_download_resolve_downloaded_target(target, operator_paths,
-                                                     &resolved, &err)) {
+                                                     &resolved, &err) > 0) {
             artifacts_add_dynamic_target(operator_paths, rows,
                                          resolved.target_id[0] ? resolved.target_id : target,
                                          resolved.family[0] ? resolved.family : family,

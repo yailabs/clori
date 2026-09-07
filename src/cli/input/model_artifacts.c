@@ -4,12 +4,14 @@
  * Parsers perform no artifact IO and call no domain builders. Argument parsing is not artifact
  * emission or runtime support.
  */
+#include <dirent.h>
 #include "src/cli/input/private.h"
 #include "src/cli/model_artifacts/private.h"
 #include <yvex/internal/source_catalog.h>
 
 #include <ctype.h>
 #include <signal.h>
+#include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -868,37 +870,12 @@ long long model_download_json_i64_field(const char *text, const char *key) {
     return strtoll(p, NULL, 10);
 }
 
-static int model_download_identity_family_hint(const char *target, char *family,
-                                               size_t family_cap) {
-    if (family && family_cap > 0u)
-        family[0] = '\0';
-    if (!target || !family || family_cap == 0u)
-        return 0;
-    if (model_download_name_starts_with(target, "qwen")) {
-        snprintf(family, family_cap, "qwen");
-        return 1;
-    }
-    if (model_download_name_starts_with(target, "gemma")) {
-        snprintf(family, family_cap, "gemma");
-        return 1;
-    }
-    if (model_download_name_starts_with(target, "deepseek")) {
-        snprintf(family, family_cap, "deepseek");
-        return 1;
-    }
-    if (model_download_name_starts_with(target, "glm")) {
-        snprintf(family, family_cap, "glm");
-        return 1;
-    }
-    return 0;
-}
-
 int model_download_identity_paths(const char *target, const char *family,
                                   const yvex_operator_paths *operator_paths,
                                   yvex_model_download_resolved_target *out, yvex_error *err) {
     char reports_family_dir[YVEX_PATH_CAP];
     char registry_family_dir[YVEX_PATH_CAP];
-    char file_name[256];
+    char file_name[320];
     int rc;
 
     if (!target || !family || !operator_paths || !out)
@@ -931,6 +908,26 @@ int model_download_identity_paths(const char *target, const char *family,
                         reports_family_dir, file_name, err, "models_download_identity");
     }
     return rc == YVEX_OK;
+}
+
+static int download_record_patterns(const char *text, const char *key,
+                                      char patterns[YVEX_MODEL_DOWNLOAD_PATTERN_CAP][1024],
+                                      unsigned int *count)
+{
+    const char *value = yvex_json_probe_field_value(text, key);
+    yvex_json json;
+    yvex_json_iter array;
+    yvex_json_item item;
+    *count = 0u;
+    if (!value) return 1; /* Older records used the default selection. */
+    yvex_json_init(&json, value, strlen(value));
+    if (!yvex_json_iter_begin(&json, &array, YVEX_JSON_COLLECTION_ARRAY)) return 0;
+    while ((item = yvex_json_array_value(&array)) == YVEX_JSON_ITEM_READY) {
+        if (*count >= YVEX_MODEL_DOWNLOAD_PATTERN_CAP ||
+            !yvex_json_string(&json, patterns[*count], sizeof(patterns[0]))) return 0;
+        (*count)++;
+    }
+    return item == YVEX_JSON_ITEM_END;
 }
 
 int model_download_read_identity_file(const char *path, const char *target, const char *family,
@@ -975,6 +972,10 @@ int model_download_read_identity_file(const char *path, const char *target, cons
         yvex_json_probe_string_field(buf, "path", parsed_source, sizeof(parsed_source));
     }
 
+    (void)yvex_json_probe_string_field(buf, "source_payload_digest",
+                                       out->source_payload_digest, sizeof(out->source_payload_digest));
+    if (!download_record_patterns(buf, "include_patterns", out->includes, &out->include_count) ||
+        !download_record_patterns(buf, "exclude_patterns", out->excludes, &out->exclude_count)) return 0;
     snprintf(out->target_id, sizeof(out->target_id), "%s",
              parsed_target[0] ? parsed_target : target);
     snprintf(out->family, sizeof(out->family), "%s", parsed_family[0] ? parsed_family : family);
@@ -991,74 +992,77 @@ int model_download_read_identity_file(const char *path, const char *target, cons
     return 1;
 }
 
+static int model_download_selected_identity(const char *target, const char *family,
+                                             const yvex_operator_paths *paths,
+                                             yvex_model_download_resolved_target *out,
+                                             yvex_error *err)
+{
+    char directory[YVEX_PATH_CAP];
+    DIR *stream;
+    struct dirent *entry;
+    int found = 0;
+    if (path_join2(directory, sizeof(directory), paths->registry_root, family, err,
+                   "source.acquisition.resolve") != YVEX_OK) return 0;
+    stream = opendir(directory);
+    if (!stream) return 0;
+    while ((entry = readdir(stream)) != NULL) {
+        const char *suffix = ".download.json";
+        size_t length = strlen(entry->d_name), ending = strlen(suffix);
+        char stem[256];
+        yvex_model_download_resolved_target candidate = {0};
+        if (length <= ending || strcmp(entry->d_name + length - ending, suffix) ||
+            length - ending >= sizeof(stem)) continue;
+        memcpy(stem, entry->d_name, length - ending);
+        stem[length - ending] = '\0';
+        if (!model_download_identity_paths(stem, family, paths, &candidate, err) ||
+            !model_download_read_identity_file(candidate.registry_path, target, family, &candidate)) continue;
+        if (found && strcmp(out->local_source_dir, candidate.local_source_dir)) {
+            closedir(stream);
+            memset(out, 0, sizeof(*out));
+            yvex_error_set(err, YVEX_ERR_STATE, "source.acquisition.resolve",
+                           "multiple acquisitions match; inspect exact source records with model show");
+            return -1;
+        }
+        *out = candidate;
+        found = 1;
+    }
+    closedir(stream);
+    return found;
+}
+
 int model_download_resolve_downloaded_target(const char *target,
                                              const yvex_operator_paths *operator_paths,
                                              yvex_model_download_resolved_target *out,
-                                             yvex_error *err) {
-    static const char *families[] = {
-        "qwen", "qwen3_5", "gemma", "deepseek", "deepseek4", "glm",
-        "minimax-h3", "mamba2", "unknown", "github"
-    };
-    char hinted_family[32];
-    unsigned long pass;
-
-    if (!out)
-        return 0;
+                                             yvex_error *err)
+{
+    DIR *directory;
+    struct dirent *entry;
+    int found = 0;
+    if (!out || !target || !target[0] || !operator_paths) return 0;
     memset(out, 0, sizeof(*out));
-    if (!target || !target[0] || !operator_paths)
-        return 0;
-    model_download_identity_family_hint(target, hinted_family, sizeof(hinted_family));
-
-    for (pass = 0; pass < 2u; ++pass) {
-        unsigned long i;
-        for (i = 0; i < sizeof(families) / sizeof(families[0]); ++i) {
-            const char *family = families[i];
-            yvex_model_download_resolved_target candidate;
-
-            if (pass == 0) {
-                if (!hinted_family[0] || strcmp(family, hinted_family) != 0) {
-                    continue;
-                }
-            } else if (hinted_family[0] && strcmp(family, hinted_family) == 0) {
-                continue;
-            }
-
-            memset(&candidate, 0, sizeof(candidate));
-            if (!model_download_identity_paths(target, family, operator_paths, &candidate, err)) {
-                continue;
-            }
-            if (model_download_read_identity_file(candidate.registry_path, target, family,
-                                                  &candidate) ||
-                model_download_read_identity_file(candidate.download_report_path, target, family,
-                                                  &candidate) ||
-                model_download_read_identity_file(candidate.manifest_path, target, family,
-                                                  &candidate)) {
-                if (!candidate.local_source_dir[0] && strcmp(candidate.provider, "github") != 0)
-                    (void)yvex_source_provider_path(candidate.local_source_dir,
-                        sizeof(candidate.local_source_dir), operator_paths->models_root,
-                        candidate.repo_id, candidate.revision);
-                if (!candidate.target_id[0]) {
-                    snprintf(candidate.target_id, sizeof(candidate.target_id), "%s", target);
-                }
-                if (!candidate.family[0]) {
-                    snprintf(candidate.family, sizeof(candidate.family), "%s", family);
-                }
-                if (!candidate.provider[0]) {
-                    snprintf(candidate.provider, sizeof(candidate.provider), "huggingface");
-                }
-                if (!candidate.revision[0]) {
-                    snprintf(candidate.revision, sizeof(candidate.revision), "main");
-                }
-                if (!candidate.local_name[0]) {
-                    snprintf(candidate.local_name, sizeof(candidate.local_name), "%s", target);
-                }
-                *out = candidate;
-                out->found = 1;
-                return 1;
-            }
+    directory = opendir(operator_paths->registry_root);
+    if (!directory) return 0;
+    while ((entry = readdir(directory)) != NULL) {
+        char path[YVEX_PATH_CAP];
+        struct stat status;
+        yvex_model_download_resolved_target candidate = {0};
+        int selected;
+        if (entry->d_name[0] == '.' || !model_download_family_valid(entry->d_name) ||
+            !strcmp(entry->d_name, "runtime") || !strcmp(entry->d_name, "provenance") ||
+            path_join2(path, sizeof(path), operator_paths->registry_root, entry->d_name, err,
+                       "source.acquisition.resolve") != YVEX_OK ||
+            lstat(path, &status) != 0 || !S_ISDIR(status.st_mode)) continue;
+        selected = model_download_selected_identity(target, entry->d_name, operator_paths, &candidate, err);
+        if (selected < 0 || (selected && found && strcmp(out->local_source_dir, candidate.local_source_dir))) {
+            found = -1;
+            memset(out, 0, sizeof(*out));
+            yvex_error_set(err, YVEX_ERR_STATE, "source.acquisition.resolve", "ambiguous acquisition target");
+            break;
         }
+        if (selected) { *out = candidate; out->found = 1; found = 1; }
     }
-    return 0;
+    closedir(directory);
+    return found;
 }
 
 static int fullmodel_options_begin(int arg_count, char **args,

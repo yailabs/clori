@@ -41,6 +41,8 @@ int yvex_model_catalog_list_command(int arg_count, char **args);
 int yvex_model_catalog_show_command(int arg_count, char **args);
 int yvex_model_catalog_search_local(
     const yvex_cli_model_search_options *options);
+int yvex_model_storage_command(int arg_count, char **args);
+int yvex_model_evict_command(int arg_count, char **args);
 int yvex_model_pull_command(int arg_count, char **args);
 int yvex_model_pull_lifecycle_command(int arg_count, char **args);
 int yvex_model_push_command(int arg_count, char **args);

@@ -6,12 +6,16 @@
  */
 
 #include <yvex/catalog.h>
+#include <yvex/internal/model_lifecycle.h>
+#include <yvex/internal/provider.h>
+#include <yvex/internal/source_distribution.h>
 
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <strings.h>
 
 #include <yvex/internal/core.h>
@@ -44,6 +48,7 @@ struct yvex_remote_catalog {
     unsigned long long representation_capacity;
     unsigned long long *representation_offsets;
     yvex_remote_file *files;
+    char (*file_sha256)[YVEX_SHA256_HEX_CAP];
     unsigned long long file_count;
     unsigned long long file_capacity;
     unsigned long long *file_offsets;
@@ -184,6 +189,7 @@ static int remote_catalog_reserve_files(yvex_remote_catalog *catalog,
                                         unsigned long long required)
 {
     yvex_remote_file *files;
+    char (*identities)[YVEX_SHA256_HEX_CAP];
     unsigned long long capacity;
 
     if (required <= catalog->file_capacity) return 1;
@@ -194,6 +200,9 @@ static int remote_catalog_reserve_files(yvex_remote_catalog *catalog,
     files = realloc(catalog->files, (size_t)capacity * sizeof(*files));
     if (!files) return 0;
     catalog->files = files;
+    identities = realloc(catalog->file_sha256, (size_t)capacity * sizeof(*identities));
+    if (!identities) return 0;
+    catalog->file_sha256 = identities;
     catalog->file_capacity = capacity;
     return 1;
 }
@@ -238,6 +247,7 @@ static yvex_remote_file *remote_catalog_add_file(yvex_remote_catalog *catalog,
         !remote_catalog_reserve_files(catalog, catalog->file_count + 1u))
         return NULL;
     file = &catalog->files[catalog->file_count++];
+    catalog->file_sha256[catalog->file_count - 1u][0] = '\0';
     memset(file, 0, sizeof(*file));
     catalog->models[model_index].available_file_count++;
     return file;
@@ -898,6 +908,23 @@ static int remote_add_file(yvex_remote_catalog *catalog,
     return 1;
 }
 
+static int remote_parse_content_identity(yvex_json *json, char sha256[YVEX_SHA256_HEX_CAP])
+{
+    yvex_json_iter object;
+    yvex_json_item item;
+    char key[YVEX_JSON_KEY_CAP];
+    if (!yvex_json_iter_begin(json, &object, YVEX_JSON_COLLECTION_OBJECT)) return 0;
+    while ((item = yvex_json_object_member(&object, key, sizeof(key))) == YVEX_JSON_ITEM_READY) {
+        if (!strcmp(key, "oid") || !strcmp(key, "sha256")) {
+            char value[YVEX_SHA256_HEX_CAP];
+            if (!yvex_json_string(json, value, sizeof(value))) return 0;
+            if (!yvex_sha256_hex_is_valid(value) || (sha256[0] && strcmp(sha256, value))) return 0;
+            remote_copy(sha256, YVEX_SHA256_HEX_CAP, value);
+        } else if (!yvex_json_skip_value(json)) return 0;
+    }
+    return item == YVEX_JSON_ITEM_END && !object.trailing_separator;
+}
+
 static int remote_parse_file_object(yvex_json *json,
                                     yvex_remote_catalog *catalog,
                                     unsigned long long model_index)
@@ -906,6 +933,7 @@ static int remote_parse_file_object(yvex_json *json,
     yvex_json_item item;
     char key[YVEX_JSON_KEY_CAP];
     char path[YVEX_REMOTE_REPOSITORY_CAP] = "";
+    char sha256[YVEX_SHA256_HEX_CAP] = "";
     unsigned long long size = 0u;
     int size_known = 0;
 
@@ -916,12 +944,17 @@ static int remote_parse_file_object(yvex_json *json,
         } else if (strcmp(key, "size") == 0) {
             if (!yvex_json_u64(json, &size)) return 0;
             size_known = 1;
+        } else if (!strcmp(key, "lfs")) {
+            if (!remote_parse_content_identity(json, sha256)) return 0;
         } else if (!yvex_json_skip_value(json)) {
             return 0;
         }
     }
-    return item == YVEX_JSON_ITEM_END && !object.trailing_separator &&
-           (!path[0] || remote_add_file(catalog, model_index, path, size, size_known));
+    if (item != YVEX_JSON_ITEM_END || object.trailing_separator) return 0;
+    if (!path[0]) return 1;
+    if (!remote_add_file(catalog, model_index, path, size, size_known)) return 0;
+    remote_copy(catalog->file_sha256[catalog->file_count - 1u], YVEX_SHA256_HEX_CAP, sha256);
+    return 1;
 }
 
 /* A numbered, complete shard population and a standalone file in the same directory
@@ -1063,7 +1096,8 @@ static int remote_parse_files(yvex_remote_catalog *catalog,
     return remote_separate_safetensors(catalog, model_index, err);
 }
 
-static int remote_run(const char *const *arguments,
+static int remote_run_policy(const char *const *arguments,
+                             int anonymous, int offline,
                       const char *not_found_reason,
                       char **output,
                       size_t *output_length,
@@ -1098,7 +1132,7 @@ static int remote_run(const char *const *arguments,
     capture.stdout_capacity = REMOTE_OUTPUT_CAP;
     capture.stderr_bytes = stderr_bytes;
     capture.stderr_capacity = REMOTE_ERROR_CAP;
-    rc = yvex_accounts_capture_provider_command(&capture, err);
+    rc = yvex_provider_capture(&capture, anonymous, offline, err);
     if (rc != YVEX_OK) {
         free(stdout_bytes);
         free(stderr_bytes);
@@ -1115,7 +1149,7 @@ static int remote_run(const char *const *arguments,
                                  ? "provider authentication is required"
                                  : strstr(stderr_bytes, "not found") || strstr(stderr_bytes, "404")
                                        ? not_found_reason
-                                       : "provider discovery failed";
+                                       : "provider operation failed";
         free(stdout_bytes);
         free(stderr_bytes);
         return remote_refuse(err, YVEX_ERR_STATE, reason);
@@ -1124,6 +1158,12 @@ static int remote_run(const char *const *arguments,
     *output = stdout_bytes;
     *output_length = capture.stdout_count;
     return YVEX_OK;
+}
+
+static int remote_run(const char *const *arguments, const char *not_found_reason,
+                        char **output, size_t *output_length, yvex_error *err)
+{
+    return remote_run_policy(arguments, 0, 0, not_found_reason, output, output_length, err);
 }
 
 static void remote_normalize_name(char *out, size_t capacity, const char *value)
@@ -1305,9 +1345,9 @@ int yvex_remote_model_search(yvex_remote_catalog **out,
     return YVEX_OK;
 }
 
-int yvex_remote_model_inspect(yvex_remote_catalog **out,
+int yvex_model_remote_inspect_policy(yvex_remote_catalog **out,
                               const yvex_remote_inspect_options *options,
-                              yvex_error *err)
+                              int anonymous, yvex_error *err)
 {
     const char *info_arguments[16];
     const char *file_arguments[16];
@@ -1339,7 +1379,7 @@ int yvex_remote_model_inspect(yvex_remote_catalog **out,
     info_arguments[count++] = "--format";
     info_arguments[count++] = "json";
     info_arguments[count] = NULL;
-    rc = remote_run(info_arguments,
+    rc = remote_run_policy(info_arguments, anonymous, 0,
                     options->revision && options->revision[0]
                         ? "remote revision or reference was not found"
                         : "remote model was not found",
@@ -1376,7 +1416,7 @@ int yvex_remote_model_inspect(yvex_remote_catalog **out,
     file_arguments[count++] = "--format";
     file_arguments[count++] = "json";
     file_arguments[count] = NULL;
-    rc = remote_run(file_arguments,
+    rc = remote_run_policy(file_arguments, anonymous, 0,
                     "remote representation listing was not found",
                     &output, &output_length, err);
     if (rc == YVEX_OK)
@@ -1391,6 +1431,12 @@ int yvex_remote_model_inspect(yvex_remote_catalog **out,
     return YVEX_OK;
 }
 
+int yvex_remote_model_inspect(yvex_remote_catalog **out,
+                              const yvex_remote_inspect_options *options, yvex_error *err)
+{
+    return yvex_model_remote_inspect_policy(out, options, 0, err);
+}
+
 void yvex_remote_catalog_close(yvex_remote_catalog *catalog)
 {
     if (!catalog) return;
@@ -1398,6 +1444,7 @@ void yvex_remote_catalog_close(yvex_remote_catalog *catalog)
     free(catalog->representations);
     free(catalog->representation_offsets);
     free(catalog->files);
+    free(catalog->file_sha256);
     free(catalog->file_offsets);
     free(catalog);
 }
@@ -1410,6 +1457,13 @@ const yvex_remote_file *yvex_remote_catalog_file_at(const yvex_remote_catalog *c
         file_index >= catalog->models[model_index].available_file_count)
         return NULL;
     return &catalog->files[catalog->file_offsets[model_index] + file_index];
+}
+
+const char *yvex_model_remote_file_sha256(const yvex_remote_catalog *catalog,
+                                          unsigned long long model_index, unsigned int file_index)
+{
+    if (!yvex_remote_catalog_file_at(catalog, model_index, file_index)) return NULL;
+    return catalog->file_sha256[catalog->file_offsets[model_index] + file_index];
 }
 
 unsigned long long yvex_remote_catalog_count(const yvex_remote_catalog *catalog)
@@ -1443,4 +1497,62 @@ const yvex_model_representation *yvex_remote_catalog_representation_at(
         return NULL;
     return &catalog->representations[catalog->representation_offsets[model_index] +
                                      representation_index];
+}
+
+/* Ask the provider's supported offline client for its own cache location. */
+static int remote_cached_file(const yvex_model_publication *remote, const char *directory,
+                               int anonymous, int *found, yvex_error *err)
+{
+    const char *arguments[] = {"download", remote->repository, remote->filename,
+                               "--revision", remote->revision, "--quiet", NULL};
+    char *output = NULL;
+    char destination[YVEX_PATH_CAP];
+    size_t length = 0u;
+    int rc;
+    *found = 0;
+    rc = remote_run_policy(arguments, anonymous, 1, "cache entry absent", &output, &length, err);
+    if (rc != YVEX_OK) { yvex_error_clear(err); return YVEX_OK; }
+    while (length && (output[length - 1u] == '\n' || output[length - 1u] == '\r')) output[--length] = '\0';
+    if (!length || output[0] != '/' || strchr(output, '\n') || strchr(output, '\r')) {
+        free(output);
+        return YVEX_OK;
+    }
+    if (snprintf(destination, sizeof(destination), "%s/%s", directory, remote->filename) >= (int)sizeof(destination)) {
+        free(output);
+        return remote_refuse(err, YVEX_ERR_BOUNDS, "cache staging path exceeds bound");
+    }
+    /* Leave an interrupted local-dir transfer to the provider's own recovery path. */
+    if (access(destination, F_OK) == 0) { free(output); return YVEX_OK; }
+    rc = yvex_source_stage_file(output, destination, err);
+    free(output);
+    if (rc == YVEX_OK) *found = 1;
+    return rc;
+}
+
+/* Transfer one pinned representation through the official resumable Hub client. */
+int yvex_model_remote_file_download(const yvex_model_publication *remote,
+                                    const char *directory, int anonymous, yvex_error *err)
+{
+    const char *arguments[10];
+    char *output = NULL;
+    size_t length = 0u;
+    int cached = 0, rc;
+    if (!remote || !directory || strcmp(remote->provider, "huggingface") ||
+        !remote_repository_valid(remote->repository) || !remote_revision_immutable(remote->revision) ||
+        !remote->filename[0] || remote->filename[0] == '/' || strstr(remote->filename, ".."))
+        return remote_refuse(err, YVEX_ERR_INVALID_ARG, "exact remote file and transient directory required");
+    rc = remote_cached_file(remote, directory, anonymous, &cached, err);
+    if (rc != YVEX_OK || cached) return rc;
+    arguments[0] = "download";
+    arguments[1] = remote->repository;
+    arguments[2] = remote->filename;
+    arguments[3] = "--revision";
+    arguments[4] = remote->revision;
+    arguments[5] = "--local-dir";
+    arguments[6] = directory;
+    arguments[7] = "--quiet";
+    arguments[8] = NULL;
+    rc = remote_run_policy(arguments, anonymous, 0, "remote artifact was not found", &output, &length, err);
+    free(output);
+    return rc;
 }

@@ -508,6 +508,9 @@ struct yvex_native_weight_table {
 };
 void yvex_source_manifest_file_list_init(yvex_source_manifest_file_list *list);
 void yvex_source_manifest_file_list_free(yvex_source_manifest_file_list *list);
+/* Explicit manual intake follows file symlinks, never directory symlinks. */
+int yvex_source_manifest_scan_import_files(const char *local_path,
+                                           yvex_source_manifest_file_list *out, yvex_error *err);
 int yvex_source_manifest_scan_files(const char *local_path,
                                     int include_files,
                                     yvex_source_manifest_file_list *out,

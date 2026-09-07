@@ -929,6 +929,13 @@ int yvex_server_engine_manager_load(
     if (!manager || !summary || pthread_mutex_lock(&manager->mutex) != 0)
         return engine_refuse(err, YVEX_ERR_INVALID_ARG,
                              "open manager and summary output are required");
+    slot = engine_find(manager, candidate.alias);
+    if (!manager->closing && slot && slot->state == YVEX_SERVER_ENGINE_LOADED) {
+        *summary = slot->summary;
+        (void)pthread_mutex_unlock(&manager->mutex);
+        return engine_refuse(err, YVEX_ERR_STATE,
+                             "engine already loaded; unload explicitly before changing residency");
+    }
     slot = !manager->closing ? engine_reserve(manager, candidate.alias) : NULL;
     if (!slot) {
         (void)pthread_mutex_unlock(&manager->mutex);
@@ -1160,6 +1167,13 @@ int yvex_server_engine_manager_unload(
         return engine_refuse(err, YVEX_ERR_INVALID_ARG,
                              "loaded engine alias and summary are required");
     engine = engine_find(manager, alias);
+    if (engine && engine->state == YVEX_SERVER_ENGINE_UNLOADED &&
+        (!generation || generation == engine->generation)) {
+        *summary = engine->summary;
+        (void)pthread_mutex_unlock(&manager->mutex);
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
     if (!engine || engine->state != YVEX_SERVER_ENGINE_LOADED ||
         (generation && generation != engine->generation)) {
         (void)pthread_mutex_unlock(&manager->mutex);

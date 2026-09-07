@@ -88,7 +88,9 @@ YVEX_HF_CLI="$fake_hf" YVEX_FAKE_HF_DOWNLOAD_SOURCE="$first/tiny.gguf" \
     --no-native-inventory --audit >"$root/provider.acquire.out"
 grep -F 'status: model-download-pass' "$root/provider.acquire.out" >/dev/null
 grep -F "revision: $provider_revision" "$root/provider.acquire.out" >/dev/null
-acquired="$models/source/hf/$provider_repo/$provider_revision/model-Q4_K_M.gguf"
+acquired_root=$(sed -n 's/^source: //p' "$root/provider.acquire.out")
+test -n "$acquired_root"
+acquired="$acquired_root/model-Q4_K_M.gguf"
 cmp "$first/tiny.gguf" "$acquired"
 "$TINY_COMPILER" "$acquired" "$first/bindings" >"$first/compile.out"
 "$TINY_COMPILER" "$second/tiny.gguf" "$second/bindings" >"$second/compile.out"
@@ -146,6 +148,18 @@ cat >"$registry" <<EOF
 }
 EOF
 
+HOME="$home" "$YVEX_BIN" artifact verify "$artifact" --expect-sha256 "$first_artifact" \
+    >"$root/artifact.verify.out"
+HOME="$home" "$YVEX_BIN" model prepare tiny-executable --models-root "$models" \
+    --registry "$registry" --json >"$root/prepare.first.json"
+HOME="$home" "$YVEX_BIN" model prepare tiny-executable --models-root "$models" \
+    --registry "$registry" --json >"$root/prepare.repeat.json"
+cmp "$root/prepare.first.json" "$root/prepare.repeat.json"
+python3 - "$root/prepare.repeat.json" <<'PYREADY'
+import json, pathlib, sys
+result = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert result["state"] == "READY" and result["changed"] is False
+PYREADY
 HOME="$home" "$YVEX_BIN" model list --models-root "$models" \
     --registry "$registry" --json >"$root/models.offline.json"
 HOME="$home" "$YVEX_BIN" source list --models-root "$models" \
@@ -210,6 +224,12 @@ grep -F 'host ready · Ctrl-C to stop' "$root/server.out" >/dev/null
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" model load tiny-executable \
     --json >"$root/load.first"
+if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" model load tiny-executable \
+    --json >"$root/load.repeat" 2>"$root/load.repeat.err"; then
+    echo 'repeated load unexpectedly created residency' >&2
+    exit 1
+fi
+grep -F 'already loaded' "$root/load.repeat.err" >/dev/null
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" host status --json \
     >"$root/status.loaded.json"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" engine list --json \
@@ -450,6 +470,9 @@ for session in persisted independent adaptive multipart forked reasoning-limit; 
 done
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" model unload tiny-executable \
     --json >"$root/unload.first"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" model unload tiny-executable \
+    --json >"$root/unload.repeat"
+cmp "$root/unload.first" "$root/unload.repeat"
 python3 - "$root/unload.first" "$second_profile" <<'PY'
 import json, pathlib, sys
 item = json.loads(pathlib.Path(sys.argv[1]).read_text())

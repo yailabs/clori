@@ -21,6 +21,7 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/io.h>
 #include <yvex/source.h>
+#include <yvex/internal/provider.h>
 
 static int account_refuse(yvex_error *err,
                           yvex_status status,
@@ -284,8 +285,8 @@ static void accounts_capture_append(char *out,
 }
 
 /* Capture one provider process without persisting or rendering its arguments or output. */
-int yvex_accounts_capture_provider_command(yvex_account_capture_options *options,
-                                           yvex_error *err) {
+int yvex_provider_capture(yvex_account_capture_options *options,
+                           int anonymous, int offline, yvex_error *err) {
     int stdout_pipe[2] = {-1, -1};
     int stderr_pipe[2] = {-1, -1};
     pid_t pid;
@@ -335,6 +336,8 @@ int yvex_accounts_capture_provider_command(yvex_account_capture_options *options
         (void)dup2(stderr_pipe[1], STDERR_FILENO);
         close(stdout_pipe[1]);
         close(stderr_pipe[1]);
+        if (yvex_provider_child_environment(anonymous, NULL) != 0) _exit(127);
+        if (offline && setenv("HF_HUB_OFFLINE", "1", 1) != 0) _exit(127);
         execv(options->args[0], (char *const *)options->args);
         _exit(127);
     }
@@ -684,4 +687,20 @@ int yvex_account_ensure(const yvex_account_ensure_options *options,
     snprintf(out->top_blocker, sizeof(out->top_blocker), "provider-login-required");
     snprintf(out->next, sizeof(out->next), "yvex accounts login %s", out->provider_name);
     return YVEX_OK;
+}
+
+int yvex_accounts_capture_provider_command(yvex_account_capture_options *options,
+                                           yvex_error *err)
+{
+    return yvex_provider_capture(options, 0, 0, err);
+}
+
+int yvex_provider_child_environment(int anonymous, const char *token)
+{
+    if (setenv("HF_HUB_DISABLE_UPDATE_CHECK", "1", 1)) return -1;
+    if (anonymous) {
+        if (unsetenv("HF_TOKEN") || unsetenv("HUGGING_FACE_HUB_TOKEN")) return -1;
+        return setenv("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1", 1);
+    }
+    return token && token[0] ? setenv("HF_TOKEN", token, 1) : 0;
 }

@@ -1438,13 +1438,17 @@ int model_download_write_json_sidecar(const char *path, const char *schema,
                                       const yvex_cli_models_download_options *options,
                                       const yvex_model_download_report *report, yvex_error *err) {
     FILE *fp;
+    char *bytes = NULL;
+    size_t count = 0u;
+    yvex_core_file_result publication;
+    int rc;
 
     if (!path || !schema || !options || !report) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "models_download_sidecar",
                        "path, schema, options, and report are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    fp = fopen(path, "wb");
+    fp = open_memstream(&bytes, &count);
     if (!fp) {
         yvex_error_setf(err, YVEX_ERR_IO, "models_download_sidecar", "cannot open sidecar: %s",
                         path);
@@ -1546,9 +1550,12 @@ int model_download_write_json_sidecar(const char *path, const char *schema,
     if (fclose(fp) != 0) {
         yvex_error_setf(err, YVEX_ERR_IO, "models_download_sidecar", "cannot close sidecar: %s",
                         path);
+        free(bytes);
         return YVEX_ERR_IO;
     }
-    return YVEX_OK;
+    rc = yvex_core_file_publish_replace(path, bytes, count, NULL, NULL, &publication, err);
+    free(bytes);
+    return rc;
 }
 
 int model_download_write_receipt(const char *path, const yvex_cli_models_download_options *options,

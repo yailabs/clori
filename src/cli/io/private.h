@@ -201,8 +201,8 @@ typedef struct yvex_cli_models_download_options {
     const char *cli;
     const char *include_patterns[YVEX_MODEL_DOWNLOAD_PATTERN_CAP];
     const char *exclude_patterns[YVEX_MODEL_DOWNLOAD_PATTERN_CAP];
-    unsigned int include_count;
-    unsigned int exclude_count;
+    unsigned int include_count, exclude_count;
+    int selection_restored;
     unsigned long long max_workers;
     yvex_model_download_auth_mode auth_mode;
     int dry_run;
@@ -334,6 +334,9 @@ typedef struct yvex_model_download_safetensors_check {
 } yvex_model_download_safetensors_check;
 typedef struct yvex_model_download_resolved_target {
     int found;
+    char includes[YVEX_MODEL_DOWNLOAD_PATTERN_CAP][1024], excludes[YVEX_MODEL_DOWNLOAD_PATTERN_CAP][1024];
+    char source_payload_digest[65];
+    unsigned int include_count, exclude_count;
     char target_id[128];
     char family[32];
     char provider[32];

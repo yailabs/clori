@@ -6,7 +6,7 @@
  * earlier complete admission; the runtime binding remains the semantic authority. Missing,
  * malformed, or stale cache data must fall back to a complete byte verification.
  */
-#include <yvex/internal/artifact.h>
+#include <yvex/internal/artifact_storage.h>
 #include <yvex/internal/core.h>
 
 #include <errno.h>

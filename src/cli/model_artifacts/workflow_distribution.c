@@ -3,6 +3,7 @@
 #include "src/cli/model_artifacts/private.h"
 
 #include <yvex/internal/source_catalog.h>
+#include <yvex/internal/model_lifecycle.h>
 #include <yvex/internal/source_distribution.h>
 #include <yvex/quant.h>
 
@@ -20,7 +21,7 @@ typedef struct {
     const char *exclude[YVEX_MODEL_DOWNLOAD_PATTERN_CAP];
     unsigned int include_count, exclude_count;
     int reference, managed, prepare, stream, resume, dry_run, verbose, json;
-    int clear_stale_locks;
+    int clear_stale_locks, refresh;
 } model_pull_options;
 
 typedef struct {
@@ -84,6 +85,7 @@ static int pull_options_parse(int argc, char **argv, model_pull_options *out)
         else if (!strcmp(flag, "--stream")) out->stream = 1;
         else if (!strcmp(flag, "--resume")) out->resume = 1;
         else if (!strcmp(flag, "--clear-stale-locks")) out->clear_stale_locks = 1;
+        else if (!strcmp(flag, "--refresh")) out->refresh = 1;
         else if (!strcmp(flag, "--dry-run")) out->dry_run = 1;
         else if (!strcmp(flag, "--verbose")) out->verbose = 1;
         else if (!strcmp(flag, "--json")) out->json = 1;
@@ -98,6 +100,10 @@ static int pull_options_parse(int argc, char **argv, model_pull_options *out)
     }
     if (!out->source) {
         yvex_cli_out_fputs("yvex: model pull requires SOURCE\n", stderr);
+        return 2;
+    }
+    if (out->auth && strcmp(out->auth, "auto") && strcmp(out->auth, "required") && strcmp(out->auth, "never")) {
+        yvex_cli_out_fputs("yvex: model pull --auth requires auto|required|never\n", stderr);
         return 2;
     }
     if (out->reference && out->managed) {
@@ -227,7 +233,8 @@ static int representation_select(const yvex_remote_catalog *catalog,
         if (!item) continue;
         if (options->format && strcasecmp(options->format, item->format)) continue;
         if (options->variant && strcmp(options->variant, item->identity) &&
-            strcasecmp(options->variant, item->precision)) continue;
+            strcasecmp(options->variant, item->precision) &&
+            strcmp(options->variant, item->file_pattern)) continue;
         eligible[count++] = index;
     }
     if (!count) {
@@ -327,8 +334,10 @@ static int pull_remote_download(int argc, char **argv,
     PULL_ARG("--revision", remote->resolved_revision);
     PULL_ARG("--models-root", models_root);
     if (representation->file_pattern[0]) PULL_ARG("--include", representation->file_pattern);
-    PULL_ARG("--include", "*.json");
-    PULL_ARG("--include", "tokenizer*");
+    if (strcasecmp(representation->format, "gguf")) {
+        PULL_ARG("--include", "*.json");
+        PULL_ARG("--include", "tokenizer*");
+    }
     if (options->include_count + 3u > YVEX_MODEL_DOWNLOAD_PATTERN_CAP) {
         yvex_cli_out_fputs("yvex: too many acquisition include patterns\n", stderr);
         return 2;
@@ -390,6 +399,139 @@ static int pull_remote_download(int argc, char **argv,
     return rc;
 }
 
+static int pull_known_remote(char **argv, const model_pull_options *options,
+                              const yvex_source_locator *locator, const char *models_root,
+                              int *handled)
+{
+    yvex_model_remote_selection selected;
+    yvex_model_storage_result materialized = {0};
+    yvex_error err;
+    const char *revision = options->revision ? options->revision :
+                           locator->revision_present ? locator->revision : NULL;
+    int rc;
+    *handled = 0;
+    if (options->refresh || options->include_count || options->exclude_count) return 0;
+    rc = yvex_model_remote_selection_resolve(models_root, locator->repository, revision,
+                                             options->variant, options->format, &selected, &err);
+    if (rc != YVEX_OK) { *handled = 1; return print_yvex_error(&err, exit_for_status(rc)); }
+    if (!selected.found) return 0;
+    *handled = 1;
+    if (!selected.local && !options->dry_run && !options->reference) {
+        if (options->auth && !strcmp(options->auth, "required")) {
+            yvex_account_observe_options observe = {0};
+            yvex_account_observation account;
+            observe.provider = YVEX_ACCOUNT_PROVIDER_HUGGINGFACE;
+            rc = yvex_account_observe(&observe, &account, &err);
+            if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
+            if (strcmp(account.auth_state, "logged-in") && strcmp(account.auth_state, "env-token-present")) {
+                yvex_cli_out_fputs("yvex: authenticated acquisition requires hf auth login\n", stderr);
+                return 1;
+            }
+        }
+        rc = yvex_model_remote_materialize(&selected, models_root,
+                                             options->auth && !strcmp(options->auth, "never"),
+                                             &materialized, &err);
+        if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
+    }
+    if (options->json) {
+        yvex_cli_out_writef(stdout, "{\"schema\":\"yvex.model.pull.v1\",\"changed\":%s,"
+                            "\"local\":%s,\"verified\":%s,\"model\":",
+                            materialized.changed ? "true" : "false", selected.local ? "true" : "false",
+                            selected.verified ? "true" : "false");
+        yvex_cli_out_json_string(stdout, selected.logical_identity);
+        yvex_cli_out_fputs(",\"location\":", stdout);
+        yvex_cli_out_json_string(stdout, selected.artifact.path);
+        yvex_cli_out_fputs(",\"revision\":", stdout);
+        yvex_cli_out_json_string(stdout, selected.remote.revision);
+        yvex_cli_out_fputs(",\"digest\":", stdout);
+        yvex_cli_out_json_string(stdout, selected.artifact.identity);
+        yvex_cli_out_fputs("}\n", stdout);
+    } else {
+        yvex_cli_out_writef(stdout, "model       %s\nrevision    %s\nlocation    %s\n"
+                            "action      %s\n",
+                            selected.model, selected.remote.revision, selected.artifact.path,
+                            materialized.changed ? "exact representation acquired and verified" :
+                            selected.local ? "none; exact local bytes already verified" : "remote identity retained");
+    }
+    return options->prepare && !options->dry_run
+        ? pull_prepare_followup(argv[0], selected.logical_identity, models_root, options->quant) : 0;
+}
+
+static int pull_rehydrate_source(char **argv, const model_pull_options *options,
+                                  const yvex_local_source_record *source, const char *models_root)
+{
+    char *download[24];
+    int count = 0, rc;
+    if (!strcmp(source->format, "gguf") && strcmp(source->representation, "gguf")) {
+        yvex_model_storage_result result = {0};
+        yvex_error err;
+        rc = options->dry_run ? YVEX_OK : yvex_model_source_file_materialize(source, models_root,
+            options->auth && !strcmp(options->auth, "never"), &result, &err);
+        if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
+        if (options->json) {
+            yvex_cli_out_writef(stdout, "{\"schema\":\"yvex.model.pull.v1\",\"changed\":%s,\"location\":",
+                                result.changed ? "true" : "false");
+            yvex_cli_out_json_string(stdout, source->path);
+            yvex_cli_out_fputs(",\"digest\":", stdout);
+            yvex_cli_out_json_string(stdout, source->digest);
+            yvex_cli_out_fputs("}\n", stdout);
+        } else yvex_cli_out_writef(stdout, "model       %s\nlocation    %s\naction      %s\n",
+            source->name, source->path, options->dry_run ? "dry-run; no bytes acquired" : "exact source rehydrated");
+        return options->prepare && !options->dry_run
+            ? pull_prepare_followup(argv[0], source->name, models_root, options->quant) : 0;
+    }
+    download[count++] = argv[0]; download[count++] = "models"; download[count++] = "download";
+    download[count++] = (char *)source->name;
+    download[count++] = "--revision"; download[count++] = (char *)source->revision;
+    download[count++] = "--models-root"; download[count++] = (char *)models_root;
+    if (options->auth) { download[count++] = "--auth"; download[count++] = (char *)options->auth; }
+    if (options->json) {
+        download[count++] = "--output"; download[count++] = "json";
+        download[count++] = "--progress"; download[count++] = "off";
+    }
+    if (options->dry_run) download[count++] = "--dry-run";
+    download[count++] = "--no-native-inventory";
+    rc = yvex_models_download_surface_command(count, download);
+    if (!rc && options->prepare && !options->dry_run)
+        rc = pull_prepare_followup(argv[0], source->name, models_root, options->quant);
+    return rc;
+}
+
+static int pull_acquired_source(char **argv, const model_pull_options *options,
+                                 const yvex_source_locator *locator, const char *models_root,
+                                 int *handled)
+{
+    yvex_local_source_record source;
+    yvex_error err;
+    const char *revision = options->revision ? options->revision :
+                           locator->revision_present ? locator->revision : NULL;
+    int found = 0, rc;
+    *handled = 0;
+    if (options->refresh || options->include_count || options->exclude_count || options->reference) return 0;
+    rc = yvex_model_remote_source_resolve(models_root, locator->repository, revision, options->variant,
+                                          options->format, &source, &found, &err);
+    if (rc != YVEX_OK) { *handled = 1; return print_yvex_error(&err, exit_for_status(rc)); }
+    if (!found) return 0;
+    *handled = 1;
+    if (!strcmp(source.acquisition_state, "source-missing"))
+        return pull_rehydrate_source(argv, options, &source, models_root);
+    if (options->json) {
+        yvex_cli_out_fputs("{\"schema\":\"yvex.model.pull.v1\",\"changed\":false,\"model\":", stdout);
+        yvex_cli_out_json_string(stdout, source.name);
+        yvex_cli_out_fputs(",\"revision\":", stdout);
+        yvex_cli_out_json_string(stdout, source.revision);
+        yvex_cli_out_fputs(",\"digest\":", stdout);
+        yvex_cli_out_json_string(stdout, source.digest);
+        yvex_cli_out_fputs(",\"location\":", stdout);
+        yvex_cli_out_json_string(stdout, source.path);
+        yvex_cli_out_fputs("}\n", stdout);
+    } else yvex_cli_out_writef(stdout, "model       %s\nrevision    %s\nlocation    %s\n"
+                               "action      none; acquired source verified from current receipts\n",
+                               source.name, source.revision, source.path);
+    return options->prepare && !options->dry_run
+        ? pull_prepare_followup(argv[0], source.name, models_root, options->quant) : 0;
+}
+
 static int pull_remote(int argc, char **argv, const model_pull_options *options,
                        const yvex_source_locator *locator, const char *models_root)
 {
@@ -398,13 +540,24 @@ static int pull_remote(int argc, char **argv, const model_pull_options *options,
     const yvex_remote_model *remote;
     const yvex_model_representation *representation = NULL;
     yvex_error err;
-    int rc;
+    char retained_revision[YVEX_REMOTE_REVISION_CAP] = "";
+    int rc, handled;
+    rc = pull_known_remote(argv, options, locator, models_root, &handled);
+    if (handled) return rc;
+    rc = pull_acquired_source(argv, options, locator, models_root, &handled);
+    if (handled) return rc;
     inspect.provider = YVEX_ACCOUNT_PROVIDER_HUGGINGFACE;
     inspect.repository = locator->repository;
     inspect.revision = options->revision ? options->revision
                                          : locator->revision_present ? locator->revision : NULL;
     yvex_error_clear(&err);
-    rc = yvex_remote_model_inspect(&catalog, &inspect, &err);
+    if (!inspect.revision && !options->refresh) {
+        rc = yvex_model_remote_revision_resolve(models_root, locator->repository, retained_revision, &err);
+        if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
+        if (retained_revision[0]) inspect.revision = retained_revision;
+    }
+    rc = yvex_model_remote_inspect_policy(&catalog, &inspect,
+        options->auth && !strcmp(options->auth, "never"), &err);
     if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
     remote = yvex_remote_catalog_count(catalog) ? yvex_remote_catalog_at(catalog, 0u) : NULL;
     if (!remote || !revision_immutable(remote->resolved_revision)) {
@@ -504,6 +657,33 @@ static int pull_remote(int argc, char **argv, const model_pull_options *options,
                 result.record_path);
         else rc = print_yvex_error(&err, exit_for_status(rc));
     } else {
+        yvex_model_remote_selection existing;
+        if (!options->include_count && !options->exclude_count) {
+            rc = yvex_model_remote_adopt_existing(catalog, representation, models_root,
+                                                   options->dry_run, &existing, &err);
+            if (rc != YVEX_OK) {
+                yvex_remote_catalog_close(catalog);
+                return print_yvex_error(&err, exit_for_status(rc));
+            }
+            if (existing.found) {
+                if (options->json) {
+                    yvex_cli_out_fputs("{\"schema\":\"yvex.model.pull.v1\",\"changed\":false,\"model\":", stdout);
+                    yvex_cli_out_json_string(stdout, existing.logical_identity);
+                    yvex_cli_out_fputs(",\"location\":", stdout);
+                    yvex_cli_out_json_string(stdout, existing.artifact.path);
+                    yvex_cli_out_fputs(",\"digest\":", stdout);
+                    yvex_cli_out_json_string(stdout, existing.artifact.identity);
+                    yvex_cli_out_fputs(",\"revision\":", stdout);
+                    yvex_cli_out_json_string(stdout, existing.remote.revision);
+                    yvex_cli_out_fputs("}\n", stdout);
+                } else yvex_cli_out_writef(stdout, "model       %s\nlocation    %s\n"
+                    "action      none; exact local content matches immutable provider identity\n",
+                    existing.model, existing.artifact.path);
+                yvex_remote_catalog_close(catalog);
+                return options->prepare && !options->dry_run
+                    ? pull_prepare_followup(argv[0], existing.logical_identity, models_root, options->quant) : 0;
+            }
+        }
         rc = pull_remote_download(argc, argv, options, locator, remote, catalog,
                                   representation, models_root);
     }
@@ -539,6 +719,32 @@ static int pull_local_storage(const model_pull_options *options,
     return 0;
 }
 
+static int pull_existing_content(const model_pull_options *options,
+                                  const yvex_source_representation_fact *inspected,
+                                  const char *root, int *handled)
+{
+    yvex_model_remote_selection selected;
+    yvex_error err;
+    int rc;
+    *handled = 0;
+    rc = yvex_model_local_content_resolve(root, inspected->digest, &selected, &err);
+    if (rc != YVEX_OK) { *handled = 1; return print_yvex_error(&err, exit_for_status(rc)); }
+    if (!selected.found) return 0;
+    *handled = 1;
+    if (options->json) {
+        yvex_cli_out_fputs("{\"schema\":\"yvex.model.pull.v1\",\"changed\":false,\"verified\":true,\"model\":", stdout);
+        yvex_cli_out_json_string(stdout, selected.model);
+        yvex_cli_out_fputs(",\"location\":", stdout);
+        yvex_cli_out_json_string(stdout, selected.artifact.path);
+        yvex_cli_out_fputs(",\"digest\":", stdout);
+        yvex_cli_out_json_string(stdout, inspected->digest);
+        yvex_cli_out_fputs("}\n", stdout);
+    } else yvex_cli_out_writef(stdout, "model       %s\nlocation    %s\n"
+        "action      none; exact managed content already exists\n",
+                                selected.model, selected.artifact.path);
+    return 0;
+}
+
 static int pull_local(char **argv, const model_pull_options *options,
                       const yvex_source_locator *locator, const char *models_root)
 {
@@ -556,7 +762,7 @@ static int pull_local(char **argv, const model_pull_options *options,
         return 3;
     }
     yvex_error_clear(&err);
-    rc = yvex_source_representation_inspect_local(locator, &inspected, &err);
+    rc = yvex_source_representation_resolve_local(locator, models_root, &inspected, &err);
     if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
     if ((options->format && strcasecmp(options->format, inspected.format)) ||
         (options->variant && strcasecmp(options->variant, inspected.precision) &&
@@ -569,6 +775,11 @@ static int pull_local(char **argv, const model_pull_options *options,
     }
     rc = pull_local_storage(options, &storage);
     if (rc) return rc;
+    if (storage == YVEX_SOURCE_STORAGE_MANAGED && !options->prepare) {
+        int handled;
+        rc = pull_existing_content(options, &inspected, models_root, &handled);
+        if (handled) return rc;
+    }
     if (options->dry_run) {
         if (options->json) {
             yvex_cli_out_fputs(
@@ -605,6 +816,7 @@ static int pull_local(char **argv, const model_pull_options *options,
     import.name = options->name;
     import.family = options->family;
     import.storage = storage;
+    import.inspected = &inspected;
     yvex_error_clear(&err);
     rc = yvex_source_import_local(&import, &result, &err);
     if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
@@ -724,11 +936,6 @@ int yvex_model_pull_lifecycle_command(int arg_count, char **args)
     plumbing[count++] = (char *)action;
     plumbing[count++] = "--provider";
     plumbing[count++] = "huggingface";
-    plumbing[count++] = "--repo";
-    plumbing[count++] = (char *)source->repository;
-    plumbing[count++] = "--family";
-    plumbing[count++] = (char *)source->family;
-    plumbing[count++] = "--name";
     plumbing[count++] = (char *)source->name;
     plumbing[count++] = "--revision";
     plumbing[count++] = (char *)source->revision;
@@ -969,4 +1176,152 @@ int yvex_model_push_command(int arg_count, char **args)
     }
     yvex_model_library_close(library);
     return 0;
+}
+
+int yvex_model_evict_command(int arg_count, char **args)
+{
+    yvex_local_catalog_options options = {0};
+    yvex_model_library *library = NULL;
+    yvex_model_storage_result result;
+    yvex_operator_paths paths;
+    yvex_paths defaults;
+    yvex_error err;
+    const char *model = NULL, *variant = NULL, *representation = NULL;
+    unsigned long long model_index = 0u, artifact_index = 0u, index, matches = 0u;
+    int argument, dry_run = 0, json = 0, rc;
+    for (argument = 3; argument < arg_count; ++argument) {
+        const char **field = !strcmp(args[argument], "--variant") ? &variant :
+            !strcmp(args[argument], "--representation") ? &representation :
+            !strcmp(args[argument], "--models-root") ? &options.models_root :
+            !strcmp(args[argument], "--registry") ? &options.registry_path : NULL;
+        if (field) {
+            if (!workflow_value("model evict", args[argument], arg_count, args, &argument, field)) return 2;
+        } else if (!strcmp(args[argument], "--dry-run")) dry_run = 1;
+        else if (!strcmp(args[argument], "--json")) json = 1;
+        else if (args[argument][0] != '-' && !model) model = args[argument];
+        else return 2;
+    }
+    if (!model || (representation && strcmp(representation, "source") && strcmp(representation, "artifact"))) return 2;
+    rc = yvex_paths_default(&defaults, &err);
+    if (rc == YVEX_OK) rc = yvex_operator_paths_resolve(&defaults, options.models_root, &paths, &err);
+    if (rc == YVEX_OK) rc = yvex_model_library_open(&library, &options, &err);
+    if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
+    if (yvex_cli_model_find(library, model, &model_index) != 1) {
+        yvex_cli_out_fputs("yvex: model selector is missing or ambiguous\n", stderr);
+        yvex_model_library_close(library);
+        return 2;
+    }
+    if (representation && !strcmp(representation, "source")) {
+        for (index = 0u; index < yvex_model_library_source_count(library, model_index); ++index) {
+            const yvex_local_source_record *source = yvex_model_library_source_at(library, model_index, index);
+            if (variant && strcmp(variant, source->digest)) continue;
+            if (strcmp(source->provider, "huggingface")) continue;
+            artifact_index = index;
+            matches++;
+        }
+    } else {
+        for (index = 0u; index < yvex_model_library_artifact_count(library, model_index); ++index) {
+            const yvex_model_artifact_fact *artifact = yvex_model_library_artifact_at(library, model_index, index);
+            if (variant && strcmp(variant, artifact->identity) && strcmp(variant, artifact->physical_variant)) continue;
+            artifact_index = index;
+            matches++;
+        }
+    }
+    if (matches != 1u) {
+        yvex_cli_out_fputs("yvex: select one representation with --variant SHA256\n", stderr);
+        yvex_model_library_close(library);
+        return 2;
+    }
+    rc = representation && !strcmp(representation, "source")
+        ? yvex_model_source_evict(library, model_index, artifact_index, paths.models_root, dry_run, &result, &err)
+        : yvex_model_local_evict(library, model_index, artifact_index, paths.models_root, dry_run, &result, &err);
+    if (rc == YVEX_OK && json) {
+        yvex_cli_out_writef(stdout, "{\"schema\":\"yvex.model.evict.v1\",\"changed\":%s,\"local\":%s,"
+                            "\"logical_bytes\":%llu,\"allocated_bytes\":%llu,\"path\":",
+                            result.changed ? "true" : "false", result.local ? "true" : "false",
+                            result.logical_bytes, result.allocated_bytes);
+        yvex_cli_out_json_string(stdout, result.path);
+        yvex_cli_out_fputs("}\n", stdout);
+    } else if (rc == YVEX_OK) {
+        yvex_cli_out_writef(stdout, "model       %s\nlocation    %s\naction      %s\n"
+                            "remote      exact catalog identity retained\n",
+                            model, result.path, dry_run ? "dry-run; no bytes removed" :
+                            result.changed ? "local payload evicted" : "none; already remote-only");
+    }
+    yvex_model_library_close(library);
+    return rc == YVEX_OK ? 0 : print_yvex_error(&err, exit_for_status(rc));
+}
+
+
+static void storage_render(const yvex_model_storage_report *report, int json)
+{
+    size_t index;
+    if (json) yvex_cli_out_fputs("{\"schema\":\"yvex.model.storage.v1\",\"rows\":[", stdout);
+    for (index = 0u; index < report->count; ++index) {
+        const yvex_model_storage_row *row = &report->rows[index];
+        if (json) {
+            if (index) yvex_cli_out_fputs(",", stdout);
+            yvex_cli_out_fputs("{\"path\":", stdout);
+            yvex_cli_out_json_string(stdout, row->path);
+            yvex_cli_out_fputs(",\"role\":", stdout);
+            yvex_cli_out_json_string(stdout, row->role);
+            yvex_cli_out_writef(stdout, ",\"exists\":%s,\"attributable_to_model\":%s,"
+                "\"logical_bytes\":%llu,\"allocated_bytes\":%llu,\"files\":%llu,\"shared_files\":%llu}",
+                row->exists ? "true" : "false", row->attributable ? "true" : "false",
+                row->logical_bytes, row->allocated_bytes, row->files, row->shared_files);
+        } else {
+            yvex_cli_out_writef(stdout, "%s  %s\n  logical=%llu B  allocated=%llu B  shared-files=%llu  %s\n",
+                row->role, row->path, row->logical_bytes, row->allocated_bytes, row->shared_files,
+                !row->exists ? "absent" : row->attributable ? "model-owned reference" :
+                    "shared cache scope; model attribution unknown");
+        }
+    }
+    if (json) yvex_cli_out_writef(stdout, "],\"logical_bytes\":%llu,\"allocated_bytes\":%llu,"
+        "\"allocation_method\":\"st_blocks; device/inode deduplicated\","
+        "\"reflink_shared_extents\":null,\"historical_peak_bytes\":null}\n",
+        report->logical_bytes, report->allocated_bytes);
+    else yvex_cli_out_writef(stdout, "Inspected scope: logical=%llu B, allocated=%llu B (inodes counted once).\n"
+        "Reflink extent sharing and historical peak: unknown. Cache rows are not a per-model disk charge.\n",
+        report->logical_bytes, report->allocated_bytes);
+}
+
+int yvex_model_storage_command(int arg_count, char **args)
+{
+    yvex_local_catalog_options options = {0};
+    yvex_model_library *library = NULL;
+    yvex_model_storage_report report;
+    yvex_operator_paths paths;
+    yvex_paths defaults;
+    yvex_error err;
+    const char *model = NULL;
+    unsigned long long model_index = 0u;
+    int argument, caches = 0, json = 0, rc;
+    for (argument = 3; argument < arg_count; ++argument) {
+        const char **field = !strcmp(args[argument], "--models-root") ? &options.models_root :
+            !strcmp(args[argument], "--registry") ? &options.registry_path : NULL;
+        if (field) {
+            if (!workflow_value("model storage", args[argument], arg_count, args, &argument, field)) return 2;
+        } else if (!strcmp(args[argument], "--include-caches")) caches = 1;
+        else if (!strcmp(args[argument], "--json")) json = 1;
+        else if (args[argument][0] != '-' && !model) model = args[argument];
+        else return 2;
+    }
+    if (!model) return 2;
+    yvex_error_clear(&err);
+    rc = yvex_paths_default(&defaults, &err);
+    if (rc == YVEX_OK) rc = yvex_operator_paths_resolve(&defaults, options.models_root, &paths, &err);
+    if (rc == YVEX_OK) rc = yvex_model_library_open(&library, &options, &err);
+    if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
+    if (yvex_cli_model_find(library, model, &model_index) != 1) {
+        yvex_cli_out_fputs("yvex: model selector is missing or ambiguous\n", stderr);
+        yvex_model_library_close(library);
+        return 2;
+    }
+    rc = yvex_model_storage_inspect(library, model_index, paths.models_root, caches, &report, &err);
+    if (rc == YVEX_OK) {
+        storage_render(&report, json);
+        yvex_model_storage_report_free(&report);
+    }
+    yvex_model_library_close(library);
+    return rc == YVEX_OK ? 0 : print_yvex_error(&err, exit_for_status(rc));
 }

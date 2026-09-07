@@ -1459,6 +1459,8 @@ static const yvex_models_subcommand model_subcommands[] = {
     { "library-list", command_library_list },
     { "library-show", command_library_show },
     { "pull", yvex_model_pull_command },
+    { "evict", yvex_model_evict_command },
+    { "storage", yvex_model_storage_command },
     { "pull-status", yvex_model_pull_lifecycle_command },
     { "pull-stop", yvex_model_pull_lifecycle_command },
     { "push", yvex_model_push_command },

@@ -387,6 +387,14 @@ cat > "$RECON_SOURCE/yvex-source-acquisition.json" <<JSON
 {"schema":"yvex.source-acquisition.v1","repository":"MiniMaxAI/MiniMax-H3",\
 "revision":"$RECON_REV","acquisition_complete":true,"source_bytes":144016000740}
 JSON
+mkdir -p "$RECON_ROOT/registry/minimax-h3"
+cat > "$RECON_ROOT/registry/minimax-h3/MiniMax-H3.download.json" <<JSON
+{"schema":"yvex.model_download.registry.v1","target_id":"MiniMax-H3",
+"family":"minimax-h3","provider":"huggingface","repo_id":"MiniMaxAI/MiniMax-H3",
+"revision":"$RECON_REV","local_source_dir":"$RECON_SOURCE",
+"status":"model-download-pass","total_regular_file_bytes":144016000740,
+"safetensors_count":1,"upstream_identity_verified":true,"payload_hash_verified":true}
+JSON
 "$YVEX_BIN" source list --models-root "$RECON_ROOT" --registry "$REG" --json \
   > "$ROOT/reconciled-source.json"
 python3 - "$ROOT/reconciled-source.json" <<'PY'
@@ -397,7 +405,7 @@ sources = json.load(open(sys.argv[1], encoding="utf-8"))["sources"]
 source = next(item for item in sources if item["name"] == "MiniMax-H3")
 assert source["representation"] == "safetensors-source"
 assert source["acquisition_state"] == "source-acquired"
-assert source["verification_state"] == "payload-verified"
+assert source["verification_state"] == "payload-verification-recorded"
 assert source["size_bytes"] == 144016000740
 PY
 
@@ -568,7 +576,7 @@ grep 'authentication is required' "$ROOT/search-auth.err"
 YVEX_FAKE_HF_FAIL=1 YVEX_HF_CLI="$FAKE_HF" \
   expect_rc 1 "$YVEX_BIN" model search failed > "$ROOT/search-fail.out" \
   2> "$ROOT/search-fail.err"
-grep 'provider discovery failed' "$ROOT/search-fail.err"
+grep 'provider operation failed' "$ROOT/search-fail.err"
 
 HF_TOKEN='discovery-secret-must-not-leak' YVEX_HF_CLI="$FAKE_HF" \
   "$YVEX_BIN" model search redaction --limit 1 --json > "$ROOT/search-redaction.json"

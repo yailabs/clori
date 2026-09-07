@@ -3,6 +3,7 @@
 #define INCLUDE_YVEX_INTERNAL_SOURCE_DISTRIBUTION_H_INCLUDED
 
 #include <yvex/core.h>
+#include <yvex/artifact.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,6 +54,8 @@ typedef struct {
     unsigned long long size_bytes;
     unsigned long long file_count;
     int directory;
+    yvex_artifact_snapshot snapshot;
+    int snapshot_verified;
 } yvex_source_representation_fact;
 
 typedef struct {
@@ -61,6 +64,7 @@ typedef struct {
     const char *name;
     const char *family;
     yvex_source_storage_kind storage;
+    const yvex_source_representation_fact *inspected;
 } yvex_source_import_options;
 
 typedef struct {
@@ -83,6 +87,9 @@ typedef struct {
     const char *precision;
     unsigned long long size_bytes;
     int size_known;
+    /* Optional exact remote-file association to already verified managed bytes. */
+    const yvex_source_representation_fact *local;
+    const char *remote_filename;
 } yvex_source_reference_options;
 
 typedef struct {
@@ -109,10 +116,44 @@ int yvex_source_locator_parse(const char *text,
                               yvex_source_locator *out,
                               yvex_error *err);
 const char *yvex_source_locator_kind_name(yvex_source_locator_kind kind);
-int yvex_source_representation_inspect_local(
-    const yvex_source_locator *locator,
-    yvex_source_representation_fact *out,
-    yvex_error *err);
+/* Resolve prior verified local bytes from source records; a stale receipt falls back to inspection. */
+int yvex_source_representation_resolve_local(
+    const yvex_source_locator *locator, const char *models_root,
+    yvex_source_representation_fact *out, yvex_error *err);
+/* Check a previously established regular-file receipt without reading payload bytes. */
+int yvex_source_file_reopen(const char *models_root, const char *path,
+                             const char *digest, yvex_error *err);
+/* Match a sole GGUF member through the authenticated source tree and current file receipts.
+ * Explicit adoption only: inspects the selected source directory, never hashes payload bytes. */
+int yvex_source_gguf_member_reopen(const char *models_root, const char *path, const char *tree_digest,
+                                    const char *member_digest, yvex_source_representation_fact *out,
+                                    yvex_error *err);
+/* Establish or reuse byte verification; emits only rebuildable verification receipts. */
+int yvex_source_representation_verify_local(
+    const yvex_source_locator *locator, const char *models_root, const char *expected_digest,
+    yvex_source_representation_fact *out, yvex_error *err);
+int yvex_source_acquisition_reopen(const char *record_path, const char *models_root,
+                                    const char *repository, const char *revision,
+                                    const char *const *includes, unsigned int include_count,
+                                    const char *const *excludes, unsigned int exclude_count,
+                                    yvex_source_representation_fact *out, yvex_error *err);
+/* Provider processes inherit the lease so a parent crash cannot permit a competing acquisition. */
+/* Stage bytes without establishing identity; the caller must verify before catalog publication. */
+int yvex_source_stage_file(const char *source, const char *destination, yvex_error *err);
+int yvex_source_selection_identity(const char *const *includes, size_t include_count,
+                                    const char *const *excludes, size_t exclude_count,
+                                    char out[YVEX_SHA256_HEX_CAP], yvex_error *err);
+int yvex_source_acquisition_lock(const char *models_root, const char *repository,
+                                  const char *revision, int *descriptor, yvex_error *err);
+typedef struct {
+    unsigned long long logical_bytes, allocated_bytes;
+    int changed, local;
+    char pending_path[YVEX_PATH_CAP];
+} yvex_source_eviction_result;
+/* Only an exact catalog-owned immutable provider acquisition is eligible. */
+int yvex_source_evict_local(const char *models_root, const char *repository, const char *revision,
+                             const char *path, const char *digest, int dry_run,
+                             yvex_source_eviction_result *out, yvex_error *err);
 int yvex_source_import_local(const yvex_source_import_options *options,
                              yvex_source_import_result *out,
                              yvex_error *err);

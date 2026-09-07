@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/file.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/source.h>
 #include <yvex/internal/source_payload.h>
@@ -1016,6 +1017,12 @@ int yvex_source_payload_session_open_with_ops(yvex_source_payload_session **out,
                                  rc,
                                  "source_payload_open",
                                  "verified source root cannot be opened safely");
+        goto fail;
+    }
+    if (flock(session->root_fd, LOCK_SH | LOCK_NB) != 0) {
+        rc = yvex_source_payload_refuse_at(failure, YVEX_SOURCE_PAYLOAD_FAILURE_SHARD_OPEN,
+            ULLONG_MAX, ULLONG_MAX, 0u, 0u, errno, err, YVEX_ERR_STATE,
+            "source_payload_open", "source is pinned by local eviction");
         goto fail;
     }
     rc = payload_build_indexes(session, failure, err);

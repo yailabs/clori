@@ -42,6 +42,7 @@ Family records do not replace either with another runtime description.
 
 | Subject | Owner |
 | --- | --- |
+| Models, provider authentication, local files, preparation and eviction | [Model lifecycle guide](model-lifecycle.md) |
 | Startup, acquisition, sessions, media, diagnosis, shutdown | [Operator runbook](operator-runbook.md) |
 | Source membership and build projection | [Source ownership](development/source-ownership.md) |
 | QA lanes, prerequisites, and evidence | [QA](development/qa.md) |

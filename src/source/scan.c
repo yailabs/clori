@@ -182,7 +182,7 @@ static int scan_is_acquisition_state(const char *rel_dir, const char *name) {
 
 static int scan_dir(const char *root,
                     const char *rel_dir,
-                    int include_files,
+                    int include_files, int follow_file_links,
                     yvex_source_manifest_file_list *out,
                     yvex_error *err) {
     char *abs_dir;
@@ -260,8 +260,16 @@ static int scan_dir(const char *root,
             break;
         }
 
+        if (S_ISLNK(st.st_mode) && follow_file_links &&
+            (stat(abs_path, &st) != 0 || !S_ISREG(st.st_mode))) {
+            free(abs_path);
+            free(rel_path);
+            rc = scan_refuse(err, YVEX_ERR_FORMAT, "source_manifest_scan",
+                              "manual intake allows only existing regular-file symlinks");
+            break;
+        }
         if (S_ISDIR(st.st_mode)) {
-            rc = scan_dir(root, rel_path, include_files, out, err);
+            rc = scan_dir(root, rel_path, include_files, follow_file_links, out, err);
         } else if (S_ISREG(st.st_mode)) {
             rc = scan_append_file(out, rel_path, (unsigned long long)st.st_size, err);
             if (!include_files && rc == YVEX_OK) {
@@ -313,8 +321,8 @@ void yvex_source_manifest_file_list_free(yvex_source_manifest_file_list *list) {
 }
 
 /* Enumerate deterministic source footprint rows beneath one admitted root. */
-int yvex_source_manifest_scan_files(const char *local_path,
-                                    int include_files,
+static int scan_files(const char *local_path,
+                       int include_files, int follow_file_links,
                                     yvex_source_manifest_file_list *out,
                                     yvex_error *err) {
     struct stat st;
@@ -334,9 +342,21 @@ int yvex_source_manifest_scan_files(const char *local_path,
         return YVEX_ERR_IO;
     }
 
-    rc = scan_dir(local_path, "", include_files, out, err);
+    rc = scan_dir(local_path, "", include_files, follow_file_links, out, err);
     if (rc == YVEX_OK && include_files && out->count > 1) {
         qsort(out->items, out->count, sizeof(out->items[0]), scan_file_compare);
     }
     return rc;
+}
+
+int yvex_source_manifest_scan_files(const char *local_path, int include_files,
+                                    yvex_source_manifest_file_list *out, yvex_error *err)
+{
+    return scan_files(local_path, include_files, 0, out, err);
+}
+
+int yvex_source_manifest_scan_import_files(const char *local_path,
+                                           yvex_source_manifest_file_list *out, yvex_error *err)
+{
+    return scan_files(local_path, 1, 1, out, err);
 }

@@ -42,7 +42,8 @@ The configured root has these durable projections:
 
 | Location relative to the model root | Owner and meaning |
 | --- | --- |
-| `source/hf/<org>/<repo>/<revision>/` | Retained provider source bytes at an immutable commit |
+| `source/hf/<org>/<repo>/<revision>/` | Retained complete provider source at an immutable commit |
+| `source/hf/<org>/<repo>/<revision>-<selection>/` | An explicitly selected immutable payload set, independent of other representations |
 | `source/github/<org>/<repo>/<release>/` | Release acquisition; a release name alone does not prove immutable bytes |
 | `source/local/<sha256>/` | Managed local adoption keyed by the complete representation digest |
 | `representations/` | Derived representations; catalog records identify retained historical layouts |
@@ -50,9 +51,9 @@ The configured root has these durable projections:
 | `evidence/fixtures/` | Selected component proofs, separate from full model residency |
 | `evidence/build/` | Preparation and acquisition evidence |
 | `evidence/calibration/` | Retained quantization inputs |
-| `cache/hf/<org>/<repo>/<revision>/` | Provider download state, linked by the corresponding source `.cache` |
+| `cache/hf/<org>/<repo>/<revision>[-<selection>]/` | Provider download state, linked by the corresponding source `.cache` |
 | `cache/` | Other provider and runtime caches |
-| `tmp/imports/`, `tmp/prepare/` | In-progress owned operations |
+| `tmp/imports/`, `tmp/prepare/`, `tmp/acquisitions/` | In-progress owned operations and identity-scoped leases |
 | `inbox/` | Optional intake surface, with no automatic catalog admission |
 | `quarantine/` | Retained material with an explicitly unresolved disposition |
 
@@ -83,7 +84,10 @@ Local material can be adopted as a managed copy or retained as an explicit
 external reference. Users do not need to construct internal directories.
 Managed copies use the full content digest and an owned temporary path before
 publication; a conflicting temporary path is refused. Directory and file
-imports keep their existing representation inspection and hashing semantics.
+imports establish content identity once and retain rebuildable snapshot receipts.
+Unchanged repeated imports check metadata; changed snapshots invalidate reuse.
+Managed copies attempt reflinks before copying and never depend on the provider
+cache entry remaining present. External references retain external ownership.
 Adapters remain subject to their owning model or project catalog; their mere
 presence under a model root does not adopt them into YVEX.
 
@@ -133,3 +137,44 @@ stay outside Git.
 [Release evidence](model-release.md) projects these owners into exact publication
 candidates. Storage membership and working-set policy do not grant release
 readiness.
+
+## Idempotency and removal
+
+The [model lifecycle guide](../model-lifecycle.md) owns user commands and provider
+interoperability examples. These are the implementation invariants:
+
+- Ordinary exact pull hits use catalog identity plus a verification receipt bound
+  to device, inode, size, nanosecond mtime and ctime. No full-payload hash or
+  provider discovery is needed for an unchanged verified published artifact.
+- Explicit file selection is part of acquisition identity. Different selections
+  and immutable revisions retain separate records and cannot merge their bytes
+  into an earlier source snapshot. `--refresh` requests provider resolution;
+  it does not replace older immutable payloads.
+- Acquisition stages bytes before verification. Per-identity advisory locks
+  serialize competing transfers; child provider processes retain the lease if
+  the parent exits. Incomplete state never promotes a complete local record.
+- Preparation identity includes the sealed source payload, transform, policy,
+  calibration, numeric contract versions and relevant backend contract.
+  Existing output must match that plan and its exact current byte verification.
+- Runtime artifact handles retain shared inode locks. Eviction obtains an
+  exclusive lock, rechecks the verified filesystem snapshot, and removes only
+  eligible managed payload bytes. Catalog and publication identities survive.
+- `unload` changes runtime residency only. `evict` is a separate explicit command.
+  External references and unique unpublished artifacts are not eligible for
+  managed representation eviction. Repeating successful eviction is a no-op.
+
+Verification receipts under `cache/verification/` and the runtime reopen cache
+are disposable evidence, not another registry. A missing or stale receipt does
+not prove integrity and must not silently inherit a previous qualification.
+`model storage` performs explicit allocation inspection. Shared inode allocation
+is counted once; provider-wide cache rows, reflink extent sharing and historical
+peak usage must not be presented as an exact model-specific reclaimable total.
+
+Source eviction uses the existing immutable acquisition record and selected
+inventory digest. The source owner holds an exclusive directory lease and
+exclusive file pins, detaches the source into a private `tmp/evictions/`
+operation directory, then removes it without following symbolic links. Source
+payload sessions hold shared directory leases. A detached incomplete cleanup
+never appears as a complete acquisition; its residual bytes remain explicit
+temporary storage. Rehydration retains the original revision, selection and
+expected source digest.

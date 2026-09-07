@@ -384,9 +384,9 @@ assert item["upstream_identity_verified"] is True
 assert item["payload_hash_verified"] is False
 PY
 pulled_revision=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$ROOT/hf-pull.json")
-pulled_source="$MODELS_ROOT/source/hf/MiniMaxAI/MiniMax-H3/$pulled_revision"
+pulled_source=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["location"])' "$ROOT/hf-pull.json")
 test -L "$pulled_source/.cache"
-test "$(readlink "$pulled_source/.cache")" = "$MODELS_ROOT/cache/hf/MiniMaxAI/MiniMax-H3/$pulled_revision"
+test "$(readlink "$pulled_source/.cache")" = "$MODELS_ROOT/cache/hf/MiniMaxAI/MiniMax-H3/$(basename "$pulled_source")"
 test -f "$pulled_source/.cache/huggingface/download/config.json.metadata"
 "$YVEX_BIN" model status pulled-h3 --models-root "$MODELS_ROOT" \
     --json >"$ROOT/hf-status.json"
@@ -614,5 +614,7 @@ contains "$ROOT/ambiguous-selector.err" 'ambiguous; use the exact identity'
 expect_rc 1 "$YVEX_BIN" model load family:deepseek4/model:v4-flash \
     >"$ROOT/exact-selector.out" 2>"$ROOT/exact-selector.err"
 contains "$ROOT/exact-selector.err" 'model is not launchable: v4-flash'
+
+python3 tests/cli/model_lifecycle.py "$ROOT"
 
 printf 'model workflow porcelain: ok\n'

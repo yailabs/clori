@@ -1161,6 +1161,9 @@ static int test_media_engine_lifecycle(void)
                          !(first.resources.available &
                            YVEX_EXECUTION_RESOURCE_PHYSICAL_RESIDENCY_AVAILABLE),
                      "first composite engine loads into the running host");
+    YVEX_TEST_ASSERT(yvex_server_media_engine_load(server, &engine_options, &media, &unloaded, &err) ==
+        YVEX_ERR_STATE && unloaded.generation == first.generation,
+                     "second load reports the existing generation without creating another engine");
     engine_options.alias = "minimax-b";
     memset(&second, 0, sizeof(second));
     YVEX_TEST_ASSERT(yvex_server_media_engine_load(
@@ -1218,14 +1221,16 @@ static int test_media_engine_lifecycle(void)
                          unloaded.state == YVEX_SERVER_ENGINE_UNLOADED &&
                          yvex_server_engine_unload(
                              server, first.alias, first.generation,
-                             &unloaded, &err) == YVEX_ERR_STATE,
-                     "unload releases one exact generation and stale reuse refuses");
+                             &unloaded, &err) == YVEX_OK,
+                     "unload of the same retired generation is a successful no-op");
     engine_options.alias = "minimax-a";
     memset(&reloaded, 0, sizeof(reloaded));
     YVEX_TEST_ASSERT(yvex_server_media_engine_load(
                          server, &engine_options, &media, &reloaded, &err) == YVEX_OK &&
                          reloaded.generation > first.generation,
                      "reloading one alias creates a distinct engine generation");
+    YVEX_TEST_ASSERT(yvex_server_engine_unload(server, first.alias, first.generation, &unloaded, &err) ==
+        YVEX_ERR_STATE, "idempotent unload cannot retire a newer engine with a stale generation");
     YVEX_TEST_ASSERT(yvex_server_engine_unload(
                          server, second.alias, second.generation,
                          &unloaded, &err) == YVEX_OK &&

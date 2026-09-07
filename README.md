@@ -22,7 +22,7 @@ Code and tests establish capability; documentation describes its limits.
 
 | Model boundary | Demonstrated path | Limit |
 | --- | --- | --- |
-| [DeepSeek-V4-Flash-DSpark](docs/model-families/deepseek-v4-flash.md) | Source-to-text, target-only and target-verified speculative generation | Operational execution is not release quality or performance qualification |
+| [DeepSeek V4 Flash](docs/model-families/deepseek-v4-flash.md) | Source-to-text, target-only and target-verified speculative generation | Operational execution is not release quality or performance qualification |
 | [Qwen3.8-27B text](docs/model-families/integration.md#current-family-boundaries) | Hybrid attention/recurrent execution and retained hosted text sessions | Text-only; unexecuted source components do not confer vision capability |
 | [MiniMax-H3 FL2VA](docs/model-families/minimax-h3.md) | Composite conditioning, iterative execution, and typed synchronized-media publication | Component numerics and a completed trajectory do not prove useful full-model output |
 | [Mamba2 / Mamba-Codestral](docs/model-families/mamba2.md) | Pinned acquisition, tensor roles, recurrent-state and CPU component evidence | Partial: no complete artifact, READY deployment, load, or hosted generation |
@@ -30,6 +30,26 @@ Code and tests establish capability; documentation describes its limits.
 Use `model show` for actual deployment lineage and blockers, and `model active`
 for current engines. This table is not a promise that every checkpoint in a
 named family can be prepared on every machine.
+
+## Download tested model artifacts
+
+The first YaiLabs releases are available on Hugging Face:
+
+| Release | Available representations |
+| --- | --- |
+| [DeepSeek V4 Flash GGUF](https://huggingface.co/yailabs/DeepSeek-V4-Flash-GGUF) | Two mixed representations: IQ2_XXS / Q2_K with Q8_0, or with MXFP4 |
+| [Qwen3.8-27B Text GGUF](https://huggingface.co/yailabs/Qwen3.8-27B-Text-GGUF) | BF16 text representation; it does not include all upstream capabilities |
+
+The exact released bytes were exercised through YVEX load → chat → unload on
+one recorded NVIDIA DGX Spark configuration. Each model card provides the
+checksums, immutable upstream revision, build lineage, license and bounded
+validation evidence. This qualification does not imply universal hardware
+compatibility or a model-quality benchmark.
+
+See the [model lifecycle guide](docs/model-lifecycle.md#published-yailabs-representations)
+for pinned download commands, manual-file adoption and local storage behavior.
+Choose one DeepSeek representation; pulling it does not require the other file
+or the upstream Safetensors.
 
 ## Quick start
 
@@ -152,8 +172,10 @@ implementation of every upstream API.
   execution width and engine/resource capacity are separate facts.
 - UMA device-addressability does not prove physical page residency. Explicit
   device allocation is not the total GPU working set.
-- Model behavior evaluation, release benchmarking, and release qualification
-  remain open. Characterization numbers are not release claims.
+- Model behavior evaluation, release benchmarking, and further family release
+  qualification remain open. The downloadable releases above have bounded
+  artifact-specific lifecycle evidence; characterization numbers are not
+  quality or performance claims.
 - CPU and admitted CUDA paths exist; other backends are not implied.
 
 ## Documentation

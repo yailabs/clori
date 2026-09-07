@@ -14,11 +14,13 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <yvex/artifact.h>
-#include <yvex/internal/artifact.h>
+#include <yvex/internal/artifact_storage.h>
+#include <yvex/internal/core.h>
 
 #ifdef __linux__
 #include <linux/openat2.h>
@@ -57,6 +59,19 @@ static int artifact_path_open(const char *path) {
     errno = ENOTSUP;
     return -1;
 #endif
+}
+
+int yvex_artifact_pin_exclusive(yvex_artifact *artifact, yvex_error *err)
+{
+    if (!artifact) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "artifact.storage", "open artifact required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (flock(artifact->fd, LOCK_EX | LOCK_NB) != 0) {
+        yvex_error_set(err, YVEX_ERR_STATE, "artifact.storage", "active artifact reader prevents eviction");
+        return YVEX_ERR_STATE;
+    }
+    return yvex_artifact_snapshot_validate(artifact, NULL, err);
 }
 
 int yvex_artifact_open(yvex_artifact **out, const yvex_artifact_options *options, yvex_error *err) {
@@ -109,6 +124,14 @@ int yvex_artifact_open(yvex_artifact **out, const yvex_artifact_options *options
                         strerror(errno));
         free(artifact);
         return YVEX_ERR_IO;
+    }
+
+    /* Every live artifact handle pins local bytes against YVEX eviction. */
+    if (flock(artifact->fd, LOCK_SH | LOCK_NB) != 0) {
+        yvex_error_set(err, YVEX_ERR_STATE, "yvex_artifact_open",
+                       "artifact is pinned by an exclusive storage operation");
+        yvex_artifact_close(artifact);
+        return YVEX_ERR_STATE;
     }
 
     if (fstat(artifact->fd, &st) != 0) {

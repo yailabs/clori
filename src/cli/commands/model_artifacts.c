@@ -6,6 +6,7 @@
 #include "src/cli/render/private.h"
 #include "src/cli/model_artifacts/private.h"
 #include <yvex/internal/model_artifact.h>
+#include <yvex/internal/model_lifecycle.h>
 #include <yvex/internal/source_distribution.h>
 #include <yvex/internal/source_catalog.h>
 #include <yvex/catalog.h>
@@ -53,7 +54,7 @@ typedef struct {
 } download_identity;
 
 static int download_pin_revision(download_identity *identity,
-                                  const yvex_operator_paths *paths,
+                                  const yvex_operator_paths *paths, int anonymous,
                                   yvex_error *err)
 {
     yvex_remote_inspect_options inspect = {0};
@@ -67,7 +68,7 @@ static int download_pin_revision(download_identity *identity,
     inspect.provider = YVEX_ACCOUNT_PROVIDER_HUGGINGFACE;
     inspect.repository = identity->repo_id;
     inspect.revision = identity->revision;
-    rc = yvex_remote_model_inspect(&catalog, &inspect, err);
+    rc = yvex_model_remote_inspect_policy(&catalog, &inspect, anonymous, err);
     if (rc != YVEX_OK) return rc;
     model = yvex_remote_catalog_count(catalog) ? yvex_remote_catalog_at(catalog, 0u) : NULL;
     if (!model || !yvex_source_provider_path(source_path, sizeof(source_path),
@@ -85,7 +86,7 @@ static int download_pin_revision(download_identity *identity,
     return rc;
 }
 
-static int download_identity_resolve(const yvex_cli_models_download_options *options,
+static int download_identity_resolve(yvex_cli_models_download_options *options,
     yvex_model_download_report *report, yvex_operator_paths *operator_paths,
     yvex_account_provider *provider_kind, download_identity *identity,
     yvex_error *err, int control_mode);
@@ -630,7 +631,7 @@ static int command_models_download_cleanup(int arg_count, char **args)
 
 /* Resolve provider, catalog identity, operator roots, and token provenance. */
 
-static int download_identity_resolve(const yvex_cli_models_download_options *options,
+static int download_identity_resolve(yvex_cli_models_download_options *options,
     yvex_model_download_report *report, yvex_operator_paths *operator_paths,
     yvex_account_provider *provider_kind, download_identity *identity,
     yvex_error *err, int control_mode)
@@ -667,8 +668,20 @@ static int download_identity_resolve(const yvex_cli_models_download_options *opt
     } else {
         identity->resolved_dynamic = model_download_resolve_downloaded_target(
             options->target, operator_paths, &identity->resolved, err);
+        if (identity->resolved_dynamic < 0)
+            return print_yvex_error(err, exit_for_status(yvex_error_code(err)));
         row = yvex_source_acquisition_target_find(options->target);
         if (identity->resolved_dynamic) {
+            unsigned int pattern;
+            if (!options->include_count && !options->exclude_count && !control_mode) {
+                options->selection_restored = 1;
+                options->include_count = identity->resolved.include_count;
+                options->exclude_count = identity->resolved.exclude_count;
+                for (pattern = 0u; pattern < options->include_count; ++pattern)
+                    options->include_patterns[pattern] = identity->resolved.includes[pattern];
+                for (pattern = 0u; pattern < options->exclude_count; ++pattern)
+                    options->exclude_patterns[pattern] = identity->resolved.excludes[pattern];
+            }
             identity->target_id = identity->resolved.target_id;
             identity->family = identity->resolved.family;
             identity->repo_id = identity->resolved.repo_id;
@@ -721,7 +734,8 @@ static int download_identity_resolve(const yvex_cli_models_download_options *opt
     snprintf(report->models_root_source, sizeof(report->models_root_source), "%s",
              operator_paths->models_root_source);
     if (*provider_kind == YVEX_ACCOUNT_PROVIDER_HUGGINGFACE && !control_mode) {
-        rc = download_pin_revision(identity, operator_paths, err);
+        rc = download_pin_revision(identity, operator_paths,
+            options->auth_mode == YVEX_MODEL_DOWNLOAD_AUTH_NEVER, err);
         if (rc != YVEX_OK) {
             yvex_account_observe_options observe = {0};
             yvex_account_observation observation = {0};
@@ -755,9 +769,35 @@ static int download_paths_prepare(const yvex_cli_models_download_options *option
     char reports_dir[YVEX_PATH_CAP];
     char registry_dir[YVEX_PATH_CAP];
     char logs_dir[YVEX_PATH_CAP];
-    char file_name[256];
-    int rc;
+    char file_name[320], selection[YVEX_SHA256_HEX_CAP], selected_target[256];
+    const char *includes[YVEX_MODEL_DOWNLOAD_PATTERN_CAP], *excludes[YVEX_MODEL_DOWNLOAD_PATTERN_CAP];
+    unsigned int index, include_count = model_download_effective_include_count(options);
+    unsigned int exclude_count = model_download_effective_exclude_count(options);
+    int reuse_paths = identity->resolved_dynamic &&
+        !strcmp(identity->revision, identity->resolved.revision) &&
+        (options->selection_restored || (!options->include_count && !options->exclude_count));
+    int rc = YVEX_OK;
+    selection[0] = '\0';
+    for (index = 0u; index < include_count; ++index)
+        includes[index] = model_download_effective_include_at(options, index);
+    for (index = 0u; index < exclude_count; ++index)
+        excludes[index] = model_download_effective_exclude_at(options, index);
+    if (options->include_count || options->exclude_count)
+        rc = yvex_source_selection_identity(includes, include_count, excludes, exclude_count, selection, err);
+    if (rc != YVEX_OK) return rc;
+    if (snprintf(selected_target, sizeof(selected_target), "%s%s%s%s%s", identity->target_id,
+                 selection[0] ? "-" : "", selection[0] ? identity->revision : "",
+                 selection[0] ? "-" : "", selection) >= (int)sizeof(selected_target)) return YVEX_ERR_BOUNDS;
 
+    if (reuse_paths && identity->resolved.registry_path[0]) {
+        const char *base = strrchr(identity->resolved.registry_path, '/');
+        size_t length = strlen(base ? base + 1 : identity->resolved.registry_path);
+        const size_t suffix = sizeof(".download.json") - 1u;
+        base = base ? base + 1 : identity->resolved.registry_path;
+        if (length <= suffix || length - suffix >= sizeof(selected_target)) return YVEX_ERR_BOUNDS;
+        memcpy(selected_target, base, length - suffix);
+        selected_target[length - suffix] = '\0';
+    }
     if (provider_kind == YVEX_ACCOUNT_PROVIDER_GITHUB) {
         rc = path_join2(provider_root, sizeof(provider_root), operator_paths->models_root,
                         "source/github", err, "models_download");
@@ -773,11 +813,16 @@ static int download_paths_prepare(const yvex_cli_models_download_options *option
             yvex_error_set(err, YVEX_ERR_INVALID_ARG, "models_download",
                 "managed acquisition requires an exact repository and immutable revision; use model pull");
     }
-    if (rc == YVEX_OK && identity->resolved_dynamic &&
-        identity->resolved.local_source_dir[0] &&
-        !strcmp(identity->revision, identity->resolved.revision)) {
+    if (rc == YVEX_OK && reuse_paths && identity->resolved.local_source_dir[0]) {
         snprintf(report->local_source_dir, sizeof(report->local_source_dir), "%s",
                  identity->resolved.local_source_dir);
+    }
+    if (rc == YVEX_OK && selection[0] && !reuse_paths) {
+        char selected_path[YVEX_PATH_CAP];
+        if (snprintf(selected_path, sizeof(selected_path), "%s-%s",
+                      report->local_source_dir, selection) >= (int)sizeof(selected_path))
+            rc = YVEX_ERR_BOUNDS;
+        else snprintf(report->local_source_dir, sizeof(report->local_source_dir), "%s", selected_path);
     }
     if (rc == YVEX_OK) rc = path_join2(reports_dir, sizeof(reports_dir),
         operator_paths->reports_root, identity->family, err, "models_download");
@@ -791,7 +836,7 @@ static int download_paths_prepare(const yvex_cli_models_download_options *option
     snprintf(report->reports_dir, sizeof(report->reports_dir), "%s", reports_dir);
     snprintf(report->registry_dir, sizeof(report->registry_dir), "%s", registry_dir);
 #define DOWNLOAD_PATH(field, suffix, root) do { \
-    snprintf(file_name, sizeof(file_name), "%s%s", identity->target_id, suffix); \
+    snprintf(file_name, sizeof(file_name), "%s%s", selected_target, suffix); \
     if (rc == YVEX_OK) rc = path_join2(report->field, sizeof(report->field), \
                                        root, file_name, err, "models_download"); \
 } while (0)
@@ -805,7 +850,7 @@ static int download_paths_prepare(const yvex_cli_models_download_options *option
     DOWNLOAD_PATH(stdout_log_path, ".download.stdout.log", logs_dir);
     DOWNLOAD_PATH(stderr_log_path, ".download.stderr.log", logs_dir);
 #undef DOWNLOAD_PATH
-    if (rc == YVEX_OK && identity->resolved_dynamic) {
+    if (rc == YVEX_OK && reuse_paths) {
         if (identity->resolved.registry_path[0]) snprintf(report->registry_path,
             sizeof(report->registry_path), "%s", identity->resolved.registry_path);
         if (identity->resolved.download_report_path[0]) snprintf(report->download_report_path,
@@ -972,7 +1017,7 @@ static int download_account_admit(const yvex_cli_models_download_options *option
 
 static int download_source_finalize(const yvex_cli_models_download_options *options,
                                     yvex_model_download_report *report,
-                                    yvex_account_provider provider_kind,
+                                    yvex_account_provider provider_kind, const char *expected_digest,
                                     yvex_error *err)
 {
     yvex_source_manifest_options manifest_options;
@@ -1063,8 +1108,8 @@ static int download_source_finalize(const yvex_cli_models_download_options *opti
     memset(&representation, 0, sizeof(representation));
     rc = yvex_source_locator_parse(report->local_source_dir, &source_locator, err);
     if (rc == YVEX_OK)
-        rc = yvex_source_representation_inspect_local(&source_locator,
-                                                       &representation, err);
+        rc = yvex_source_representation_verify_local(&source_locator, report->models_root, expected_digest,
+                                                      &representation, err);
     if (rc != YVEX_OK || representation.size_bytes !=
                              report->source_scan.total_regular_file_bytes) {
         snprintf(report->status, sizeof(report->status), "model-download-fail");
@@ -1109,7 +1154,7 @@ static int download_source_finalize(const yvex_cli_models_download_options *opti
     return model_download_finish(options, report);
 }
 
-static int command_models_download_execute(int arg_count, char **args, int start_index, int resume_mode)
+static int command_models_download_locked(int arg_count, char **args, int start_index, int resume_mode)
 {
     yvex_cli_models_download_options options;
     yvex_model_download_report report;
@@ -1148,9 +1193,12 @@ static int command_models_download_execute(int arg_count, char **args, int start
         if (!admitted) return rc;
     }
 
+    if (options.selection_restored)
+        snprintf(report.source_payload_digest, sizeof(report.source_payload_digest), "%s",
+                 identity.resolved.source_payload_digest);
     /* Publish incomplete acquisition truth before the long transfer, so model status/stop
      * can route a first acquisition through the same catalog used after completion. */
-    if (!options.dry_run && access(report.registry_path, F_OK) != 0) {
+    if (!options.dry_run) {
         snprintf(report.status, sizeof(report.status), "model-download-running");
         rc = model_download_write_json_sidecar(report.registry_path,
             "yvex.model_download.registry.v1", &options, &report, &err);
@@ -1243,7 +1291,52 @@ static int command_models_download_execute(int arg_count, char **args, int start
     }
     snprintf(report.stage_download, sizeof(report.stage_download), "pass");
 
-    return download_source_finalize(&options, &report, provider_kind, &err);
+    return download_source_finalize(&options, &report, provider_kind,
+        options.selection_restored && identity.resolved.source_payload_digest[0]
+            ? identity.resolved.source_payload_digest : NULL, &err);
+}
+
+static int command_models_download_execute(int arg_count, char **args, int start_index, int resume_mode)
+{
+    yvex_cli_models_download_options options;
+    yvex_model_download_report report;
+    yvex_operator_paths paths;
+    yvex_source_representation_fact verified;
+    yvex_account_provider provider = YVEX_ACCOUNT_PROVIDER_UNKNOWN;
+    download_identity identity;
+    yvex_error err;
+    const char *includes[YVEX_MODEL_DOWNLOAD_PATTERN_CAP], *excludes[YVEX_MODEL_DOWNLOAD_PATTERN_CAP];
+    unsigned int index, include_count, exclude_count;
+    int lock = -1, rc = parse_models_download_options_from(arg_count, args, start_index, &options);
+    if (rc || options.dry_run) return command_models_download_locked(arg_count, args, start_index, resume_mode);
+    model_download_report_init(&report);
+    rc = download_identity_resolve(&options, &report, &paths, &provider, &identity, &err, 0);
+    if (rc) return rc;
+    rc = download_paths_prepare(&options, &report, &paths, provider, &identity, &err, 0);
+    if (rc) return rc;
+    rc = yvex_source_acquisition_lock(paths.models_root, report.repo_id, report.revision, &lock, &err);
+    if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
+    include_count = model_download_effective_include_count(&options);
+    exclude_count = model_download_effective_exclude_count(&options);
+    for (index = 0u; index < include_count; ++index)
+        includes[index] = model_download_effective_include_at(&options, index);
+    for (index = 0u; index < exclude_count; ++index)
+        excludes[index] = model_download_effective_exclude_at(&options, index);
+    rc = yvex_source_acquisition_reopen(report.registry_path, paths.models_root, report.repo_id, report.revision,
+                                        includes, include_count, excludes, exclude_count, &verified, &err);
+    if (rc == YVEX_OK) {
+        snprintf(report.status, sizeof(report.status), "%s", "model-download-pass");
+        snprintf(report.stage_download, sizeof(report.stage_download), "%s", "reused");
+        snprintf(report.source_payload_digest, sizeof(report.source_payload_digest), "%s", verified.digest);
+        snprintf(report.representation_format, sizeof(report.representation_format), "%s", verified.format);
+        snprintf(report.representation_precision, sizeof(report.representation_precision), "%s", verified.precision);
+        report.source_scan.total_regular_file_bytes = verified.size_bytes;
+        report.source_scan.file_count = verified.file_count;
+        report.upstream_identity_verified = 1;
+        rc = model_download_finish(&options, &report);
+    } else rc = command_models_download_locked(arg_count, args, start_index, resume_mode);
+    (void)close(lock);
+    return rc;
 }
 
 int yvex_models_download_surface_command(int arg_count, char **args)

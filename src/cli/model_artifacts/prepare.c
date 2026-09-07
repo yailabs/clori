@@ -577,10 +577,9 @@ int yvex_models_prepare_surface_command(int arg_count, char **args)
         yvex_model_download_resolved_target downloaded;
 
         yvex_error_clear(&err);
-        if (model_download_resolve_downloaded_target(options.target,
-                                                     &operator_paths,
-                                                     &downloaded,
-                                                     &err)) {
+        rc = model_download_resolve_downloaded_target(options.target, &operator_paths, &downloaded, &err);
+        if (rc < 0) return print_yvex_error(&err, exit_for_status(yvex_error_code(&err)));
+        if (rc > 0) {
             return print_prepare_downloaded_source_unsupported(&options,
                                                                &operator_paths,
                                                                &downloaded);

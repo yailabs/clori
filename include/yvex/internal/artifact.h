@@ -6,6 +6,7 @@
 #define INCLUDE_YVEX_INTERNAL_ARTIFACT_H_INCLUDED
 #include <stddef.h>
 #include <yvex/artifact.h>
+#include <yvex/internal/artifact_storage.h>
 #include <yvex/gguf.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/gguf.h>
@@ -17,12 +18,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-int yvex_artifact_snapshot_equal(const yvex_artifact_snapshot *left,
-                                 const yvex_artifact_snapshot *right);
-int yvex_artifact_cache_release(const yvex_artifact *artifact,
-                                unsigned long long offset,
-                                unsigned long long byte_count,
-                                yvex_error *err);
 /* Identity. */
 typedef struct {
     yvex_sha256 hash;
@@ -207,11 +202,6 @@ int yvex_artifact_admission_identity_verify(
     int (*progress)(void *context, unsigned long long completed,
                     unsigned long long total), void *progress_context,
     yvex_artifact_admission_failure *failure, yvex_error *err);
-typedef struct {
-    int verified, receipt_present, receipt_valid;
-    yvex_artifact_snapshot snapshot;
-    char lease_identity[YVEX_SHA256_HEX_CAP], path[YVEX_ARTIFACT_PATH_CAP];
-} yvex_artifact_reopen_lease;
 #define YVEX_ARTIFACT_ADMISSION_OPTIONS_SCHEMA_V1 1u
 typedef enum {
     YVEX_ARTIFACT_VERIFICATION_FULL_HASH = 0, YVEX_ARTIFACT_VERIFICATION_VERIFIED_REOPEN,
@@ -246,12 +236,6 @@ int yvex_artifact_admit_catalog_with_options(
     const yvex_artifact_catalog_contract *contract, const yvex_artifact_admission_options *options,
     yvex_complete_artifact_admission *out, yvex_artifact_admission_evidence *evidence,
     yvex_artifact_admission_failure *failure, yvex_error *err);
-int yvex_artifact_reopen_lease_check(
-    const yvex_artifact *artifact, const char *artifact_identity, const char *cache_root,
-    yvex_artifact_reopen_lease *out, yvex_error *err);
-int yvex_artifact_reopen_lease_publish(
-    const yvex_artifact *artifact, const char *artifact_identity, const char *cache_root,
-    yvex_artifact_reopen_lease *out, yvex_error *err);
 const char *yvex_artifact_admission_code_name(yvex_artifact_admission_code code);
 int yvex_artifact_descriptor_from_admission(const yvex_complete_artifact_admission *admission,
                                             yvex_artifact_descriptor_fact *fact);

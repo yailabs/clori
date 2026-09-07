@@ -11,6 +11,8 @@
 #include <yvex/internal/family_catalog.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/model_lifecycle.h>
+#include <yvex/internal/source_distribution.h>
 #include <yvex/internal/source_catalog.h>
 #include <yvex/internal/source_payload.h>
 #include <yvex/quant.h>
@@ -799,13 +801,39 @@ static int prepare_quant_plan(const model_prepare_options *options,
     return rc ? YVEX_ERR_STATE : YVEX_OK;
 }
 
+static int prepare_existing_artifact(const model_prepare_plan *plan, yvex_error *err)
+{
+    yvex_artifact_options options = {0};
+    yvex_complete_artifact_admission admission = {0};
+    yvex_artifact_admission_failure failure = {0};
+    yvex_quant_plan_file_summary sealed = {0};
+    yvex_artifact *artifact = NULL;
+    yvex_gguf *gguf = NULL;
+    int rc = yvex_quant_plan_file_probe(plan->plan_path, &sealed, err);
+    options.path = plan->artifact_path;
+    options.readonly = 1;
+    if (rc == YVEX_OK) rc = yvex_artifact_open(&artifact, &options, err);
+    if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, err);
+    if (rc == YVEX_OK)
+        rc = plan->execution->compiler->binding_pipeline->artifact_admit(artifact, &admission, &failure, err);
+    if (rc == YVEX_OK && (!prepare_plan_matches_artifact(&sealed, &admission) ||
+                         !prepare_artifact_imatrix_matches(gguf, &sealed))) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "model.prepare",
+            "existing output does not match the exact transformation plan");
+        rc = YVEX_ERR_FORMAT;
+    }
+    yvex_gguf_close(gguf);
+    yvex_artifact_close(artifact);
+    return rc;
+}
+
 static int prepare_quant_emit(const model_prepare_options *options,
                               const model_prepare_plan *plan, yvex_error *err)
 {
     char *argv[24];
     int argc = 0, rc;
 
-    if (access(plan->artifact_path, F_OK) == 0) return YVEX_OK;
+    if (access(plan->artifact_path, F_OK) == 0) return prepare_existing_artifact(plan, err);
     argv[argc++] = "yvex"; argv[argc++] = "quant"; argv[argc++] = "emit";
     argv[argc++] = "--target"; argv[argc++] = (char *)plan->execution->target_id;
     argv[argc++] = "--source"; argv[argc++] = (char *)plan->source->path;
@@ -979,6 +1007,65 @@ static void prepare_render_ready(const model_prepare_options *options,
     }
 }
 
+static int prepare_ready_verify(const model_prepare_options *options,
+                                 const yvex_model_library *library,
+                                 unsigned long long model_index, yvex_error *err)
+{
+    yvex_paths defaults;
+    yvex_operator_paths paths;
+    unsigned long long profile_index, artifact_index;
+    int rc = yvex_paths_default(&defaults, err);
+    if (rc == YVEX_OK) rc = yvex_operator_paths_resolve(&defaults, options->models_root, &paths, err);
+    if (rc != YVEX_OK) return rc;
+    for (profile_index = 0u; profile_index < yvex_model_library_profile_count(library, model_index); ++profile_index) {
+        const yvex_model_runtime_profile_fact *profile =
+            yvex_model_library_profile_at(library, model_index, profile_index);
+        if (!profile->launchable) continue;
+        for (artifact_index = 0u; artifact_index < yvex_model_library_artifact_count(library, model_index);
+             ++artifact_index) {
+            const yvex_model_artifact_fact *artifact =
+                yvex_model_library_artifact_at(library, model_index, artifact_index);
+            yvex_artifact_snapshot snapshot;
+            if (strcmp(artifact->identity, profile->artifact_identity) ||
+                strcmp(artifact->path, profile->artifact_path))
+                continue;
+            rc = yvex_model_artifact_local_verify(artifact, paths.models_root, &snapshot, err);
+            if (rc == YVEX_OK) return rc;
+        }
+    }
+    yvex_error_set(err, YVEX_ERR_STATE, "model.prepare", "ready profile lacks an unchanged verified local artifact");
+    return YVEX_ERR_STATE;
+}
+
+static int prepare_cached_plan(model_prepare_plan *plan, const yvex_model_library *library,
+                                unsigned long long model_index, yvex_error *err)
+{
+    yvex_quant_plan_file_summary sealed = {0};
+    unsigned long long profile_index, artifact_index;
+    if (yvex_quant_plan_file_probe(plan->plan_path, &sealed, err) != YVEX_OK) return 0;
+    for (profile_index = 0u; profile_index < yvex_model_library_profile_count(library, model_index); ++profile_index) {
+        const yvex_model_runtime_profile_fact *profile =
+            yvex_model_library_profile_at(library, model_index, profile_index);
+        if (!profile->launchable || strcmp(profile->artifact_path, plan->artifact_path) ||
+            strcmp(profile->backend, plan->deployment->backend) ||
+            strcmp(profile->runtime_target, plan->execution->target_id)) continue;
+        for (artifact_index = 0u; artifact_index < yvex_model_library_artifact_count(library, model_index);
+             ++artifact_index) {
+            const yvex_model_artifact_fact *artifact =
+                yvex_model_library_artifact_at(library, model_index, artifact_index);
+            yvex_artifact_snapshot snapshot;
+            if (strcmp(artifact->identity, profile->artifact_identity) ||
+                strcmp(artifact->physical_variant, sealed.physical_variant_identity)) continue;
+            if (yvex_model_artifact_local_verify(artifact, plan->operator_paths.models_root,
+                                                  &snapshot, err) != YVEX_OK) return 0;
+            snprintf(plan->binding_path, sizeof(plan->binding_path), "%s", profile->runtime_binding);
+            snprintf(plan->profile_alias, sizeof(plan->profile_alias), "%s", profile->alias);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int prepare_already_ready(const model_prepare_options *options,
                                  const yvex_model_library_entry *model)
 {
@@ -996,7 +1083,7 @@ static int prepare_already_ready(const model_prepare_options *options,
     return 0;
 }
 
-int yvex_model_prepare_command(int arg_count, char **args)
+static int model_prepare_execute(int arg_count, char **args)
 {
     model_prepare_options options;
     model_prepare_plan plan;
@@ -1012,8 +1099,11 @@ int yvex_model_prepare_command(int arg_count, char **args)
     if (rc) return rc;
     if (yvex_model_library_at(library, model_index)->profile_launchable &&
         !options.quant && !options.imatrix) {
-        rc = prepare_already_ready(
-            &options, yvex_model_library_at(library, model_index));
+        yvex_error_clear(&err);
+        rc = prepare_ready_verify(&options, library, model_index, &err);
+        if (rc == YVEX_OK)
+            rc = prepare_already_ready(&options, yvex_model_library_at(library, model_index));
+        else rc = print_yvex_error(&err, exit_for_status(rc));
         yvex_model_library_close(library);
         return rc;
     }
@@ -1050,6 +1140,12 @@ int yvex_model_prepare_command(int arg_count, char **args)
         rc = prepare_quant_plan(&options, &plan, &err);
         if (rc == YVEX_OK) rc = prepare_store_plan(&plan, &err);
     }
+    if (rc == YVEX_OK && !plan.rebind_existing_artifact &&
+        prepare_cached_plan(&plan, library, model_index, &err)) {
+        prepare_render_ready(&options, &plan, 0, 0);
+        yvex_model_library_close(library);
+        return 0;
+    }
     if (rc == YVEX_OK && !plan.rebind_existing_artifact) {
         if (!options.json) yvex_cli_out_fputs("[materialize] emitting admitted artifact\n", stdout);
         changed |= access(plan.artifact_path, F_OK) != 0;
@@ -1081,4 +1177,23 @@ int yvex_model_prepare_command(int arg_count, char **args)
     prepare_render_ready(&options, &plan, changed, binding_published);
     yvex_model_library_close(library);
     return 0;
+}
+
+int yvex_model_prepare_command(int arg_count, char **args)
+{
+    model_prepare_options options;
+    yvex_paths defaults;
+    yvex_operator_paths paths;
+    yvex_error err;
+    int lock = -1, rc = prepare_options_parse(arg_count, args, &options);
+    if (rc) return rc;
+    yvex_error_clear(&err);
+    rc = yvex_paths_default(&defaults, &err);
+    if (rc == YVEX_OK) rc = yvex_operator_paths_resolve(&defaults, options.models_root, &paths, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_source_acquisition_lock(paths.models_root, "model.prepare", options.model, &lock, &err);
+    if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
+    rc = model_prepare_execute(arg_count, args);
+    (void)close(lock);
+    return rc;
 }

@@ -13,6 +13,7 @@
 #include <yvex/model.h>
 #include <yvex/qtype.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/artifact_storage.h>
 
 static int integrity_refuse(yvex_error *err,
                             yvex_status status,
@@ -264,6 +265,16 @@ static int apply_requested_digest(const yvex_artifact *artifact,
         return add_error(report, "digest-read-failed", "", yvex_error_message(err));
     }
     apply_identity_digest(&identity, options, report);
+    if (!strcmp(report->digest_status, "pass")) {
+        yvex_paths paths;
+        yvex_artifact_reopen_lease lease;
+        yvex_error cache_error;
+        /* Byte verification is independent of model admission. Cache only the stable byte proof. */
+        yvex_error_clear(&cache_error);
+        if (yvex_paths_default(&paths, &cache_error) == YVEX_OK)
+            (void)yvex_artifact_reopen_lease_publish(artifact, identity.sha256,
+                                                    paths.cache_dir, &lease, &cache_error);
+    }
     return YVEX_OK;
 }
 

@@ -67,6 +67,10 @@ complete redacted machine projection. Account commands never print a token.
 
 ## Discover, acquire, and prepare a model
 
+The [model lifecycle guide](model-lifecycle.md) owns the complete acquisition,
+external-tool interoperability, cache, preparation, and safe-removal workflow.
+The [storage contract](contracts/model-storage.md) owns its invariants.
+
 Search remote or local catalogs without downloading payloads:
 
 ```sh
@@ -122,9 +126,11 @@ explains `source/`, `representations/`, records, evidence, caches and temporary
 state, including the difference between new managed output and retained
 historical directories. You do not need to reproduce those subdirectories to
 import a model. An optional `inbox/` is an explicit intake path, not a watched
-folder: run `model pull` on its contents. Local intake verifies full content
-digests, including during a dry-run; inspecting a large local model can therefore
-take substantially longer than resolving remote metadata.
+folder: run `model pull` on its contents. First intake establishes full content
+identity, including during a dry-run. Later operations reuse current verification
+receipts; changed file snapshots invalidate that reuse. See the
+[idempotency and disk-cost rules](model-lifecycle.md#repeated-commands-interruptions-and-disk-cost)
+for the exact behavior.
 
 Prepare the acquired model through the high-level owner:
 
