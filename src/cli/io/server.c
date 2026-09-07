@@ -222,7 +222,9 @@ static void *human_log_main(void *opaque)
         if (yvex_server_event_next(state->server, cursor, 1, &event, &err) != YVEX_OK)
             continue;
         cursor = event.sequence;
-        if (event.kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS &&
+        if ((event.kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS ||
+             (event.kind >= YVEX_SERVER_EVENT_GENERATION_COMPLETED &&
+              event.kind <= YVEX_SERVER_EVENT_GENERATION_FAILED)) &&
             yvex_server_get_summary(state->server, &summary, &err) == YVEX_OK)
             live = &summary;
         (void)yvex_cli_watch_renderer_event(&renderer, &event, live);

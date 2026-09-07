@@ -709,15 +709,15 @@ wait "$server_pid"
 server_pid=
 wait "$log_pid"
 log_pid=
-grep -E 'REQ[[:space:]]+persisted/' "$root/server.out" >/dev/null
-grep -E 'DONE[[:space:]]+[^[:space:]]+/[^[:space:]]+ t[1-9][0-9]* p[1-9][0-9]*' \
+grep -E 'REQUEST[[:space:]]+persisted/' "$root/server.out" >/dev/null
+grep -E 'DONE[[:space:]]+[^[:space:]]+/[^[:space:]]+ generated=[1-9][0-9]* position=[1-9][0-9]*' \
     "$root/server.out" >/dev/null
-grep -E 'LOAD[[:space:]]+bind[[:space:]]+start' "$root/server.out" >/dev/null
-grep -E 'LOAD[[:space:]]+verify[[:space:]]+[0-9.]+/[0-9.]+[KMGB] 100%' \
+grep -F 'LOAD      phase=binding-validation completed=0 operations total=unknown' "$root/server.out" >/dev/null
+grep -E 'LOAD[[:space:]]+phase=artifact-verification completed=[0-9.]+/[0-9.]+(KiB|MiB|GiB|B) \(100%\)' \
     "$root/server.out" >/dev/null
-grep -E 'MODEL[[:space:]]+tiny-executable g[1-9][0-9]* CPU tgt' \
+grep -E 'MODEL[[:space:]]+tiny-executable generation=[1-9][0-9]* backend=CPU strategy=target-only' \
     "$root/server.out" >/dev/null
-! grep -E 'operations completed|total unavailable|generation [0-9]|first committed token|prompt tokens|depth [0-9]' \
+! grep -E 'REQ[[:space:]]|DEC[[:space:]]|PF[[:space:]]| t[0-9]+ p[0-9]+|avg[0-9]+|rss[0-9]+' \
     "$root/server.out" >/dev/null
 ! grep -F '"kind":' "$root/server.out" >/dev/null
 grep -F '"kind":"generation.completed"' "$root/server.log.jsonl" >/dev/null

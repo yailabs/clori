@@ -38,6 +38,22 @@ SOCKET_ROOT=$(realpath "$SOCKET_ROOT")
 SOCKET_PATH=$SOCKET_ROOT/yvex/yvexd.sock
 chmod 0700 "$SOCKET_ROOT"
 
+# Link the actual renderer; section GC excludes unrelated porcelain consumers.
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -D_POSIX_C_SOURCE=200809L -I. -Iinclude \
+    -Ibuild/generated -ffunction-sections -fdata-sections \
+    tests/cli/logs.c src/cli/io/out.c src/core/status.c \
+    -Wl,--gc-sections -o "$OUT_DIR/log-renderer"
+NO_COLOR=1 "$OUT_DIR/log-renderer" >"$OUT_DIR/log-renderer.out"
+env -u NO_COLOR TERM=xterm script -q -e -c "$OUT_DIR/log-renderer" \
+    "$OUT_DIR/log-renderer.tty" >"$OUT_DIR/log-renderer.color"
+python3 - "$OUT_DIR/log-renderer.out" "$OUT_DIR/log-renderer.color" <<'PY'
+import pathlib, re, sys
+plain, color = [pathlib.Path(path).read_bytes().decode() for path in sys.argv[1:]]
+assert '\x1b' not in plain and '\r' not in plain
+assert '\x1b[' in color
+assert re.sub(r'\x1b\[[0-9;]*m', '', color).replace('\r\n', '\n') == plain
+PY
+
 fail()
 {
     printf 'FAIL: %s\n' "$1" >&2
@@ -339,7 +355,7 @@ contains "$OUT_DIR/server-terminal.typescript" 'NATIVE'
 not_contains "$OUT_DIR/server-terminal.typescript" 'LOAD   deepseek4-v4-flash-dspark · g1'
 contains "$OUT_DIR/server-terminal.typescript" 'FAIL'
 contains "$OUT_DIR/server-terminal.typescript" 'deepseek4-v4-flash-dspark-'
-contains "$OUT_DIR/server-terminal.typescript" ' g0 CPU'
+contains "$OUT_DIR/server-terminal.typescript" ' generation=0 backend=CPU'
 contains "$OUT_DIR/server-terminal.typescript" 'EVENTS     lifecycle · progress · resources'
 contains "$OUT_DIR/server-terminal.typescript" 'host ready · Ctrl-C to stop'
 not_contains "$OUT_DIR/server-terminal.typescript" 'CONTROL'

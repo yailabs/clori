@@ -350,14 +350,23 @@ static void execution_rates(FILE *output,
         if (typed && (measurement->available &
                       YVEX_EXECUTION_MEASUREMENT_CUMULATIVE_RATE_AVAILABLE))
             cumulative = measurement->cumulative_rate;
-        else if (fallback_rate > 0.0)
+        else if (!typed && fallback_rate > 0.0)
             cumulative = fallback_rate;
-        if (cumulative > 0.0) fprintf(output, " | avg%.2f", cumulative);
+        const char *label = !typed ? "rate" :
+            measurement->scope == YVEX_EXECUTION_SCOPE_SUBSEQUENT_DECODE
+                ? "decode-avg" :
+            measurement->scope == YVEX_EXECUTION_SCOPE_TOTAL_OPERATION
+                ? "total-avg" : "avg";
+        if (cumulative > 0.0)
+            fprintf(output, " | %s=%.2f tok/s", label, cumulative);
         if (typed && (measurement->available &
-                      YVEX_EXECUTION_MEASUREMENT_ROLLING_RATE_AVAILABLE))
-            fprintf(output, "%s r%llu %.2f", cumulative > 0.0 ? "" : " |",
-                    measurement->rolling_window_units,
+                      YVEX_EXECUTION_MEASUREMENT_ROLLING_RATE_AVAILABLE)) {
+            fprintf(output, "%s rolling[", cumulative > 0.0 ? "" : " |");
+            if (measurement->rolling_units < measurement->rolling_window_units)
+                fprintf(output, "%llu/", measurement->rolling_units);
+            fprintf(output, "%llu]=%.2f tok/s", measurement->rolling_window_units,
                     measurement->rolling_rate);
+        }
         return;
     }
     if (typed &&
@@ -476,7 +485,7 @@ static void server_event_bytes(const char *name, unsigned long long bytes, int c
     double scale = bytes >= 1073741824u ? 1073741824.0 : 1048576.0;
     const char *unit = bytes >= 1073741824u ? "GiB" : "MiB";
     if (compact)
-        printf(" %s%.1f%c", name, (double)bytes / scale, unit[0]);
+        printf(" %s=%.1f%s", name, (double)bytes / scale, unit);
     else
         printf(" · %s %.2f %s", name, (double)bytes / scale, unit);
 }
@@ -766,7 +775,7 @@ static void watch_line_begin(const yvex_cli_watch_renderer *renderer,
 {
     char stamp[16];
     watch_stamp(event, stamp);
-    printf("%s%s%s  %s%-5s%s ", renderer->style.dim, stamp,
+    printf("%s%s%s  %s%-9s%s ", renderer->style.dim, stamp,
            renderer->style.reset, color, label, renderer->style.reset);
 }
 
@@ -794,77 +803,69 @@ static void watch_request_begin(yvex_cli_watch_renderer *renderer,
                                 const yvex_server_event *event)
 {
     renderer->request_open = 1;
-    renderer->cycles = renderer->proposed = renderer->accepted = 0ull;
-    renderer->rejected = renderer->discarded = 0ull;
-    putchar('\n');
-    watch_line_begin(renderer, event, renderer->style.accent, "REQ");
+    watch_line_begin(renderer, event, renderer->style.accent, "REQUEST");
     watch_request_id(event);
-    if (event->kind == YVEX_SERVER_EVENT_REQUEST_STARTED)
-        printf("  %si%llu l%llu m%llu%s",
-               renderer->style.dim, event->value_a, event->value_b,
-               event->value_c, renderer->style.reset);
+    printf(" %s%s=%llu prefix_tokens=%llu max_tokens=%llu%s",
+           renderer->style.dim,
+           event->provider_request_identity[0] ? "messages" : "input_bytes",
+           event->value_a, event->value_b,
+           event->value_c, renderer->style.reset);
     putchar('\n');
 }
 static void watch_session(const yvex_cli_watch_renderer *renderer,
                           const yvex_server_event *event)
 {
-    const char *verb = event->kind == YVEX_SERVER_EVENT_SESSION_CREATED ? "new" :
-                       event->kind == YVEX_SERVER_EVENT_SESSION_ATTACHED ? "att" :
-                       event->kind == YVEX_SERVER_EVENT_SESSION_DETACHED ? "det" : "close";
+    const char *verb = event->kind == YVEX_SERVER_EVENT_SESSION_CREATED ? "created" :
+        event->kind == YVEX_SERVER_EVENT_SESSION_ATTACHED ? "attached" :
+        event->kind == YVEX_SERVER_EVENT_SESSION_DETACHED ? "detached" :
+        event->kind == YVEX_SERVER_EVENT_SESSION_RESET ? "reset" : "closed";
     watch_line_begin(renderer, event, server_event_color(event, &renderer->style),
-                     "SESS");
+                     "SESSION");
     watch_text(event->session_id, 16u);
     printf(" %s", verb);
     if (event->kind == YVEX_SERVER_EVENT_SESSION_ATTACHED ||
         event->kind == YVEX_SERVER_EVENT_SESSION_DETACHED)
-        printf(" c%llu", event->value_a);
+        printf(" clients=%llu", event->value_a);
     else if (event->kind == YVEX_SERVER_EVENT_SESSION_CREATED ||
              event->kind == YVEX_SERVER_EVENT_SESSION_CLOSED)
-        printf(" a%llu", event->value_b);
+        printf(" active_sessions=%llu", event->value_b);
     putchar('\n');
 }
 static void watch_cycle(yvex_cli_watch_renderer *renderer,
                         const yvex_server_event *event)
 {
-    renderer->cycles++;
-    renderer->proposed += event->proposed_tokens;
-    renderer->accepted += event->accepted_tokens;
-    renderer->rejected += event->rejected_tokens;
-    renderer->discarded += event->discarded_tokens;
     if (!renderer->detailed) return;
     watch_line_begin(renderer, event, renderer->style.success, "SPEC");
-    printf("cy %-3llu · ok %llu/%llu", event->speculative_cycle,
+    watch_request_id(event);
+    printf(" cycle=%llu accepted=%llu/%llu", event->speculative_cycle,
            event->accepted_tokens, event->proposed_tokens);
     if (event->selected_verification_tokens)
-        printf(" · ver %llu", event->selected_verification_tokens);
-    if (event->rejected_tokens) printf(" · rej %llu", event->rejected_tokens);
-    if (event->discarded_tokens) printf(" · drop %llu", event->discarded_tokens);
-    if (event->seconds > 0.0) printf(" · %.3f s", event->seconds);
+        printf(" verified=%llu", event->selected_verification_tokens);
+    if (event->rejected_tokens) printf(" rejected=%llu", event->rejected_tokens);
+    if (event->discarded_tokens) printf(" discarded=%llu", event->discarded_tokens);
+    if (event->seconds > 0.0) printf(" elapsed=%.3fs", event->seconds);
     putchar('\n');
 }
 
 static void watch_request_end(yvex_cli_watch_renderer *renderer,
                               const yvex_server_event *event)
 {
-    static const char *const stops[] = {
-        "-", "eos", "tok", "max", "ctx", "cxl", "mdl", "tok", "out"};
     const char *label = event->kind == YVEX_SERVER_EVENT_GENERATION_COMPLETED
                             ? "DONE"
                         : event->kind == YVEX_SERVER_EVENT_GENERATION_CANCELLED
-                            ? "CXL"
+                            ? "CANCELLED"
                             : "FAIL";
     const char *color = server_event_color(event, &renderer->style);
     watch_line_begin(renderer, event, color, label);
     watch_request_id(event);
-    printf(" t%llu p%llu %s", event->value_a, event->value_b,
-           event->value_c < sizeof(stops) / sizeof(stops[0])
-               ? stops[event->value_c] : "unk");
-    if (event->seconds > 0.0) printf(" %.1fs", event->seconds);
+    printf(" generated=%llu position=%llu stop=\"%s\"", event->value_a,
+           event->value_b, yvex_cli_out_stop_reason(event->value_c));
+    if (event->seconds > 0.0) printf(" elapsed=%.1fs", event->seconds);
     execution_rates(stdout, &event->measurement, event->rate, 1);
     if (event->proposed_tokens)
-        printf(" sp%.0f%%", 100.0 * (double)event->accepted_tokens /
+        printf(" spec-accept=%.1f%%", 100.0 * (double)event->accepted_tokens /
                               (double)event->proposed_tokens);
-    puts("\n");
+    putchar('\n');
     renderer->request_open = 0;
 }
 
@@ -888,20 +889,28 @@ static int watch_progress_due(yvex_cli_watch_renderer *renderer,
     return 1;
 }
 
-static void watch_live_resources(const yvex_server_summary *live)
+static void watch_live_resources(yvex_cli_watch_renderer *renderer,
+                                 const yvex_server_event *event,
+                                 const yvex_server_summary *live, int force)
 {
     const yvex_execution_resource_summary *resource;
     if (!live) return;
+    if (!force && renderer->resource_stamp_ns &&
+        event->wall_time_ns >= renderer->resource_stamp_ns &&
+        event->wall_time_ns - renderer->resource_stamp_ns < 10000000000ull) return;
+    renderer->resource_stamp_ns = event->wall_time_ns;
     resource = &live->metrics.resources;
-    fputs(" |", stdout);
-    server_event_bytes("rss", resource->process_rss_current_bytes, 1);
+    watch_line_begin(renderer, event, renderer->style.dim, "RESOURCES");
+    fputs("host snapshot", stdout);
+    if (resource->available & YVEX_EXECUTION_RESOURCE_PROCESS_AVAILABLE)
+        server_event_bytes("process-rss", resource->process_rss_current_bytes, 1);
     if (resource->model_explicit_device_bytes)
-        server_event_bytes("dev", resource->model_explicit_device_bytes, 1);
-    if (resource->workspace_current_bytes)
-        server_event_bytes("ws", resource->workspace_current_bytes, 1);
-    if (resource->session_physical_state_bytes)
-        server_event_bytes("st", resource->session_physical_state_bytes, 1);
-    printf(" run%llu q%llu", live->metrics.active_requests,
+        server_event_bytes("model-device-alloc", resource->model_explicit_device_bytes, 1);
+    if (resource->available & YVEX_EXECUTION_RESOURCE_WORKSPACE_AVAILABLE)
+        server_event_bytes("workspace", resource->workspace_current_bytes, 1);
+    if (resource->available & YVEX_EXECUTION_RESOURCE_SESSION_AVAILABLE)
+        server_event_bytes("session-state", resource->session_physical_state_bytes, 1);
+    printf(" active_requests=%llu queued=%llu\n", live->metrics.active_requests,
            live->metrics.queue_depth);
 }
 
@@ -910,20 +919,19 @@ static int watch_generation_progress(yvex_cli_watch_renderer *renderer,
                                      const yvex_server_summary *live)
 {
     if (!watch_progress_due(renderer, event)) return 0;
-    watch_line_begin(renderer, event, renderer->style.accent, "DEC");
+    watch_line_begin(renderer, event, renderer->style.accent, "DECODE");
     watch_request_id(event);
-    printf("  t%llu p%llu %s", event->value_a, event->value_b,
-           !strcmp(event->phase, "reasoning") ? "rsn" :
-           !strcmp(event->phase, "answer") ? "ans" : "dec");
+    printf(" generated=%llu position=%llu phase=%s", event->value_a, event->value_b,
+           event->phase[0] ? event->phase : "decode");
     if (event->value_c && strcmp(event->phase, "reasoning"))
-        printf(" th%llu", event->value_c);
-    if (event->seconds > 0.0) printf(" %.0fs", event->seconds);
+        printf(" reasoning=%llu", event->value_c);
+    if (event->seconds > 0.0) printf(" elapsed=%.1fs", event->seconds);
     execution_rates(stdout, &event->measurement, event->rate, 1);
     if (event->proposed_tokens)
-        printf(" sp%.0f%%", 100.0 * (double)event->accepted_tokens /
+        printf(" spec-accept=%.1f%%", 100.0 * (double)event->accepted_tokens /
                               (double)event->proposed_tokens);
-    watch_live_resources(live);
     putchar('\n');
+    watch_live_resources(renderer, event, live, 0);
     return 1;
 }
 
@@ -935,56 +943,43 @@ void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer, int detaile
     yvex_cli_terminal_style_get(stdout, &renderer->style);
 }
 
-static int watch_engine_load_progress(yvex_cli_watch_renderer *renderer,
-                                      const yvex_server_event *event)
+static int watch_operation_progress(yvex_cli_watch_renderer *renderer,
+                                     const yvex_server_event *event, const char *label)
 {
     const yvex_execution_measurement *measurement = &event->measurement;
     const char *phase = event->phase[0] ? event->phase : "work";
-    const char *unit =
-        measurement->work_unit == YVEX_EXECUTION_WORK_TENSORS ? "ten" :
-        measurement->work_unit == YVEX_EXECUTION_WORK_PLANS ? "plan" :
-        measurement->work_unit == YVEX_EXECUTION_WORK_COMPONENTS ? "comp" :
-        measurement->work_unit == YVEX_EXECUTION_WORK_OPERATIONS ? "op" :
-        execution_work_name(measurement->work_unit);
-    if (!strcmp(phase, "binding-validation")) phase = "bind";
-    else if (!strcmp(phase, "artifact-open")) phase = "open";
-    else if (!strcmp(phase, "artifact-admission")) phase = "admit";
-    else if (!strcmp(phase, "artifact-verification")) phase = "verify";
-    else if (!strcmp(phase, "materialization")) phase = "mat";
-    else if (!strcmp(phase, "model-seal")) phase = "seal";
-    else if (!strcmp(phase, "residency")) phase = "res";
-    else if (!strcmp(phase, "backend-open")) phase = "be";
-    else if (!strcmp(phase, "workspace-prepare")) phase = "ws";
-    watch_line_begin(renderer, event, renderer->style.accent, "LOAD");
-    printf("%-6s", phase);
-    if (measurement->available &
-        YVEX_EXECUTION_MEASUREMENT_DENOMINATOR_AVAILABLE) {
-        double percent = measurement->total_units
-                             ? 100.0 * (double)measurement->completed_units /
-                                   (double)measurement->total_units
-                             : 0.0;
+    const char *unit = execution_work_name(measurement->work_unit);
+    watch_line_begin(renderer, event, renderer->style.accent, label);
+    if (event->request_id[0]) {
+        watch_request_id(event);
+        putchar(' ');
+    }
+    printf("phase=%s", phase);
+    if ((measurement->available & YVEX_EXECUTION_MEASUREMENT_DENOMINATOR_AVAILABLE) &&
+        measurement->total_units) {
+        double percent = 100.0 * (double)measurement->completed_units /
+                         (double)measurement->total_units;
         if (measurement->work_unit == YVEX_EXECUTION_WORK_BYTES) {
             double scale = measurement->total_units >= 1073741824ull
                                ? 1073741824.0
                            : measurement->total_units >= 1048576ull
                                ? 1048576.0
                            : measurement->total_units >= 1024ull ? 1024.0 : 1.0;
-            const char *suffix = scale == 1073741824.0 ? "G" :
-                                 scale == 1048576.0 ? "M" :
-                                 scale == 1024.0 ? "K" : "B";
-            printf(" %.1f/%.1f%s", (double)measurement->completed_units / scale,
+            const char *suffix = scale == 1073741824.0 ? "GiB" :
+                                 scale == 1048576.0 ? "MiB" :
+                                 scale == 1024.0 ? "KiB" : "B";
+            printf(" completed=%.1f/%.1f%s", (double)measurement->completed_units / scale,
                    (double)measurement->total_units / scale, suffix);
         } else {
-            printf(" %llu/%llu%s", measurement->completed_units,
+            printf(" completed=%llu/%llu %s", measurement->completed_units,
                    measurement->total_units, unit);
         }
-        printf(" %.0f%%", percent);
+        printf(" (%.0f%%)", percent);
     } else {
-        printf(measurement->completed_units ? " n%llu%s" : " start",
-               measurement->completed_units, unit);
+        printf(" completed=%llu %s total=unknown", measurement->completed_units, unit);
     }
     if (measurement->available & YVEX_EXECUTION_MEASUREMENT_DURATION_AVAILABLE)
-        printf(" %.2fs", (double)measurement->duration_ns / 1000000000.0);
+        printf(" elapsed=%.2fs", (double)measurement->duration_ns / 1000000000.0);
     putchar('\n');
     return 1;
 }
@@ -999,19 +994,20 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
         strcmp(event->phase, "media-model")) {
         static const char *const modes[] = {"hash", "reopen", "rehash"};
         unsigned long long mode = event->value_c & 0xffull;
-        watch_line_begin(renderer, event, renderer->style.accent, "COMP");
+        watch_line_begin(renderer, event, renderer->style.accent, "COMPONENT");
         printf("%-12s %s", event->phase,
                mode < sizeof(modes) / sizeof(modes[0]) ? modes[mode] : "unknown");
-        server_event_bytes("h", event->value_a, 1);
-        server_event_bytes("f", event->value_b, 1);
-        if (event->seconds > 0.0) printf(" %.2fs", event->seconds);
+        server_event_bytes("hashed", event->value_a, 1);
+        server_event_bytes("file", event->value_b, 1);
+        if (event->seconds > 0.0) printf(" elapsed=%.2fs", event->seconds);
         putchar('\n');
         return 1;
     }
     if (event->engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
         event->kind == YVEX_SERVER_EVENT_REQUEST_STARTED) {
-        watch_line_begin(renderer, event, renderer->style.accent, "MED");
-        printf("start\n");
+        watch_line_begin(renderer, event, renderer->style.accent, "MEDIA");
+        watch_request_id(event);
+        puts(" started");
         renderer->request_open = 1;
         return 1;
     }
@@ -1020,13 +1016,15 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
          event->kind == YVEX_SERVER_EVENT_PREFILL_COMPLETED ||
          event->kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS ||
          event->kind == YVEX_SERVER_EVENT_GENERATION_PROFILE)) {
-        watch_line_begin(renderer, event, renderer->style.accent, "MED");
-        printf("%s", event->phase[0] ? event->phase : "executing");
+        watch_line_begin(renderer, event, renderer->style.accent, "MEDIA");
+        watch_request_id(event);
+        printf(" phase=%s", event->phase[0] ? event->phase : "executing");
         if (event->value_b)
-            printf(" · %llu/%llu", event->value_a, event->value_b);
-        if (event->value_c) printf(" v%llu", event->value_c);
-        watch_live_resources(live);
+            printf(" completed=%llu/%llu %s", event->value_a, event->value_b,
+                   execution_work_name(event->measurement.work_unit));
+        if (event->value_c) printf(" value=%llu", event->value_c);
         putchar('\n');
+        watch_live_resources(renderer, event, live, 0);
         return 1;
     }
     if (event->engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
@@ -1038,14 +1036,16 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
                                 ? "CANCELLED" : "FAILED";
         watch_line_begin(renderer, event, server_event_color(event, &renderer->style),
                          !strcmp(label, "COMPLETE") ? "DONE" :
-                         !strcmp(label, "CANCELLED") ? "CXL" : "FAIL");
+                         !strcmp(label, "CANCELLED") ? "CANCELLED" : "FAIL");
+        watch_request_id(event);
         if (event->kind == YVEX_SERVER_EVENT_GENERATION_COMPLETED)
-            printf("f%llu b%llu aud%llu",
+            printf(" frames=%llu bytes=%llu audio_samples=%llu",
                    event->value_a, event->value_b, event->value_c);
         else
-            printf("med %s", event->phase[0] ? event->phase : "end");
-        if (event->seconds > 0.0) printf(" %.2fs", event->seconds);
-        puts("\n");
+            printf(" media phase=%s", event->phase[0] ? event->phase : "end");
+        if (event->seconds > 0.0) printf(" elapsed=%.2fs", event->seconds);
+        putchar('\n');
+        watch_live_resources(renderer, event, live, 1);
         renderer->request_open = 0;
         return 1;
     }
@@ -1062,7 +1062,10 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
          event->kind <= YVEX_SERVER_EVENT_CANDIDATE_REJECTED))
         return 0;
     if (event->kind == YVEX_SERVER_EVENT_ENGINE_LOAD_PROGRESS)
-        return watch_engine_load_progress(renderer, event);
+        return watch_operation_progress(renderer, event, "LOAD");
+    if (event->kind == YVEX_SERVER_EVENT_PREFILL_STARTED ||
+        event->kind == YVEX_SERVER_EVENT_PREFILL_PROGRESS)
+        return watch_operation_progress(renderer, event, "PREFILL");
     if (event->kind == YVEX_SERVER_EVENT_RUNTIME_READY ||
         event->kind >= YVEX_SERVER_EVENT_ENGINE_LOAD_REQUESTED) {
         const char *label = event->kind == YVEX_SERVER_EVENT_RUNTIME_READY ||
@@ -1073,17 +1076,17 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
                             : event->kind == YVEX_SERVER_EVENT_ENGINE_LOAD_FAILED
                                 ? "FAIL"
                             : event->kind == YVEX_SERVER_EVENT_ENGINE_UNLOAD_STARTED
-                                ? "ULD"
+                                ? "UNLOAD"
                             : event->kind == YVEX_SERVER_EVENT_ENGINE_UNLOADED
-                                ? "OUT" : "FAIL";
+                                ? "UNLOADED" : "FAIL";
         watch_line_begin(renderer, event,
                          server_event_color(event, &renderer->style), label);
         watch_text(event->phase, sizeof(event->phase));
-        printf(" g%llu %s", event->value_a, server_backend_name(event->value_c));
+        printf(" generation=%llu backend=%s", event->value_a, server_backend_name(event->value_c));
         if (event->execution_strategy == YVEX_SERVER_EXECUTION_SPECULATIVE)
-            printf(" spec");
+            printf(" strategy=speculative");
         else if (event->execution_strategy == YVEX_SERVER_EXECUTION_TARGET_ONLY)
-            printf(" tgt");
+            printf(" strategy=target-only");
         putchar('\n');
         return 1;
     }
@@ -1096,9 +1099,9 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
     }
     if (event->kind == YVEX_SERVER_EVENT_REQUEST_QUEUED) {
         if (event->value_a <= 1ull) return 0;
-        watch_line_begin(renderer, event, renderer->style.warning, "Q");
+        watch_line_begin(renderer, event, renderer->style.warning, "QUEUE");
         watch_request_id(event);
-        printf(" d%llu/%llu\n", event->value_a, event->value_b);
+        printf(" depth=%llu/%llu\n", event->value_a, event->value_b);
         return 1;
     }
     if (event->kind == YVEX_SERVER_EVENT_REQUEST_STARTED) {
@@ -1106,21 +1109,20 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
         return 1;
     }
     if (event->kind == YVEX_SERVER_EVENT_TOKENIZER_COMPLETED) {
-        if (!renderer->detailed) return 0;
-        watch_line_begin(renderer, event, renderer->style.strong, "IN");
+        watch_line_begin(renderer, event, renderer->style.strong, "PROMPT");
         watch_request_id(event);
-        printf(" p%llu reuse%llu\n", event->value_a, event->value_b);
+        printf(" tokens=%llu reused=%llu\n", event->value_a, event->value_b);
     } else if (event->kind == YVEX_SERVER_EVENT_PREFILL_COMPLETED) {
-        watch_line_begin(renderer, event, renderer->style.success, "PF");
+        watch_line_begin(renderer, event, renderer->style.success, "PREFILL");
         watch_request_id(event);
-        printf(" t%llu c%llu", event->value_a, event->value_b);
-        if (event->seconds > 0.0) printf(" %.2fs", event->seconds);
+        printf(" tokens=%llu chunks=%llu", event->value_a, event->value_b);
+        if (event->seconds > 0.0) printf(" elapsed=%.2fs", event->seconds);
         execution_rates(stdout, &event->measurement, event->rate, 1);
         putchar('\n');
     } else if (event->kind == YVEX_SERVER_EVENT_GENERATION_FIRST_TOKEN) {
-        watch_line_begin(renderer, event, renderer->style.accent, "1ST");
+        watch_line_begin(renderer, event, renderer->style.accent, "FIRST");
         watch_request_id(event);
-        if (event->seconds > 0.0) printf(" ttft%.3fs", event->seconds);
+        if (event->seconds > 0.0) printf(" first-token=%.3fs", event->seconds);
         putchar('\n');
     } else if (event->kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS) {
         if (!watch_generation_progress(renderer, event, live)) return 0;
@@ -1129,9 +1131,10 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
     } else if (event->kind >= YVEX_SERVER_EVENT_GENERATION_COMPLETED &&
                event->kind <= YVEX_SERVER_EVENT_GENERATION_FAILED) {
         watch_request_end(renderer, event);
+        watch_live_resources(renderer, event, live, 1);
     } else if (event->kind == YVEX_SERVER_EVENT_TELEMETRY_DROPPED) {
         watch_line_begin(renderer, event, renderer->style.warning, "WARN");
-        printf("tel merge%llu drop%llu cap%llu\n",
+        printf("telemetry coalesced=%llu dropped=%llu capacity=%llu\n",
                event->value_c, event->value_a, event->value_b);
     } else if (event->kind == YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_START ||
                event->kind == YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE) {

@@ -153,8 +153,7 @@ typedef struct {
     yvex_cli_terminal_style style;
     char session_id[YVEX_SERVER_ID_CAP];
     char request_id[YVEX_SERVER_ID_CAP];
-    unsigned long long cycles, proposed, accepted, rejected;
-    unsigned long long discarded, progress_tokens;
+    unsigned long long progress_tokens, resource_stamp_ns;
     double progress_seconds;
     int request_open, detailed, progress_reasoning;
 } yvex_cli_watch_renderer;
