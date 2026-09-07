@@ -17,6 +17,13 @@ session state, resource accounting, and execution measurement have common
 owners. Multiple fitting engines can coexist without replacing a primary
 conversation. Cooperative scheduling does not imply continuous batching.
 
+The first integrated reassessment closes two generic ownership boundaries:
+source-declared logical model relations replace catalog family exceptions,
+and a private platform adapter isolates terminal mechanics from client
+semantics. Linux execution is qualified; portable interfaces do not establish
+Windows or macOS execution. The compiler/state/backend substrate is retained
+where its existing ownership is sound.
+
 The accepted family boundaries are deliberately unequal:
 
 - DeepSeek reaches source-to-hosted text and speculative execution.
@@ -41,18 +48,19 @@ than a second current ledger.
 
 | Order | Milestone | State | Owned after-state | Depends on |
 | ---: | --- | --- | --- | --- |
-| 1 | `MAINTENANCE.ARCHITECTURE.REASSESSMENT.0` | `active` | Fresh adversarial review of the integrated architecture and evidence, with findings classified before code work is selected. | Accepted integrated foundation and documentation ownership |
-| 2 | `SPECTRUM.MAMBA2.REPAIR.0` | `partial` | Resolve source authorities and the SSM-only compiled decoder, then earn artifact, deployment, and hosted generation evidence. | Reassessment; repair the same boundary |
+| 1 | `MAINTENANCE.ARCHITECTURE.REASSESSMENT.0` | `complete` | Source-qualified logical relations and platform-isolated client lifetimes, adversarial QA and a repeated whole-model performance control. | Accepted integrated foundation and documentation ownership |
+| 2 | `SPECTRUM.MAMBA2.REPAIR.0` | `active` | Accepted evidence remains PARTIAL. Resolve source authorities and the SSM-only compiled decoder, then earn artifact, deployment, and hosted generation evidence. | Qualified reassessment; repair the same boundary |
 | 3 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `partial` | Improve real warm execution under controlled phase/resource evidence without weakening numerical or lifecycle semantics. | Measured bottleneck selection; explicit resumption |
 | 4 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, long-context, and refusal evaluation over the admitted product path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
 | 5 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Identity-bound full-model latency, throughput, memory, and reliability evidence. | `V010.EVAL.DEEPSEEK.0` |
 | 6 | `V010.RELEASE.0` | `blocked` | All release gates close together; no missing evidence is relabelled pass. | `V010.BENCH.DEEPSEEK.0` |
 
-Active Next: MAINTENANCE.ARCHITECTURE.REASSESSMENT.0
+Active Next: SPECTRUM.MAMBA2.REPAIR.0
 
-Architecture-spectrum implementation is paused for the reassessment. The next
-Mamba2 delivery repairs its existing boundary; this is not permission to begin
-another architecture, performance campaign, or application integration.
+The next delivery repairs Mamba2's existing boundary. An active work item is
+not family promotion: its evidence remains PARTIAL until the product path is
+qualified. This is not permission to begin another architecture, performance
+campaign, or application integration.
 
 ## Open boundaries
 

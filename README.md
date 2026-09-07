@@ -15,6 +15,16 @@ transactional session state. Unsupported implementations, stale identities,
 and insufficient resources fail closed instead of silently changing the
 requested execution.
 
+The compiler and runtime are developed together: family interpretation states
+what a model means, compilation seals legal physical work, and the runtime
+executes that work through shared engine, session and backend owners. A new
+architecture should extend those owners where necessary, not acquire its own
+loader, scheduler or session manager.
+
+This makes YVEX both an operator-facing local inference product and a systems
+engineering substrate. Its unit of support is an evidenced source,
+representation and deployment—not a model name or a successfully parsed file.
+
 The [system architecture](docs/architecture/system.md) explains these owners.
 Code and tests establish capability; documentation describes its limits.
 
@@ -132,12 +142,117 @@ After closing dependent sessions and releasing leases:
 ./yvex model unload MODEL
 ```
 
+### 4. Inspect the running system
+
+```sh
+./yvex host status
+./yvex host memory
+./yvex model list --wide
+./yvex model show MODEL
+./yvex model active --json
+```
+
+The catalog describes known material and deployment readiness. The active
+view describes loaded engine generations, including idle engines; it is not
+another list of downloaded checkpoints. A host can be healthy with no model
+loaded, and unloading a model does not stop the host.
+
 The runbook owns the complete [startup procedure](docs/operator-runbook.md#first-verified-startup),
 session recovery, media execution, inspection, and shutdown.
 
 REPLAI owns terminal mechanics; YVEX owns input semantics and result rendering.
 The [interactive boundary figure](docs/architecture/system.md#interactive-terminal-path)
 shows editing, dispatch, execution and the return to the next prompt.
+
+## Architecture and lifetimes
+
+Source, artifact, deployment, engine and session are different objects with
+different lifetimes. This distinction is what lets one persistent host serve
+different model architectures without making mutable state global.
+
+| Boundary | What it establishes | What remains separate |
+| --- | --- | --- |
+| Source and family interpretation | Immutable provenance, tensor roles, topology and state meaning | Executable support must still be proved |
+| Compilation and artifact | Legal physical representation, authenticated package and runtime binding | Current hardware compatibility and live resources |
+| Deployment | Admitted implementation choices for the current backend/device | An engine need not be loaded |
+| Engine generation | Executable model resources and stale-reference protection | Mutable conversation state belongs to sessions |
+| Session and transaction | Independent component state, candidate updates and committed continuity | Shared immutable weights are not duplicated per conversation |
+| Scheduler and backend | Selected work, buffers, submission and equivalent physical operations | They do not decide model meaning or application intent |
+
+The runtime consumes admitted bindings. Source-specific tensor interpretation
+terminates at compilation; backends execute admitted operations rather than
+selecting a model architecture from filenames. Incomplete lowering remains an
+explicit refusal, as it currently does for the pure-SSM Mamba2 decoder.
+
+Sequence state is not synonymous with KV. Attention state, recurrent state,
+convolution history and speculative state have different geometries. Common
+transaction machinery coordinates their lifetime and commit/abort boundaries
+without pretending that their update rules are identical.
+
+A quantized artifact is a derived physical representation of its source, not
+a different source model. A logical relationship between two source variants
+does not erase their exact revisions, artifact identities or deployment
+selectors. Working-set membership is likewise independent of storage location
+and engine residency.
+
+The deeper owners are [compilation](docs/architecture/compilation.md),
+[runtime](docs/architecture/runtime.md),
+[family integration](docs/model-families/integration.md), and the
+[storage contract](docs/contracts/model-storage.md).
+
+## Multiple models and typed turns
+
+The selected conversational model need not be the only loaded model. An
+external client can explicitly ensure that a READY model is active and hold a
+lease on its engine generation. The same lifecycle owner admits that engine;
+there is no auxiliary loader. Live leases and sessions prevent premature
+unload, and resource pressure does not authorize silent eviction.
+
+Each turn can carry ordered text, image, audio, video, file or tensor parts.
+Content identities and derivation provenance distinguish an original object
+from a representation derived from it, such as an audio transcript. Input and
+output capabilities belong to the admitted execution specialization: transport
+support for audio or images is not a claim that a text model understands them.
+
+The reference client stages attachments for the next turn:
+
+```text
+/attach /absolute/path/first.png
+/attach /absolute/path/second.png
+/attachments
+Describe these inputs.
+```
+
+This illustrates multipart submission, not qualified vision in the text-only
+models above. Later turns can stage different files without replacing the
+session. `/attachments-clear` discards the staged parts, not the conversation.
+Native local media transport does not require base64-expanded JSON; local
+references remain subject to admission and are not arbitrary remote file access.
+
+## Reading execution and memory truth
+
+YVEX exposes typed execution events and resource facts through human and
+machine projections. The labels distinguish scopes: `decode-avg` describes
+cumulative decode progress, a rolling rate describes a bounded recent window,
+and a request total is not a per-token measurement. A declining local decode
+rate can therefore remain visible while the cumulative average is still high.
+
+Memory observations distinguish mapped model bytes, explicit backend
+allocations, prepared resources, workspace, typed session state, transients
+and process RSS. These are not automatically additive totals. In particular,
+on unified-memory hardware a device-addressable mapping is not a measurement
+of physical GPU page residency, and zero explicit device allocation does not
+mean zero GPU-used memory.
+
+Normal operational observation and detailed profiling have different costs.
+Characterization must retain the artifact/binding, workload, backend,
+observability configuration and warm/cold identity needed to repeat it. A
+component timing, an engineering target and a whole-model benchmark are
+different evidence classes.
+
+See [execution and resource contracts](docs/contracts/runtime.md) and
+[event and telemetry semantics](docs/contracts/events-telemetry.md) for precise
+scopes, overlap and unavailable measurements.
 
 ## Product boundary
 
@@ -151,6 +266,35 @@ and tool execution belong to consumers. The reference CLI is a linear
 provider client, not an application harness. HTTP clients use the bounded
 [OpenAI compatibility profile](docs/openai-compatibility.md), not an implied
 implementation of every upstream API.
+
+REPLAI provides editing mechanics. A private terminal adapter isolates current
+POSIX interrupt capture, terminal observation and temporary output-state
+restoration from YVEX command and cancellation semantics. This interface
+separation does not claim a qualified Windows or macOS product build; the
+pinned dependency and local transport have their own platform constraints.
+
+## Development and validation
+
+Engineering starts by reconciling the repository and understanding current
+owners. Changes earn promotion through negative admission, numerical,
+lifecycle and product evidence appropriate to the boundary being changed.
+Green software tests alone do not establish whole-model quality or release
+readiness.
+
+The QA catalog maps changed owners to their required checks:
+
+```sh
+git diff --check
+python3 tools/qa.py plan --changed BASE
+python3 tools/qa.py run --changed BASE
+```
+
+Replace `BASE` with the commit preceding the delivery. GPU/live lanes are
+separate from routine checks and require exact admitted assets and exclusive
+hardware access. Weights, generated packages, raw profiles and local registries
+stay outside Git. The [QA contract](docs/development/qa.md) owns validation;
+the [engineering method](docs/development/agentic-engineering.md) explains how
+evidence selects the next boundary. [ROADMAP](ROADMAP.md) owns current direction.
 
 ## Current limits
 
