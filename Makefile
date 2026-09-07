@@ -234,6 +234,7 @@ endef
 
 YVEX_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(YVEX_SRCS)) $(OPERATOR_REGISTRY_OBJ)
 CLIENT_LANE_OBJ := $(OBJ_DIR)/src/cli/io/client.o
+CLIENT_TERMINAL_OBJ := $(OBJ_DIR)/src/cli/io/terminal/posix.o
 # Static external dependency; neither the editor nor its header is vendored.
 REPLAI_PREFIX ?= $(abspath $(BUILD_DIR)/external/replai)
 REPLAI_SOURCE ?=
@@ -243,8 +244,8 @@ REPLAI_ARCHIVE := $(REPLAI_PREFIX)/lib/libreplai_c.a
 replai-dependency:
 	python3 tools/prepare_replai.py --prefix '$(REPLAI_PREFIX)' $(if $(REPLAI_SOURCE),--source '$(REPLAI_SOURCE)')
 $(REPLAI_HEADER) $(REPLAI_ARCHIVE): | replai-dependency
-$(CLIENT_LANE_OBJ): CPPFLAGS += -I$(REPLAI_PREFIX)/include
-$(CLIENT_LANE_OBJ): $(REPLAI_HEADER)
+$(CLIENT_LANE_OBJ) $(CLIENT_TERMINAL_OBJ): CPPFLAGS += -I$(REPLAI_PREFIX)/include
+$(CLIENT_LANE_OBJ) $(CLIENT_TERMINAL_OBJ): $(REPLAI_HEADER)
 CLIENT_PROTOCOL_OBJS := \
 	$(OBJ_DIR)/src/core/status.o \
 	$(OBJ_DIR)/src/core/sha256.o \

@@ -16,6 +16,7 @@
 #endif
 #include "src/cli/input/private.h"
 #include "src/cli/io/private.h"
+#include "src/cli/io/terminal/private.h"
 #include "src/cli/private.h"
 #include "src/cli/render/private.h"
 #include <yvex/internal/core.h>
@@ -23,18 +24,9 @@
 #include <ctype.h>
 #include <errno.h>
 #include <math.h>
-#include <poll.h>
-#include <pthread.h>
-#include <signal.h>
-#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
-#include <sys/types.h>
-#include <termios.h>
-#include <time.h>
-#include <unistd.h>
 #define CLIENT_REPL_LINE_MAX 65536u
 #define CLIENT_REPL_HISTORY_MAX 64u
 typedef struct {
@@ -55,20 +47,11 @@ typedef struct {
 typedef struct {
     client_engine_binding engine;
     char session[YVEX_SERVER_SESSION_NAME_CAP];
-    atomic_int done, interrupts, force_exit;
-    pthread_t thread;
-    sigset_t previous_mask;
-    int ready;
-} client_turn_signals;
-typedef struct {
-    struct termios saved;
-    int active;
-} client_turn_terminal;
+} client_turn_cancellation;
 typedef struct {
     replai_handle *handle;
     char *last_admitted;
 } client_chat_input;
-static volatile sig_atomic_t chat_interrupts;
 static int console_status(const client_engine_binding *engine, const char *session_name);
 static int console_status_fetch(const client_engine_binding *engine,
                                 const char *session_name, yvex_client_message *message,
@@ -218,86 +201,15 @@ static int cancellation_request(const client_engine_binding *engine,
     (void)snprintf(request.session_name, sizeof(request.session_name), "%s",
                    session);
     rc = request_open(&client, &request, &err);
+    if (rc == YVEX_OK) rc = yvex_client_timeout_set(client, 250u, &err);
     if (rc == YVEX_OK) rc = yvex_client_receive(client, &message, &err);
     yvex_client_close(&client);
     return rc == YVEX_OK && message.kind == YVEX_CLIENT_MESSAGE_ACK;
 }
-static void *turn_signal_main(void *opaque)
+static int turn_cancel(void *opaque)
 {
-    client_turn_signals *state = opaque;
-    sigset_t signals;
-    int number;
-    (void)sigemptyset(&signals);
-    (void)sigaddset(&signals, SIGINT);
-    (void)sigaddset(&signals, SIGUSR1);
-    while (sigwait(&signals, &number) == 0) {
-        if (number == SIGUSR1) break;
-        if (atomic_fetch_add_explicit(&state->interrupts, 1,
-                                      memory_order_acq_rel) > 0) {
-            atomic_store_explicit(&state->force_exit, 1, memory_order_release);
-            continue;
-        }
-        while (!atomic_load_explicit(&state->done, memory_order_acquire)) {
-            struct timespec delay = {0, 10000000L};
-            if (cancellation_request(&state->engine, state->session)) break;
-            (void)nanosleep(&delay, NULL);
-        }
-    }
-    return NULL;
-}
-static void turn_signals_open(client_turn_signals *state,
-                              const client_engine_binding *engine,
-                              const char *session)
-{
-    sigset_t signals;
-    memset(state, 0, sizeof(*state));
-    if (engine) state->engine = *engine;
-    (void)snprintf(state->session, sizeof(state->session), "%s", session);
-    atomic_init(&state->done, 0);
-    atomic_init(&state->interrupts, 0);
-    atomic_init(&state->force_exit, 0);
-    (void)sigemptyset(&signals);
-    (void)sigaddset(&signals, SIGINT);
-    (void)sigaddset(&signals, SIGUSR1);
-    if (pthread_sigmask(SIG_BLOCK, &signals, &state->previous_mask) != 0)
-        return;
-    if (pthread_create(&state->thread, NULL, turn_signal_main, state) == 0)
-        state->ready = 1;
-    else
-        (void)pthread_sigmask(SIG_SETMASK, &state->previous_mask, NULL);
-}
-static int turn_signals_close(client_turn_signals *state)
-{
-    int result = 0;
-    if (!state->ready) return 0;
-    atomic_store_explicit(&state->done, 1, memory_order_release);
-    (void)pthread_kill(state->thread, SIGUSR1);
-    (void)pthread_join(state->thread, NULL);
-    (void)pthread_sigmask(SIG_SETMASK, &state->previous_mask, NULL);
-    if (atomic_load_explicit(&state->force_exit, memory_order_acquire))
-        result = 2;
-    else if (atomic_load_explicit(&state->interrupts, memory_order_acquire))
-        result = 1;
-    return result;
-}
-static void turn_terminal_open(client_turn_terminal *terminal)
-{
-    struct termios quiet;
-    memset(terminal, 0, sizeof(*terminal));
-    if (!isatty(STDIN_FILENO) || tcgetattr(STDIN_FILENO, &terminal->saved) != 0)
-        return;
-    quiet = terminal->saved;
-    quiet.c_lflag &= (tcflag_t)~(ECHO | ECHONL);
-    if (tcsetattr(STDIN_FILENO, TCSANOW, &quiet) == 0) terminal->active = 1;
-}
-static void turn_terminal_close(client_turn_terminal *terminal)
-{
-    if (!terminal || !terminal->active) return;
-    /* Chat deliberately does not draft the next turn while generation owns the
-     * output stream. Discard queued editing bytes before restoring the editor. */
-    (void)tcflush(STDIN_FILENO, TCIFLUSH);
-    (void)tcsetattr(STDIN_FILENO, TCSANOW, &terminal->saved);
-    terminal->active = 0;
+    const client_turn_cancellation *state = opaque;
+    return cancellation_request(&state->engine, state->session);
 }
 static const char *backend_name(yvex_backend_kind backend)
 {
@@ -758,19 +670,20 @@ static int generation_turn(const client_engine_binding *engine,
                            const client_turn_options *options, int conversation,
                            yvex_server_engine_kind engine_kind,
                            unsigned long long context_capacity,
+                           yvex_cli_interrupt *interrupts,
                            int *connection_lost) {
     yvex_client_request request;
-    yvex_client_message message;
+    yvex_client_message message = {0};
     yvex_client *client = NULL;
-    client_turn_signals signals;
-    client_turn_terminal terminal;
+    client_turn_cancellation cancellation = {0};
+    yvex_cli_output_scope *terminal = NULL;
     yvex_cli_stream_renderer renderer;
     yvex_error err;
     yvex_cli_terminal_style style;
     FILE *status_output = conversation ? stdout : stderr;
     yvex_reasoning_policy reasoning_policy = options->reasoning_policy;
     int rc, started = 0, progress_active = 0, renderer_finished = 0;
-    int terminal_output = isatty(fileno(stdout));
+    int terminal_output = yvex_cli_terminal_interactive(stdout);
     if (connection_lost) *connection_lost = 0;
     if (!yvex_reasoning_policy_valid(reasoning_policy) &&
         console_status_fetch(engine, session_name, &message, &err) != YVEX_OK)
@@ -834,8 +747,16 @@ static int generation_turn(const client_engine_binding *engine,
         request.typical_p = options->sampling.typical_p;
     }
     request.reasoning_policy = reasoning_policy;
-    turn_signals_open(&signals, engine, session_name);
-    turn_terminal_open(&terminal);
+    if (engine) cancellation.engine = *engine;
+    (void)snprintf(cancellation.session, sizeof(cancellation.session), "%s", session_name);
+    rc = yvex_cli_output_scope_open(&terminal, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_cli_interrupt_watch(interrupts, turn_cancel, &cancellation, &err);
+    if (rc != YVEX_OK) {
+        (void)yvex_cli_output_scope_close(&terminal, NULL);
+        (void)client_error(&err);
+        return 132;
+    }
     rc = request_open(&client, &request, &err);
     while (rc == YVEX_OK) {
         rc = yvex_client_receive(client, &message, &err);
@@ -905,18 +826,22 @@ static int generation_turn(const client_engine_binding *engine,
         (void)yvex_cli_out_flush(stdout);
     }
     yvex_client_close(&client);
-    turn_terminal_close(&terminal);
     {
-        int interrupted = turn_signals_close(&signals);
+        unsigned int interrupted = yvex_cli_interrupt_unwatch(interrupts);
+        yvex_cli_interrupt_clear(interrupts);
+        if (yvex_cli_output_scope_close(&terminal, &err) != YVEX_OK) {
+            (void)client_error(&err);
+            return 132;
+        }
         if (interrupted) {
             if (conversation) {
-                const char *text = interrupted == 2 ? "cancelled · leaving chat"
+                const char *text = interrupted >= 2 ? "cancelled · leaving chat"
                                    : message.session_state == YVEX_SERVER_SESSION_PARTIAL
                                        ? "cancelled · session partial · use /reset"
                                        : "cancelled";
                 printf("%s%s%s\n", style.warning, text, style.reset);
             }
-            return interrupted == 2 ? 131 : 130;
+            return interrupted >= 2 ? 131 : 130;
         }
     }
     if (connection_lost && rc != YVEX_OK &&
@@ -984,11 +909,6 @@ static int chat_history_admit(client_chat_input *input, const char *line)
     input->last_admitted = copy;
     return 0;
 }
-static void chat_signal_handler(int number)
-{
-    (void)number;
-    if (chat_interrupts < 2) chat_interrupts++;
-}
 static replai_status chat_complete_slash(replai_handle *input)
 {
     const yvex_operator_descriptor *match = NULL;
@@ -1034,23 +954,24 @@ static int chat_submission(replai_handle *input, char **output, size_t *count)
     *output = line;
     return 1;
 }
-static int chat_read_line(replai_handle *input, const char *label, int connected,
+static int chat_read_line(replai_handle *input, yvex_cli_interrupt *interrupts,
+                           const char *label, int connected,
                            const char *initial, char **output, size_t *count)
 {
     const char *suffix = connected ? "" : " [disconnected]";
     replai_status status = replai_prompt(input, (const unsigned char *)label,
         strlen(label), (const unsigned char *)suffix, strlen(suffix),
         (const unsigned char *)"... ", 4u);
-    sig_atomic_t observed_interrupts = chat_interrupts;
+    unsigned int observed_interrupts = yvex_cli_interrupt_count(interrupts);
     if (status == REPLAI_OK) status = replai_clear(input);
     if (status == REPLAI_OK && initial)
         status = replai_set_draft(input, (const unsigned char *)initial, strlen(initial));
     if (status == REPLAI_OK && fflush(stdout) != 0) status = REPLAI_IO;
-    if (status == REPLAI_OK) status = replai_open(input, STDIN_FILENO, STDOUT_FILENO);
+    if (status == REPLAI_OK) status = yvex_cli_terminal_editor_open(input);
     if (status != REPLAI_OK) return chat_input_error(input, status);
     for (;;) {
         replai_event event = {0};
-        int host_interrupt = chat_interrupts != observed_interrupts;
+        int host_interrupt = yvex_cli_interrupt_count(interrupts) != observed_interrupts;
         event.struct_size = sizeof(event);
         event.abi_version = REPLAI_C_ABI_VERSION;
         status = host_interrupt ? replai_interrupt(input, &event)
@@ -1062,8 +983,8 @@ static int chat_read_line(replai_handle *input, const char *label, int connected
         case REPLAI_EVENT_SUBMITTED:
             return chat_submission(input, output, count);
         case REPLAI_EVENT_INTERRUPTED:
-            if (!host_interrupt && chat_interrupts < 2) chat_interrupts++;
-            return chat_interrupts >= 2 ? 0 : -2;
+            if (!host_interrupt) yvex_cli_interrupt_record(interrupts);
+            return yvex_cli_interrupt_count(interrupts) >= 2 ? 0 : -2;
         case REPLAI_EVENT_END_OF_INPUT:
             return 0;
         case REPLAI_EVENT_COMPLETION_REQUESTED:
@@ -1338,18 +1259,14 @@ static int chat(const client_engine_binding *selected_engine,
     yvex_client_message status;
     yvex_error err;
     yvex_cli_terminal_style style;
-    struct sigaction action, prior_interrupt;
+    yvex_cli_interrupt *interrupts = NULL;
     char current[YVEX_SERVER_SESSION_NAME_CAP];
     char *draft = NULL;
     unsigned long long generated_session = 1u;
     int closed = 0, connected = 1, attached = 0, result = 0;
-    memset(&action, 0, sizeof(action));
-    action.sa_handler = chat_signal_handler;
-    (void)sigemptyset(&action.sa_mask);
-    chat_interrupts = 0;
-    if (sigaction(SIGINT, &action, &prior_interrupt) != 0) return 1;
+    if (yvex_cli_interrupt_open(&interrupts, &err) != YVEX_OK) return client_error(&err);
     if (chat_input_open(&input_state) != 0) {
-        (void)sigaction(SIGINT, &prior_interrupt, NULL);
+        (void)yvex_cli_interrupt_close(&interrupts, NULL);
         return 1;
     }
     options = *initial_options;
@@ -1400,7 +1317,7 @@ static int chat(const client_engine_binding *selected_engine,
             : selected_model && selected_model->model_selector[0]
                 ? selected_model->model_selector
             : status.console.model_alias[0] ? status.console.model_alias : "yvex";
-        input = chat_read_line(input_state.handle, prompt_model, connected,
+        input = chat_read_line(input_state.handle, interrupts, prompt_model, connected,
                                draft, &line, &count);
         free(draft);
         draft = NULL;
@@ -1409,30 +1326,42 @@ static int chat(const client_engine_binding *selected_engine,
             if (input < 0) result = 1;
             break;
         }
-        chat_interrupts = 0;
+        yvex_cli_interrupt_clear(interrupts);
         if (!count) {
             free(line);
             continue;
         }
         if (line[0] == '/') {
-            client_turn_terminal terminal;
+            yvex_cli_output_scope *terminal = NULL;
             const char *argument = NULL;
             const yvex_operator_descriptor *descriptor =
                 slash_descriptor(line, &argument);
             int local = descriptor &&
                 (descriptor->lane == YVEX_OPERATOR_LANE_REPL_LOCAL ||
                  descriptor->runtime_adapter == YVEX_OPERATOR_RUNTIME_HELP);
-            turn_terminal_open(&terminal);
+            if (yvex_cli_output_scope_open(&terminal, &err) != YVEX_OK) {
+                free(line);
+                result = client_error(&err);
+                break;
+            }
             if (!connected && descriptor && !local &&
                 !repl_reconnect(&engine, current, &status)) {
-                turn_terminal_close(&terminal);
+                if (yvex_cli_output_scope_close(&terminal, &err) != YVEX_OK) {
+                    free(line);
+                    result = client_error(&err);
+                    break;
+                }
                 draft = line;
                 continue;
             }
             if (!connected && descriptor && !local) connected = 1;
             int command = repl_command(line, &engine, current, &generated_session,
                                        &options, attachments);
-            turn_terminal_close(&terminal);
+            if (yvex_cli_output_scope_close(&terminal, &err) != YVEX_OK) {
+                free(line);
+                result = client_error(&err);
+                break;
+            }
             free(line);
             if (command == 3) {
                 closed = 1;
@@ -1442,11 +1371,19 @@ static int chat(const client_engine_binding *selected_engine,
             continue;
         }
         if (!connected) {
-            client_turn_terminal terminal;
+            yvex_cli_output_scope *terminal = NULL;
             int reconnected;
-            turn_terminal_open(&terminal);
+            if (yvex_cli_output_scope_open(&terminal, &err) != YVEX_OK) {
+                free(line);
+                result = client_error(&err);
+                break;
+            }
             reconnected = repl_reconnect(&engine, current, &status);
-            turn_terminal_close(&terminal);
+            if (yvex_cli_output_scope_close(&terminal, &err) != YVEX_OK) {
+                free(line);
+                result = client_error(&err);
+                break;
+            }
             if (!reconnected) {
                 draft = line;
                 continue;
@@ -1476,11 +1413,12 @@ static int chat(const client_engine_binding *selected_engine,
                 (unsigned long long)count, content_parts, content_part_count,
                 &options, 1,
                 status.engine_kind,
-                status.console.context_capacity, &connection_lost);
+                status.console.context_capacity, interrupts, &connection_lost);
             if (connection_lost) connected = 0;
             else if (content_part_count)
                 yvex_cli_content_stage_clear(attachments);
-            if (turn == 131) {
+            if (turn == 131 || turn == 132) {
+                if (turn == 132) result = 1;
                 free(line);
                 break;
             }
@@ -1495,7 +1433,7 @@ cleanup:
     if (attached && !closed && connected)
         (void)administration_bound(YVEX_CLIENT_OP_SESSION_DETACH, &engine,
                                    current, -1);
-    (void)sigaction(SIGINT, &prior_interrupt, NULL);
+    if (yvex_cli_interrupt_close(&interrupts, &err) != YVEX_OK) result = client_error(&err);
     return result;
 }
 static int chat_command(int argc, char **argv, size_t consumed)
@@ -1565,7 +1503,7 @@ static int chat_command(int argc, char **argv, size_t consumed)
     if (!!(options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_WIDTH) !=
         !!(options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT))
         return 2;
-    if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
+    if (!yvex_cli_terminal_interactive(stdin) || !yvex_cli_terminal_interactive(stdout)) {
         fputs("yvex: chat requires a terminal\n"
               "programmatic inference: use the configured provider API\n",
               stderr);

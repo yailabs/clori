@@ -2,7 +2,7 @@
   "schema":1,"number":5,"title":"Interactive editing is not runtime ownership",
   "description":"REPLAI is a pinned, statically linked editor inside yvex chat. It returns submitted UTF-8 and generic input events, restores terminal state before dispatch, and owns no product request semantics. YVEX owns history admission, command completion decisions, attachments, generation-bound requests, cancellation and result rendering. No editable prompt coexists with generation.",
   "size":[1200,1060],"owner":"docs/architecture/system.md",
-  "authority":["config/replai.json","docs/decisions/0007-external-terminal-editor.md","src/cli/io/client.c","src/cli/io/stream.c","tests/replai_consumer.py"],
+  "authority":["config/replai.json","docs/decisions/0007-external-terminal-editor.md","src/cli/io/client.c","src/cli/io/terminal/private.h","src/cli/io/terminal/posix.c","src/cli/io/stream.c","tests/replai_consumer.py"],
   "panels":[
     {"box":[398,82,358,280],"title":"a  REPLAI inside chat"},
     {"box":[24,394,732,526],"title":"b  Client"},
@@ -32,6 +32,6 @@
     {"at":[440,372],"text":"Submitted UTF-8; editing closes"},{"at":[440,395],"text":"before semantic dispatch"},
     {"at":[214,537],"text":"Local result"},
     {"at":[442,645],"text":"Typed content is formed here"},
-    {"at":[48,891],"text":"Next turn reopens editing. During generation, YVEX owns Ctrl-C and terminal quiet-output scope.","style":"note"}
+    {"at":[48,891],"text":"Client owns cancellation; a platform adapter captures interrupts and restores output state.","style":"note"}
   ]
 }

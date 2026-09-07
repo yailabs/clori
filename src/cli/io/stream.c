@@ -6,6 +6,7 @@
  */
 #define _XOPEN_SOURCE 700
 #include "src/cli/io/private.h"
+#include "src/cli/io/terminal/private.h"
 
 #include <ctype.h>
 #include <limits.h>
@@ -13,8 +14,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
 #include <wchar.h>
 
 #define STREAM_PREFERRED_PROSE_WIDTH 96u
@@ -92,13 +91,11 @@ static int stream_newline(yvex_cli_stream_renderer *renderer)
 
 static unsigned int stream_terminal_columns(FILE *output)
 {
-    struct winsize size;
+    unsigned int width = yvex_cli_terminal_width(output);
     const char *configured = getenv("COLUMNS");
     char *end = NULL;
     unsigned long value;
-    int fd = fileno(output);
-    if (fd >= 0 && ioctl(fd, TIOCGWINSZ, &size) == 0 && size.ws_col)
-        return size.ws_col;
+    if (width) return width;
     if (!configured || !configured[0]) return STREAM_PREFERRED_PROSE_WIDTH;
     value = strtoul(configured, &end, 10);
     if (!end || *end || value > UINT_MAX || value < 1u)

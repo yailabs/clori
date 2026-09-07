@@ -1,6 +1,7 @@
 /* Project porcelain model residency over the exact native engine protocol. */
 #define _POSIX_C_SOURCE 200809L
 #include "src/cli/io/private.h"
+#include "src/cli/io/terminal/private.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -363,7 +364,7 @@ int yvex_cli_model_loaded_select(const char *model, const char *variant,
         return 1;
     }
     if (count > 1u) {
-        if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
+        if (!yvex_cli_terminal_interactive(stdin) || !yvex_cli_terminal_interactive(stdout)) {
             yvex_cli_out_fputs(
                 "yvex: multiple loaded models match; pass exact MODEL and --variant\n",
                 stderr);

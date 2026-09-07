@@ -7,6 +7,7 @@
  */
 #include <build_commit.h>
 #include "src/cli/io/private.h"
+#include "src/cli/io/terminal/private.h"
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
@@ -16,7 +17,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 enum { COMPLETION_CANDIDATE_CAP = 256, COMPLETION_TEXT_CAP = 128 };
 typedef struct {
     char text[COMPLETION_CANDIDATE_CAP][COMPLETION_TEXT_CAP];
@@ -237,7 +237,6 @@ void yvex_cli_terminal_style_get(FILE *fp, yvex_cli_terminal_style *style)
 {
     FILE *stream = fp ? fp : stdout;
     const char *terminal;
-    int fd;
 
     if (!style) return;
     memset(style, 0, sizeof(*style));
@@ -248,9 +247,8 @@ void yvex_cli_terminal_style_get(FILE *fp, yvex_cli_terminal_style *style)
     style->success = "";
     style->warning = "";
     style->error = "";
-    fd = fileno(stream);
     terminal = getenv("TERM");
-    if (fd < 0 || !isatty(fd) || getenv("NO_COLOR") ||
+    if (!yvex_cli_terminal_interactive(stream) || getenv("NO_COLOR") ||
         (terminal && !strcmp(terminal, "dumb")))
         return;
     style->reset = "\033[0m";

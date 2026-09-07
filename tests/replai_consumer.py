@@ -147,11 +147,17 @@ def audit(binary):
     dependency_rejections(root, pin)
     symbols = subprocess.check_output(['nm', str(binary)], text=True)
     imports = subprocess.check_output(['nm', '-u', os.environ['YVEX_CLIENT_LANE_OBJ']], text=True)
-    for symbol in ['replai_abi_version', 'replai_create', 'replai_open', 'replai_poll',
+    for symbol in ['replai_abi_version', 'replai_create', 'replai_poll',
                    'replai_complete', 'replai_external_output', 'replai_history_add',
                    'replai_interrupt', 'replai_destroy']:
         assert any(line.split()[-1] == symbol for line in symbols.splitlines())
         assert any(line.split()[-1] == symbol for line in imports.splitlines())
+    assert any(line.split()[-1] == 'replai_open' for line in symbols.splitlines())
+    assert any(line.split()[-1] == 'yvex_cli_terminal_editor_open' for line in imports.splitlines())
+    # Platform entrypoints no longer form the semantic client's interface.
+    for symbol in ['replai_open', 'sigaction', 'sigwait', 'pthread_sigmask',
+                   'tcgetattr', 'tcsetattr', 'tcflush', 'ioctl', 'isatty', 'fileno']:
+        assert not any(line.split()[-1] == symbol for line in imports.splitlines()), symbol
     loader = subprocess.check_output(['ldd', str(binary)], text=True)
     assert 'libreplai' not in loader
     source = (root / 'src/cli/io/client.c').read_text()

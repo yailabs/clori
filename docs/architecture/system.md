@@ -149,6 +149,20 @@ event; during generation it enters YVEX cancellation and quiet-output handling.
 EOF, exit and transport failure follow their distinct close/recovery paths.
 Historical `repl_` helper names do not establish another editor.
 
+The private `src/cli/io/terminal/` contract exposes terminal observation,
+opaque output/capture scopes and interrupt counts, not descriptors, signals or
+console layouts. The current POSIX implementation adapts the editor entrypoint,
+captures interrupts, and joins its watch before application context expires.
+The client callback decides which generation to cancel; terminal capture never
+owns engine/session meaning. Output-state admission and restoration failures
+stop chat instead of continuing with uncertain terminal state.
+
+This is an interface portability boundary, not cross-platform qualification.
+Linux PTY tests exercise the implementation and the pinned REPLAI ABI, which
+currently declares Linux support. A macOS or Windows port must qualify its
+platform adapter, editor dependency and local transport; neither a POSIX signal
+nor a Windows console event is a generic request type.
+
 [Real chat PTY tests](../../tests/repl_pty.sh), their
 [consumer assertions](../../tests/replai_consumer.py), and the
 [tiny runtime vertical](../../tests/integration/tiny_vertical.sh) qualify the

@@ -146,6 +146,8 @@ src/cli/input/private.h	cli.input	cli.input.private	generic	private	private-inte
 src/cli/input/source.c	cli.input	cli.input.source	generic	private	reusable-algorithm	cli.commands	implementation	none
 src/cli/io/out.c	cli.io	cli.io.out	generic	private	reusable-algorithm	cli,render	implementation	none
 src/cli/io/stream.c	cli.io	cli.io.stream	generic	private	reusable-algorithm	cli.io.out,client	implementation	none
+src/cli/io/terminal/private.h	cli.io.terminal	cli.io.terminal	generic	private	platform-interface	client,cli.io	interface	none
+src/cli/io/terminal/posix.c	cli.io.terminal	cli.io.terminal	backend	private	platform-interface	client,cli.io	implementation	none
 src/cli/io/private.h	cli.io	cli.io.private	generic	private	private-interface	cli,render	interface	none
 src/cli/main.c	client	client.yvex	entrypoint	private	entrypoint	operator	entrypoint	none
 src/cli/io/client.c	client	client.runtime_lane	generic	private	protocol-client	client.yvex	implementation	none

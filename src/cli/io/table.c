@@ -1,14 +1,13 @@
 /* Render bounded, line-oriented CLI tables without terminal ownership. */
 #define _POSIX_C_SOURCE 200809L
 #include "src/cli/io/private.h"
+#include "src/cli/io/terminal/private.h"
 #include <yvex/internal/cli_table.h>
 
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
 
 void yvex_cli_precision_format(char *out, size_t capacity, const char *raw)
 {
@@ -51,11 +50,10 @@ static size_t table_text_width(const char *text)
 
 unsigned int yvex_cli_terminal_columns(FILE *fp)
 {
-    struct winsize window;
+    unsigned int width;
     const char *configured = getenv("COLUMNS");
     char *end = NULL;
     unsigned long value;
-    int fd = fp ? fileno(fp) : -1;
 
     if (configured && configured[0]) {
         errno = 0;
@@ -63,10 +61,8 @@ unsigned int yvex_cli_terminal_columns(FILE *fp)
         if (!errno && end && !*end && value >= 20u && value <= 1000u)
             return (unsigned int)value;
     }
-    memset(&window, 0, sizeof(window));
-    if (fd >= 0 && isatty(fd) && ioctl(fd, TIOCGWINSZ, &window) == 0 &&
-        window.ws_col >= 20u)
-        return window.ws_col;
+    width = yvex_cli_terminal_interactive(fp) ? yvex_cli_terminal_width(fp) : 0u;
+    if (width >= 20u) return width;
     return 120u;
 }
 
@@ -247,7 +243,7 @@ static int table_render_at_width(FILE *fp,
             char rendered[CLI_TABLE_CELL_CAP];
             const char *secondary = rows[row].secondary;
             const char *tone = table_tone(&style, rows[row].secondary_tone);
-            if (isatty(fileno(fp))) {
+            if (yvex_cli_terminal_interactive(fp)) {
                 table_elide(rendered, secondary, available > 2u ? available - 2u : 1u,
                             0);
                 secondary = rendered;
